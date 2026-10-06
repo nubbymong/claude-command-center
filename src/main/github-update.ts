@@ -26,6 +26,7 @@ import { logInfo, logError } from './debug-logger'
 import { readConfig } from './config-manager'
 import { readRegistry, writeRegistry } from './registry'
 import { getDataDirectory } from './data-paths'
+import macosFloorsJson from '../../resources/macos-release-floors.json'
 
 const execFileAsync = promisify(execFile)
 
@@ -314,23 +315,34 @@ function getRunningVersion(): string {
 
 /**
  * The oldest macOS a release needs, keyed by the first release tag that needs
- * it. Electron 44 (Chromium 152) dropped macOS 12, so every release from the
+ * it (resources/macos-release-floors.json; the release gate reads the same
+ * file). Electron 44 (Chromium 152) dropped macOS 12, so every release from the
  * one that moved to Electron 44 needs macOS 13, and its packaged app says so
  * (package.json build.mac.minimumSystemVersion). A Mac below a release's floor
  * is never offered that release: installed, it would not open. It is offered
  * the newest release it CAN run, when that is newer than the one it runs.
- * When a later Electron raises the floor again, add an entry here and raise
- * minimumSystemVersion with it (tests/unit/main/update-macos-floor.test.ts).
+ * When a later Electron raises the floor again, add an entry to that file and
+ * raise minimumSystemVersion and the floor in build.mac.artifactName with it
+ * (tests/unit/main/update-macos-floor.test.ts).
  */
-export const MACOS_RELEASE_FLOORS: ReadonlyArray<{ fromTag: string; major: number }> = [
-  { fromTag: 'v2.1.1-beta.2', major: 13 },
-]
+export const MACOS_RELEASE_FLOORS: ReadonlyArray<{ fromTag: string; major: number }> =
+  macosFloorsJson.floors.map((f) => ({ fromTag: f.fromTag, major: f.macosMajor }))
 
-/** The macOS major version the release `tag` needs; 0 when it has no floor. */
+/**
+ * The macOS major version the release `tag` needs; 0 when it has no floor. A
+ * bare `-beta` tag (no number) is what release.yml cuts from a final version
+ * on the beta channel (package.json 2.1.1 is tagged v2.1.1-beta), and it sorts
+ * below that version's numbered betas, so it also carries the final version's
+ * floor. scripts/release-gate.mjs holds a copy of this rule.
+ */
 export function macosFloorForTag(tag: string): number {
+  const bare = /^v(\d+\.\d+\.\d+)-beta$/.exec(tag)
+  const tags = bare ? [tag, `v${bare[1]}`] : [tag]
   let floor = 0
-  for (const f of MACOS_RELEASE_FLOORS) {
-    if (compareTags(tag, f.fromTag) >= 0 && f.major > floor) floor = f.major
+  for (const t of tags) {
+    for (const f of MACOS_RELEASE_FLOORS) {
+      if (compareTags(t, f.fromTag) >= 0 && f.major > floor) floor = f.major
+    }
   }
   return floor
 }
@@ -342,17 +354,66 @@ export function osMajorVersion(version: string | null | undefined): number | nul
 }
 
 /**
- * Can this machine run the release `tag`? Off macOS, yes: no floor applies. On
- * macOS, when its major version is at or above the tag's floor. A macOS version
- * that cannot be read counts as below every floor (fail closed): a release with
- * a floor is not offered, one without a floor still is.
+ * The macOS major version this Mac runs, as far as the updater can tell: the
+ * version Electron reports, and never less than `runningFloor`, the floor of
+ * the build that is running (macOS opens a build only at or above its
+ * LSMinimumSystemVersion, so a build that runs proves its floor). 0 when
+ * nothing is known, which runs no release that has a floor (fail closed).
  */
-export function releaseRunsOnThisOs(tag: string, platform: NodeJS.Platform, systemVersion: string | null | undefined): boolean {
+export function macosMajorAtLeast(systemVersion: string | null | undefined, runningFloor: number): number {
+  return Math.max(osMajorVersion(systemVersion) ?? 0, runningFloor)
+}
+
+/**
+ * Can this machine run the release `tag`? Off macOS, yes: no floor applies. On
+ * macOS, when its major version (macosMajorAtLeast) is at or above the tag's
+ * floor. A macOS version that cannot be read counts as the running build's own
+ * floor, and on a build with none as below every floor: a release with a floor
+ * above it is not offered, one without a floor still is.
+ */
+export function releaseRunsOnThisOs(tag: string, platform: NodeJS.Platform, systemVersion: string | null | undefined, runningFloor = 0): boolean {
   if (platform !== 'darwin') return true
   const floor = macosFloorForTag(tag)
-  if (floor === 0) return true
-  const major = osMajorVersion(systemVersion)
-  return major !== null && major >= floor
+  return floor === 0 || macosMajorAtLeast(systemVersion, runningFloor) >= floor
+}
+
+/**
+ * Installer names. Every Windows and Linux installer, and every Mac download
+ * up to the last release before the macOS 13 floor, is named
+ * `ClaudeCommandCenter-*` or `AI-Code-Conductor-*`, and the updater in those
+ * earlier builds matches only those two prefixes; it has no floor check. A Mac
+ * download that needs macOS NN or later is named
+ * `AICodeConductor-<version>-macosNN.dmg` (package.json build.mac.artifactName),
+ * which those updaters never match, so a Mac on an earlier build is offered
+ * nothing from a release it might not open (not even an older release: that
+ * updater stops at the newest one). This updater matches both kinds.
+ */
+const INSTALLER_PREFIXES = ['ClaudeCommandCenter-', 'AI-Code-Conductor-']
+const MAC_FLOORED_DMG = /^AICodeConductor-[0-9A-Za-z.+-]+-macos(\d{1,3})\.dmg$/
+
+/**
+ * The Mac downloads of a release this updater accepts, each with the macOS it
+ * needs: one named with its floor needs the higher of that floor and the
+ * release tag's; one with an earlier name is accepted only for a release whose
+ * tag has no floor, since a release that needs a newer macOS ships under the
+ * floored name for the earlier builds' sake.
+ */
+export function macInstallers<A extends { name: string }>(assets: ReadonlyArray<A> | undefined, tag: string): Array<{ asset: A; floor: number }> {
+  const tagFloor = macosFloorForTag(tag)
+  const out: Array<{ asset: A; floor: number }> = []
+  for (const a of assets ?? []) {
+    const name = typeof a?.name === 'string' ? a.name : ''
+    const m = MAC_FLOORED_DMG.exec(name)
+    if (m) out.push({ asset: a, floor: Math.max(parseInt(m[1], 10), tagFloor) })
+    else if (tagFloor === 0 && name.endsWith('.dmg') && INSTALLER_PREFIXES.some((p) => name.startsWith(p))) out.push({ asset: a, floor: 0 })
+  }
+  return out
+}
+
+/** The macOS a Mac needs for this release: the lowest of its accepted Mac downloads' floors, or its tag's floor when it has none. */
+function macReleaseFloor(assets: ReadonlyArray<{ name: string }> | undefined, tag: string): number {
+  const dmgs = macInstallers(assets, tag)
+  return dmgs.length ? Math.min(...dmgs.map((d) => d.floor)) : macosFloorForTag(tag)
 }
 
 /** The running OS version (Electron's process.getSystemVersion), or null. */
@@ -585,6 +646,10 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
   let best: { release: GitHubRelease; tag: string; version: string; channel: UpdateChannel } | null = null
   const platform = process.platform
   const systemVersion = platform === 'darwin' ? readSystemVersion() : null
+  // On a Mac: the macOS this Mac runs, never less than the floor of the build
+  // that is running (macosMajorAtLeast), so an unreadable version does not stop
+  // updates that build's own macOS can open.
+  const macMajor = platform === 'darwin' ? macosMajorAtLeast(systemVersion, macosFloorForTag(`v${currentVersion}`)) : 0
 
   for (const rel of releases) {
     if (rel.draft) continue
@@ -598,10 +663,14 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
     // Strictly newer than the currently running app
     if (compareTagToCurrentVersion(tag, currentVersion) <= 0) continue
 
-    // Never a release this Mac's macOS is too old to open (MACOS_RELEASE_FLOORS).
-    if (!releaseRunsOnThisOs(tag, platform, systemVersion)) {
-      logInfo(`[github-update] Skipping ${tag}: it needs macOS ${macosFloorForTag(tag)} or later (this Mac: ${systemVersion ?? 'unknown'})`)
-      continue
+    // Never a release this Mac's macOS is too old to open: its tag's floor
+    // (MACOS_RELEASE_FLOORS) or the floor its Mac download's name declares.
+    if (platform === 'darwin') {
+      const floor = macReleaseFloor(rel.assets, tag)
+      if (floor > macMajor) {
+        logInfo(`[github-update] Skipping ${tag}: it needs macOS ${floor} or later (this Mac: ${systemVersion ?? 'unknown'}, taken as ${macMajor})`)
+        continue
+      }
     }
 
     if (!best || compareTags(tag, best.tag) > 0) {
@@ -614,19 +683,17 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
     return null
   }
 
-  // Accept either the legacy artifact prefix or the current brand one.
-  //
-  // Releases currently publish the SAME installer under both names: every client
-  // in the wild matches the legacy prefix literally, so dropping it would make
-  // them see "no matching asset" — which is indistinguishable from "up to date"
-  // and unfixable, because the fix would only ship in the build they can no
-  // longer see. Tolerating both here is what eventually lets the legacy name be
-  // retired: once installs predating this build are gone, releases can publish
-  // the brand name alone. Until then the legacy asset must keep being published.
-  const INSTALLER_PREFIXES = ['ClaudeCommandCenter-', 'AI-Code-Conductor-']
-  const installer = best.release.assets.find((a) =>
-    a.name.endsWith(INSTALLER_EXT) && INSTALLER_PREFIXES.some((p) => a.name.startsWith(p))
-  )
+  // Windows and Linux: an installer under either name prefix
+  // (INSTALLER_PREFIXES), as before. A Mac: a download this Mac can open
+  // (macInstallers), the one that needs the newest macOS first, since that is
+  // the build made for it.
+  const installer = platform === 'darwin'
+    ? macInstallers(best.release.assets, best.tag)
+      .filter((d) => d.floor <= macMajor)
+      .sort((a, b) => b.floor - a.floor)[0]?.asset
+    : best.release.assets.find((a) =>
+      a.name.endsWith(INSTALLER_EXT) && INSTALLER_PREFIXES.some((p) => a.name.startsWith(p))
+    )
 
   // If there's no installer for the current platform, don't offer the update.
   // Otherwise the user would see "update available" but clicking Install fails.

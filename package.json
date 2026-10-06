@@ -161,7 +161,7 @@
       ],
       "category": "public.app-category.developer-tools",
       "minimumSystemVersion": "13.0",
-      "artifactName": "AI-Code-Conductor-${version}-mac.${ext}",
+      "artifactName": "AICodeConductor-${version}-macos13.${ext}",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",

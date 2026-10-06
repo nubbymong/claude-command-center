@@ -1,0 +1,6 @@
+{
+  "_about": "The oldest macOS each release needs, by the first release tag that needs it and the Electron major that raised it. The updater (src/main/github-update.ts) never offers a Mac a release below that macOS; the release gate (scripts/release-gate.mjs) refuses to cut a release whose Electron needs a newer macOS than its tag's floor. A new entry goes with a raised package.json build.mac.minimumSystemVersion and the new floor in build.mac.artifactName (macosNN).",
+  "floors": [
+    { "fromTag": "v2.1.1-beta.2", "electronMajor": 44, "macosMajor": 13 }
+  ]
+}

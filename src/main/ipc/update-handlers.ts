@@ -169,7 +169,9 @@ export function registerUpdateHandlers(): void {
     // 3. Dev-only fallback: look for a locally-built installer in the source folder.
     // Mirrors electron-builder's `artifactName` (package.json build.*):
     //   Windows: AI-Code-Conductor-${version}.exe
-    //   macOS:   AI-Code-Conductor-${version}-mac.dmg
+    //   macOS:   build.mac.artifactName read from package.json
+    //            (AICodeConductor-${version}-macosNN.dmg), then the earlier
+    //            AI-Code-Conductor-${version}-mac.dmg
     // Checks both a `-latest` convenience file and the versioned file, in both
     // repo root and `dist/`. The legacy brand names are still probed LAST so a
     // dist/ left over from before the rename keeps working locally; they cost
@@ -190,6 +192,13 @@ export function registerUpdateHandlers(): void {
         }
         try {
           const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf-8'))
+          const macTemplate: unknown = pkg?.build?.mac?.artifactName
+          const macName = isMac && typeof macTemplate === 'string'
+            ? macTemplate.replace(/\$\{version\}/g, String(pkg.version)).replace(/\$\{ext\}/g, 'dmg')
+            : null
+          if (macName && !/[\\/]/.test(macName)) {
+            candidates.push(path.join(projectRoot, macName), path.join(projectRoot, 'dist', macName))
+          }
           for (const brand of brands) {
             candidates.push(
               path.join(projectRoot, `${brand}-${pkg.version}${macSuffix}${ext}`),

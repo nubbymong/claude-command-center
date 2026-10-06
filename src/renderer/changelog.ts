@@ -98,6 +98,7 @@ export const changelog: ChangelogEntry[] = [
       { type: 'fix', description: 'A canvas review with one note now says 1 note, not 1 notes, in the line it writes into the session.' },
       { type: 'fix', description: 'The Cost over time chart in Tokenomics reads clearly on long ranges such as All: the dates under it are spaced to fit the width of the chart instead of running together, carry the year when the range crosses one, and its text and dots are no longer stretched or squashed with the window.' },
       { type: 'improvement', description: 'The app now runs on Electron 44, with Chromium 152. On a Mac it needs macOS 13 (Ventura) or later, so a Mac on macOS 12 stays on an earlier version (see Known issues in the Feature Guide). From this version on, the updater does not offer a Mac a version that needs a newer macOS than the one it runs.' },
+      { type: 'improvement', description: 'Mac: this version\'s download has a new file name, ending in macos13.dmg, so the updater in an earlier version does not offer it. On macOS 12, stay on 2.1.1-beta.1. On macOS 13 or later, download this version\'s .dmg from the Releases page on GitHub once by hand; the updater offers the versions after it as before.' },
     ],
   },
   {
