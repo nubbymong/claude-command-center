@@ -329,6 +329,15 @@ Per PR:
   only paths the memory channels take. Owed for it: its spec and quality
   reviews, the ADR-009 delta pass (the Conductor MCP server and the memory
   channel bound) and the SSH live matrix (it changes `pty-manager.ts`).
+  Fix pass 13c (56a30fc3 to 24ce2e7a and the jsdom range with this
+  record): the memory channels and the account listing apply one path
+  check in one unit; two tests hold a replaced process's late exit apart
+  from the next launch's MCP record; jsdom is held at 30.0.x (`~30.0.1`)
+  while CI and the release workflow run Node 20; the vision teardown test
+  waits for the exit it asserts (30 of 30 runs). 9 new tests, 8 mutants,
+  8 killed. Fix pass 13's spec and quality reviews and its ADR-009 delta
+  pass, and the reviews of the fixes after it, PASS; the SSH live matrix
+  is still owed.
 
 Package completion is not release completion. A complete PR merges to beta
 only on the owner's word, in the order #625, PR 3, PR 4, and nothing is
