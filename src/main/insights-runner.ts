@@ -15,13 +15,13 @@ import {
   realpathSync,
   rmdirSync,
   rmSync,
-  chmodSync,
+  fchmodSync,
   openSync,
   fstatSync,
   readSync,
   closeSync,
   constants as fsConstants,
-  type Stats,
+  type BigIntStats,
 } from 'fs'
 import * as pty from 'node-pty'
 import { guardPtyIo } from './pty-input-guard'
@@ -1153,22 +1153,45 @@ function runsFolderHolds(parent: string, kind: RunFolders): boolean {
  *  insights folder is checked before anything is made in it: a link there
  *  is refused, never made through. On POSIX an insights folder of this
  *  user's that others can write to (one made under a group-writable umask)
- *  is first made writable by this user only, as the app's other owner-only
- *  folders are; one that stays writable by others is refused. */
+ *  is first made owner-only (0700), as the app's other owner-only folders
+ *  are, through the folder its lstat saw (ownerOnlyThroughHandle); one that
+ *  cannot be, or stays writable by others, is refused. */
 function runsParentFor(kind: RunFolders): string | null {
   const insights = getInsightsDir()
   const parent = join(insights, kind.dirname)
   try {
-    let st: Stats | null = null
-    try { st = lstatSync(insights) } catch (e) { if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') return null }
+    let st: BigIntStats | null = null
+    try { st = lstatSync(insights, { bigint: true }) } catch (e) { if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') return null }
     if (st && (st.isSymbolicLink() || !st.isDirectory())) return null
-    if (st && typeof process.getuid === 'function' && st.uid === process.getuid() && (st.mode & 0o022) !== 0) {
-      try { chmodSync(insights, st.mode & 0o7777 & ~0o022) } catch { /* checked below either way */ }
+    if (st && typeof process.getuid === 'function' && Number(st.uid) === process.getuid() && (Number(st.mode) & 0o022) !== 0) {
+      if (!ownerOnlyThroughHandle(insights, st)) return null
     }
     mkdirSync(parent, { recursive: true, mode: 0o700 })
     return runsFolderHolds(parent, kind) ? parent : null
   } catch {
     return null
+  }
+}
+
+/** POSIX: makes `dir` owner-only (0700) through a handle on the folder
+ *  `seen` (its lstat) describes, so the change never lands on anything put
+ *  in its place after that lstat. The handle is opened without following a
+ *  link, and the change is made only when it is a folder, this user's, and
+ *  that same folder (device and inode); false, changing nothing, when it is
+ *  not or cannot be opened. A change the system refuses is left to the
+ *  checks after it (runsFolderHolds). */
+function ownerOnlyThroughHandle(dir: string, seen: BigIntStats): boolean {
+  let fd: number | null = null
+  try {
+    fd = openSync(dir, fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0) | (fsConstants.O_NOFOLLOW ?? 0))
+    const open = fstatSync(fd, { bigint: true })
+    if (!open.isDirectory() || open.uid !== BigInt(process.getuid!()) || open.dev !== seen.dev || open.ino !== seen.ino) return false
+    try { fchmodSync(fd, 0o700) } catch { /* checked after either way */ }
+    return true
+  } catch {
+    return false
+  } finally {
+    if (fd !== null) try { closeSync(fd) } catch { /* already closed */ }
   }
 }
 

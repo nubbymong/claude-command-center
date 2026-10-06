@@ -14,7 +14,10 @@
 //    again just before the stale sweep and again just before the run's
 //    folder is removed (each check by lstat and by real path): a runs folder
 //    found to be a link at a check is never swept or removed through;
-//  - `insights` is checked before the runs folder is made in it;
+//  - `insights` is checked before the runs folder is made in it, and on POSIX
+//    made owner-only only through a handle on the folder its lstat saw
+//    (opened without following a link; a folder, this user's, the same
+//    device and inode), so nothing that took its place is ever changed;
 //  - each session is read through the file the walk saw (the same file, a
 //    regular one with no second name), never one that took its place, and
 //    the whole read has a time limit: a read that does not end fails the run
@@ -63,10 +66,17 @@ const h = vi.hoisted(() => ({
   closes: 0,
   /** An inode number a stat of the path reports (lstat, or fstat of an open descriptor). */
   inoFor: null as null | ((p: string, how: 'lstat' | 'fstat') => bigint | undefined),
-  /** Told of each chmodSync (POSIX modes are modelled in `modeFor`). */
-  onChmod: null as null | ((p: string, mode: number) => void),
+  /** Told of each chmodSync and fchmodSync: the path named (for fchmodSync
+   *  the path the descriptor was opened by), the mode, and where it lands
+   *  once links are followed (POSIX modes are modelled in `modeFor`). */
+  onChmod: null as null | ((p: string, mode: number, target: string) => void),
   /** Open descriptors and the path each was opened by (the sync calls). */
   fdPaths: new Map<number, string>(),
+  /** Open descriptors and where each landed once links were followed. */
+  fdTargets: new Map<number, string>(),
+  /** The owner an fstat of an open descriptor reports, by where it landed
+   *  (when unset, `uidFor`'s answer). */
+  fstatUidFor: null as null | ((p: string) => number | undefined),
   prepareCalls: [] as Array<Record<string, unknown>>,
   execCalls: [] as Array<{ cwd: string; env: Record<string, string>; prompt: string }>,
   released: 0,
@@ -159,7 +169,12 @@ async function wrapFs(real: any): Promise<any> {
   const over: Record<string, any> = {
     existsSync: f1('existsSync'), statSync: f1('statSync'), readFileSync: f1('readFileSync'), writeFileSync: f1('writeFileSync'),
     appendFileSync: f1('appendFileSync'), utimesSync: f1('utimesSync'),
-    chmodSync: (p: any, mode: any) => { if (isStr(p)) h.onChmod?.(path.resolve(p), Number(mode)); return real.chmodSync(isStr(p) ? follow(p, true) : p, mode) },
+    chmodSync: (p: any, mode: any) => { if (isStr(p)) h.onChmod?.(path.resolve(p), Number(mode), follow(p, true)); return real.chmodSync(isStr(p) ? follow(p, true) : p, mode) },
+    fchmodSync: (fd: any, mode: any) => {
+      const p = h.fdPaths.get(fd)
+      if (p !== undefined) h.onChmod?.(p, Number(mode), h.fdTargets.get(fd) ?? p)
+      return real.fchmodSync(fd, mode)
+    },
     accessSync: f1('accessSync'),
     // O_NOFOLLOW refuses a link as the last part (POSIX); other links are followed.
     openSync: (p: any, flags?: any, mode?: any) => {
@@ -170,15 +185,21 @@ async function wrapFs(real: any): Promise<any> {
       const fd = real.openSync(follow(p, true), flags, mode)
       if (h.fifo.has(key(p))) h.fifoFds.add(fd)
       h.fdPaths.set(fd, path.resolve(p))
+      h.fdTargets.set(fd, follow(p, true))
       return fd
     },
     fstatSync: (fd: any, o?: any) => {
       const st = h.fifoFds.has(fd) ? asFifo(real.fstatSync(fd, o)) : real.fstatSync(fd, o)
       const p = h.fdPaths.get(fd)
+      const t = h.fdTargets.get(fd)
+      const fields: Record<string, number | bigint> = {}
       const i = p !== undefined ? h.inoFor?.(p, 'fstat') : undefined
-      return i !== undefined ? patch(st, { ino: i }) : st
+      const u = t !== undefined ? (h.fstatUidFor?.(t) ?? h.uidFor?.(t)) : undefined
+      if (i !== undefined) fields.ino = i
+      if (u !== undefined) fields.uid = u
+      return Object.keys(fields).length ? patch(st, fields) : st
     },
-    closeSync: (fd: any) => { h.fifoFds.delete(fd); h.fdPaths.delete(fd); return real.closeSync(fd) },
+    closeSync: (fd: any) => { h.fifoFds.delete(fd); h.fdPaths.delete(fd); h.fdTargets.delete(fd); return real.closeSync(fd) },
     createReadStream: (p: any, o?: any) => {
       const q = isStr(p) ? follow(p, true) : p
       if (isStr(p) && (h.fifo.has(key(p)) || h.hang.has(key(p)))) return hanging()
@@ -357,7 +378,7 @@ beforeEach(() => {
   h.prepareCalls = []; h.execCalls = []; h.released = 0
   h.fifo.clear(); h.fifoFds.clear(); h.hang.clear(); h.hangStreams = []
   h.hard.clear(); h.hardOnOpen.clear(); h.hardGoneOnOpen.clear(); h.stall.clear(); h.hangReaddir.clear(); h.destroys = 0; h.closes = 0
-  h.inoFor = null; h.onChmod = null; h.fdPaths.clear()
+  h.inoFor = null; h.onChmod = null; h.fdPaths.clear(); h.fdTargets.clear(); h.fstatUidFor = null
   h.gate = new Promise<void>((r) => { h.release = r })
 })
 afterEach(() => {
@@ -366,7 +387,7 @@ afterEach(() => {
   if (realGetuid === undefined) delete (process as any).getuid
   else (process as any).getuid = realGetuid
   h.links.clear(); h.hard.clear()
-  h.onReaddir = null; h.onLstat = null; h.onRun = null; h.uidFor = null; h.modeFor = null; h.inoFor = null; h.onChmod = null
+  h.onReaddir = null; h.onLstat = null; h.onRun = null; h.uidFor = null; h.modeFor = null; h.inoFor = null; h.onChmod = null; h.fstatUidFor = null
   const t = h.tmpRoot
   if (t && basename(t).startsWith(PREFIX) && nodePath.resolve(dirname(t)) === nodePath.resolve(os.tmpdir())) {
     try { R().rmSync(t, { recursive: true, force: true }) } catch { /* ignore */ }
@@ -413,10 +434,10 @@ describe('the runs folder is a real folder, checked before any launch [host]', (
 
   // [host] P4.7 fix pass 4: `insights` above the runs folder is held to the
   // runs folder's rule on POSIX. One this user owns that others can write to
-  // (an older folder made under a group-writable umask) is made writable by
-  // this user only before anything is made in it; one that stays writable by
-  // others, or is another user's, is refused before any launch.
-  it('on POSIX an insights folder others can write to is made writable by this user only, or refused before any launch [host]', async () => {
+  // (an older folder made under a group-writable umask) is made owner-only
+  // (0700, fix pass 6) before anything is made in it; one that stays
+  // writable by others, or is another user's, is refused before any launch.
+  it('on POSIX an insights folder others can write to is made owner-only, or refused before any launch [host]', async () => {
     const ins = () => nodePath.resolve(insightsDir())
     const runs = () => nodePath.resolve(runsParent())
     R().mkdirSync(runsParent(), { recursive: true })
@@ -426,7 +447,7 @@ describe('the runs folder is a real folder, checked before any launch [host]', (
     posixAs(() => 4242, (p) => (fkey(p) === fkey(ins()) ? insMode : fkey(p) === fkey(runs()) ? 0o040700 : undefined))
     const ok = await runner.runCodexInsights(win, { accountId: ACCT }) as string
     expect(runOf(ok).status).toBe('complete')
-    expect(chmods).toEqual([0o755])
+    expect(chmods).toEqual([0o700])
     // The folder stays writable by others: refused, nothing launched.
     h.onChmod = null
     for (const mode of [0o040775, 0o040757, 0o040777]) {
@@ -445,6 +466,83 @@ describe('the runs folder is a real folder, checked before any launch [host]', (
     expect(runOf(other)).toMatchObject({ status: 'failed', error: NO_FOLDER })
     expect(h.prepareCalls).toEqual([])
     expect(chmods).not.toContain(-1)
+  })
+
+  // [host] P4.7 fix pass 6: the owner-only change of `insights` acts through
+  // a handle on the folder its lstat saw, opened without following a link
+  // and checked to be a folder, this user's, and that same folder (device
+  // and inode). Whatever is swapped in after the lstat is never changed, and
+  // the run is refused before anything is made in it or launched.
+  const insightsSwappedAfterItsLstat = (target: string) => {
+    let armed = true
+    h.onLstat = (p) => { if (armed && fkey(p) === fkey(insightsDir())) { armed = false; h.links.set(nodePath.resolve(insightsDir()), target) } }
+  }
+  const groupWritableInsights = () => posixAs(() => 4242, (p) => (fkey(p) === fkey(insightsDir()) ? 0o040775 : fkey(p) === fkey(runsParent()) ? 0o040700 : undefined))
+
+  it("on POSIX `insights` swapped for a link to another folder of this user's after its lstat: that folder's rights never change and no runs folder is made in it; refused before any launch [host]", async () => {
+    const elsewhere = join(h.tmpRoot, 'elsewhere-home', 'keys')
+    R().mkdirSync(elsewhere, { recursive: true })
+    R().writeFileSync(join(elsewhere, 'kept.txt'), 'kept')
+    R().mkdirSync(runsParent(), { recursive: true })
+    const landed: string[] = []
+    h.onChmod = (_p, _m, target) => { landed.push(fkey(target)) }
+    groupWritableInsights()
+    insightsSwappedAfterItsLstat(elsewhere)
+    const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    expect(landed).not.toContain(fkey(elsewhere))
+    expect(R().readdirSync(elsewhere)).not.toContain(RUNS)
+    expect(R().readFileSync(join(elsewhere, 'kept.txt'), 'utf8')).toBe('kept')
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: NO_FOLDER })
+    expect(h.prepareCalls).toEqual([])
+    expect(h.execCalls).toHaveLength(0)
+  })
+
+  it("on POSIX `insights` swapped for a link to a file of this user's after its lstat: the file's rights never change; nothing is launched [host]", async () => {
+    const file = join(h.tmpRoot, 'elsewhere-home', 'settings.json')
+    R().mkdirSync(dirname(file), { recursive: true })
+    R().writeFileSync(file, '{}')
+    R().mkdirSync(runsParent(), { recursive: true })
+    const landed: string[] = []
+    h.onChmod = (_p, _m, target) => { landed.push(fkey(target)) }
+    groupWritableInsights()
+    insightsSwappedAfterItsLstat(file)
+    // `insights` now names a file, so the run's record cannot be kept under
+    // it either: the run may end in an error; nothing is changed or launched.
+    await runner.runCodexInsights(win, { accountId: ACCT }).catch(() => null)
+    expect(landed).not.toContain(fkey(file))
+    expect(R().readFileSync(file, 'utf8')).toBe('{}')
+    expect(h.prepareCalls).toEqual([])
+    expect(h.execCalls).toHaveLength(0)
+  })
+
+  it("on POSIX a file in `insights`' place that even carries the folder's own inode number is never changed; nothing is launched [host]", async () => {
+    const file = join(h.tmpRoot, 'elsewhere-home', 'notes.txt')
+    R().mkdirSync(dirname(file), { recursive: true })
+    R().writeFileSync(file, 'kept')
+    R().mkdirSync(runsParent(), { recursive: true })
+    const folderIno = R().lstatSync(insightsDir(), { bigint: true }).ino as bigint
+    // The file took the folder's inode number (the folder removed, its number reused).
+    h.inoFor = (p, how) => (how === 'fstat' && fkey(p) === fkey(insightsDir()) ? folderIno : undefined)
+    const landed: string[] = []
+    h.onChmod = (_p, _m, target) => { landed.push(fkey(target)) }
+    groupWritableInsights()
+    insightsSwappedAfterItsLstat(file)
+    await runner.runCodexInsights(win, { accountId: ACCT }).catch(() => null)
+    expect(landed).not.toContain(fkey(file))
+    expect(R().readFileSync(file, 'utf8')).toBe('kept')
+    expect(h.prepareCalls).toEqual([])
+  })
+
+  it("on POSIX an `insights` whose open handle is not this user's folder is never changed; refused before any launch [host]", async () => {
+    R().mkdirSync(runsParent(), { recursive: true })
+    const landed: number[] = []
+    h.onChmod = (p, m) => { if (fkey(p) === fkey(insightsDir())) landed.push(m) }
+    groupWritableInsights()
+    h.fstatUidFor = (p) => (fkey(p) === fkey(insightsDir()) ? 7 : undefined)
+    const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    expect(landed).toEqual([])
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: NO_FOLDER })
+    expect(h.prepareCalls).toEqual([])
   })
 
   // [host] P4.7 fix pass 4: each check matches the runs folder's real path
