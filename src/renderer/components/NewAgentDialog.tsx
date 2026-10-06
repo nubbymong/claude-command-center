@@ -4,6 +4,7 @@ import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { resolveAccountName } from '../../shared/account-chip-color'
+import { CLAUDE_OFF, useClaudeOff } from '../lib/claudeOff'
 import {
   DialogOverlay,
   DialogPanel,
@@ -35,6 +36,9 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
   const [skipPermissions, setSkipPermissions] = useState(false)
   const configs = useConfigStore(s => s.configs)
   const dispatch = useCloudAgentStore(s => s.dispatch)
+  // A cloud agent is a headless Claude Code run: with Claude Code switched
+  // off, Dispatch is disabled and says why (the store refuses as well).
+  const claudeOff = useClaudeOff()
   const nameRef = useRef<HTMLInputElement>(null)
 
   // Account selection (multi-account): default to the captured primary so an
@@ -71,7 +75,7 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
   }
 
   const handleDispatch = async () => {
-    if (!name.trim() || !description.trim() || !projectPath.trim() || dispatching) return
+    if (!name.trim() || !description.trim() || !projectPath.trim() || dispatching || claudeOff) return
     setDispatching(true)
     const selectedConfig = selectedConfigId ? localConfigs.find(c => c.id === selectedConfigId) : undefined
     await dispatch({
@@ -221,7 +225,9 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
 
         {/* Actions */}
         <DialogFooter
-          left={<span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Ctrl+Enter to dispatch</span>}
+          left={claudeOff
+            ? <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }} data-testid="new-agent-claude-off">{CLAUDE_OFF}</span>
+            : <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Ctrl+Enter to dispatch</span>}
         >
           <DialogButton variant="secondary" onClick={onClose}>
             Cancel
@@ -229,7 +235,9 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
           <DialogButton
             variant="primary"
             onClick={handleDispatch}
-            disabled={!name.trim() || !description.trim() || !projectPath.trim() || dispatching}
+            disabled={!name.trim() || !description.trim() || !projectPath.trim() || dispatching || claudeOff}
+            title={claudeOff ? CLAUDE_OFF : undefined}
+            testId="new-agent-dispatch"
           >
             {dispatching ? 'Dispatching...' : 'Dispatch agent'}
           </DialogButton>

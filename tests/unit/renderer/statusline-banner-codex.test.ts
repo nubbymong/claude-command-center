@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 /**
- * P5.4 regression: Statusline tab shows a provider-aware banner when the active
- * session is Codex, explaining that statusline customisation is Claude-only.
- * The banner is informational; StatusLineTab controls remain visible and functional.
+ * P5.4 regression, corrected in WP2 P2: with a Codex session in front, the
+ * Status Line tab says these settings apply to Codex sessions too (the strip
+ * is one component for every session) and which items a Codex session cannot
+ * fill yet. It never claims the settings are Claude-only. The note is
+ * informational; StatusLineTab controls remain visible and functional.
  */
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -13,6 +15,8 @@ import { act } from 'react'
 
 let mockSessions: Array<{ id: string; provider?: 'claude' | 'codex'; label: string; workingDirectory: string; color: string; sessionType: 'local' | 'ssh' }> = []
 let mockActiveSessionId: string | null = null
+/** Usage track MP6: the saved provider switches the note reads. */
+let mockChoice: Record<string, unknown> = {}
 
 vi.mock('../../../src/renderer/stores/sessionStore', () => ({
   useSessionStore: (sel: any) => sel({
@@ -36,9 +40,11 @@ vi.mock('../../../src/renderer/stores/settingsStore', () => {
   }
   return {
     DEFAULT_STATUS_LINE,
+    // Read at load by onboarding/hello-codex.ts (SettingsPage imports it).
+    DEFAULT_CONDUCTOR_TOOLS: { vision: true, codexReview: true, claudeReview: true, hostTransfer: true, canvas: true },
     useSettingsStore: (selector: any) =>
       selector({
-        settings: { statusLine: DEFAULT_STATUS_LINE },
+        settings: { statusLine: DEFAULT_STATUS_LINE, ...mockChoice },
         updateSettings: vi.fn(),
       }),
   }
@@ -76,13 +82,30 @@ describe('Statusline tab provider-aware banner', () => {
     mockSessions = [{ id: 's-1', provider: 'codex', label: 't', workingDirectory: '/', color: '#89b4fa', sessionType: 'local' }]
     mockActiveSessionId = 's-1'
     act(() => { root.render(React.createElement(SettingsPage, { initialTab: 'statusline' })) })
-    expect(container.textContent).toContain('Statusline customisation is Claude-only')
+    // Usage track MP6: its account now shows (the footer names it), so the
+    // note no longer says it does not.
+    expect(container.querySelector('[data-testid="statusline-codex-note"]')?.textContent).toBe(
+      'These settings apply to Codex sessions too. A Codex session does not report lines changed or session time yet, so those items do not show for it.',
+    )
+    expect(container.textContent).not.toMatch(/Claude-only/)
   })
 
   it('does NOT render the Codex banner when active session is Claude', () => {
     mockSessions = [{ id: 's-1', provider: 'claude', label: 't', workingDirectory: '/', color: '#89b4fa', sessionType: 'local' }]
     mockActiveSessionId = 's-1'
     act(() => { root.render(React.createElement(SettingsPage, { initialTab: 'statusline' })) })
-    expect((container.textContent ?? '')).not.toContain('Statusline customisation is Claude-only')
+    expect(container.querySelector('[data-testid="statusline-codex-note"]')).toBeNull()
+  })
+
+  // Usage track MP6 (as drawn): the note shows while Codex is in use, whatever
+  // session is in front.
+  it('renders the Codex banner while Codex is in use, with a Claude session in front', async () => {
+    const { choiceSettings } = await import('../../../src/renderer/onboarding/provider-choice')
+    mockChoice = { ...choiceSettings('both'), codexAnswered: true }
+    mockSessions = [{ id: 's-1', provider: 'claude', label: 't', workingDirectory: '/', color: '#89b4fa', sessionType: 'local' }]
+    mockActiveSessionId = 's-1'
+    act(() => { root.render(React.createElement(SettingsPage as React.ComponentType<{ initialTab?: string }>, { initialTab: 'statusline' })) })
+    expect(container.querySelector('[data-testid="statusline-codex-note"]')).not.toBeNull()
+    mockChoice = {}
   })
 })

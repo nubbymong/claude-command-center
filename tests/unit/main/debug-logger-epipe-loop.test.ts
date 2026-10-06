@@ -104,6 +104,70 @@ describe('debug-logger #487: EPIPE/EIO handling and rotation', () => {
     consoleErrorSpy.mockRestore()
   })
 
+  // Found on the Windows test VM: an SSH session whose ssh.exe exited almost at
+  // once (connection refused) closed the whole app. node-pty runs a resize it
+  // queued before the terminal was ready from its data socket's first 'data'
+  // event, and for a process that has already exited that resize throws there,
+  // outside every caller's try/catch. Exactly that error, from node-pty's own
+  // code, is not fatal; the same text from anywhere else, and every other
+  // error, still rethrows. Mutations that prove each can fail: removing the
+  // isExitedPtyResize branch from the uncaughtException handler fails the
+  // first; dropping its node-pty stack check fails the second; dropping its
+  // message check fails the third.
+  const exitedPtyResize = (stack: string): Error => {
+    const err = new Error('Cannot resize a pty that has already exited')
+    err.stack = `Error: Cannot resize a pty that has already exited\n${stack}`
+    return err
+  }
+  const NODE_PTY_STACK_WIN = [
+    '    at WindowsPtyAgent.resize (C:\\Program Files\\App\\resources\\app.asar.unpacked\\node_modules\\node-pty\\lib\\windowsPtyAgent.js:177:19)',
+    '    at WindowsTerminal.<anonymous> (C:\\Program Files\\App\\resources\\app.asar.unpacked\\node_modules\\node-pty\\lib\\windowsTerminal.js:140:26)',
+    '    at Socket.<anonymous> (C:\\Program Files\\App\\resources\\app.asar.unpacked\\node_modules\\node-pty\\lib\\windowsTerminal.js:78:38)',
+  ].join('\n')
+  const NODE_PTY_STACK_POSIX = '    at WindowsPtyAgent.resize (/work/app/node_modules/node-pty/lib/windowsPtyAgent.js:177:19)'
+
+  it('a resize node-pty queued for a terminal whose process already exited is suppressed and logged to file WITHOUT touching console', async () => {
+    mod.installGlobalErrorHandlers()
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    expect(() => process.emit('uncaughtException', exitedPtyResize(NODE_PTY_STACK_WIN))).not.toThrow()
+    expect(() => process.emit('uncaughtException', exitedPtyResize(NODE_PTY_STACK_POSIX))).not.toThrow()
+    await flush()
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled()
+    const log = readLogFile()
+    expect(log).toContain('Uncaught exception (suppressed, resize of an exited pty):')
+    expect(log).toContain('Cannot resize a pty that has already exited')
+
+    consoleErrorSpy.mockRestore()
+  })
+
+  it('the same message without a node-pty stack frame still rethrows', () => {
+    mod.installGlobalErrorHandlers()
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const elsewhere = exitedPtyResize('    at resizeSomethingElse (C:\\Program Files\\App\\resources\\app.asar\\out\\main\\index.js:1:1)')
+    expect(() => process.emit('uncaughtException', elsewhere)).toThrow('Cannot resize a pty that has already exited')
+    // A lookalike path segment is not node-pty either.
+    const lookalike = exitedPtyResize('    at x (/work/app/node_modules/not-node-pty-at-all/index.js:1:1)')
+    expect(() => process.emit('uncaughtException', lookalike)).toThrow('Cannot resize a pty that has already exited')
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+
+    consoleErrorSpy.mockRestore()
+  })
+
+  it('an ordinary error, even one thrown from node-pty, still rethrows', () => {
+    mod.installGlobalErrorHandlers()
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    expect(() => process.emit('uncaughtException', new Error('boom'))).toThrow('boom')
+    const other = new Error('resizing must be done using positive cols and rows')
+    other.stack = `Error: ${other.message}\n${NODE_PTY_STACK_WIN}`
+    expect(() => process.emit('uncaughtException', other)).toThrow('resizing must be done using positive cols and rows')
+
+    consoleErrorSpy.mockRestore()
+  })
+
   it('#487 (unhandledRejection): EPIPE/EIO reasons are suppressed the same way', async () => {
     mod.installGlobalErrorHandlers()
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})

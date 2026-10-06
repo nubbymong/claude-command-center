@@ -56,7 +56,7 @@ const SECTIONS_20: WhatsNewSection[] = [
   {
     heading: 'Tools',
     items: [
-      { title: 'Built-in tools, your call.', desc: 'Vision, code review, host screenshots and the Agent Canvas each get a real switch.' },
+      { title: 'Built-in Tools, your call.', desc: 'Vision, code review, host screenshots and the Agent Canvas each get a real switch.' },
       { title: 'Codex support.', desc: "Run OpenAI's Codex CLI beside Claude, with its own switch and sign-in.", beta: true },
     ],
   },

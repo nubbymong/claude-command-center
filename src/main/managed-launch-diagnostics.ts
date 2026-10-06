@@ -26,7 +26,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { logInfo, logWarn } from './debug-logger'
 import { managedLaunchPreflightFor, authoritySettingsKeysFor } from './providers'
-import { peekClaudeCliVersion, ensureClaudeCliVersion } from './claude-cli-version'
+import { peekClaudeCliVersion, ensureClaudeCliVersion, claudeCliProbeAllowed } from './claude-cli-version'
 import { decodeSettingsText } from './settings-text'
 // From the shared state module, NOT from account-profiles: the choke point in
 // account-profiles calls this recorder, so importing back would make the launch
@@ -1065,6 +1065,21 @@ export function peekGateVerdict(cwd: string): ProjectGateResult | undefined {
   return hit.verdict
 }
 
+/** The preflight of a launch while Claude Code is switched off: its version
+ *  was not checked because nothing may run the Claude CLI then, which is not
+ *  the "version not verified" fault the report otherwise raises. */
+function versionNotCheckedWhileOff(p: ManagedLaunchPreflight): ManagedLaunchPreflight {
+  const findings = p.findings.filter((f) => f.id !== 'cli-version-unverified')
+  if (findings.length === p.findings.length) return p
+  findings.unshift({
+    id: 'cli-version-not-checked-off',
+    severity: 'info',
+    title: 'Claude Code is off',
+    detail: 'Its version is not checked while it is off. Turn it on in Settings, Accounts.',
+  })
+  return { ...p, findings, ok: !findings.some((f) => f.severity === 'blocked') }
+}
+
 /**
  * Run the preflight for one composed managed launch and record it.
  *
@@ -1098,7 +1113,8 @@ export function recordManagedLaunchPreflight(
   try {
     // If the boot probe never answered (the CLI was installed after launch, or
     // one probe failed), start another now. Fire-and-forget: this launch still
-    // reports `unknown`, the next one will not.
+    // reports `unknown`, the next one will not. Never while Claude Code is
+    // switched off (the probe skips itself then; see below for the report).
     ensureClaudeCliVersion()
     const input: ManagedLaunchPreflightInput = {
       env,
@@ -1112,8 +1128,12 @@ export function recordManagedLaunchPreflight(
       ...(gate?.status === 'not-scanned' ? { projectScanSkipped: gate.reason } : {}),
       ...(extra.launchDirectoryUnverified ? { launchDirectoryUnverified: extra.launchDirectoryUnverified } : {}),
     }
-    const preflight = managedLaunchPreflightFor('claude', input)
-    if (!preflight) return null
+    const measured = managedLaunchPreflightFor('claude', input)
+    if (!measured) return null
+    // WP2: with Claude Code switched off no version check runs, so a version
+    // nobody checked is not a fault to raise (a shell pinned to an account is
+    // the one managed launch left then): the report says Claude Code is off.
+    const preflight = !claudeCliProbeAllowed() && !input.cliVersion ? versionNotCheckedWhileOff(measured) : measured
     const report: StoredReport = { home, profileId, sessionId, kind, at: Date.now(), seq: nextSeq++, preflight, input }
     const ring = ringFor(kind)
     const max = kind === 'probe' ? MAX_PROBE_REPORTS : MAX_REPORTS

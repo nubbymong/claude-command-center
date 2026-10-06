@@ -14,7 +14,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { getConfigDir, ensureConfigDir } from '../config-manager'
 import { logInfo } from '../debug-logger'
-import { codexPricingKeys, priceForModel } from '../providers/codex/pricing'
+import { codexPricingKeys, priceForModel, codexCachedInputPer1M } from '../providers/codex/pricing'
 import { getRegistry } from '../model-registry-service'
 import type { TkPricing } from './tk-types'
 
@@ -195,7 +195,8 @@ export function getAllPricing(): Record<string, TkPricing> {
     out[key] = {
       input: p.inputPer1M,
       output: p.outputPer1M,
-      cacheRead: p.cachedInputPer1M ?? 0,
+      // MP11: no cached tier costs the full input rate, as in the strip.
+      cacheRead: codexCachedInputPer1M(p),
       cacheWrite: 0,
     }
   }

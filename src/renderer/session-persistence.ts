@@ -7,6 +7,7 @@ import type { SessionState, SavedSession } from './types/electron'
 import { migrateColorRecords } from './utils/migrateIdentityColors'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { shouldPredetermineRestoredAccount } from './utils/sessionLaunch'
+import { isConfigLaunchBlocked } from './hooks/useLaunchConfig'
 // Type-only: livenessStore imports persistSessionState from THIS module, so a
 // value import of either store here closes a renderer import cycle (benign
 // while nothing reads across it at module scope; a boot-time TDZ crash the day
@@ -22,7 +23,12 @@ import type { pingAllDetachedHosts } from './stores/hostReachability'
 // before invoking session-scoped IPC to keep the on-disk view in sync.
 export function buildSessionState(): SessionState {
   const state = useSessionStore.getState()
-  const sessions: SavedSession[] = state.sessions.map((s) => ({
+  // A transient tab (commandTerminal: a confirmed install command) is never
+  // saved: restoring it would run that command again at the next launch, with
+  // nobody asked. Nor is it saved as the active session.
+  const kept = state.sessions.filter((s) => !s.transient)
+  const activeKept = kept.some((s) => s.id === state.activeSessionId)
+  const sessions: SavedSession[] = kept.map((s) => ({
     id: s.id,
     configId: s.configId,
     kind: s.kind,
@@ -84,10 +90,14 @@ export function buildSessionState(): SessionState {
       loggingEnabled: s.loggingEnabled,
     } : undefined,
     codexOptions: s.codexOptions,
+    // WP2: a reopened Codex session keeps the account it ran under. The
+    // account id only: a launch acknowledgement is never saved, so the
+    // reopened session asks again if its account needs one.
+    providerAccountId: s.provider === 'codex' ? s.providerAccountId : undefined,
   }))
   return {
     sessions,
-    activeSessionId: state.activeSessionId,
+    activeSessionId: activeKept ? state.activeSessionId : (kept[kept.length - 1]?.id ?? null),
     savedAt: Date.now(),
     // SSH Persistent (Phase 1): fold the left-running registry into the same
     // persisted file so a detached remote survives an app restart. Main round-
@@ -408,6 +418,14 @@ export async function restoreSavedSessions(
         resumeUuid: saved.resumeUuid,
         resumeCwd: saved.resumeCwd,
         codexOptions: saved.codexOptions,
+        providerAccountId: saved.provider === 'codex' && typeof saved.providerAccountId === 'string' ? saved.providerAccountId : undefined,
+        // Its provider cannot launch now (off, or Codex not set up: the launch
+        // rule): main will start nothing for it, so it is Not started from
+        // the restore on, and never counts as its config running before its
+        // tab is first viewed (a tab starts on first view). Its view checks
+        // the Multi Spawn rule before it tries (TerminalView), so a session
+        // that CAN launch keeps counting from the restore as before.
+        ...(isConfigLaunchBlocked({ provider: saved.provider ?? 'claude', shellOnly: saved.shellOnly }) ? { neverStarted: true } : {}),
       }
     })
 

@@ -244,12 +244,51 @@ export const IPC = {
   TOKENOMICS2_INDEX_STATUS: 'tokenomics2:indexStatus',
   TOKENOMICS2_INDEX_PROGRESS: 'tokenomics2:indexProgress',
   TOKENOMICS2_INDEX_COMPLETE: 'tokenomics2:indexComplete',
+  // Usage track MP9: the providers and accounts the stored usage has (the
+  // Account filter's choices). No arguments; keys and provider names only.
+  TOKENOMICS2_ACCOUNTS: 'tokenomics2:accounts',
 
-  // Codex (OpenAI)
-  CODEX_STATUS: 'codex:status',
-  CODEX_LOGIN: 'codex:login',
-  CODEX_LOGOUT: 'codex:logout',
-  CODEX_TEST_CONNECTION: 'codex:testConnection',
+  // Provider accounts (WP2 commit 3): the one provider-neutral Accounts
+  // surface. Requests name opaque ids only; replies are views, never paths,
+  // tokens, keys or environment values. SECRET is one-way (send, no reply).
+  PROVIDER_ACCOUNTS_SNAPSHOT: 'providerAccounts:snapshot',
+  PROVIDER_ACCOUNTS_CHANGED: 'providerAccounts:changed', // main -> renderer: AccountsSnapshot
+  PROVIDER_ACCOUNTS_DISCOVER: 'providerAccounts:discover',
+  PROVIDER_ACCOUNTS_INSTALL_RECIPES: 'providerAccounts:installRecipes',
+  PROVIDER_ACCOUNTS_SET_ENABLED: 'providerAccounts:setEnabled',
+  PROVIDER_ACCOUNTS_BEGIN_SETUP: 'providerAccounts:beginSetup',
+  PROVIDER_ACCOUNTS_ISSUE_SECRET_HANDLE: 'providerAccounts:issueSecretHandle',
+  PROVIDER_ACCOUNTS_SECRET: 'providerAccounts:secret',
+  PROVIDER_ACCOUNTS_SIGN_IN: 'providerAccounts:signIn',
+  PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT: 'providerAccounts:signInOutput', // main -> the renderer that started it: SignInOutputEvent
+  PROVIDER_ACCOUNTS_CANCEL_SIGN_IN: 'providerAccounts:cancelSignIn',
+  PROVIDER_ACCOUNTS_SIGN_IN_AGAIN: 'providerAccounts:signInAgain', // an existing managed account, in its own realm; output on SIGN_IN_OUTPUT
+  PROVIDER_ACCOUNTS_COMPLETE_SETUP: 'providerAccounts:completeSetup',
+  PROVIDER_ACCOUNTS_ABANDON_SETUP: 'providerAccounts:abandonSetup',
+  PROVIDER_ACCOUNTS_REFRESH_STATUS: 'providerAccounts:refreshStatus',
+  PROVIDER_ACCOUNTS_LOGOUT: 'providerAccounts:logout',
+  PROVIDER_ACCOUNTS_SET_LIFECYCLE: 'providerAccounts:setLifecycle',
+  PROVIDER_ACCOUNTS_SET_DEFAULT: 'providerAccounts:setDefault',
+  PROVIDER_ACCOUNTS_UPDATE_IDENTITY: 'providerAccounts:updateIdentity',
+  PROVIDER_ACCOUNTS_CREATE_GROUP: 'providerAccounts:createGroup',
+  PROVIDER_ACCOUNTS_RENAME_GROUP: 'providerAccounts:renameGroup',
+  PROVIDER_ACCOUNTS_DELETE_GROUP: 'providerAccounts:deleteGroup',
+  PROVIDER_ACCOUNTS_LINK_IDENTITY: 'providerAccounts:linkIdentity',
+  PROVIDER_ACCOUNTS_UNLINK_IDENTITY: 'providerAccounts:unlinkIdentity',
+  PROVIDER_ACCOUNTS_ADOPT_EXTERNAL: 'providerAccounts:adoptExternal',
+  PROVIDER_ACCOUNTS_PROBE_EXTERNAL: 'providerAccounts:probeExternal',
+  PROVIDER_ACCOUNTS_RECONCILE_SIGN_IN: 'providerAccounts:reconcileSignIn',
+  PROVIDER_ACCOUNTS_RESOLVE_CONFLICT: 'providerAccounts:resolveConflict',
+  PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT: 'providerAccounts:setReviewerDefault',
+  // Usage track MP3: allowance views, provider-neutral. The stream sends each
+  // account's view on the caller's private reply channel
+  // (PROVIDER_USAGE_RESULT_PREFIX + 24 hex) as it is ready; nothing for a
+  // provider that is off. A closed account may be read afresh (MP8,
+  // ADR-022: one short-lived helper of the provider's own CLI); the page
+  // closing stops the caller's stream and its read (USAGE_STREAM_STOP).
+  PROVIDER_ACCOUNTS_USAGE_STREAM: 'providerAccounts:usageStream',
+  PROVIDER_ACCOUNTS_USAGE_STREAM_STOP: 'providerAccounts:usageStreamStop',
+  PROVIDER_ACCOUNTS_USAGE_ONE: 'providerAccounts:usageOne',
 
   // Memory
   MEMORY_SCAN: 'memory:scan',
@@ -406,6 +445,9 @@ export const IPC = {
   // per-account skeleton rows in load order instead of waiting for the whole set.
   ACCOUNT_USAGE_FETCH_ALL_STREAM: 'accountUsage:fetchAllStream',
   ACCOUNT_USAGE_FETCH_ONE: 'accountUsage:fetchOne',
+  // Usage track MP3: the bucket labels of the saved and live figures, for the
+  // Settings toggles. Cached data only: no network and no credential read.
+  ACCOUNT_USAGE_KNOWN_LABELS: 'accountUsage:knownLabels',
 
   // Reliable per-session account identity (main -> renderer push at spawn; renderer pull on mount)
   ACCOUNT_IDENTITY_UPDATE: 'identity:accountUpdate',

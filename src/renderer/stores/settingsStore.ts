@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { saveConfigNow } from '../utils/config-saver'
 import { DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { migrateTypography } from './migrateTypography'
+import { parseFooterHiddenEntry } from '../../shared/usage-labels'
 
 export type StatusLineFont = 'sans' | 'mono'
 
@@ -102,7 +103,10 @@ export const DEFAULT_TYPOGRAPHY: TypographySettings = {
  *  filters a tool group on the conductor MCP server's tool list. */
 export interface ConductorToolsSettings {
   vision: boolean
+  /** Claude sessions may ask Codex for a review (codex_review). */
   codexReview: boolean
+  /** Codex sessions may ask Claude for a review (claude_review). */
+  claudeReview: boolean
   hostTransfer: boolean
   canvas: boolean
 }
@@ -110,6 +114,7 @@ export interface ConductorToolsSettings {
 export const DEFAULT_CONDUCTOR_TOOLS: ConductorToolsSettings = {
   vision: true,
   codexReview: true,
+  claudeReview: true,
   hostTransfer: true,
   canvas: true,
 }
@@ -207,10 +212,23 @@ export interface AppSettings {
    *  tool groups the server registers. Absent = on (pre-upgrade configs). */
   conductorToolsEnabled?: boolean
   conductorTools?: ConductorToolsSettings
-  /** "Do you use Codex?" (onboarding / Settings -> Codex). Absent = never
-   *  answered (existing installs keep full behaviour); false disables Codex
-   *  surfaces incl. the codex_review built-in tool. Codex support is Beta. */
+  /** Codex on/off (onboarding's assistants page, the one-time "Do you use
+   *  Codex?" page after an update, the Providers card in Settings, Accounts,
+   *  or adding a Codex account). Counts only together with `codexAnswered`
+   *  (main ignores it otherwise, and hydrate drops it: migrateCodexAnswer).
+   *  Absent = not answered yet: Codex is not set up, and main refuses its
+   *  launches; false disables Codex surfaces incl. the codex_review built-in
+   *  tool. Codex support is Beta. */
   codexEnabled?: boolean
+  /** The user has answered whether they use Codex, in this model (owner
+   *  decision 2026-09-26): written with `codexEnabled` by every way of
+   *  answering. Absent on every install that updated from a build before
+   *  it: those users are asked again, once (onboarding/codex-reconfirm-gate.ts),
+   *  and nothing carries over from the earlier setting. */
+  codexAnswered?: boolean
+  /** Claude Code on/off, saved (main reads it as the Claude package's
+   *  enablement key). Absent = on: Claude-only users change nothing. */
+  claudeEnabled?: boolean
   localMachineName: string
   /** Usage buckets the user has HIDDEN from the status line, by label (e.g.
    *  "Fable"). Denylist model so the set stays dynamic: a new bucket shows by
@@ -220,7 +238,10 @@ export interface AppSettings {
   /** Like hiddenUsageBuckets but scoped to the multi-account BOTTOM footer
    *  (MultiAccountStatusline), so the footer's bars are curated INDEPENDENTLY of
    *  the per-session strip -- e.g. keep only Fable there to narrow the cluster.
-   *  Same denylist model (by label); absent/empty = show every discovered bucket. */
+   *  Same denylist model, per provider since usage track MP6: each entry is
+   *  `<provider>:<label>` (`claude:Fable`, `codex:Weekly`); an older bare
+   *  label was Claude Code's and is migrated at load (migrateFooterHiddenBuckets).
+   *  Absent/empty = show every discovered bucket. */
   footerHiddenUsageBuckets?: string[]
   /** How the multi-account footer draws each account. 'meters' (absent/default)
    *  is the labelled progress bars; 'dots' is minimal mode -- the account's NAME
@@ -481,6 +502,40 @@ export function migrateGpuDefaultOn(settings: AppSettings): { settings: AppSetti
   return { settings: { ...settings, terminal, gpuDefaultOnMigrated: true }, changed: true }
 }
 
+// Owner decision 2026-09-26: every user who updates chooses again whether they
+// use Codex; nothing carries over from the earlier Codex setting. A saved
+// `codexEnabled` without `codexAnswered` was written by a build before that
+// model, so it is dropped here, once: from then on every reader in this
+// process sees the same "not answered yet" a fresh install has, until the
+// user answers (which writes both keys). Main ignores such a value on its own
+// (the Codex package's answeredKey), so its launch rule never depends on this
+// save having landed. Idempotent: with nothing to drop it changes nothing.
+export function migrateCodexAnswer(settings: AppSettings): { settings: AppSettings; changed: boolean } {
+  if (settings.codexAnswered === true || !Object.hasOwn(settings, 'codexEnabled')) return { settings, changed: false }
+  const { codexEnabled: _dropped, ...rest } = settings
+  return { settings: rest as AppSettings, changed: true }
+}
+
+// Usage track MP6: the footer shows each provider's meters in their own group,
+// so its hidden labels are kept per provider (`<provider>:<label>`). An entry
+// written before that (a bare label) was Claude Code's, the only provider the
+// footer showed, so it becomes `claude:<label>`, once. Idempotent: entries
+// already scoped to a provider are kept as they are, duplicates dropped, and a
+// list with nothing to change is left untouched.
+export function migrateFooterHiddenBuckets(settings: AppSettings): { settings: AppSettings; changed: boolean } {
+  const list = settings.footerHiddenUsageBuckets
+  if (!Array.isArray(list) || list.length === 0) return { settings, changed: false }
+  const out: string[] = []
+  for (const entry of list) {
+    const e = parseFooterHiddenEntry(entry)
+    if (!e) continue
+    const scoped = `${e.providerId}:${e.label}`
+    if (!out.includes(scoped)) out.push(scoped)
+  }
+  const changed = out.length !== list.length || out.some((e, i) => e !== list[i])
+  return changed ? { settings: { ...settings, footerHiddenUsageBuckets: out }, changed } : { settings, changed: false }
+}
+
 export const useSettingsStore = create<SettingsState>((set) => ({
   settings: { ...DEFAULT_SETTINGS },
   isLoaded: false,
@@ -504,8 +559,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     }
     const font = migrateV2Font(merged)
     const gpu = migrateGpuDefaultOn(font.settings)
-    const migrated = gpu.settings
-    if (font.changed || gpu.changed) {
+    const codex = migrateCodexAnswer(gpu.settings)
+    const footer = migrateFooterHiddenBuckets(codex.settings)
+    const migrated = footer.settings
+    if (font.changed || gpu.changed || codex.changed || footer.changed) {
       // Persist the one-time migrations (including their guard flags) so they run once.
       saveConfigNow('settings', migrated).catch(() => {})
     }

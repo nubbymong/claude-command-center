@@ -17,6 +17,13 @@ export function codexPricingKeys(): string[] {
   return Object.keys(pricing)
 }
 
+/** The rate cached input costs (usage track MP11: one rule for the session
+ *  strip and Tokenomics): the model's cached tier, or its full input rate
+ *  when it has none. */
+export function codexCachedInputPer1M(p: { inputPer1M: number; cachedInputPer1M: number | null }): number {
+  return p.cachedInputPer1M ?? p.inputPer1M
+}
+
 /** Codex usage semantics (verified against real rollouts: total_tokens ==
  *  input_tokens + output_tokens exactly, even with nonzero reasoning):
  *  `cached_input_tokens` is a SUBSET of `input_tokens`, and
@@ -39,7 +46,7 @@ export function computeCodexCostUsd(
   const cached = Math.min(tokens.cachedInputTokens, tokens.inputTokens)
   const uncached = tokens.inputTokens - cached
   const inputCost = (uncached / 1e6) * p.inputPer1M
-  const cachedCost = (cached / 1e6) * (p.cachedInputPer1M ?? p.inputPer1M)
+  const cachedCost = (cached / 1e6) * codexCachedInputPer1M(p)
   const outputCost = (tokens.outputTokens / 1e6) * p.outputPer1M
   return inputCost + cachedCost + outputCost
 }

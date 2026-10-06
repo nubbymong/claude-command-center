@@ -9,6 +9,9 @@
 // faked -- so a refusal that never reached the run, or one that spawned
 // anyway, goes red.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
+// Every provider is on here: main's launch rule has its own suites
+// (tests/unit/main/provider-launch-gate.test.ts and the provider-off tests).
+vi.mock('../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal: () => null, providerProbeRefusal: () => null }))
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'

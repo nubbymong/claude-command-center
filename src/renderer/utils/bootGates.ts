@@ -24,13 +24,23 @@
  *                          tour, the sidebar FirstRunCard or the empty state.
  *   6. githubOnboarding  — opened by its own effect 120ms after the gates
  *                          above clear.
- *   7. loggingConsent    — one-time notice. Waits on the *due* predicates so it
+ *   7. codexReconfirm    — "Do you use Codex?", asked once of everyone who
+ *                          updates (owner decision 2026-09-26; see
+ *                          onboarding/codex-reconfirm-gate.ts). After the
+ *                          release notes and the upgrade harness (the `*Due`
+ *                          short-circuit below holds it until they are done),
+ *                          and before everything that uses the app: the resume
+ *                          prompt restores sessions, and a Codex one would only
+ *                          be refused while the question is unanswered. A Yes
+ *                          hands the user to the Codex setup page, which is the
+ *                          harness again (the `onboarding` gate above).
+ *   8. loggingConsent    — one-time notice. Waits on the *due* predicates so it
  *                          doesn't flash for the few hundred ms before a higher
  *                          gate's timer fires and then get swapped out from
  *                          under the user.
- *   8. resume            — "restore your sessions?". Every boot, so it sits
+ *   9. resume            — "restore your sessions?". Every boot, so it sits
  *                          below the one-time surfaces above.
- *   9. multiSpawnIntro   — the Allow Multi Spawn startup page (phase 5). LAST,
+ *  10. multiSpawnIntro   — the Allow Multi Spawn startup page (phase 5). LAST,
  *                          and both halves of that are deliberate. It must come
  *                          after the release notes, because it is the second
  *                          page of one upgrade story — and the `*Due`
@@ -40,6 +50,13 @@
  *                          copy counts are read from the sessions this start
  *                          brought back; shown first it would count zero and
  *                          claim nothing was resumable.
+ *  11. helloCodex       — the one-time Codex introduction (WP2 commit 6f),
+ *                          outside onboarding. After everything above,
+ *                          including the `*Due` short-circuit: it must never
+ *                          cover a running setup. bootChain below asks this
+ *                          chain whether it would be next; only then does
+ *                          HelloCodexHost latch it open, and only once it is
+ *                          open is it an input here.
  *
  * `resume` joined the chain on 2026-08-21. It and the Sentinel panel were the
  * two boot surfaces still OUTSIDE it, each with its own render condition — the
@@ -68,9 +85,11 @@ export type BootGate =
   | 'guidedTour'
   | 'guidedConfig'
   | 'githubOnboarding'
+  | 'codexReconfirm'
   | 'loggingConsent'
   | 'resume'
   | 'multiSpawnIntro'
+  | 'helloCodex'
 
 export interface BootGateState {
   configLoaded: boolean
@@ -87,12 +106,18 @@ export interface BootGateState {
   showGuidedConfig?: boolean
   showGitHubOnboarding: boolean
   loggingConsentSeen: boolean
+  /** The one-time "Do you use Codex?" page is due (codexReconfirmDue in
+   *  onboarding/codex-reconfirm-gate.ts). Optional: absent === false. */
+  codexReconfirmDue?: boolean
   /** Saved sessions are waiting on a restore decision. Optional: absent === false. */
   resumePending?: boolean
   /** The Allow Multi Spawn startup page is due this launch — decided once at
    *  boot (decideMultiSpawnIntro) from meta read before anything stamped.
    *  Optional: absent === false. */
   multiSpawnIntroDue?: boolean
+  /** The Codex introduction's one-time takeover is open (latched by App once
+   *  it was due and nothing was in its way). Optional: absent === false. */
+  helloCodexOpen?: boolean
   /** shouldShowWhatsNew() — true before postConfigInit has armed the harness. */
   whatsNewDue: boolean
   /** shouldShowTraining() || isFirstInstall() — true before the tour opens. */
@@ -113,8 +138,27 @@ export function pickBootGate(s: BootGateState): BootGate | null {
   if (s.showGuidedConfig) return 'guidedConfig'
   if (s.showGitHubOnboarding) return 'githubOnboarding'
   if (s.whatsNewDue || s.trainingDue || s.githubOnboardingDue) return null
+  if (s.codexReconfirmDue) return 'codexReconfirm'
   if (!s.loggingConsentSeen) return 'loggingConsent'
   if (s.resumePending) return 'resume'
   if (s.multiSpawnIntroDue) return 'multiSpawnIntro'
+  if (s.helloCodexOpen) return 'helloCodex'
   return null
+}
+
+/**
+ * App's whole boot-chain decision, in one place so it can be tested as App
+ * uses it: the gate that renders now, and the two answers the Codex
+ * introduction's host needs. `helloCodexGatesClear`: every gate above the
+ * takeover has had its turn, the *Due waits included (would the takeover be
+ * next if it were open?). `helloCodexTurn`: the takeover is open and it is
+ * its turn, so it renders.
+ */
+export function bootChain(s: BootGateState): { gate: BootGate | null; helloCodexGatesClear: boolean; helloCodexTurn: boolean } {
+  const gate = pickBootGate(s)
+  return {
+    gate,
+    helloCodexGatesClear: pickBootGate({ ...s, helloCodexOpen: true }) === 'helloCodex',
+    helloCodexTurn: gate === 'helloCodex',
+  }
 }

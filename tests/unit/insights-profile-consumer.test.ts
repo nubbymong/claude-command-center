@@ -4,6 +4,9 @@
 // the profile from its first read to its `finally`, and waits out a rotation
 // that is already in flight before that first read.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+// Every provider is on here: main's launch rule has its own suites
+// (tests/unit/main/provider-launch-gate.test.ts and the provider-off tests).
+vi.mock('../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal: () => null, providerProbeRefusal: () => null }))
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'

@@ -18,6 +18,8 @@ import { resolveClaudeForPty, withProfileHome } from './pty-manager'
 import { gateManagedLaunch } from './managed-launch-diagnostics'
 import { spawnClaudeHeadless } from './claude-headless'
 import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
+import { providerLaunchRefusal } from './provider-launch-gate'
+import type { ProviderLaunchRefused } from '../shared/providers'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
@@ -788,6 +790,12 @@ async function extractKpis(
 
   const spawnArgs = buildKpiSpawnArgs()
 
+  // Another Claude Code run: not started once Claude Code has been switched
+  // off since the run began. The report stays; the KPIs say why they are not
+  // there.
+  const refused = providerLaunchRefusal('claude')
+  if (refused) return { ok: false, reason: refused.message }
+
   // Pipe the prompt via stdin — passing multi-KB prompts with embedded JSON
   // as shell arguments is unreliable on Windows (quoting/escaping breaks).
   const result = await spawnClaudeHeadless(spawnArgs, 600000, prompt, home)
@@ -909,7 +917,14 @@ function saveExtractionFailure(
   }
 }
 
-export async function runInsights(getWindow: () => BrowserWindow | null, opts?: { profileId?: string }): Promise<string> {
+export async function runInsights(getWindow: () => BrowserWindow | null, opts?: { profileId?: string }): Promise<string | ProviderLaunchRefused> {
+  // WP2: an insights run is a Claude Code run, so none starts while Claude
+  // Code is off -- refused here, before a run record or a lock exists
+  // (provider-launch-gate.ts). Answered, never thrown: the Insights page
+  // says why. Each later step that starts Claude asks again (a switch-off
+  // mid-run stops the run at its next step instead of starting it anyway).
+  const refused = providerLaunchRefusal('claude')
+  if (refused) return { refused }
   const account = resolveInsightsAccount(opts?.profileId)
   const key = accountKey(account.profileId)
   if (inFlight.has(key)) throw new Error('Insights already running for this account')
@@ -947,7 +962,16 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
       await waitForProfileRefresh(account.profileId)
     }
 
-    // Step 1: Run /insights via interactive PTY
+    // Step 1: Run /insights via interactive PTY -- unless Claude Code was
+    // switched off while the run waited above.
+    const stepRefused = providerLaunchRefusal('claude')
+    if (stepRefused) {
+      run.status = 'failed'
+      run.error = stepRefused.message
+      upsertRun(run)
+      notifyRenderer(getWindow, run)
+      return id
+    }
     run.statusMessage = 'Step 1/3: Generating report...'
     upsertRun(run)
     notifyRenderer(getWindow, run)
@@ -1055,7 +1079,11 @@ export function isCrossAccountRunning(): boolean {
 export async function runCrossAccountInsights(
   getWindow: () => BrowserWindow | null,
   opts?: { profileIds?: string[] }
-): Promise<string> {
+): Promise<string | ProviderLaunchRefused> {
+  // Every member's run and the synthesis run Claude Code: refused while it is
+  // off, before anything else (as runInsights).
+  const refused = providerLaunchRefusal('claude')
+  if (refused) return { refused }
   const targets = resolveCrossAccountTargets(opts?.profileIds)
   if (targets.length < CROSS_ACCOUNT_MIN_ACCOUNTS) {
     throw new Error(
@@ -1103,7 +1131,13 @@ export async function runCrossAccountInsights(
     let done = 0
     await mapWithLimit(targets, CROSS_ACCOUNT_MAX_PARALLEL, async (target) => {
       try {
-        const memberRunId = await runInsights(getWindow, { profileId: target.id })
+        const started = await runInsights(getWindow, { profileId: target.id })
+        // Claude Code switched off during the fan-out: this member never ran.
+        if (typeof started !== 'string') {
+          patchMember(target.id, { status: 'failed', error: started.refused.message })
+          return
+        }
+        const memberRunId = started
         // runInsights resolves with the id even when the run failed, so the
         // outcome has to be read back off the catalogue rather than inferred.
         const memberRun = loadCatalogue().runs.find(r => r.id === memberRunId)
@@ -1194,13 +1228,20 @@ export async function runCrossAccountInsights(
       `${baseline.comparison.length} shared / ${baseline.uniqueMetrics.length} unique metrics, ` +
       `windowsComparable=${baseline.windowsComparable}`
     )
-    const result = await spawnClaudeHeadless(buildCrossAccountSpawnArgs(), 600000, prompt, home)
+    // The synthesis is another Claude Code run: not started once Claude Code
+    // has been switched off since the roll-up began (numbers only, and why).
+    const synthesisRefused = providerLaunchRefusal('claude')
+    const result = synthesisRefused ? null : await spawnClaudeHeadless(buildCrossAccountSpawnArgs(), 600000, prompt, home)
 
-    const usage = describeClaudeUsage(result.stdout)
+    const usage = result ? describeClaudeUsage(result.stdout) : null
     if (usage) logInfo(`[insights] Cross-account synthesis usage: ${usage}`)
 
-    const narrative = result.code === 0 ? parseCrossAccountNarrative(result.stdout) : null
-    if (!narrative) {
+    const narrative = result && result.code === 0 ? parseCrossAccountNarrative(result.stdout) : null
+    if (!result) {
+      // Nothing ran: no exit code or output to report, only the reason.
+      logInfo(`[insights] Cross-account synthesis not started (${synthesisRefused!.code}); numbers-only roll-up`)
+      run.error = `No written analysis. ${synthesisRefused!.message}`
+    } else if (!narrative) {
       // Record WHY there is no written analysis. Degrading silently to
       // numbers-only left a real run looking like the model had nothing to say,
       // when in fact the synthesis account's sign-in had expired.
@@ -1288,6 +1329,14 @@ export function getLatestRun(): InsightsRun | null {
 
 export function isRunning(profileId?: string): boolean {
   return profileId ? inFlight.has(accountKey(profileId)) : inFlight.size > 0
+}
+
+/** WP2: insights runs in flight (each account's, and a cross-account
+ *  roll-up's), which run Claude Code: counted as Claude Code in use for the
+ *  switch-off rule (provider-in-use.ts). A run takes its lock in the same
+ *  step as the launch check, and releases it in its finally. */
+export function countInsightsRunsInFlight(): number {
+  return inFlight.size
 }
 
 // On startup, mark any stuck 'running' or 'extracting_kpis' entries as 'failed'

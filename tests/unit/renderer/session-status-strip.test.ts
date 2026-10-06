@@ -18,6 +18,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
+import { readingToBuckets } from '../../../src/main/providers/codex/rate-limits'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -91,6 +92,13 @@ const ptyWrite = vi.fn()
 }
 
 const { default: SessionStatusStrip } = await import('../../../src/renderer/components/SessionStatusStrip')
+const { useSettingsStore: mockedSettings } = await import('../../../src/renderer/stores/settingsStore')
+/** The saved Codex answer the strip reads: true (on), or absent (not set up). */
+function setCodexSaved(on: boolean | undefined): void {
+  const settings = (mockedSettings as any).getState().settings as Record<string, unknown>
+  if (on === undefined) delete settings.codexEnabled
+  else settings.codexEnabled = on
+}
 
 let container: HTMLDivElement
 let root: Root
@@ -109,6 +117,8 @@ beforeEach(() => {
 afterEach(() => {
   act(() => { root.unmount() })
   container.remove()
+  // The saved Codex answer is shared module state: back to not set up.
+  setCodexSaved(undefined)
 })
 
 async function render(sessionId: string): Promise<void> {
@@ -165,6 +175,7 @@ describe('SessionStatusStrip -- telemetry', () => {
   })
 
   it('renders the codex-review count when usage record has reviews', async () => {
+    setCodexSaved(true)
     sessionState = {
       activeSessionId: claudeSession.id,
       sessions: [{ ...claudeSession, enableCodexReview: true }],
@@ -179,6 +190,16 @@ describe('SessionStatusStrip -- telemetry', () => {
     })
     await render(claudeSession.id)
     expect(container.textContent).toContain('review 4')
+    expect(mockCodexReview).toHaveBeenCalledWith(claudeSession.id)
+    setCodexSaved(undefined)
+  })
+
+  it('never asks for the codex-review count while Codex is not set up (no saved answer)', async () => {
+    setCodexSaved(undefined)
+    sessionState = { activeSessionId: claudeSession.id, sessions: [{ ...claudeSession, enableCodexReview: true }] }
+    await render(claudeSession.id)
+    expect(mockCodexReview).toHaveBeenCalled()
+    expect(mockCodexReview.mock.calls.every(([id]) => id === null)).toBe(true)
   })
 
   it('renders nothing for an unknown sessionId', async () => {
@@ -264,5 +285,28 @@ describe('SessionStatusStrip -- provider gating', () => {
     // Telemetry still renders
     expect(container.textContent).toContain('gpt-5.5')
     expect(container.textContent).toContain('12%')
+  })
+
+  // Usage track MP2 (review nit): a Codex session's meters come from the
+  // buckets its telemetry sends, labelled from the window length, so the
+  // weekly one reads "Weekly" (never the legacy "7d"), and a separate limit
+  // gets its own meter.
+  it('a Codex session shows 5h, Weekly and a per-limit meter from its buckets, never 7d', async () => {
+    const reading = {
+      limits: [
+        { limitId: 'codex', limitName: null, readingAt: 1, primary: { windowMinutes: 300, usedPercent: 20, resetsAt: null }, secondary: { windowMinutes: 10080, usedPercent: 40, resetsAt: null } },
+        { limitId: 'codex_spark', limitName: 'Spark', readingAt: 1, primary: { windowMinutes: 300, usedPercent: 3, resetsAt: null }, secondary: null },
+      ],
+      planType: 'plus',
+      readingAt: 1,
+    }
+    const usageBuckets = readingToBuckets(reading)
+    sessionState = { activeSessionId: codexSession.id, sessions: [{ ...codexSession, usageBuckets, rateLimitWeekly: 40 }] }
+    await render(codexSession.id)
+    const text = container.textContent ?? ''
+    expect(text).toContain('5h')
+    expect(text).toContain('Weekly')
+    expect(text).toContain('Spark 5h')
+    expect(text).not.toContain('7d')
   })
 })

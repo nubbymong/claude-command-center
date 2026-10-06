@@ -42,6 +42,10 @@ export interface ProviderAccount {
   planLabel?: string
   lifecycle: AccountLifecycle
   isProviderDefault: boolean
+  /** The account a reviewer invocation of this provider uses when a request
+   *  names none. Present only when true; at most one per provider; never an
+   *  archived account. Absent everywhere means the provider default. */
+  isReviewerDefault?: true
   createdAt: number
   updatedAt: number
   lastAuthenticatedAt?: number

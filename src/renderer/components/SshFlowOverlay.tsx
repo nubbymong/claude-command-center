@@ -4,6 +4,8 @@ import { parseDockerPostCommand, isContainerRuntime } from '../../shared/contain
 import { SSH_ENTRY } from '../../shared/ssh-entry'
 import { useSessionStore } from '../stores/sessionStore'
 import { DialogButton } from './ui/Dialog'
+import { CLAUDE_OFF, useClaudeOff } from '../lib/claudeOff'
+import { launchRefusalOf } from '../../shared/providers'
 
 interface Props {
   sessionId: string
@@ -95,6 +97,17 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
   const wantedPersistence = sshConfig?.detachable !== false && !isContainerRuntime(effectiveRuntime)
   const [busy, setBusy] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
+  // Main's own refusal of a "Launch Claude" (provider-launch-gate.ts), shown
+  // where the Claude-off reason is.
+  const [refusedText, setRefusedText] = useState<string | null>(null)
+  // Claude Code switched off in Settings, Accounts: no "Launch Claude" on
+  // the remote either (a terminal-only SSH config may still connect). Every
+  // button below that starts Claude is disabled with the reason, and the
+  // action refuses on its own as well.
+  const claudeOff = useClaudeOff()
+  // Main's refusal is about the switch as it was: once the switch changes
+  // (off, or back on), the note follows the switch instead.
+  useEffect(() => { setRefusedText(null) }, [claudeOff])
 
   useEffect(() => {
     if (!enabled) return
@@ -167,9 +180,16 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
     try { await window.electronAPI.ssh.runPostCommand(sessionId) } catch { setBusy(false) }
   }
   const launchClaude = async () => {
+    if (claudeOff) return
     setBusy(true)
     setErrorText(null)
-    try { await window.electronAPI.ssh.launchClaude(sessionId) } catch { setBusy(false) }
+    setRefusedText(null)
+    try {
+      // Main refuses on its own while Claude Code is off (a switch flipped
+      // after this overlay last rendered): say why here, and stay usable.
+      const refusal = launchRefusalOf(await window.electronAPI.ssh.launchClaude(sessionId))
+      if (refusal) { setRefusedText(refusal.message); setBusy(false) }
+    } catch { setBusy(false) }
   }
   const skip = async () => {
     try { await window.electronAPI.ssh.skip(sessionId) } catch { /* noop */ }
@@ -192,6 +212,9 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
     ''
 
   const mutedStyle: React.CSSProperties = { color: 'var(--text-muted)' }
+  const claudeOffNote = (claudeOff || refusedText !== null) && (
+    <p className="text-[11px] leading-snug" style={mutedStyle} data-testid="ssh-claude-off">{claudeOff ? CLAUDE_OFF : refusedText}</p>
+  )
 
   return (
     <div
@@ -234,8 +257,9 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
                   <DialogButton
                     variant="secondary"
                     onClick={launchClaude}
-                    disabled={busy}
-                    title="Skip the post-connect command and launch Claude on the host"
+                    disabled={busy || claudeOff}
+                    title={claudeOff ? CLAUDE_OFF : 'Skip the post-connect command and launch Claude on the host'}
+                    testId="ssh-launch-claude-on-host"
                   >
                     Launch Claude on host
                   </DialogButton>
@@ -245,7 +269,9 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
               <DialogButton
                 variant="primary"
                 onClick={launchClaude}
-                disabled={busy}
+                disabled={busy || claudeOff}
+                title={claudeOff ? CLAUDE_OFF : undefined}
+                testId="ssh-launch-claude"
               >
                 Launch Claude
               </DialogButton>
@@ -258,6 +284,7 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
               Skip
             </DialogButton>
           </div>
+          {claudeOffNote}
         </div>
       )}
       {isAwaitingClaude && (
@@ -287,8 +314,9 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
             <DialogButton
               variant={info === ENTRY_UNVERIFIED ? 'secondary' : 'primary'}
               onClick={launchClaude}
-              disabled={busy}
-              testId={info === ENTRY_UNVERIFIED ? 'ssh-launch-anyway' : undefined}
+              disabled={busy || claudeOff}
+              title={claudeOff ? CLAUDE_OFF : undefined}
+              testId={info === ENTRY_UNVERIFIED ? 'ssh-launch-anyway' : 'ssh-launch-claude'}
             >
               {info === ENTRY_UNVERIFIED ? 'Launch anyway' : 'Launch Claude'}
             </DialogButton>
@@ -300,6 +328,7 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
               Skip
             </DialogButton>
           </div>
+          {claudeOffNote}
         </div>
       )}
       {state === 'running-claude' && info === 'reattach' && (
@@ -379,6 +408,9 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
               <DialogButton
                 variant="primary"
                 onClick={launchClaude}
+                disabled={claudeOff}
+                title={claudeOff ? CLAUDE_OFF : undefined}
+                testId="ssh-retry-launch"
               >
                 Retry Launch
               </DialogButton>
@@ -390,6 +422,7 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
               Skip
             </DialogButton>
           </div>
+          {!(info === CONTAINER_ENTRY_FAILED || info === CONTAINER_LEFT) && claudeOffNote}
         </div>
       )}
     </div>

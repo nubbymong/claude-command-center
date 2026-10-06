@@ -319,4 +319,81 @@ describe('codex rollouts are streamed, not slurped', () => {
     expect(ready.firstIndexComplete).toBe(true)
     expect(ready.eventsTotal).toBe(1)
   })
+  // WP2 plan A13: each Codex account writes its transcripts in its own realm.
+  it('indexes the Codex accounts\' realm folders beside ~/.codex, follows a change of them, and reads each rollout once', async () => {
+    const write = (dir: string, name: string, id: string, turns: number) => {
+      fs.mkdirSync(dir, { recursive: true })
+      const lines = [JSON.stringify({ type: 'session_meta', timestamp: '2026-08-01T00:00:00Z', payload: { id, cwd: 'F:\\proj', model: 'gpt-5.5' } })]
+      for (let i = 0; i < turns; i++) {
+        lines.push(JSON.stringify({ type: 'event_msg', timestamp: '2026-08-01T00:00:0' + i + 'Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 1000, output_tokens: 10 }, last_token_usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 10 } } } }))
+      }
+      fs.writeFileSync(path.join(dir, name), lines.join('\n') + '\n')
+    }
+    const base = path.join(tmp, 'codex')
+    const realmA = path.join(tmp, 'realms', 'a', 'sessions')
+    const realmB = path.join(tmp, 'realms', 'b', 'sessions')
+    write(path.join(base, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-base.jsonl', 'cx-base', 2)
+    write(path.join(realmA, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-a.jsonl', 'cx-a', 3)
+    write(path.join(realmB, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-b.jsonl', 'cx-b', 4)
+    const fake = new FakeTkWorkerTransport()
+    const msgs: FromTkWorker[] = []
+    fake.onMessage((m) => msgs.push(m))
+    track(createTokenomicsWorker(fake.asWorkerSide(), {}))
+    // A realm listed twice, and the base listed again as a realm: each read
+    // once, the base as this computer's own sign-in (usage track MP9).
+    const A = { dir: realmA, accountKey: 'codex:acct-a' }
+    const B = { dir: realmB, accountKey: 'codex:acct-b' }
+    fake.post({ type: 'open', dbPath: ':memory:', pricing: CODEX_PRICING, configs: [], claudeProjectsDir: path.join(tmp, 'claude'), codexSessionsDir: base, codexRealmSessionsDirs: [A, { ...A, accountKey: 'codex:acct-other' }, { dir: base, accountKey: 'codex:acct-base' }] })
+    expect(await sweepUntilStable(fake, msgs)).toBe(2 + 3)
+    // An account added: its folder joins the index.
+    fake.post({ type: 'set-codex-realm-dirs', dirs: [A, B] })
+    const completions = () => (msgs.filter((m) => m.type === 'index-complete') as Array<{ eventsTotal: number }>)
+    let total = completions().at(-1)!.eventsTotal
+    for (let round = 0; round < 60 && total !== 2 + 3 + 4; round++) {
+      const seen = completions().length
+      fake.post({ type: 'reindex' })
+      for (let i = 0; i < 500 && completions().length <= seen; i++) await new Promise((r) => setTimeout(r, 10))
+      total = completions().at(-1)!.eventsTotal
+    }
+    expect(total).toBe(2 + 3 + 4)
+    // Each rollout's turns carry the account of the folder it lives in.
+    const ask = async (id: number, kind: string, args: Record<string, unknown>) => {
+      fake.post({ type: 'query', id, kind, args })
+      for (let i = 0; i < 200; i++) {
+        const r = msgs.find((m) => m.type === 'query-result' && (m as { id: number }).id === id) as { rows: unknown[] } | undefined
+        if (r) return r.rows[0]
+        await new Promise((res) => setTimeout(res, 5))
+      }
+      throw new Error('no answer')
+    }
+    expect(await ask(901, 'accounts', {})).toEqual([
+      { provider: 'codex', accountKey: 'codex:acct-a' },
+      { provider: 'codex', accountKey: 'codex:acct-b' },
+      { provider: 'codex', accountKey: 'codex:external' },
+    ])
+    const sessions = await ask(902, 'sessions', {}) as { rows: Array<{ sessionId: string; accountKey: string }> }
+    expect(Object.fromEntries(sessions.rows.map((r) => [r.sessionId, r.accountKey]))).toEqual({ 'cx-base': 'codex:external', 'cx-a': 'codex:acct-a', 'cx-b': 'codex:acct-b' })
+    const onlyB = await ask(903, 'sessions', { accountKey: 'codex:acct-b' }) as { rows: Array<{ sessionId: string }> }
+    expect(onlyB.rows.map((r) => r.sessionId)).toEqual(['cx-b'])
+  })
+
+  it('drops a folder entry that is not a folder and a key, and keeps indexing the rest', async () => {
+    const base = path.join(tmp, 'codex')
+    const realmA = path.join(tmp, 'realms', 'a', 'sessions')
+    fs.mkdirSync(path.join(realmA, '2026', '08', '01'), { recursive: true })
+    fs.writeFileSync(path.join(realmA, '2026', '08', '01', 'rollout-2026-08-01T00-00-00-a.jsonl'), [
+      JSON.stringify({ type: 'session_meta', timestamp: '2026-08-01T00:00:00Z', payload: { id: 'cx-a', cwd: 'F:\\proj', model: 'gpt-5.5' } }),
+      JSON.stringify({ type: 'event_msg', timestamp: '2026-08-01T00:00:01Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 100, output_tokens: 10 }, last_token_usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 10 } } } }),
+    ].join('\n') + '\n')
+    const fake = new FakeTkWorkerTransport()
+    const msgs: FromTkWorker[] = []
+    fake.onMessage((m) => msgs.push(m))
+    track(createTokenomicsWorker(fake.asWorkerSide(), {}))
+    const bad: unknown[] = [realmA, { dir: realmA }, { dir: realmA, accountKey: 'codex:bad key' }, { dir: '', accountKey: 'codex:acct-a' }, null, 7]
+    fake.post({ type: 'open', dbPath: ':memory:', pricing: CODEX_PRICING, configs: [], claudeProjectsDir: path.join(tmp, 'claude'), codexSessionsDir: base, codexRealmSessionsDirs: bad as never })
+    expect(await sweepUntilStable(fake, msgs)).toBe(0)
+    msgs.length = 0
+    fake.post({ type: 'set-codex-realm-dirs', dirs: [...bad, { dir: realmA, accountKey: 'codex:acct-a' }] as never })
+    expect(await sweepUntilStable(fake, msgs)).toBe(1)
+  })
 })

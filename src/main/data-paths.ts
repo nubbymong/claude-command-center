@@ -199,6 +199,15 @@ export function setDataDirectory(dataDir: string): boolean {
   }
 }
 
+// Notified after the resources directory changes while the app runs (the
+// first-run setup chooses it after start). Anything that captured the old
+// directory -- the provider account registry does -- follows it here.
+const resourcesDirectoryListeners = new Set<(resourcesDir: string) => void>()
+export function onResourcesDirectoryChanged(listener: (resourcesDir: string) => void): () => void {
+  resourcesDirectoryListeners.add(listener)
+  return () => { resourcesDirectoryListeners.delete(listener) }
+}
+
 // Set resources directory in registry and create folders
 export function setResourcesDirectory(resourcesDir: string): boolean {
   try {
@@ -210,8 +219,14 @@ export function setResourcesDirectory(resourcesDir: string): boolean {
 
     writeRegistry('ResourcesDirectory', resourcesDir)
 
+    const changed = cachedResourcesDir !== resourcesDir
     cachedResourcesDir = resourcesDir // Update cache
     logInfo(`[setup] Resources directory set to: ${resourcesDir}`)
+    if (changed) {
+      for (const l of resourcesDirectoryListeners) {
+        try { l(resourcesDir) } catch (err) { logInfo(`[setup] a resources-directory listener failed: ${err}`) }
+      }
+    }
     return true
   } catch (err) {
     logInfo(`[setup] Failed to set resources directory: ${err}`)

@@ -4,6 +4,7 @@ import { useSessionStore, type Session } from '../stores/sessionStore'
 import { useAccountGateStore } from '../stores/accountGateStore'
 import { clearSpawned } from '../ptyTracker'
 import { writeSessionInput } from '../components/terminal/tmuxWheelScroll'
+import { ASK_CLAUDE_OFF, isAskConductorBlocked } from './askConductorGate'
 
 /**
  * Ask Conductor — the in-app help session.
@@ -112,7 +113,8 @@ const WORKSPACE_FAILED =
  * If an Ask session is already open it is focused rather than duplicated — the
  * docked pill is a single affordance, not a session factory — and any question
  * is typed into that running session instead. Returns the session id, or '' if
- * the help workspace could not be staged (the reason lands in useAskErrorStore).
+ * the help workspace could not be staged or Claude Code is off (the reason
+ * lands in useAskErrorStore).
  */
 /**
  * In-flight launch, so a second click while the first is still staging the help
@@ -130,6 +132,15 @@ const WORKSPACE_FAILED =
 let inFlightLaunch: Promise<string> | null = null
 
 export function launchAskConductor(question?: string): Promise<string> {
+  // The backstop for every entry point (the dock, the command dialog, the
+  // Feature Guide, the tip card, anything added later): with Claude Code off,
+  // Ask starts nothing, revives nothing and types into nothing. Each entry
+  // point shows itself disabled with the reason (askConductorGate); the
+  // reason is also recorded here, for a caller that reads the error store.
+  if (isAskConductorBlocked()) {
+    useAskErrorStore.getState().setError(ASK_CLAUDE_OFF)
+    return Promise.resolve('')
+  }
   if (inFlightLaunch) {
     // Join the launch already running. A question typed on the second click
     // still has to land, and the session it belongs to is the one being staged,

@@ -436,6 +436,22 @@ describe('k. the Ask Conductor chip', () => {
     render({ capabilities: askSession })
     expect(byTest('command-ask-conductor')).toBeNull()
   })
+
+  it('with Claude Code switched off it is disabled, says why, and launches nothing (WP2 commit 6e review fix)', async () => {
+    const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false } })
+    try {
+      render({ capabilities: local, configId: 'cfg' })
+      const chip = byTest<HTMLButtonElement>('command-ask-conductor')!
+      expect(chip.disabled).toBe(true)
+      expect(chip.title).toBe('Ask Conductor runs on Claude Code, which is off. Turn it on in Settings, Accounts.')
+      await act(async () => { chip.click() })
+      await new Promise((r) => setTimeout(r, 0))
+      expect(ask.launchAskConductor).not.toHaveBeenCalled()
+    } finally {
+      useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+    }
+  })
 })
 
 describe('l. the upgrade review banner (D13)', () => {

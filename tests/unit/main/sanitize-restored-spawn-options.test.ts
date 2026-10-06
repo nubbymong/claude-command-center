@@ -25,6 +25,37 @@ describe('sanitizeRestoredSpawnOptions', () => {
     expect(out.resume).toBeUndefined()
   })
 
+  it('drops an invalid persisted Codex model (it becomes a launch argument) and logs; keeps a valid or empty one', () => {
+    const log = vi.fn()
+    for (const bad of ['a&b', '-c', 'x'.repeat(65), 'gpt 5', 42]) {
+      const out = sanitizeRestoredSpawnOptions({ provider: 'codex', codexOptions: { model: bad, permissionsPreset: 'auto' } }, log)
+      expect(out.codexOptions.model, String(bad)).toBeUndefined()
+      expect(out.codexOptions.permissionsPreset).toBe('auto')
+    }
+    expect(log).toHaveBeenCalledTimes(5)
+    for (const good of ['gpt-5.5', 'gpt-oss:20b', 'openai/gpt-5-codex', '']) {
+      expect(sanitizeRestoredSpawnOptions({ provider: 'codex', codexOptions: { model: good, permissionsPreset: 'auto' } }).codexOptions.model).toBe(good)
+    }
+  })
+
+  it('drops unusable Codex options left on a non-Codex session, which never reads them, rather than wedge it', () => {
+    for (const codexOptions of [null, 'x', { model: 'gpt-5.5' }, { permissionsPreset: 'root' }]) {
+      const log = vi.fn()
+      const out = sanitizeRestoredSpawnOptions({ provider: 'claude', codexOptions }, log)
+      expect(out.codexOptions, JSON.stringify(codexOptions)).toBeUndefined()
+      expect(log).toHaveBeenCalledOnce()
+    }
+    expect(sanitizeRestoredSpawnOptions({ codexOptions: { permissionsPreset: 'auto' } }).codexOptions).toEqual({ permissionsPreset: 'auto' })
+  })
+
+  it('repairs a stale Codex model on a restored session of ANY provider (the strict parse bounds it for every session)', () => {
+    for (const provider of ['claude', undefined]) {
+      const out = sanitizeRestoredSpawnOptions({ provider, codexOptions: { model: 'x y', permissionsPreset: 'auto' } })
+      expect(out.codexOptions.model, String(provider)).toBeUndefined()
+      expect(out.provider).toBe(provider)
+    }
+  })
+
   it('drops a resume with an over-long cwd (> 4096)', () => {
     const out = sanitizeRestoredSpawnOptions({ resume: { uuid: goodUuid, cwd: 'x'.repeat(4097) } })
     expect(out.resume).toBeUndefined()

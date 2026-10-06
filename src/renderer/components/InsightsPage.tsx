@@ -12,6 +12,7 @@ import PageFrame from './PageFrame'
 import { parseInsightsReport, type ParsedInsights } from './insights/parseInsightsReport'
 import { InsightsSections } from './insights/InsightsSections'
 import CrossAccountReport from './insights/CrossAccountReport'
+import { CLAUDE_OFF, useClaudeOff } from '../lib/claudeOff'
 
 interface InsightsPageProps {
   /** Switch to the sessions view. Re-auth opens a login shell session, so the
@@ -91,6 +92,9 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
   const startCrossAccount = useInsightsStore((s) => s.startCrossAccount)
   const batchActive = useInsightsStore((s) => s.batchActive)
   const loadCatalogue = useInsightsStore((s) => s.loadCatalogue)
+  // An insights run is a headless Claude Code run: with Claude Code switched
+  // off every Run button is disabled and says why (the store refuses as well).
+  const claudeOff = useClaudeOff()
 
   const [parsed, setParsed] = useState<ParsedInsights | null>(null)
   const [currentKpis, setCurrentKpis] = useState<InsightsData | null>(null)
@@ -357,20 +361,28 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
                 <div className="flex items-center justify-center gap-2">
                   <button
                     onClick={() => startInsights(effectiveRunProfileId || undefined)}
-                    className="px-4 py-2 bg-teal/10 border border-teal/25 text-teal rounded-lg hover:bg-teal/20 transition-colors text-xs font-medium"
+                    disabled={claudeOff}
+                    title={claudeOff ? CLAUDE_OFF : undefined}
+                    data-testid="insights-run-now"
+                    className="px-4 py-2 bg-teal/10 border border-teal/25 text-teal rounded-lg hover:bg-teal/20 transition-colors text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Run Insights Now
                   </button>
                   {multiAccount && (
                     <button
                       onClick={() => startCrossAccount()}
-                      className="px-4 py-2 bg-surface0 border border-surface1 text-subtext1 rounded-lg hover:border-teal/40 hover:text-teal transition-colors text-xs font-medium"
-                      title="Generate a report for every account, then one combined cross-account report"
+                      disabled={claudeOff}
+                      className="px-4 py-2 bg-surface0 border border-surface1 text-subtext1 rounded-lg hover:border-teal/40 hover:text-teal transition-colors text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={claudeOff ? CLAUDE_OFF : 'Generate a report for every account, then one combined cross-account report'}
+                      data-testid="insights-run-all-empty"
                     >
                       {runAllLabel}
                     </button>
                   )}
                 </div>
+                {claudeOff && (
+                  <p className="text-xs text-overlay0 mt-3 max-w-[260px] mx-auto" data-testid="insights-claude-off">{CLAUDE_OFF}</p>
+                )}
               </>
             )}
           </div>
@@ -424,13 +436,20 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
           ))}
         </select>
       )}
+      {claudeOff && (
+        <span className="text-[11px] text-overlay0" data-testid="insights-claude-off">{CLAUDE_OFF}</span>
+      )}
       <button
         onClick={() => startInsights(effectiveRunProfileId || undefined)}
-        disabled={isRunning}
+        disabled={isRunning || claudeOff}
+        title={claudeOff ? CLAUDE_OFF : undefined}
+        data-testid="insights-new-run"
         className={`text-xs px-2.5 py-0.5 rounded border font-medium transition-all flex items-center gap-1.5 ${
           isRunning
             ? 'bg-surface0 border-surface1 text-teal cursor-wait'
-            : 'bg-teal/10 border-teal/30 text-teal hover:bg-teal/20'
+            : claudeOff
+              ? 'bg-surface0 border-surface1 text-overlay0 cursor-not-allowed'
+              : 'bg-teal/10 border-teal/30 text-teal hover:bg-teal/20'
         }`}
       >
         {isRunning ? (
@@ -456,13 +475,14 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
       {multiAccount && (
         <button
           onClick={() => startCrossAccount()}
-          disabled={isRunning || batchActive}
+          disabled={isRunning || batchActive || claudeOff}
           className={`text-xs px-2.5 py-0.5 rounded border font-medium transition-all ${
-            isRunning || batchActive
+            isRunning || batchActive || claudeOff
               ? 'bg-surface0 border-surface1 text-overlay0 cursor-not-allowed'
               : 'bg-surface0 border-surface1 text-subtext1 hover:border-teal/40 hover:text-teal'
           }`}
-          title="Generate a report for every account, then one combined cross-account report"
+          title={claudeOff ? CLAUDE_OFF : 'Generate a report for every account, then one combined cross-account report'}
+          data-testid="insights-run-all"
         >
           {runAllLabel}
         </button>

@@ -1,4 +1,5 @@
 import { useSettingsStore, DEFAULT_CONDUCTOR_TOOLS, type ConductorToolsSettings } from '../stores/settingsStore'
+import { codexPreference } from './provider-choice'
 
 const GEAR = String.fromCodePoint(0x2699)
 const CHECK = String.fromCodePoint(0x2713)
@@ -12,8 +13,10 @@ type ToolKey = keyof ConductorToolsSettings
 // Every switch drives a real settings.conductorTools.* flag: the conductor MCP
 // server filters its tool groups by them per connection, and the master gates
 // the attach at every spawn path (local Claude / SSH / Codex). Vision is
-// Claude-only (the server never advertises it to Codex); code review runs the
-// codex CLI, so it also requires Codex to be enabled.
+// Claude-only (the server never advertises it to Codex). Codex review runs
+// the codex CLI, so it is blocked while Codex is off. Claude review answers
+// Codex sessions: with Codex off nothing asks for it, so it stays a live
+// switch with a note rather than a blocked card (the same rule as Settings).
 const TOOLS: { k: ToolKey; icon: string; title: string; desc: string; tag?: string }[] = [
   {
     k: 'vision',
@@ -25,9 +28,16 @@ const TOOLS: { k: ToolKey; icon: string; title: string; desc: string; tag?: stri
   {
     k: 'codexReview',
     icon: MAG,
-    title: 'Code review',
+    title: 'Codex review',
     tag: 'uses Codex',
-    desc: 'Ask Codex for an independent review of your working changes: a fresh pair of eyes on a diff before you commit.',
+    desc: 'Claude sessions can ask Codex to review: an independent look at your working changes before you commit.',
+  },
+  {
+    k: 'claudeReview',
+    icon: MAG,
+    title: 'Claude review',
+    tag: 'for Codex sessions',
+    desc: 'Codex sessions can ask Claude to review: an independent look at your working changes before you commit.',
   },
   {
     k: 'hostTransfer',
@@ -46,9 +56,13 @@ const TOOLS: { k: ToolKey; icon: string; title: string; desc: string; tag?: stri
 export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
   const tools = useSettingsStore((s) => s.settings.conductorTools) ?? DEFAULT_CONDUCTOR_TOOLS
   const master = useSettingsStore((s) => s.settings.conductorToolsEnabled ?? true)
-  // Code review runs the codex CLI: with Codex off it can't work, so the card
-  // shows a disabled state (the stored preference is left untouched).
-  const codexOn = useSettingsStore((s) => s.settings.codexEnabled) !== false
+  // Codex review runs the codex CLI: with Codex off it can't work, so the
+  // card shows a disabled state (the stored preference is left untouched).
+  // Nor while the user has not said they use Codex (no saved value): Codex
+  // is not set up then, and main offers no Codex review.
+  const codex = useSettingsStore((s) => codexPreference(s.settings))
+  const codexOn = codex === 'on'
+  const codexState = codex === 'off' ? 'off' : 'not set up'
 
   const flip = (k: ToolKey) => {
     void useSettingsStore
@@ -72,19 +86,23 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
           <div className={master ? 'mcp-detail' : 'mcp-detail off'} inert={!master}>
             {TOOLS.map((t) => {
               const codexBlocked = t.k === 'codexReview' && !codexOn
+              const codexOffNote = t.k === 'claudeReview' && !codexOn
               return (
                 <div className={codexBlocked ? 'tool-card blocked' : 'tool-card'} key={t.k} inert={codexBlocked}>
                   <div className="tc-ic">{t.icon}</div>
                   <div className="tc-body">
                     <div className="tc-t">
                       {t.title}
-                      {(codexBlocked || t.tag) && <span className="gh-tag">{codexBlocked ? 'Codex off' : t.tag}</span>}
+                      {(codexBlocked || t.tag) && <span className="gh-tag">{codexBlocked ? `Codex ${codexState}` : t.tag}</span>}
                     </div>
                     <div className="tc-d">
                       {codexBlocked
-                        ? 'Code review is powered by Codex, which is turned off. Enable it on the Codex page or in Settings → Codex.'
+                        ? codexState === 'off'
+                          ? 'Code review is powered by Codex, which is turned off. Turn it on in Settings, Accounts.'
+                          : 'Code review is powered by Codex, which is not set up. Set it up in Settings, Accounts.'
                         : t.desc}
                     </div>
+                    {codexOffNote && <div className="tc-d tc-note">Only Codex sessions use it; Codex is {codexState}.</div>}
                   </div>
                   <button
                     className={tools[t.k] && !codexBlocked ? 'tc-sw on' : 'tc-sw'}
@@ -125,7 +143,7 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
             <div className="sl-offnote">
               <div className="off-ic">{GEAR}</div>
               <div>
-                <b>Built-in tools are off.</b>
+                <b>Built-in Tools are off.</b>
                 <span>
                   Switch them on anytime in <b>Settings → General</b>.
                 </span>
@@ -139,7 +157,7 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
           ← Back
         </button>
         <div className="feat-onoff">
-          <span className="oo-lbl">Built-in tools</span>
+          <span className="oo-lbl">Built-in Tools</span>
           <button className={master ? 'oo-btn on' : 'oo-btn'} onClick={() => setMaster(true)} type="button">
             On
           </button>

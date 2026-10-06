@@ -64,7 +64,7 @@ export type CapabilityKey = (typeof CAPABILITY_KEYS)[number]
  *  makes the rule bite, and a `null` backing now FORBIDS `supported` rather
  *  than waving it through. */
 export type CapabilityBacking =
-  | { readonly operations: 'setup' | 'auth' | 'realms' }
+  | { readonly operations: 'setup' | 'auth' | 'realms' | 'usage' }
   | { readonly sessionMethod: string }
   | null
 
@@ -78,9 +78,10 @@ export const CAPABILITY_OPERATION: Readonly<Record<CapabilityKey, CapabilityBack
   'auth.logout': { operations: 'auth' },
   'realm.isolated': { operations: 'realms' },
   'account.labelFields': { operations: 'auth' },
-  // Per-account usage is fetched today by src/main/usage/account-usage.ts,
-  // which is not on the package: nothing here backs the key yet.
-  'account.usage': null,
+  // Per-account usage through the package's usage port (usage track MP3).
+  // A provider whose usage stays outside the package (Claude's, in
+  // src/main/usage/account-usage.ts) has no port and cannot claim the key.
+  'account.usage': { operations: 'usage' },
   'session.launch': { sessionMethod: 'buildSpawnCommand' },
   'session.history': { sessionMethod: 'listHistorySessions' },
   // Cloud agents ship through cloud-agent-manager.ts, not through

@@ -247,3 +247,57 @@ describe('restoreSavedSessions -- the restore does NOT land', () => {
     expect(d.pingAllDetachedHosts).not.toHaveBeenCalled()
   })
 })
+
+describe('restoreSavedSessions -- a session whose provider cannot launch (walk fix N2)', () => {
+  const setProviders = (over: { claudeEnabled?: boolean; codexEnabled?: boolean }) =>
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...over }, updateSettings })
+  const three = () => state([
+    saved({ id: 'cx', configId: 'cfg-cx', provider: 'codex', codexOptions: { permissionsPreset: 'standard' } }),
+    saved({ id: 'cl', configId: 'cfg-cl' }),
+    saved({ id: 'sh', configId: 'cfg-sh', shellOnly: true }),
+  ])
+
+  it('Codex off or not set up: its session comes back Not started, so its config is not running before the tab is first viewed; the others still count', async () => {
+    const { runningConfigCounts } = await import('../../../src/renderer/components/sidebar/savedConfigsView')
+    for (const answer of [{ codexEnabled: false }, {}]) {
+      useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: true })
+      setProviders({ claudeEnabled: true, ...answer })
+      await restoreSavedSessions(three(), ref(), deps())
+      const s = useSessionStore.getState()
+      expect(s.getSession('cx')!.neverStarted, JSON.stringify(answer)).toBe(true)
+      expect(s.getSession('cl')!.neverStarted).toBeUndefined()
+      expect(s.getSession('sh')!.neverStarted).toBeUndefined()
+      expect([...runningConfigCounts(s.sessions)].sort()).toEqual([['cfg-cl', 1], ['cfg-sh', 1]])
+    }
+  })
+
+  it('the same rule for Claude: with Claude Code off its sessions come back Not started; a terminal-only one and a Codex one that can launch still count', async () => {
+    setProviders({ claudeEnabled: false, codexEnabled: true })
+    await restoreSavedSessions(three(), ref(), deps())
+    const s = useSessionStore.getState()
+    expect(s.getSession('cl')!.neverStarted).toBe(true)
+    expect(s.getSession('cx')!.neverStarted).toBeUndefined()
+    expect(s.getSession('sh')!.neverStarted).toBeUndefined()
+  })
+
+  it('every provider on: nothing comes back Not started (the one-at-a-time rule counts them all from the restore)', async () => {
+    setProviders({ claudeEnabled: true, codexEnabled: true })
+    await restoreSavedSessions(three(), ref(), deps())
+    expect(useSessionStore.getState().sessions.map((x) => x.neverStarted)).toEqual([undefined, undefined, undefined])
+  })
+})
+
+describe('restoreSavedSessions -- the Codex account binding (WP2 commit 6)', () => {
+  it("a reopened Codex session keeps its providerAccountId, and saves it again; a Claude session never carries one", async () => {
+    const { buildSessionState } = await import('../../../src/renderer/session-persistence')
+    const codex = saved({ id: 'cx', provider: 'codex', codexOptions: { permissionsPreset: 'standard' }, providerAccountId: 'acc-work' })
+    const claude = saved({ id: 'cl', providerAccountId: 'acc-stray' })
+    await restoreSavedSessions(state([codex, claude]), ref(), deps())
+    const s = useSessionStore.getState()
+    expect(s.getSession('cx')!.providerAccountId).toBe('acc-work')
+    expect(s.getSession('cl')!.providerAccountId).toBeUndefined()
+    const again = buildSessionState().sessions
+    expect(again.find((x) => x.id === 'cx')!.providerAccountId).toBe('acc-work')
+    expect(again.find((x) => x.id === 'cl')!.providerAccountId).toBeUndefined()
+  })
+})

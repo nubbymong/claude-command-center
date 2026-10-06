@@ -58,6 +58,11 @@ export interface SpawnOptions {
   askPrompt?: string
   // Codex-specific (only present when provider === 'codex')
   codexOptions?: CodexOptions
+  /** Codex (WP2, plan A10): the session's prepared launch in its account's
+   *  realm -- the executable setup proved, the realm's environment (ambient
+   *  credentials removed, CODEX_HOME set) and its transcript folder. A Codex
+   *  spawn runs only from this. Set by main; never from the renderer. */
+  realmLaunch?: { executable: string; env: Record<string, string>; sessionsDir: string }
 }
 
 export interface TelemetrySource {
@@ -79,7 +84,10 @@ export interface SessionProvider {
   readonly displayName: string
 
   resolveBinary(legacyVersion?: LegacyVersion): { cmd: string; args: string[] } | null
-  buildSpawnCommand(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string> }
+  /** `commandLine` (Windows only): the whole command line after `cmd`, which
+   *  node-pty passes VERBATIM -- a cmd.exe `/s /c` line cannot survive its
+   *  per-argument quoting. When present it is what runs, and `args` is empty. */
+  buildSpawnCommand(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string>; commandLine?: string }
   detectUiRunning(data: string): boolean
 
   /** Optional -- Claude only; Codex has no statusline shim. */
@@ -98,11 +106,12 @@ export interface SessionProvider {
    *                        Used by the Codex provider to claim the correct rollout file.
    * opts.spawnTimestamp -- Date.now() captured immediately before pty.spawn().
    *                        Used as the lower-bound for the rollout claim window (ts >= spawn - 5s).
+   * opts.sessionsDir    -- where the session's realm writes its transcripts (Codex).
    * Claude provider ignores opts (its telemetry comes from the statusline file watcher).
    */
   ingestSessionTelemetry(
     sessionId: string,
-    opts: { cwd: string; spawnTimestamp: number },
+    opts: { cwd: string; spawnTimestamp: number; sessionsDir?: string },
     onUpdate: (data: StatuslineData) => void,
   ): TelemetrySource
   listHistorySessions(): Promise<HistorySession[]>

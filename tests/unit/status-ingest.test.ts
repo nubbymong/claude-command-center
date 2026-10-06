@@ -31,7 +31,7 @@ vi.mock('../../src/main/clipboard-file', () => ({ mimeForImage: () => 'image/png
 vi.mock('../../src/main/providers/codex/mcp-config', () => ({ removeConductorVisionFromCodexConfig: () => {} }))
 vi.mock('../../src/main/vision-manager', () => ({ getGlobalManager: () => null, startGlobalVision: () => {}, launchBrowser: () => {} }))
 vi.mock('../../src/main/update-watcher', () => ({ isPackagedApp: () => false, getInstallPath: () => '', getProjectRootPath: () => '' }))
-vi.mock('../../src/main/codex-review-mcp-tool', () => ({ registerCodexReviewTool: () => {} }))
+vi.mock('../../src/main/codex-review-mcp-tool', () => ({ registerCodexReviewTool: () => {}, registerClaudeReviewTool: () => {}, abortSessionReviews: () => {}, cancelReviewRequest: () => false }))
 
 import { ingestStatusPayload, STATUS_BODY_MAX_BYTES } from '../../src/main/conductor-mcp-server'
 

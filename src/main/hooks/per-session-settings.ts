@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { getConductorMcpPort, mcpSessionToken } from '../conductor-mcp-server'
+import { getConductorMcpPort, issueMcpSessionToken } from '../conductor-mcp-server'
 import { buildStatuslineSetting } from '../providers/claude/statusline-command'
 import { statusPostUrl } from '../providers/claude/ssh-shim'
 import { atomicWriteSecure, mkdirSecure, hardenCredentialDir } from '../account-profiles'
@@ -214,7 +214,7 @@ export function writeLocalSessionMcpConfig(sessionId: string, includeConductor =
     // endpoint, so follow-up POSTs carry it too.
     mcpServers['conductor'] = {
       type: 'sse',
-      url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodedSid}&token=${mcpSessionToken(sessionId)}`,
+      url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodedSid}&token=${issueMcpSessionToken(sessionId, 'claude')}`,
     }
   }
   const cfg = { mcpServers }

@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import type { CloudAgent, CloudAgentStatus } from '../types/electron'
+import { CLAUDE_OFF, isClaudeOff } from '../lib/claudeOff'
+import { launchRefusalOf } from '../../shared/providers'
 
 type FilterType = 'all' | 'running' | 'completed' | 'failed'
 
@@ -78,8 +80,17 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   },
 
   dispatch: async (params) => {
+    // The backstop behind every way in: a cloud agent is a headless Claude
+    // Code run, and none starts while Claude Code is switched off. The page's
+    // banner (this store's `error`) says why.
+    if (isClaudeOff()) { set({ error: CLAUDE_OFF }); return }
     try {
       const agent = await window.electronAPI.cloudAgent.dispatch(params)
+      // Main refuses on its own while Claude Code is off (a switch flipped
+      // since this page last read the setting): the banner says why.
+      const refusal = launchRefusalOf(agent)
+      if (refusal) { set({ error: refusal.message }); return }
+      if (!('id' in agent)) return
       // Don't add agent here — handleStatusChanged listener already added it
       // from the broadcastStatus() call in the main process. Just select it.
       set({ selectedAgentId: agent.id })
@@ -113,8 +124,12 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   },
 
   retry: async (id: string) => {
+    // A retry is a new run: the same backstop as dispatch.
+    if (isClaudeOff()) { set({ error: CLAUDE_OFF }); return }
     const newAgent = await window.electronAPI.cloudAgent.retry(id)
-    if (newAgent) {
+    const refusal = launchRefusalOf(newAgent)
+    if (refusal) { set({ error: refusal.message }); return }
+    if (newAgent && 'id' in newAgent) {
       // Don't add — handleStatusChanged listener already added it from broadcast
       set({ selectedAgentId: newAgent.id })
     }

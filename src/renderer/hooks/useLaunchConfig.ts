@@ -1,19 +1,100 @@
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { Session, useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { TerminalConfig } from '../stores/configStore'
 import { generateId } from '../utils/id'
 import { markSessionForResumePicker } from '../utils/resumePicker'
+import { isClaudeOff, CLAUDE_OFF_LAUNCH_REASON } from '../lib/claudeOff'
+import { providerOffMessage, providerNotSetUpMessage, refusedTabText } from '../../shared/providers'
+import { codexPreference } from '../onboarding/provider-choice'
 
-/** True when this config cannot launch because the Codex master is off.
- *  Single source of truth for every launch surface (rows, pinned panel,
- *  empty-state cards) AND the launch action itself. */
-export function isConfigLaunchBlocked(config: Pick<TerminalConfig, 'provider'>): boolean {
-  return config.provider === 'codex' && useSettingsStore.getState().settings.codexEnabled === false
+/** What the launch rule reads of a config. */
+export type LaunchGateConfig = Pick<TerminalConfig, 'provider' | 'shellOnly'>
+
+/** What the launch rule reads of the settings: each provider's saved on/off. */
+export interface LaunchGateSettings {
+  claudeEnabled?: boolean
+  codexEnabled?: boolean
 }
 
-/** The reason shown wherever a blocked config is marked disabled. */
-export const CODEX_OFF_LAUNCH_REASON = 'Codex is off. Enable it in Settings → Codex to launch this config.'
+/**
+ * True when this config cannot launch because its provider is switched off
+ * (or, for Codex, not set up yet). Single source of truth for every launch
+ * surface (rows, pinned panel, empty-state cards) AND the launch action
+ * itself.
+ *
+ *   - A Codex config, while Codex is off, or not set up (the user has not
+ *     said they use it: owner decision 2026-09-26; main refuses its launch
+ *     then too).
+ *   - A Claude config (no provider means Claude), while Claude Code is off
+ *     (a Codex-only install, WP2), EXCEPT a terminal-only config: it runs a
+ *     plain shell and no Claude; the Claude provider is only its stored
+ *     shape (see SessionDialog).
+ *
+ * `settings` defaults to the live store; a component passes the values it
+ * subscribed to, so its render and this rule read the same thing.
+ */
+export function isConfigLaunchBlocked(
+  config: LaunchGateConfig,
+  settings: LaunchGateSettings = useSettingsStore.getState().settings,
+): boolean {
+  const provider = config.provider ?? 'claude'
+  if (provider === 'codex') return codexPreference(settings) !== 'on'
+  // Claude Code's on/off is decided in one place (claudeOff.ts), which every
+  // other surface that would start Claude asks too.
+  return !config.shellOnly && isClaudeOff(settings)
+}
+
+/** The reason shown for a Claude config blocked because Claude Code is off
+ *  (worded in claudeOff.ts, with the app's other Claude-off reasons). */
+export { CLAUDE_OFF_LAUNCH_REASON }
+
+/** Why this config cannot launch, naming its own provider, or undefined when
+ *  it can. The rule is `isConfigLaunchBlocked`; this only words it. */
+export function launchBlockedReason(
+  config: LaunchGateConfig,
+  settings: LaunchGateSettings = useSettingsStore.getState().settings,
+): string | undefined {
+  if (!isConfigLaunchBlocked(config, settings)) return undefined
+  if ((config.provider ?? 'claude') !== 'codex') return CLAUDE_OFF_LAUNCH_REASON
+  return codexPreference(settings) === 'off' ? CODEX_OFF_LAUNCH_REASON : CODEX_NOT_SET_UP_LAUNCH_REASON
+}
+
+/** The short tag a blocked config wears beside its name. */
+export function launchBlockedTag(
+  config: LaunchGateConfig,
+  settings: LaunchGateSettings = useSettingsStore.getState().settings,
+): string {
+  if ((config.provider ?? 'claude') !== 'codex') return 'Claude Code off'
+  return codexPreference(settings) === 'off' ? 'Codex off' : 'Codex not set up'
+}
+
+/** Both providers' saved on/off, subscribed: a launch surface re-renders the
+ *  moment either switch flips in Settings. */
+export function useLaunchGateSettings(): LaunchGateSettings {
+  const claudeEnabled = useSettingsStore((s) => s.settings.claudeEnabled)
+  const codexEnabled = useSettingsStore((s) => s.settings.codexEnabled)
+  return useMemo(() => ({ claudeEnabled, codexEnabled }), [claudeEnabled, codexEnabled])
+}
+
+/** What a tab of this config reads when it opens while its provider cannot
+ *  launch: main's own refusal (accounts-service launchRefusal), as the tab
+ *  words it (refusedTabText). Undefined when it can launch. The resume prompt
+ *  shows it on a saved session that will reopen so. */
+export function launchBlockedTabText(
+  config: LaunchGateConfig,
+  settings: LaunchGateSettings = useSettingsStore.getState().settings,
+): string | undefined {
+  if (!isConfigLaunchBlocked(config, settings)) return undefined
+  if ((config.provider ?? 'claude') !== 'codex') return refusedTabText({ message: providerOffMessage('Claude Code') })
+  return refusedTabText({ message: codexPreference(settings) === 'off' ? providerOffMessage('Codex') : providerNotSetUpMessage('Codex') })
+}
+
+/** The reason shown for a Codex config blocked because Codex is off. */
+export const CODEX_OFF_LAUNCH_REASON = providerOffMessage('Codex', 'to launch this config')
+
+/** The reason shown for a Codex config blocked because Codex is not set up. */
+export const CODEX_NOT_SET_UP_LAUNCH_REASON = providerNotSetUpMessage('Codex', 'to launch this config')
 
 /**
  * Allow Multi Spawn (phase 4) — THE rule, in one place.
@@ -66,7 +147,25 @@ export function flattenPopoverCopy(copy: { headline: string; body: string }): st
 function liveCountForConfig(configId: string): number {
   return useSessionStore
     .getState()
-    .sessions.filter((s) => s.kind !== 'ask' && s.configId === configId).length
+    .sessions.filter((s) => s.kind !== 'ask' && !s.neverStarted && s.configId === configId).length
+}
+
+/**
+ * A Restart of a tab whose launch started nothing (Session.neverStarted) is a
+ * launch of its config: that tab does not count as running, so the config may
+ * have launched elsewhere since. It passes the same rule
+ * (isMultiSpawnLaunchBlocked) and is refused in the same words; undefined when
+ * it may restart. Any other tab is its config's running copy, which a Restart
+ * only replaces.
+ */
+export function restartLaunchRefusal(
+  session: Pick<Session, 'neverStarted' | 'configId' | 'kind'>,
+  configs: ReadonlyArray<Pick<TerminalConfig, 'id' | 'label' | 'allowMultiSpawn'>>,
+): string | undefined {
+  if (!session.neverStarted || session.kind === 'ask' || !session.configId) return undefined
+  const config = configs.find((c) => c.id === session.configId)
+  if (!config || !isMultiSpawnLaunchBlocked(config, liveCountForConfig(config.id))) return undefined
+  return flattenPopoverCopy(alreadyRunningLaunchCopy(config.label))
 }
 
 /** Overrides for a launch. SSH Persistent: a RESUME reuses the detached remote's
@@ -85,14 +184,15 @@ export interface LaunchSessionOptions {
 
 /**
  * Build the Session object for a config launch, or `null` when the config is
- * launch-blocked (Codex off). Pure aside from `isConfigLaunchBlocked` (reads
+ * launch-blocked (its provider off). Pure aside from `isConfigLaunchBlocked` (reads
  * settings) and id generation — extracted so both the sidebar/empty-state launch
  * and the resume/reattach path build the SAME session shape. Credentials are
  * resolved in main at PTY spawn time, never here.
  */
 export function buildLaunchSession(config: TerminalConfig, opts?: LaunchSessionOptions): Session | null {
   // Backstop for any path that missed the disabled UI (group/section
-  // launch-all included): a Codex config never spawns while Codex is off.
+  // launch-all included): a Codex config never spawns while Codex is off,
+  // nor a Claude one while Claude Code is off.
   if (isConfigLaunchBlocked(config)) return null
   const session: Session = {
     id: opts?.sessionId ?? generateId(),
@@ -136,12 +236,16 @@ export function buildLaunchSession(config: TerminalConfig, opts?: LaunchSessionO
     disableAutoMemory: config.claudeOptions?.disableAutoMemory,
     // Launch must carry the indexing opt-out or the spawn never sees it
     // (pre-2.1.0-beta.5 bug: this path dropped it, so the toggle was inert
-    // for sidebar launches). enableCodexReview is retired — the tool is
-    // authorised globally now, not per config.
+    // for sidebar launches). enableCodexReview is retired: there is no
+    // per-config opt-in (see ClaudeOptions.enableCodexReview).
     loggingEnabled: config.claudeOptions?.loggingEnabled,
     provider: config.provider,
     profileId: config.profileId,
     codexOptions: config.codexOptions,
+    // WP2: the account a Codex session runs under rides from the config to
+    // the spawn (TerminalView sends it as `providerAccountId`). Codex only:
+    // main refuses the field on any other provider's spawn.
+    providerAccountId: config.provider === 'codex' ? config.providerAccountId : undefined,
     githubIntegration: config.githubIntegration,
   }
   // SSH Persistent (Phase 3): a reattach spawns with reconnect set. TerminalView
@@ -176,7 +280,7 @@ export function useLaunchSessionAction(): (config: TerminalConfig, opts?: Launch
 /**
  * Shared "launch a saved config into a new active session" action. Reused by the
  * centre empty state and the sidebar so every surface takes the EXACT same path.
- * Returns the new session id, or '' when the launch is blocked (Codex off).
+ * Returns the new session id, or '' when the launch is blocked (its provider off).
  *
  * SSH Persistent — a manual launch ALWAYS starts a NEW session, with a fresh id,
  * immediately. Left-running remotes in the detached registry do NOT interrupt it:

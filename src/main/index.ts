@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, session, shell, powerMonitor } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
-import { existsSync, mkdirSync, readdirSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, realpathSync } from 'fs'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY_MS, splashShownAt } from './splash-window'
 import { registerUsageHandlers } from './ipc/usage-handlers'
@@ -22,10 +22,14 @@ import {
 } from './canvas/ccc-ux-protocol'
 
 import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, healGlobalStatusline } from './statusline-watcher'
-import { recordLiveUsageForSession } from './usage/account-usage'
+import { recordLiveUsageForSession, setClaudeAccountDataAllowed } from './usage/account-usage'
 import { getProvider } from './providers'
-import { composeProviders } from './providers/compose'
-import { probeClaudeCliVersion } from './claude-cli-version'
+import { composeProviders, flushPendingProviderCliKills } from './providers/compose'
+import { initAccountRegistry, reconcileLegacyAccountStores } from './provider-account-registry'
+import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory, discoverProvidersAtStart } from './provider-accounts'
+import { probeClaudeCliVersion, setClaudeCliProbeAllowed } from './claude-cli-version'
+import { providerProbeRefusal } from './provider-launch-gate'
+import { providerUseWithoutLease } from './provider-in-use'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
@@ -34,7 +38,7 @@ import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from '
 // Direct from data-paths, not the handlers barrel: this runs at module scope
 // before app-ready, so it must not pull the IPC registration side of that module
 // in ahead of time.
-import { devSessionDataDir } from './data-paths'
+import { devSessionDataDir, onResourcesDirectoryChanged } from './data-paths'
 import { ensureHelpWorkspace } from './help-workspace'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerDiagnosticsHandlers } from './ipc/diagnostics-handlers'
@@ -48,19 +52,21 @@ import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
-import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions } from './account-profiles'
+import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, getProfilesRoot, getProfileConfigDir, isValidProfileId } from './account-profiles'
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
-import { initTokenomics, shutdownTokenomics } from './tokenomics/tokenomics-service'
+import { initTokenomics, shutdownTokenomics, getTokenomicsSupervisor } from './tokenomics/tokenomics-service'
+import { createTranscriptAttribution } from './tokenomics/tk-attribution'
+import { getClaudeProfileId } from './claude-account-identity'
 import { registerTokenomics2Handlers } from './ipc/tokenomics2-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
 import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/service-health-handlers'
 import { PtyIntegrityMonitor, setPtyIntegrityMonitor, getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
-import { registerCodexHandlers } from './ipc/codex-handlers'
+import { registerProviderAccountsHandlers } from './ipc/provider-accounts-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
 import { registerExeHandlers, stopAllCapturedRuns } from './ipc/exe-handlers'
 import { registerRegistryHandlers } from './ipc/registry-handlers'
@@ -502,11 +508,51 @@ if (!gotTheLock) {
       return
     }
 
+    // WP2: the provider account registry. Best-effort and after providers are
+    // composed: a registry problem leaves it in recovery mode and never blocks
+    // start-up; Claude keeps launching from profiles.json either way (A12).
+    try {
+      const rd = getResourcesDirectory()
+      if (rd) initAccountRegistry(rd)
+    } catch (err) {
+      logError('[main] account registry start failed:', err)
+    }
+    // The accounts service (WP2 commit 3) exists either way: without a
+    // registry it reports the account list as unavailable. The one-time
+    // adoption of a provider's own default sign-in runs after the legacy
+    // reconcile, outside the registry lock.
+    try {
+      // A switch-off is refused while any of the provider runs: its sessions,
+      // and (WP2) for Claude Code its cloud agents, Insights runs, Sentinel
+      // runs and accepted SSH "Launch Claude"s too (provider-in-use.ts).
+      initProviderAccounts({ unleasedSessions: (id) => providerUseWithoutLease(id) })
+      // A resources directory chosen after start (first-run setup) moves the
+      // registry with it before anything reads or reconciles it.
+      onResourcesDirectoryChanged((dir) => { void followResourcesDirectory(dir) })
+      void reconcileLegacyAccountStores()
+        .then(() => runStartupProviderMigrations())
+        .catch((err) => logError('[main] account start-up work failed:', err))
+        // Then, whatever that did, look for each switched-on provider's CLI
+        // once, in the background (WP2 6g: the retired Codex store's boot
+        // refresh kept Codex's status current; this does, for every provider).
+        .then(() => discoverProvidersAtStart())
+    } catch (err) {
+      logError('[main] accounts service start failed:', err)
+    }
+
     // Probe the Claude CLI version once, in the background. The managed-launch
     // preflight needs it to say which side of the verified floor the user is
     // on, and no launch waits for it: until it answers, the preflight reports
-    // the version as unverified rather than assuming it is fine.
+    // the version as unverified rather than assuming it is fine. The probe
+    // itself skips while Claude Code is switched off (WP2), by main's launch
+    // rule, wired in here because that rule's graph imports the probe's
+    // importers (claude-cli-version.ts, setClaudeCliProbeAllowed).
+    setClaudeCliProbeAllowed(() => providerProbeRefusal('claude') === null)
     void probeClaudeCliVersion()
+    // Usage track MP3, D5: the Account usage page reads nothing of Claude Code
+    // (no credential, refresh or request) while it is switched off, by the
+    // same rule. Set here, before the usage handlers are registered below.
+    setClaudeAccountDataAllowed(() => providerProbeRefusal('claude') === null)
 
     // Take a daily safety snapshot of the CONFIG directory BEFORE anything
     // writes to it (deploy/config below, window/handlers later, IPC saves
@@ -634,7 +680,14 @@ if (!gotTheLock) {
     }
     registerConfigHandlers({
       // #266 MAJOR-2: unticking the watchdog must tear down RUNNING watchers.
-      onSettingsSaved: () => getWatchdogManager()?.applySettings(),
+      // Each in its own try: a failure in one never skips the other.
+      onSettingsSaved: () => {
+        try { getWatchdogManager()?.applySettings() } catch (err) { logError('[main] watchdog settings apply failed:', err) }
+        // WP2 6d: a provider's saved on/off may have changed (the Providers
+        // switch, onboarding, Settings): the accounts snapshot says so now, and
+        // a provider the save turned on is looked for.
+        try { getAccountsService()?.settingsChanged() } catch (err) { logError('[main] accounts settings change failed:', err) }
+      },
     })
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->
     // app.log) so field issues are captured. NEVER on stable. This enables only
@@ -680,7 +733,7 @@ if (!gotTheLock) {
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
-    registerCodexHandlers()
+    registerProviderAccountsHandlers(getWindow, getAccountsService)
     registerCodexReviewHandlers()
     registerExeHandlers()
     registerChannelHandlers()
@@ -735,11 +788,33 @@ if (!gotTheLock) {
     // (HOOKS_STATUS, HOOKS_EVENT, ...) the supervisor/gateway emit passes through.
     const emitWithMerge = (channel: string, payload: unknown) =>
       channel === IPC.SERVICE_HEALTH_UPDATE ? pushDiagnostics() : emitToWindow(channel, payload)
+    // Usage track MP10: the same live transcript paths attribute each local
+    // Claude session's usage to an account, for Tokenomics: the profile whose
+    // config folder holds the transcript (the path decides) names it through
+    // its registry link. Independent of the binder, so it works with logging
+    // off; the profiles root and the usage index are resolved lazily too.
+    const attributeTranscript = createTranscriptAttribution({
+      isLocal: (sessionId) => getClaudeProfileId(sessionId) !== undefined,
+      profilesRoot: () => { try { return getProfilesRoot() } catch { return null } },
+      isProfileId: (name) => isValidProfileId(name),
+      // The layout comes from where profile homes are built: <home>/.claude/projects.
+      projectsDirOf: (profileId) => join(getProfileConfigDir(profileId), '.claude', 'projects'),
+      realRoot: (root) => { try { return realpathSync.native(root) } catch { return null } },
+      accountOf: (profileId) => getAccountsService()?.accountIdForLegacy('claude', profileId, { ignoreCase: process.platform === 'win32' }) ?? null,
+      record: (sessionId, accountKey) => {
+        const tokenomics = getTokenomicsSupervisor()
+        if (!tokenomics) return false
+        tokenomics.setSessionAccount(sessionId, accountKey)
+        return true
+      },
+    })
     // Logs v2 (Task 8): route transcript paths the child gateway lifts from hook
     // POSTs into the binder. Resolved lazily — the binder is created later by
     // initLogging(), and is null when logging is disabled (then this is a no-op).
-    const routeTranscriptPath = (sessionId: string, path: string) =>
+    const routeTranscriptPath = (sessionId: string, path: string) => {
+      attributeTranscript(sessionId, path)
       getTranscriptBinder()?.notifyTranscriptPath(sessionId, path)
+    }
     if (hooksEnabled) {
       // Supervised out-of-process gateway: a utilityProcess child runs the HooksGateway,
       // crash-isolated from the main thread, with restart/backoff + fail-open-to-in-process.
@@ -950,6 +1025,12 @@ try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
     // Kill any GUI-subsystem tool still being captured (#379). Its stdio is
     // piped to us, so leaving it running orphans a process nobody can see.
     try { stopAllCapturedRuns() } catch { /* never started */ }
+    // Usage track MP8: a fresh usage read under way is stopped first, so the
+    // flush below kills its helper too, and none starts again.
+    try { getAccountsService()?.stopUsageReads() } catch { /* no accounts service */ }
+    // A headless CLI run stopped but still reading its process table would
+    // otherwise leave its chain below cmd.exe running once the app is gone.
+    try { flushPendingProviderCliKills() } catch { /* nothing pending */ }
     stopServiceStatusPoller()
     stopLoopStallMonitor()
     stopUpdateWatcher()

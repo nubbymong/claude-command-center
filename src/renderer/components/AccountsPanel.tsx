@@ -15,6 +15,10 @@ import ToggleSwitch from './github/config/ToggleSwitch'
 import { Section } from './SettingsPage'
 import { AccountWebSession } from './settings/AccountWebSession'
 import { AccountIsolationNotice } from './settings/AccountIsolationNotice'
+import { useProviderAccountsStore, providerAccountActions, accountForLegacyId, canOfferMakeReviewer, showsReviewerBadge, accountFailureText } from '../stores/providerAccountsStore'
+import { claudeCodeOn } from '../onboarding/hello-codex'
+import { ProviderMark } from './sidebar/Badges'
+import { Pill, MutedLine, ErrorLine, RowButton, ReviewerLineBlock } from './settings/accounts/accounts-ui'
 
 // ---- props ------------------------------------------------------------------
 
@@ -62,7 +66,7 @@ function NameField({
           }
         }}
         placeholder="Optional friendly name"
-        className="flex-1 bg-crust/60 border border-surface0/80 rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
+        className="flex-1 bg-crust/60 border border-surface0/80 rounded-lg px-3 py-1.5 text-sm text-text focus-ring-strong focus:border-blue/50 placeholder:text-[var(--text-muted)] transition-colors"
       />
     </div>
   )
@@ -84,7 +88,7 @@ function ColourPicker({
   return (
     <div className="flex items-center gap-2 mt-1.5" data-testid={`colour-picker-${profile.id}`}>
       <span className="text-[11px] text-subtext0 w-10 shrink-0">Colour</span>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-3">
         {IDENTITY_COLOR_KEYS.map((key) => {
           const hex = resolveIdentityColor(key, theme)
           const isSelected = key === currentKey
@@ -96,11 +100,10 @@ function ColourPicker({
               aria-label={`Set colour to ${key}${isSelected ? ' (current)' : ''}`}
               aria-pressed={isSelected}
               onClick={() => onPick(key)}
-              className="w-4 h-4 rounded-full transition-transform focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50"
+              className="w-4 h-4 rounded-full transition-transform focus-ring-strong-outset"
               style={{
                 backgroundColor: hex,
-                outline: isSelected ? `2px solid ${hex}` : undefined,
-                outlineOffset: isSelected ? '2px' : undefined,
+                boxShadow: isSelected ? `0 0 0 2px var(--surface-raised), 0 0 0 4px ${hex}` : undefined,
                 transform: isSelected ? 'scale(1.2)' : undefined,
               }}
             />
@@ -117,6 +120,26 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  // WP2: this profile's account in the provider registry (it mirrors the
+  // profile id), for its reviewer state. Absent until the registry lists it.
+  const snapshot = useProviderAccountsStore((s) => s.snapshot)
+  const registryAccount = accountForLegacyId(snapshot, 'claude', profile.id)
+  const [reviewerBusy, setReviewerBusy] = useState(false)
+  const [reviewerError, setReviewerError] = useState<string | null>(null)
+  const makeReviewer = async () => {
+    if (!registryAccount) return
+    setReviewerBusy(true)
+    setReviewerError(null)
+    const r = await providerAccountActions.setReviewerDefault({ providerId: 'claude', accountId: registryAccount.id })
+    setReviewerBusy(false)
+    if (!r.ok) setReviewerError(accountFailureText(r))
+  }
+  const refusal = registryAccount?.reviewRefusal
+  const refusalText = !refusal ? null
+    : refusal.reason === 'platform'
+      ? (window.electronPlatform === 'darwin' ? "Can't run Claude reviews on macOS" : refusal.message)
+      : "Can't check whether this account can run reviews right now"
 
   // Active/inactive: an inactive account stays listed here but cannot be chosen
   // when switching a session's account. The primary account is always active.
@@ -181,29 +204,37 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
         <div className="flex-1 min-w-0 flex items-center gap-2">
           <span
             className="text-sm font-mono truncate"
-            style={{ color: !active ? 'var(--color-overlay0)' : (hasEmail ? 'var(--text-secondary)' : undefined) }}
+            style={{ color: !active ? 'var(--text-muted)' : (hasEmail ? 'var(--text-secondary)' : undefined) }}
             title={hasEmail ? profile.accountEmail : undefined}
           >
             {hasEmail ? (
               middleTruncateEmail(profile.accountEmail)
             ) : (
-              <span className="text-overlay0 italic">setup incomplete</span>
+              <span className="text-[var(--text-muted)] italic">setup incomplete</span>
             )}
           </span>
           {profile.isPrimary && (
-            <span className="text-[10px] text-overlay0 border border-overlay0/30 rounded px-1 shrink-0">
+            <span className="text-[10px] text-[var(--text-muted)] border border-overlay0/30 rounded px-1 shrink-0">
               primary
             </span>
           )}
           {!active && (
             <span
-              className="text-[10px] text-overlay0 border border-overlay0/30 rounded px-1 shrink-0"
+              className="text-[10px] text-[var(--text-muted)] border border-overlay0/30 rounded px-1 shrink-0"
               data-testid={`inactive-badge-${profile.id}`}
             >
               inactive
             </span>
           )}
+          {registryAccount && showsReviewerBadge(registryAccount) && (
+            <Pill tone="reviewer" testId={`claude-reviewer-badge-${profile.id}`}>Reviewer</Pill>
+          )}
         </div>
+        {registryAccount && canOfferMakeReviewer(snapshot, registryAccount) && (
+          <RowButton onClick={() => { void makeReviewer() }} disabled={reviewerBusy} testId={`claude-make-reviewer-${profile.id}`}>
+            Make reviewer
+          </RowButton>
+        )}
         {!profile.isPrimary && (
           <ToggleSwitch
             state={active ? 'on' : 'off'}
@@ -219,7 +250,7 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
             onClick={handleDelete}
             title="Remove this account from AI Code Conductor"
             data-testid={`delete-profile-${profile.id}`}
-            className="ml-1 p-1 rounded text-overlay1 hover:text-red hover:bg-red/10 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-red/50 shrink-0"
+            className="ml-1 p-1 rounded text-overlay1 hover:text-red hover:bg-red/10 transition-colors focus-ring-strong shrink-0"
             aria-label="Remove account"
           >
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -229,6 +260,8 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
         )}
       </div>
       <div className="ml-5">
+        {refusalText && <MutedLine className="mt-1" testId={`claude-review-refusal-${profile.id}`}>{refusalText}</MutedLine>}
+        {reviewerError && <ErrorLine testId={`claude-reviewer-error-${profile.id}`}>{reviewerError}</ErrorLine>}
         <NameField initialValue={profile.name} onCommit={commitName} />
         {hasEmail && (
           <ColourPicker
@@ -272,6 +305,14 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
 
 export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
   const profiles = useAccountProfilesStore((s) => s.profiles)
+  // Claude Code on (claudeCodeOn: the saved setting says so, absent meaning
+  // on, and main has not switched it off). While it is off no Claude session
+  // starts, so an account added then could not be used: the card offers no
+  // add and says how to turn it on instead, as the other providers' cards do
+  // (ManagedAccountsSection).
+  const claudeEnabled = useSettingsStore((s) => s.settings.claudeEnabled)
+  const snapshot = useProviderAccountsStore((s) => s.snapshot)
+  const claudeOn = claudeCodeOn({ claudeEnabled }, snapshot)
 
   // On open, reconcile any "setup incomplete" account: the user's /login may have
   // finished after the live add-account poll's window, so re-read each empty
@@ -295,14 +336,14 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
 
   return (
     <Section
-      title="Accounts"
-      icon={
-        <>
-          <circle cx="8" cy="5.5" r="2.5" stroke="currentColor" strokeWidth="1.2" fill="none" />
-          <path d="M3.5 13c0-2.2 2-3.5 4.5-3.5s4.5 1.3 4.5 3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" fill="none" />
-        </>
-      }
+      title="Claude"
+      mark={<ProviderMark providerId="claude" size={16} />}
+      testId="provider-accounts-claude"
     >
+      {/* WP2: which Claude account code reviews (asked for from the other
+          provider's sessions) use. Renders nothing until the registry says
+          Claude reviews here. */}
+      <ReviewerLineBlock providerId="claude" />
       <div className="space-y-1 divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
         {/* One ProfileRow per profile; primary shows badge and has no delete */}
         {profiles.map((profile) => (
@@ -312,32 +353,36 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
         ))}
       </div>
 
-      {/* Add another account. Windows-only: on macOS Claude Code keeps its
+      {/* Add an account. Windows-only: on macOS Claude Code keeps its
           OAuth token in the login Keychain, which per-profile HOME redirection
           cannot isolate, so added accounts would silently share one login
-          (Mac readiness review 2026-07-02). */}
+          (Mac readiness review 2026-07-02). "Another" only when there is one
+          already. The notes are --text-muted: --color-overlay0 measured 2.1:1
+          (dark) and 3.2:1 (light) on this card (VM audit 2026-09-25). */}
       {window.electronPlatform === 'darwin' ? (
-        <p className="mt-3 text-[11px] text-overlay0 leading-relaxed rounded-lg border border-dashed border-surface1 py-2 px-4">
+        <p className="mt-3 text-[11px] leading-relaxed rounded-lg border border-dashed border-surface1 py-2 px-4" style={{ color: 'var(--text-muted)' }} data-testid="accounts-mac-note">
           Multiple accounts are not available on macOS yet: Claude Code stores its sign-in
           token in the macOS Keychain, which is shared across the whole app, so added
           accounts could not be kept separate. Your single account works exactly as normal.
         </p>
+      ) : !claudeOn ? (
+        <MutedLine testId="provider-off-note-claude" className="mt-3">Turn Claude Code on to add an account.</MutedLine>
       ) : (
         <button
           onClick={onAdd}
           data-testid="add-account-btn"
-          className="mt-3 w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-surface1 hover:border-blue/50 text-overlay1 hover:text-blue py-2 px-4 text-sm transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50"
+          className="mt-3 w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-surface1 hover:border-blue/50 text-overlay1 hover:text-blue py-2 px-4 text-sm transition-colors focus-ring-strong"
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
             <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
-          Add another account
+          {profiles.length === 0 ? 'Add an account' : 'Add another account'}
         </button>
       )}
 
 
       {/* Informational note - no em dashes */}
-      <p className="text-[11px] text-overlay0 leading-relaxed mt-2">
+      <p className="text-[11px] leading-relaxed mt-2" style={{ color: 'var(--text-muted)' }} data-testid="accounts-claude-note">
         The email is the account; the name is just a friendly label for you. Signing in or
         out of an added account never touches the others or your default, and memory,
         settings and history stay shared. You pick which account a session runs under when

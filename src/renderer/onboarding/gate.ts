@@ -93,7 +93,9 @@ export function shouldReonboardForVersion(
  * rule — one field, both cases.
  *
  * `whatsNewV2` is excluded: it is the notes page itself, not a setting, and the
- * harness places it first on its own.
+ * harness places it first on its own. So is every `freshInstallOnly` step
+ * (the assistants choice and Codex setup, WP2): everyone this answers for has
+ * run the app before, and upgraders are not asked.
  *
  * With no `lastSeenVersion` this returns nothing. A fresh install has no delta
  * — it gets every page, via `deriveOnboarding`.
@@ -107,6 +109,7 @@ export function stepsNewSince(
   return steps.filter(
     (s) =>
       s.id !== 'whatsNewV2' &&
+      !s.freshInstallOnly &&
       (s.when ? s.when(settings) : true) &&
       compareVersions(s.sinceVersion, lastSeenVersion) > 0,
   )

@@ -136,10 +136,35 @@ describe('Transparency recap rows', () => {
     })
   })
 
+  describe('the Codex row', () => {
+    const codexValue = () => {
+      const c = [...container.querySelectorAll('.gh-card')].find((x) => x.querySelector('.gh-t')?.textContent === 'Codex (Beta)')
+      return c?.querySelector('.gh-d')?.textContent
+    }
+
+    it('says On only once the user said yes', () => {
+      setSettings({ codexEnabled: true, codexAnswered: true })
+      render()
+      expect(codexValue()).toBe('On')
+    })
+
+    it('points at Settings, Accounts to turn Codex on when the answer was no', () => {
+      setSettings({ codexEnabled: false, codexAnswered: true })
+      render()
+      expect(codexValue()).toBe('Off (Settings, Accounts)')
+    })
+
+    it('says Not set up, with where to set it up, while the user has not answered', () => {
+      setSettings({})
+      render()
+      expect(codexValue()).toBe('Not set up (Settings, Accounts)')
+    })
+  })
+
   it('keeps the rest of the recap intact', () => {
     render()
     const text = container.textContent ?? ''
-    for (const label of ['Theme', 'Account', 'GitHub', 'Status line', 'Codex (Beta)', 'Built-in tools']) {
+    for (const label of ['Theme', 'Account', 'GitHub', 'Status line', 'Codex (Beta)', 'Built-in Tools']) {
       expect(text).toContain(label)
     }
   })

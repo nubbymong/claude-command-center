@@ -47,6 +47,8 @@ const ptyKillMock = vi.fn()
 
 // -- import hook after mocks ------------------------------------------------
 const { useRestartSession } = await import('../../../src/renderer/hooks/useRestartSession')
+const { useConfigStore } = await import('../../../src/renderer/stores/configStore')
+const { listenForSpawnEnd } = await import('../../../src/renderer/utils/spawnEndNotice')
 
 // -- helpers ----------------------------------------------------------------
 
@@ -221,6 +223,80 @@ describe('useRestartSession (P4 Task A)', () => {
     // The fields round-trip through removeSession + addSession (...session merge).
     expect(stored!.resumeUuid).toBe('persisted-uuid')
     expect(stored!.resumeCwd).toBe('F:/wt')
+  })
+
+  // 2c. Walk fix W4: a Restart of a tab whose launch started nothing is a launch
+  //     of its config, so it passes the Multi Spawn one-at-a-time rule. -------
+
+  describe('a Restart of a Not started tab passes the Multi Spawn rule', () => {
+    const cfg = (over: Record<string, unknown> = {}): any => ({ id: 'cfg-1', label: 'Web App', workingDirectory: 'C:/w', color: '', sessionType: 'local', provider: 'claude', ...over })
+    const notStarted = makeSession({ id: 'old', configId: 'cfg-1', neverStarted: true, ptyExited: true })
+    const running = makeSession({ id: 'new', configId: 'cfg-1' })
+    const listen = (id: string) => {
+      const heard: Array<string | null> = []
+      return { heard, stop: listenForSpawnEnd(id, (l) => { heard.push(l) }) }
+    }
+    afterEach(() => { useConfigStore.setState({ configs: [] }) })
+
+    it('its config now running elsewhere and not Multi Spawn: nothing is killed or remounted, the tab stays Not started and says why', () => {
+      useConfigStore.setState({ configs: [cfg()] })
+      useSessionStore.getState().addSession(notStarted)
+      useSessionStore.getState().addSession(running)
+      const view = listen('old')
+      renderHarness(notStarted)
+      act(() => { capturedActions!.restart() })
+      act(() => { capturedActions!.recover() })
+      view.stop()
+      expect(killSessionPtyMock).not.toHaveBeenCalled()
+      expect(ptyKillMock).not.toHaveBeenCalled()
+      const stored = useSessionStore.getState().sessions.find((s) => s.id === 'old')!
+      expect(stored.neverStarted).toBe(true)
+      expect(stored.createdAt).toBe(1_000_000)
+      const line = "\r\n\x1b[90mNot started: Web App is already running. It isn't a Multi Spawn config, so it runs one at a time.\x1b[0m"
+      expect(view.heard).toEqual([line, line])
+    })
+
+    it('walk fix X3: restarting its PARTNER terminal goes ahead; the main tab keeps its Not started flag for the remounted view to check', () => {
+      useConfigStore.setState({ configs: [cfg()] })
+      useSessionStore.getState().addSession(notStarted)
+      useSessionStore.getState().addSession(running)
+      const view = listen('old')
+      renderHarness(notStarted, true)
+      act(() => { capturedActions!.restart() })
+      view.stop()
+      // The partner restarts: its PTY is killed and the views remount.
+      expect(ptyKillMock).toHaveBeenCalledWith('old-partner')
+      expect(clearSpawnedMock).toHaveBeenCalledWith('old-partner')
+      const after = useSessionStore.getState().sessions.find((s) => s.id === 'old')!
+      expect(after.createdAt).toBeGreaterThan(1_000_000)
+      // The main tab is neither killed nor started here, and stays Not started:
+      // the remounted main view refuses to start it (terminalview-account-launch).
+      expect(killSessionPtyMock).not.toHaveBeenCalled()
+      expect(after.neverStarted).toBe(true)
+      expect(view.heard).toEqual([])
+    })
+
+    it('a Multi Spawn config, or nothing of it running: the Restart goes ahead and the flag goes', () => {
+      for (const [configs, others] of [[[cfg({ allowMultiSpawn: true })], [running]], [[cfg()], []]] as const) {
+        useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
+        killSessionPtyMock.mockReset()
+        useConfigStore.setState({ configs: [...configs] })
+        useSessionStore.getState().addSession(notStarted)
+        for (const s of others) useSessionStore.getState().addSession(s)
+        renderHarness(notStarted)
+        act(() => { capturedActions!.restart() })
+        expect(killSessionPtyMock).toHaveBeenCalledWith('old')
+        expect(useSessionStore.getState().sessions.find((s) => s.id === 'old')!.neverStarted).toBeUndefined()
+      }
+    })
+
+    it('a tab that started is its config\'s running copy: its Restart only replaces it, as before', () => {
+      useConfigStore.setState({ configs: [cfg()] })
+      useSessionStore.getState().addSession(running)
+      renderHarness(running)
+      act(() => { capturedActions!.restart() })
+      expect(killSessionPtyMock).toHaveBeenCalledWith('new')
+    })
   })
 
   // 3. no-op when session is null ---------------------------------------------

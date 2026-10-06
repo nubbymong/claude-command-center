@@ -1,6 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useId } from 'react'
 import { useTokenomicsStore } from '../../stores/tokenomicsStore'
 import type { TkRange } from '../../stores/tokenomicsStore'
+import { useProviderAccountsStore } from '../../stores/providerAccountsStore'
+import { tkAccountGroups, tkAccountValue, tkParseAccountValue, tkProvidersWithData, TK_PROVIDER_LABEL } from './tk-labels'
+import { ProviderMark } from '../sidebar/Badges'
 
 const RANGE_OPTIONS: Array<{ label: string; value: TkRange }> = [
   { label: '7d', value: '7d' },
@@ -12,8 +15,20 @@ export function FilterBar() {
   const filter = useTokenomicsStore((s) => s.filter)
   const summary = useTokenomicsStore((s) => s.summary)
   const setConfig = useTokenomicsStore((s) => s.setConfig)
+  const accounts = useTokenomicsStore((s) => s.accounts)
+  const setProvider = useTokenomicsStore((s) => s.setProvider)
+  const setAccount = useTokenomicsStore((s) => s.setAccount)
+  const snapshot = useProviderAccountsStore((s) => s.snapshot)
+  // Usage track MP12 (Q1.4): Provider only when both providers have usage;
+  // Account grouped by provider, with "Not recorded" and "This computer's
+  // sign-in" where they have usage.
+  const providers = tkProvidersWithData(accounts)
+  const groups = tkAccountGroups(accounts, snapshot, filter.provider)
+  const accountValue = filter.account ? tkAccountValue(filter.account.provider, filter.account.key) : '__all__'
   const setRange = useTokenomicsStore((s) => s.setRange)
   const setSearch = useTokenomicsStore((s) => s.setSearch)
+  const providerLabelId = useId()
+  const accountSelectId = useId()
 
   const costByConfig = summary?.costByConfig ?? []
 
@@ -61,6 +76,69 @@ export function FilterBar() {
       className="flex items-center gap-3 flex-wrap px-4 py-2 mb-4 rounded-lg"
       style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
     >
+      {/* Provider segmented control (MP12) */}
+      {providers.length > 1 && (
+        <div className="flex items-center gap-1.5">
+          <span id={providerLabelId} className="text-[11px] text-overlay0 uppercase tracking-wider">Provider</span>
+          <div
+            role="group"
+            aria-labelledby={providerLabelId}
+            className="flex rounded overflow-hidden"
+            style={{ border: '1px solid var(--border-subtle)' }}
+            data-testid="tk-provider-filter"
+          >
+            {[undefined, ...providers].map((p) => {
+              const active = filter.provider === p
+              return (
+                <button
+                  key={p ?? 'all'}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setProvider(p)}
+                  className="px-2.5 py-0.5 text-xs transition-colors inline-flex items-center gap-1.5"
+                  style={{
+                    background: active ? 'var(--accent)' : 'var(--surface-stage)',
+                    color: active ? 'var(--surface-base)' : 'var(--text-secondary)',
+                    fontWeight: active ? 600 : 400,
+                  }}
+                >
+                  {p && <ProviderMark providerId={p} size={14} />}
+                  {p ? TK_PROVIDER_LABEL[p] : 'All'}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Account dropdown, grouped by provider (MP12) */}
+      {groups.length > 0 && (
+        <div className="flex items-center gap-1.5">
+          <label htmlFor={accountSelectId} className="text-[11px] text-overlay0 uppercase tracking-wider">Account</label>
+          <select
+            id={accountSelectId}
+            value={accountValue}
+            onChange={(e) => setAccount(e.target.value === '__all__' ? undefined : tkParseAccountValue(e.target.value) ?? undefined)}
+            className="text-xs rounded px-2 py-0.5 outline-none max-w-[200px]"
+            style={{
+              background: 'var(--surface-stage)',
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--text-secondary)',
+            }}
+            data-testid="tk-account-filter"
+          >
+            <option value="__all__">All accounts</option>
+            {groups.map((g) => (
+              <optgroup key={g.provider} label={g.label}>
+                {g.options.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* Config dropdown */}
       {costByConfig.length > 0 && (
         <div className="flex items-center gap-1.5">

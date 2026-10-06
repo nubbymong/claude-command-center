@@ -123,6 +123,8 @@ const makeRow = (id: string, overrides: Partial<TkSessionRow> = {}): TkSessionRo
   cacheCreateTok: 200,
   msgCount: 8,
   lastTs: new Date('2026-06-01').getTime(),
+  unpricedTokens: 0,
+  accountKey: '',
   ...overrides,
 })
 
@@ -142,6 +144,24 @@ describe('SessionsTable', () => {
     const cells = container.querySelectorAll('td')
     const text = Array.from(cells).map((c) => c.textContent).join(' ')
     expect(text).toContain('Work Config')
+  })
+
+  // Usage track MP11: a session whose models have no price reads "no price", never $0.
+  it('shows "no price" for a session with no priced model', () => {
+    mockStoreState = {
+      sessions: [makeRow('s1', { costUsd: null, unpricedTokens: 1200 }), makeRow('s2')],
+      nextCursor: null,
+      loadingSessions: false,
+      loadMore: vi.fn(),
+      selectSession: vi.fn(),
+    }
+    act(() => {
+      root.render(createElement(SessionsTable, {}))
+    })
+    const text = Array.from(container.querySelectorAll('td')).map((c) => c.textContent).join(' ')
+    expect(text).toContain('no price')
+    expect(text).toContain('$2.50')
+    expect(text).not.toContain('$0.00')
   })
 
   it('renders "No sessions" when sessions is empty', () => {
@@ -189,7 +209,7 @@ describe('SessionsTable', () => {
 
 // ── SessionDetailDrawer ───────────────────────────────────────────────────────
 
-const makeDetail = (): TkSessionDetail => ({
+const makeDetail = (over: Partial<TkSessionDetail> = {}): TkSessionDetail => ({
   sessionId: 'sess-abc-123-def',
   provider: 'claude',
   configId: 'c1',
@@ -204,6 +224,8 @@ const makeDetail = (): TkSessionDetail => ({
   lastTs: new Date('2026-06-01T18:00:00Z').getTime(),
   firstTs: new Date('2026-06-01T16:00:00Z').getTime(),
   projectDir: '/home/user/my-project',
+  unpricedTokens: 0,
+  accountKey: '',
   byModel: [
     {
       model: 'claude-sonnet-4-5',
@@ -224,6 +246,7 @@ const makeDetail = (): TkSessionDetail => ({
       msgCount: 2,
     },
   ],
+  ...over,
 })
 
 describe('SessionDetailDrawer', () => {
@@ -258,6 +281,20 @@ describe('SessionDetailDrawer', () => {
       root.render(createElement(SessionDetailDrawer, {}))
     })
     expect(container.textContent).toContain('Work Config')
+  })
+
+  // Usage track MP11: no price reads "no price", for the session and the model.
+  it('shows "no price" for a session, and a model, with no price', () => {
+    const base = makeDetail()
+    mockStoreState = {
+      selected: makeDetail({ costUsd: null, unpricedTokens: 31_500, byModel: base.byModel.map((m) => ({ ...m, costUsd: null })) }),
+      clearSelected: vi.fn(),
+    }
+    act(() => {
+      root.render(createElement(SessionDetailDrawer, {}))
+    })
+    expect(container.textContent).toContain('no price')
+    expect(container.textContent).not.toContain('$0.00')
   })
 
   it('renders per-model breakdown rows', () => {
