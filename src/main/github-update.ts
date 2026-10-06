@@ -310,6 +310,61 @@ function getRunningVersion(): string {
   return app.getVersion()
 }
 
+// -- macOS version floor ------------------------------------------------
+
+/**
+ * The oldest macOS a release needs, keyed by the first release tag that needs
+ * it. Electron 44 (Chromium 152) dropped macOS 12, so every release from the
+ * one that moved to Electron 44 needs macOS 13, and its packaged app says so
+ * (package.json build.mac.minimumSystemVersion). A Mac below a release's floor
+ * is never offered that release: installed, it would not open. It is offered
+ * the newest release it CAN run, when that is newer than the one it runs.
+ * When a later Electron raises the floor again, add an entry here and raise
+ * minimumSystemVersion with it (tests/unit/main/update-macos-floor.test.ts).
+ */
+export const MACOS_RELEASE_FLOORS: ReadonlyArray<{ fromTag: string; major: number }> = [
+  { fromTag: 'v2.1.1-beta.2', major: 13 },
+]
+
+/** The macOS major version the release `tag` needs; 0 when it has no floor. */
+export function macosFloorForTag(tag: string): number {
+  let floor = 0
+  for (const f of MACOS_RELEASE_FLOORS) {
+    if (compareTags(tag, f.fromTag) >= 0 && f.major > floor) floor = f.major
+  }
+  return floor
+}
+
+/** The major number of an OS version string ('12.7.4' is 12); null when it does not parse. */
+export function osMajorVersion(version: string | null | undefined): number | null {
+  const m = typeof version === 'string' ? /^(\d+)(?:\.|$)/.exec(version.trim()) : null
+  return m ? parseInt(m[1], 10) : null
+}
+
+/**
+ * Can this machine run the release `tag`? Off macOS, yes: no floor applies. On
+ * macOS, when its major version is at or above the tag's floor. A macOS version
+ * that cannot be read counts as below every floor (fail closed): a release with
+ * a floor is not offered, one without a floor still is.
+ */
+export function releaseRunsOnThisOs(tag: string, platform: NodeJS.Platform, systemVersion: string | null | undefined): boolean {
+  if (platform !== 'darwin') return true
+  const floor = macosFloorForTag(tag)
+  if (floor === 0) return true
+  const major = osMajorVersion(systemVersion)
+  return major !== null && major >= floor
+}
+
+/** The running OS version (Electron's process.getSystemVersion), or null. */
+function readSystemVersion(): string | null {
+  try {
+    const v: unknown = (process as { getSystemVersion?: () => string }).getSystemVersion?.()
+    return typeof v === 'string' ? v : null
+  } catch {
+    return null
+  }
+}
+
 /** Read the update channel from user settings */
 function getUpdateChannel(): UpdateChannel {
   try {
@@ -528,6 +583,8 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
   // Uses full-tag comparison so prereleases of the same base version order deterministically
   // (1.2.3-beta.2 > 1.2.3-beta.1 > 1.2.3-dev.5, and 1.2.3 > any 1.2.3-prerelease).
   let best: { release: GitHubRelease; tag: string; version: string; channel: UpdateChannel } | null = null
+  const platform = process.platform
+  const systemVersion = platform === 'darwin' ? readSystemVersion() : null
 
   for (const rel of releases) {
     if (rel.draft) continue
@@ -540,6 +597,12 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
 
     // Strictly newer than the currently running app
     if (compareTagToCurrentVersion(tag, currentVersion) <= 0) continue
+
+    // Never a release this Mac's macOS is too old to open (MACOS_RELEASE_FLOORS).
+    if (!releaseRunsOnThisOs(tag, platform, systemVersion)) {
+      logInfo(`[github-update] Skipping ${tag}: it needs macOS ${macosFloorForTag(tag)} or later (this Mac: ${systemVersion ?? 'unknown'})`)
+      continue
+    }
 
     if (!best || compareTags(tag, best.tag) > 0) {
       best = { release: rel, tag, version: parseVersion(tag), channel: classifyTag(tag)! }

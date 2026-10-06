@@ -86,7 +86,7 @@ const SECTIONS_20: WhatsNewSection[] = [
   {
     heading: 'Under the hood',
     items: [
-      { title: 'A modern engine.', desc: 'Electron 43, React 19 and xterm.js 6 — fast, on a current security baseline.' },
+      { title: 'A modern engine.', desc: 'Electron 44, React 19 and xterm.js 6 — fast, on a current security baseline.' },
     ],
   },
 ]

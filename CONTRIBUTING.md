@@ -8,7 +8,7 @@ Thanks for your interest in contributing! This document covers setup, coding sta
 - npm 9+
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
 - Optional: OpenAI's [Codex CLI](https://github.com/openai/codex) 0.153.4 or newer, to work on Codex features
-- Windows 10/11, macOS 12+, or Linux with glibc 2.39+ (Linux support is experimental — verified on Ubuntu 24.04 and Rocky 10)
+- Windows 10/11, macOS 13+, or Linux with glibc 2.39+ (Linux support is experimental — verified on Ubuntu 24.04 and Rocky 10)
 
 ## Getting Started
 

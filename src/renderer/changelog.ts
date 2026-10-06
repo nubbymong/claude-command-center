@@ -97,6 +97,7 @@ export const changelog: ChangelogEntry[] = [
       { type: 'fix', description: 'The Usage page\'s Updated line now ages while the page stays open. It used to read Updated just now until the page was left or refreshed.' },
       { type: 'fix', description: 'A canvas review with one note now says 1 note, not 1 notes, in the line it writes into the session.' },
       { type: 'fix', description: 'The Cost over time chart in Tokenomics reads clearly on long ranges such as All: the dates under it are spaced to fit the width of the chart instead of running together, carry the year when the range crosses one, and its text and dots are no longer stretched or squashed with the window.' },
+      { type: 'improvement', description: 'The app now runs on Electron 44, with Chromium 152. On a Mac it needs macOS 13 (Ventura) or later, so a Mac on macOS 12 stays on an earlier version (see Known issues in the Feature Guide). From this version on, the updater does not offer a Mac a version that needs a newer macOS than the one it runs.' },
     ],
   },
   {
