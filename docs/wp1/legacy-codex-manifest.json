@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-05T23:02:20.751Z",
-  "head": "664931b04dc7eb0960552458eb5b814986310ac6",
-  "tree": "a448c7a9a761d0bfb4c608bd1b4a8d73f674f94f",
+  "generatedAt": "2026-10-06T01:32:59.857Z",
+  "head": "63878767a9cff377616468aecdfd9df1ce8387c6",
+  "tree": "cb1f663c938a2fe7262edf2838801a89369148c3",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2788,
+  "trackedFileCount": 2789,
   "excludedFileCount": 402,
-  "scannedFileCount": 2386,
+  "scannedFileCount": 2387,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 838,
-  "pathDigest": "d81696c6e6177496204daca33d1b7bc4fe650007b005eb28d30b19ef86f64c87",
+  "matchedPathCount": 839,
+  "pathDigest": "8fa37abbbab9926f54ed46731b67a3b3b0a98375c63893f6073614009a6c3fba",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -169,7 +169,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 70
+      "lineCount": 76
     },
     {
       "path": "README.md",
@@ -748,14 +748,14 @@
         "P01",
         "P14"
       ],
-      "lineCount": 98
+      "lineCount": 103
     },
     {
       "path": "src/main/insights-cross-account.ts",
       "predicates": [
         "P14"
       ],
-      "lineCount": 4
+      "lineCount": 8
     },
     {
       "path": "src/main/insights-runner.ts",
@@ -763,7 +763,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 146
+      "lineCount": 166
     },
     {
       "path": "src/main/install-secret.ts",
@@ -1144,7 +1144,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 270
+      "lineCount": 274
     },
     {
       "path": "src/main/providers/codex/insights-exec.ts",
@@ -1152,7 +1152,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 27
+      "lineCount": 30
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -1898,7 +1898,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 35
+      "lineCount": 36
     },
     {
       "path": "src/renderer/components/insights/parseInsightsReport.ts",
@@ -2294,7 +2294,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 13
+      "lineCount": 14
     },
     {
       "path": "src/renderer/onboarding/codex-reconfirm-gate.ts",
@@ -2668,7 +2668,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 33
+      "lineCount": 35
     },
     {
       "path": "src/shared/ipc-channels.ts",
@@ -4424,12 +4424,20 @@
       "lineCount": 33
     },
     {
+      "path": "tests/unit/main/insights-codex-fs-guards.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 44
+    },
+    {
       "path": "tests/unit/main/insights-codex-links.test.ts",
       "predicates": [
         "P01",
         "P13"
       ],
-      "lineCount": 18
+      "lineCount": 24
     },
     {
       "path": "tests/unit/main/insights-codex-report.test.ts",
@@ -4437,7 +4445,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 101
+      "lineCount": 117
     },
     {
       "path": "tests/unit/main/insights-codex-rollup.test.ts",
@@ -4446,7 +4454,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 50
+      "lineCount": 78
     },
     {
       "path": "tests/unit/main/insights-codex-run.test.ts",
@@ -4455,7 +4463,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 82
+      "lineCount": 112
     },
     {
       "path": "tests/unit/main/insights-run-handler.test.ts",
@@ -5077,7 +5085,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 18
+      "lineCount": 26
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",
@@ -5827,7 +5835,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 107
+      "lineCount": 111
     },
     {
       "path": "tests/unit/renderer/insights-no-iframe.test.tsx",
@@ -6709,7 +6717,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 197
+      "lineCount": 201
     },
     {
       "path": "tests/unit/shared/insights-codex-report.test.ts",

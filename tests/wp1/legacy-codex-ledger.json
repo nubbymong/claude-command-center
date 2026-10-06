@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "d81696c6e6177496204daca33d1b7bc4fe650007b005eb28d30b19ef86f64c87",
-  "manifestHead": "664931b04dc7eb0960552458eb5b814986310ac6",
+  "manifestPathDigest": "8fa37abbbab9926f54ed46731b67a3b3b0a98375c63893f6073614009a6c3fba",
+  "manifestHead": "63878767a9cff377616468aecdfd9df1ce8387c6",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1031,7 +1031,7 @@
       ],
       "category": "OTHER",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.7 (row 68) module (d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): a Codex account's Insights report read and counted from that account's own rollouts with the Logs page's line reader, the report's own runs left out, the digest and prompt, and the check every reply must pass (WP1.68, WP1.38); tests/unit/main/insights-codex-report.test.ts, tests/unit/main/insights-codex-run.test.ts",
+      "evidence": "new WP2 PR 4 P4.7 (row 68) module (d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): a Codex account's Insights report read and counted from that account's own rollouts with the Logs page's line reader, the report's own runs left out, the digest and prompt, and the check every reply must pass (WP1.68, WP1.38); tests/unit/main/insights-codex-report.test.ts, tests/unit/main/insights-codex-run.test.ts; WP2 PR 4 P4.7 fix pass 2: a tool or MCP server name is counted under its own name only when it is an identifier; text in a data block can neither open nor close one; the previous run's figures as numbers only (codexPreviousFigures); each session read through the file the walk saw, within a time limit (WP1.68, WP1.38); tests/unit/main/insights-codex-report.test.ts, tests/unit/main/insights-codex-fs-guards.test.ts",
       "note": ""
     },
     {
@@ -1041,7 +1041,7 @@
       ],
       "category": "OTHER",
       "disposition": "replace",
-      "evidence": "WP2 PR 4 P4.7 (row 68; d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): a member carries its assistant, and a roll-up that includes Codex accounts says so in its prompt's first line; a Claude Code roll-up keeps its prompt word for word (WP1.60); tests/unit/main/insights-codex-rollup.test.ts, tests/unit/insights-cross-account-pure.test.ts",
+      "evidence": "WP2 PR 4 P4.7 (row 68; d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): a member carries its assistant, and a roll-up that includes Codex accounts says so in its prompt's first line; a Claude Code roll-up keeps its prompt word for word (WP1.60); tests/unit/main/insights-codex-rollup.test.ts, tests/unit/insights-cross-account-pure.test.ts; WP2 PR 4 P4.7 fix pass 2: the comparison sits between one pair of data markers after a rule to treat it as data (a Claude Code roll-up keeps its first line); the written analysis argv holds no tools, loads no settings file and keeps no transcript (Sentinel's form); a written analysis kept as plain text (WP1.60); tests/unit/insights-cross-account-pure.test.ts, tests/unit/main/insights-codex-rollup.test.ts",
       "note": ""
     },
     {
@@ -1052,7 +1052,7 @@
       ],
       "category": "OTHER",
       "disposition": "replace",
-      "evidence": "WP2 PR 4 P4.7 (row 68; d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): runCodexInsights, a Codex account's report on a background launch that holds the account's lease (prepareLaunch names the account; a confirmation counts only with it), refused while Codex is off, counted as Codex in use until the lease is held and never as Claude Code; the roll-up over both assistants (C1 A) leaving out an account that needs its own confirmation; vs previous run paired by assistant; a Codex report served as data; Claude Code's run unchanged (WP1.38, WP1.42, WP1.60); tests/unit/main/insights-codex-run.test.ts, tests/unit/main/insights-codex-rollup.test.ts, tests/unit/main/insights-provider-off.test.ts; WP2 PR 4 P4.7 fix pass 1: the Codex report run is reached through the registered package's Insights port (tryGetProviderPackage), no longer by a deep import into the Codex package; a package without the port fails the run saying so (WP1.55); tests/unit/main/insights-codex-run.test.ts, tests/wp1/dependency-boundaries.test.ts",
+      "evidence": "WP2 PR 4 P4.7 (row 68; d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): runCodexInsights, a Codex account's report on a background launch that holds the account's lease (prepareLaunch names the account; a confirmation counts only with it), refused while Codex is off, counted as Codex in use until the lease is held and never as Claude Code; the roll-up over both assistants (C1 A) leaving out an account that needs its own confirmation; vs previous run paired by assistant; a Codex report served as data; Claude Code's run unchanged (WP1.38, WP1.42, WP1.60); tests/unit/main/insights-codex-run.test.ts, tests/unit/main/insights-codex-rollup.test.ts, tests/unit/main/insights-provider-off.test.ts; WP2 PR 4 P4.7 fix pass 1: the Codex report run is reached through the registered package's Insights port (tryGetProviderPackage), no longer by a deep import into the Codex package; a package without the port fails the run saying so (WP1.55); tests/unit/main/insights-codex-run.test.ts, tests/wp1/dependency-boundaries.test.ts; WP2 PR 4 P4.7 fix pass 2: the package's Insights port and the runs folder are checked before the account is launched (report and roll-up); the runs folder is checked again before the stale sweep and before a run's folder is removed; the sessions read has a time limit; the previous run's figures reach the prompt as numbers only; the roll-up's written analysis on Claude Code runs in Sentinel's argv form in an empty folder of its own, and Codex's written analysis and a run's failure text are kept as plain text; report.json is served only as a bounded regular file (WP1.38, WP1.60); tests/unit/main/insights-codex-run.test.ts, tests/unit/main/insights-codex-rollup.test.ts, tests/unit/main/insights-codex-fs-guards.test.ts",
       "note": "Claude Code's report run and its pty-manager import are unchanged"
     },
     {
@@ -3828,7 +3828,7 @@
       ],
       "category": "OTHER",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.7 (row 68) module (d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): the one rule for a stored Codex report (report.json): the seven card kinds as plain text, controls and spoofing characters replaced, every list bounded, used by main before anything is kept and by the page before anything is drawn (WP1.68); tests/unit/shared/insights-codex-report.test.ts, tests/unit/renderer/insights-codex-page.test.tsx",
+      "evidence": "new WP2 PR 4 P4.7 (row 68) module (d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): the one rule for a stored Codex report (report.json): the seven card kinds as plain text, controls and spoofing characters replaced, every list bounded, used by main before anything is kept and by the page before anything is drawn (WP1.68); tests/unit/shared/insights-codex-report.test.ts, tests/unit/renderer/insights-codex-page.test.tsx; WP2 PR 4 P4.7 fix pass 2: the report.json size cap is one constant (CODEX_REPORT_MAX_BYTES), read by main and the page alike (WP1.68); tests/unit/main/insights-codex-run.test.ts",
       "note": ""
     },
     {
@@ -6270,6 +6270,17 @@
       "note": ""
     },
     {
+      "path": "tests/unit/main/insights-codex-fs-guards.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.7 fix pass 2 test: a Codex report's runs folder checked before any launch, again before the stale sweep and before its folder is removed, `insights` checked before anything is made in it, each session read through the file the walk saw within a time limit, and report.json handed to the page only as the regular file lstat saw, with links modelled, never planted (WP1.33); tests/unit/main/insights-codex-fs-guards.test.ts",
+      "note": ""
+    },
+    {
       "path": "tests/unit/main/insights-codex-links.test.ts",
       "predicates": [
         "P01",
@@ -6277,7 +6288,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.7 (row 68) HOST QUARANTINE test (CI and VM): the sessions walk never follows a link or junction, and a runs folder that is or becomes a link is refused with nothing run or written through it (WP1.33); tests/unit/main/insights-codex-links.test.ts",
+      "evidence": "new WP2 PR 4 P4.7 (row 68) HOST QUARANTINE test (CI and VM): the sessions walk never follows a link or junction, and a runs folder that is or becomes a link is refused with nothing run or written through it (WP1.33); tests/unit/main/insights-codex-links.test.ts; WP2 PR 4 P4.7 fix pass 2: a runs folder that is a link: nothing in its target is swept (WP1.33); tests/unit/main/insights-codex-links.test.ts",
       "note": ""
     },
     {
@@ -6288,7 +6299,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.7 (row 68) test: counting a Codex account's rollouts (the P3.1 fixtures of both supported versions), the report runs left out, the digest and prompt, and the reply check (WP1.33); tests/unit/main/insights-codex-report.test.ts",
+      "evidence": "new WP2 PR 4 P4.7 (row 68) test: counting a Codex account's rollouts (the P3.1 fixtures of both supported versions), the report runs left out, the digest and prompt, and the reply check (WP1.33); tests/unit/main/insights-codex-report.test.ts; WP2 PR 4 P4.7 fix pass 2: identifier-only tool and MCP server names, the data markers, the previous figures as numbers only (WP1.33); tests/unit/main/insights-codex-report.test.ts",
       "note": ""
     },
     {
@@ -6300,7 +6311,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.7 (row 68) test: Run all over both assistants (C1 A), the left-out confirm-at-launch account, the written analysis on Codex with Claude Code off, and in-use counting (WP1.33); tests/unit/main/insights-codex-rollup.test.ts",
+      "evidence": "new WP2 PR 4 P4.7 (row 68) test: Run all over both assistants (C1 A), the left-out confirm-at-launch account, the written analysis on Codex with Claude Code off, and in-use counting (WP1.33); tests/unit/main/insights-codex-rollup.test.ts; WP2 PR 4 P4.7 fix pass 2: the written analysis on Claude Code and on Codex holds no tools and reads its inputs as data, an explicit Run all list naming accounts that cannot run, the port checked before the analysis account is launched (WP1.33); tests/unit/main/insights-codex-rollup.test.ts",
       "note": ""
     },
     {
@@ -6312,7 +6323,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.7 (row 68) test: a Codex account's report through the real runner and launch gate: the lease, the run folder, D12, D13, D14, the sign-in flag and Codex in use (WP1.33); tests/unit/main/insights-codex-run.test.ts",
+      "evidence": "new WP2 PR 4 P4.7 (row 68) test: a Codex account's report through the real runner and launch gate: the lease, the run folder, D12, D13, D14, the sign-in flag and Codex in use (WP1.33); tests/unit/main/insights-codex-run.test.ts; WP2 PR 4 P4.7 fix pass 2: each account's own realm in the fake, two reports on two accounts at once, the model run's environment pinned to the launch's own plus the three git switches, the port checked before any lease, the previous figures as numbers only, report.json bounded, failure text plain (WP1.33); tests/unit/main/insights-codex-run.test.ts",
       "note": ""
     },
     {

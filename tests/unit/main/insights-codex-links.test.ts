@@ -122,15 +122,22 @@ describe('the sessions walk never follows a link [CI] [VM]', () => {
 })
 
 describe('the runs folder is never a link [CI] [VM]', () => {
-  it('a runs folder that is a link is refused: no model run, nothing written through it [CI] [VM]', async () => {
+  it('a runs folder that is a link is refused: no model run, nothing swept, made or written through it [CI] [VM]', async () => {
     const outside = path.join(tmpRoot, 'outside')
-    fs.mkdirSync(outside, { recursive: true })
+    // A stale leftover-shaped folder in the link's target: a sweep that followed
+    // the link would remove it.
+    const victim = path.join(outside, 'ccc-insights-codex-victim1')
+    fs.mkdirSync(victim, { recursive: true })
+    fs.writeFileSync(path.join(victim, 'keep.txt'), 'kept')
+    const old = new Date(Date.now() - 3 * 3600_000)
+    fs.utimesSync(victim, old, old)
     fs.mkdirSync(path.join(h.resourcesDir, 'insights'), { recursive: true })
     fs.symlinkSync(outside, path.join(h.resourcesDir, 'insights', '.insights-codex-runs'), LINK_TYPE)
     const id = await runCodexInsights(win, { accountId: ACCT }) as string
     expect(getCatalogue().runs.find((r) => r.id === id)).toMatchObject({ status: 'failed', error: 'This report could not be written: no empty folder could be made for it.' })
     expect(h.execCalls).toBe(0)
-    expect(fs.readdirSync(outside)).toEqual([])
+    expect(fs.readdirSync(outside)).toEqual(['ccc-insights-codex-victim1'])
+    expect(fs.existsSync(path.join(victim, 'keep.txt'))).toBe(true)
   })
 
   it('a runs folder that became a link between the check and the make is refused, and the folder made through it removed [CI] [VM]', async () => {

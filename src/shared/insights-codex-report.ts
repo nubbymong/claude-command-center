@@ -35,6 +35,8 @@ export const CODEX_REPORT_PARAGRAPH_MAX = 1200
 export const CODEX_REPORT_ITEMS_MAX = 6
 /** The most paragraphs the narrative card keeps. */
 export const CODEX_REPORT_PARAGRAPHS_MAX = 6
+/** The largest report.json read, in bytes (main) and characters (the page). */
+export const CODEX_REPORT_MAX_BYTES = 512 * 1024
 
 /** The card kinds the page draws (the same shapes as parseInsightsReport's). */
 export type CodexReportSection =
@@ -180,7 +182,7 @@ export function readCodexStoredReport(value: unknown): CodexStoredReport | null 
 
 /** The stored report from report.json's text, or null (see readCodexStoredReport). */
 export function parseCodexStoredReport(text: unknown): CodexStoredReport | null {
-  if (typeof text !== 'string' || text.length > 512 * 1024) return null
+  if (typeof text !== 'string' || text.length > CODEX_REPORT_MAX_BYTES) return null
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { return null }
   return readCodexStoredReport(parsed)

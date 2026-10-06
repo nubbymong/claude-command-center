@@ -15,6 +15,12 @@ import {
   realpathSync,
   rmdirSync,
   rmSync,
+  openSync,
+  fstatSync,
+  readSync,
+  closeSync,
+  constants as fsConstants,
+  type Stats,
 } from 'fs'
 import * as pty from 'node-pty'
 import { guardPtyIo } from './pty-input-guard'
@@ -27,7 +33,7 @@ import { spawnClaudeHeadless } from './claude-headless'
 import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
 import { providerLaunchRefusal, providerProbeRefusal } from './provider-launch-gate'
 import type { ProviderLaunchRefused } from '../shared/providers'
-import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
+import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId, sharedRoot } from './account-profiles'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import type { AccountProfile } from '../shared/account-types'
@@ -41,22 +47,26 @@ import { sweepStaleFolders } from './stale-folder-sweep'
 import { isOpaqueId } from '../shared/providers'
 import type { AccountsSnapshot, ProviderId } from '../shared/providers'
 import { tryGetProviderPackage } from './providers/core'
+import type { ProviderInsightsOperations } from './providers/core'
 import {
+  CODEX_INSIGHTS_READ_TIME_LIMIT_MS,
   CODEX_INSIGHTS_RUNS_DIRNAME,
   CODEX_INSIGHTS_RUN_PREFIX,
   buildCodexDigest,
   buildCodexInsightsPrompt,
   codexInsightsKpis,
   codexMemberLabel,
+  codexPreviousFigures,
   codexStoredReport,
   countCodexSessions,
   parseCodexInsightsReply,
   readCodexSessions,
 } from './insights-codex'
-import type { CodexStoredReport } from '../shared/insights-codex-report'
+import { CODEX_REPORT_MAX_BYTES, type CodexStoredReport } from '../shared/insights-codex-report'
 import {
   CROSS_ACCOUNT_MAX_PARALLEL,
   CROSS_ACCOUNT_MIN_ACCOUNTS,
+  CROSS_ACCOUNT_SYNTHESIS_ENV,
   assembleCrossAccount,
   buildCrossAccountPromptFrom,
   buildCrossAccountSpawnArgs,
@@ -64,6 +74,7 @@ import {
   describeCrossAccountFanout,
   mapWithLimit,
   parseCrossAccountNarrative,
+  plainCrossAccountNarrative,
   withNarrative,
   type CrossAccountMember
 } from './insights-cross-account'
@@ -1088,7 +1099,7 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
 
 // -- A Codex account's report (WP2 PR 4, P4.7, row 68) --
 
-/** A Codex run's working folder older than this is a leftover (a crash or a
+/** A run's working folder older than this is a leftover (a crash or a
  *  quit mid-run; a run ends well inside it). */
 const STALE_CODEX_RUN_FOLDER_MS = 2 * 60 * 60 * 1000
 
@@ -1097,61 +1108,132 @@ function samePath(a: string, b: string): boolean {
   return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
 }
 
-/** The parent of every Codex report run's working folder: the insights
- *  folder's `.insights-codex-runs`, each a real folder (never a link) and, on POSIX,
- *  this user's. Null when it cannot be. */
-function codexRunsParent(): string | null {
-  const insights = getInsightsDir()
-  const parent = join(insights, CODEX_INSIGHTS_RUNS_DIRNAME)
+/** The folders an Insights model run is made a working folder in: a runs
+ *  folder inside the insights folder (a dot name, so it is never read as a
+ *  run), and the prefix each run's own folder starts with. `marker`: an
+ *  empty `.git` file makes the folder a project root of its own (Codex). */
+interface RunFolders { dirname: string; prefix: string; marker: boolean }
+/** A Codex model run's (a report, or a roll-up's written analysis on Codex). */
+const CODEX_RUN_FOLDERS: RunFolders = { dirname: CODEX_INSIGHTS_RUNS_DIRNAME, prefix: CODEX_INSIGHTS_RUN_PREFIX, marker: true }
+/** The roll-up's written analysis on Claude Code (as Sentinel's Claude Code
+ *  analysis folder, no marker). */
+const CLAUDE_SYNTHESIS_FOLDERS: RunFolders = { dirname: '.insights-claude-runs', prefix: 'ccc-insights-claude-', marker: false }
+
+/**
+ * Whether `parent` is still the runs folder it was checked to be: `insights`
+ * and it real folders (never links), its real path
+ * `<real resources>/insights/<runs folder>`, and on POSIX both this user's
+ * and the runs folder writable by no one else. Asked before any launch,
+ * again just before the stale sweep, and again just before a run's folder
+ * is removed, so nothing is ever swept or removed through a link. Never
+ * throws.
+ */
+function runsFolderHolds(parent: string, kind: RunFolders): boolean {
   try {
-    mkdirSync(parent, { recursive: true, mode: 0o700 })
+    const insights = getInsightsDir()
+    if (!samePath(resolve(parent), resolve(insights, kind.dirname))) return false
+    const posix = typeof process.getuid === 'function'
     for (const dir of [insights, parent]) {
       const st = lstatSync(dir)
-      if (st.isSymbolicLink() || !st.isDirectory()) return null
-      if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return null
+      if (st.isSymbolicLink() || !st.isDirectory()) return false
+      if (posix && st.uid !== process.getuid!()) return false
+      if (posix && dir === parent && (st.mode & 0o022) !== 0) return false
     }
-    return parent
+    const expected = join(realpathSync.native(dirname(insights)), basename(insights), kind.dirname)
+    return samePath(realpathSync.native(parent), expected)
+  } catch {
+    return false
+  }
+}
+
+/** The runs folder of `kind`, made owner-only (0700) when it is not there
+ *  yet; null when it cannot be, or does not hold (runsFolderHolds). The
+ *  insights folder is checked before anything is made in it: a link there
+ *  is refused, never made through. */
+function runsParentFor(kind: RunFolders): string | null {
+  const insights = getInsightsDir()
+  const parent = join(insights, kind.dirname)
+  try {
+    let st: Stats | null = null
+    try { st = lstatSync(insights) } catch (e) { if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') return null }
+    if (st && (st.isSymbolicLink() || !st.isDirectory())) return null
+    mkdirSync(parent, { recursive: true, mode: 0o700 })
+    return runsFolderHolds(parent, kind) ? parent : null
   } catch {
     return null
   }
 }
 
-/** A fresh, empty working folder for one Codex report run, as Sentinel makes
- *  its analysis folder: leftovers of earlier runs go first; once made, its
- *  real path must be `<resources>/insights/.insights-codex-runs/<it>` under the
- *  resources folder's own real path, so neither `insights` nor the runs
- *  folder became a link between the check and the make (one that did is
- *  removed, it is empty, and refused); an empty `.git` file makes it a
- *  project root of its own, so nothing above it is read. */
-function makeCodexRunFolder(parent: string): string {
-  sweepStaleFolders(parent, CODEX_INSIGHTS_RUN_PREFIX, { maxAgeMs: STALE_CODEX_RUN_FOLDER_MS })
-  const dir = mkdtempSync(join(parent, CODEX_INSIGHTS_RUN_PREFIX))
+/** The parent of every Codex model run's working folder (CODEX_RUN_FOLDERS). */
+function codexRunsParent(): string | null {
+  return runsParentFor(CODEX_RUN_FOLDERS)
+}
+
+/** A fresh, empty working folder for one run, as Sentinel makes its
+ *  analysis folder: the runs folder is checked again first (runsFolderHolds;
+ *  one that no longer holds is refused, and nothing in it is swept);
+ *  leftovers of earlier runs go next; once made, the folder's real path must
+ *  be `<resources>/insights/<runs folder>/<it>` under the resources folder's
+ *  own real path, so neither `insights` nor the runs folder became a link
+ *  between the check and the make (one that did is removed, it is empty,
+ *  and refused); for Codex an empty `.git` file makes it a project root of
+ *  its own, so nothing above it is read. */
+function makeRunFolder(parent: string, kind: RunFolders): string {
+  if (!runsFolderHolds(parent, kind)) throw new Error('the runs folder is not the one checked')
+  sweepStaleFolders(parent, kind.prefix, { maxAgeMs: STALE_CODEX_RUN_FOLDER_MS })
+  const dir = mkdtempSync(join(parent, kind.prefix))
   let ok = false
   try {
     const insights = getInsightsDir()
-    const expected = join(realpathSync.native(dirname(insights)), basename(insights), CODEX_INSIGHTS_RUNS_DIRNAME, basename(dir))
-    ok = samePath(resolve(parent), resolve(insights, CODEX_INSIGHTS_RUNS_DIRNAME)) && samePath(realpathSync.native(dir), expected)
+    const expected = join(realpathSync.native(dirname(insights)), basename(insights), kind.dirname, basename(dir))
+    ok = samePath(resolve(parent), resolve(insights, kind.dirname)) && samePath(realpathSync.native(dir), expected)
   } catch { ok = false }
   if (!ok) {
     try { rmdirSync(dir) } catch { /* not empty, or gone: leave it */ }
     throw new Error('the report folder is not where it was made')
   }
+  if (!kind.marker) return dir
   try {
     writeFileSync(join(dir, '.git'), '', { flag: 'wx' })
   } catch (err) {
-    try { rmSync(dir, { recursive: true, force: true }) } catch { /* a leftover is swept by a later run */ }
+    removeRunFolder(dir, parent, kind)
     throw err
   }
   return dir
 }
 
-/** Removes a folder makeCodexRunFolder made, and nothing else: its name has
- *  the prefix and its parent is the runs folder. */
-function removeCodexRunFolder(dir: string, parent: string): void {
+/** Removes a folder makeRunFolder made, and nothing else: its name has the
+ *  prefix, its parent is the runs folder, and the runs folder still holds
+ *  (runsFolderHolds; when it does not, nothing is removed and a later run's
+ *  sweep finds the leftover). */
+function removeRunFolder(dir: string, parent: string, kind: RunFolders): void {
   const name = basename(dir)
-  if (!name.startsWith(CODEX_INSIGHTS_RUN_PREFIX) || name.length === CODEX_INSIGHTS_RUN_PREFIX.length) return
+  if (!name.startsWith(kind.prefix) || name.length === kind.prefix.length) return
   if (!samePath(resolve(dirname(dir)), resolve(parent))) return
+  if (!runsFolderHolds(parent, kind)) return
   try { rmSync(dir, { recursive: true, force: true }) } catch { /* a leftover is swept by a later run */ }
+}
+
+/** A fresh, empty working folder for one Codex model run (makeRunFolder). */
+function makeCodexRunFolder(parent: string): string {
+  return makeRunFolder(parent, CODEX_RUN_FOLDERS)
+}
+
+/** Removes a folder makeCodexRunFolder made, and nothing else (removeRunFolder). */
+function removeCodexRunFolder(dir: string, parent: string): void {
+  removeRunFolder(dir, parent, CODEX_RUN_FOLDERS)
+}
+
+/** What a Codex model run needs before the account is launched: the
+ *  registered Codex package's Insights port (reached through the registry,
+ *  as a Cloud Agent's run is, never by import), and the runs folder. Asked
+ *  before any lease is taken or any session is read. */
+function codexRunPrerequisites(): { ok: true; port: ProviderInsightsOperations; parent: string } | { ok: false; message: string } {
+  const port = tryGetProviderPackage('codex')?.insights
+  if (!port || typeof port.run !== 'function') return { ok: false, message: 'Codex does not write Insights reports in this version of the app.' }
+  const parent = codexRunsParent()
+  if (!parent) return { ok: false, message: 'no empty folder could be made for it.' }
+  return { ok: true, port, parent }
 }
 
 /** The accounts snapshot, or null when it cannot be read. */
@@ -1181,16 +1263,16 @@ export function codexReplyFailedMessage(reason: string): string {
   return `Codex's reply was not a report the page can show, so nothing was kept. Try New run again. (${stripSpoofableText(reason, 200).trim()})`
 }
 
-/** A Codex model run on one account, in a fresh empty folder, from a launch
- *  the accounts service prepared (its lease held until the run, and any kill
- *  still under way, has ended). Used by a report and by a roll-up's written
- *  analysis on Codex. */
+/** A Codex model run on one account, from a launch the accounts service
+ *  prepared (its lease held until the run, and any kill still under way,
+ *  has ended). Used by a report and by a roll-up's written analysis on
+ *  Codex; the caller has checked codexRunPrerequisites first. */
 async function withCodexLaunch<T>(
   accountId: string,
   ownerId: string,
   acknowledgeRealmOnly: boolean,
   onLeased: () => void,
-  body: (launch: { executable: string; env: Record<string, string>; sessionsDir: string }, parent: string | null) => Promise<T>,
+  body: (launch: { executable: string; env: Record<string, string>; sessionsDir: string }) => Promise<T>,
 ): Promise<{ ok: true; value: T } | { ok: false; message: string; signedOut: boolean }> {
   const svc = getAccountsService()
   if (!svc || typeof svc.prepareLaunch !== 'function') return { ok: false, message: 'accounts are not ready yet. Try again in a moment.', signedOut: false }
@@ -1211,32 +1293,34 @@ async function withCodexLaunch<T>(
   const launch = prepared
   onLeased()
   try {
-    return { ok: true, value: await body({ executable: launch.executable, env: launch.env, sessionsDir: launch.sessionsDir }, codexRunsParent()) }
+    return { ok: true, value: await body({ executable: launch.executable, env: launch.env, sessionsDir: launch.sessionsDir }) }
   } finally {
     try { launch.lease.release() } catch { /* a release never throws the run away */ }
   }
 }
 
 /** One Codex model run in a fresh folder under `parent`; the folder goes after.
- *  The run is the Codex package's Insights port, reached through the
- *  registered package (as a Cloud Agent's run is), never by import. */
-async function codexModelRun(launch: { executable: string; env: Record<string, string> }, parent: string | null, prompt: string): Promise<{ ok: true; text: string } | { ok: false; message: string }> {
-  const insights = tryGetProviderPackage('codex')?.insights
-  if (!insights || typeof insights.run !== 'function') return { ok: false, message: 'Codex does not write Insights reports in this version of the app.' }
-  if (!parent) return { ok: false, message: 'no empty folder could be made for it.' }
+ *  The run is the Codex package's Insights port (codexRunPrerequisites), on
+ *  the launch's own environment: the account's realm, and nothing of this
+ *  app's own. */
+async function codexModelRun(launch: { executable: string; env: Record<string, string> }, parent: string, port: ProviderInsightsOperations, prompt: string): Promise<{ ok: true; text: string } | { ok: false; message: string }> {
   let folder: string
   try { folder = makeCodexRunFolder(parent) } catch { return { ok: false, message: 'no empty folder could be made for it.' } }
   try {
     // A text-only run: any git the CLI runs stops at the runs folder, never
     // prompts, and takes no optional lock (Sentinel's analysis, round 2).
     const env = { ...launch.env, GIT_CEILING_DIRECTORIES: parent, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }
-    const out = await insights.run({ executable: launch.executable, env, cwd: folder, prompt })
+    const out = await port.run({ executable: launch.executable, env, cwd: folder, prompt })
     if (!out.ok && out.killSettled instanceof Promise) await out.killSettled
     return out.ok ? { ok: true, text: out.text } : { ok: false, message: out.message }
   } finally {
     removeCodexRunFolder(folder, parent)
   }
 }
+
+/** What a Codex report says when its sessions read did not end in time
+ *  (CODEX_INSIGHTS_READ_TIME_LIMIT_MS). */
+const CODEX_SESSIONS_READ_TOO_SLOW = "This account's Codex sessions could not be read in time, so nothing was sent to Codex. Try New run again."
 
 /**
  * A Codex account's Insights report (mockup screens 1 to 9, approved on the
@@ -1273,7 +1357,10 @@ export async function runCodexInsights(
     upsertRun(run)
     notifyRenderer(getWindow, run)
   }
-  const failRun = (why: string, authFailed = false): void => {
+  const failRun = (reason: string, authFailed = false): void => {
+    // Plain prose before it is kept or logged: a failure can carry the CLI's
+    // own text (shared/safe-text).
+    const why = stripSpoofableText(reason, 2000)
     run.status = 'failed'
     run.statusMessage = undefined
     run.error = why
@@ -1288,8 +1375,17 @@ export async function runCodexInsights(
     run.statusMessage = 'Step 1/3: Reading the sessions...'
     publish()
     logInfo(`[insights] Codex run ${id} account=${accountId}`)
-    const launched = await withCodexLaunch(accountId, `insights:${id}`, opts.acknowledgeRealmOnly === true, () => { codexUnleased.delete(accountId) }, async (launch, parent): Promise<{ failed: string } | { stored: CodexStoredReport; kpis: InsightsData }> => {
-      const read = await readCodexSessions(launch.sessionsDir, { runsParent: parent })
+    // Before the account is launched: the package's Insights port and the
+    // runs folder (no lease is taken, and no session read, without both).
+    const ready = codexRunPrerequisites()
+    if (!ready.ok) {
+      failRun(`This report could not be written: ${ready.message}`)
+      return id
+    }
+    const { port, parent } = ready
+    const launched = await withCodexLaunch(accountId, `insights:${id}`, opts.acknowledgeRealmOnly === true, () => { codexUnleased.delete(accountId) }, async (launch): Promise<{ failed: string } | { stored: CodexStoredReport; kpis: InsightsData }> => {
+      const read = await readCodexSessions(launch.sessionsDir, { runsParent: parent, timeLimitMs: CODEX_INSIGHTS_READ_TIME_LIMIT_MS })
+      if (read.timedOut) return { failed: CODEX_SESSIONS_READ_TOO_SLOW }
       if (read.sessions.length === 0) {
         // A link is never followed (a moved sessions folder): say so, rather
         // than that the account has no sessions (review F5).
@@ -1301,15 +1397,16 @@ export async function runCodexInsights(
       }
       const counts = countCodexSessions(read.sessions)
       const digest = buildCodexDigest(read.sessions)
-      const prompt = buildCodexInsightsPrompt(counts, digest, loadPreviousKpis(id), read)
-      logInfo(`[insights] Codex run ${id}: ${counts.sessions} sessions (${read.filesFound} files, ${read.filesNotRead} not read at the byte limit, ${read.skippedLines} oversized lines skipped), digest ${digest.included} sessions, prompt ${prompt.length} chars`)
+      // The previous run's figures as numbers only, never its words.
+      const prompt = buildCodexInsightsPrompt(counts, digest, codexPreviousFigures(loadPreviousKpis(id)), read)
+      logInfo(`[insights] Codex run ${id}: ${counts.sessions} sessions (${read.filesFound} files, ${read.filesNotRead} not read at the byte limit, ${read.skippedLines} oversized lines skipped, ${read.linksSkipped} links not followed), digest ${digest.included} sessions, prompt ${prompt.length} chars`)
       run.statusMessage = 'Step 2/3: Writing the report...'
       publish()
       // The launch rule once more, right before Codex starts: switched off
       // since the launch was prepared, or while the sessions were read.
       const offNow = providerLaunchRefusal('codex')
       if (offNow) return { failed: offNow.message }
-      const out = await codexModelRun(launch, parent, prompt)
+      const out = await codexModelRun(launch, parent, port, prompt)
       if (!out.ok) return { failed: `This report could not be written: ${out.message}` }
       run.statusMessage = 'Step 3/3: Checking the report...'
       publish()
@@ -1602,17 +1699,24 @@ export async function runCrossAccountInsights(
     if (synthesisMember.provider === 'codex') {
       // P4.7: the written analysis runs on a Codex account (the first that
       // produced figures, when the primary did not): one text-only `codex
-      // exec` on that account's allowance and lease, as its report runs.
-      // Not started once Codex has been switched off (numbers only, and why).
+      // exec` on that account's allowance and lease, as its report runs
+      // (read-only, no tools, the comparison on stdin as data). Not started
+      // once Codex has been switched off (numbers only, and why), and checked
+      // before the account is launched (codexRunPrerequisites).
       const codexRefused = providerLaunchRefusal('codex')
-      const written = codexRefused
+      const ready = codexRefused ? null : codexRunPrerequisites()
+      const written = !ready || !ready.ok
         ? null
-        : await withCodexLaunch(synthesisMember.profileId!, `insights:${id}:synthesis`, false, () => {}, (launch, parent) => codexModelRun(launch, parent, prompt))
-      const narrative = written && written.ok && written.value.ok ? parseCrossAccountNarrative(written.value.text) : null
-      if (!written) {
-        run.error = `No written analysis. ${codexRefused!.message}`
+        : await withCodexLaunch(synthesisMember.profileId!, `insights:${id}:synthesis`, false, () => {}, (launch) => codexModelRun(launch, ready.parent, ready.port, prompt))
+      // Codex's prose is kept as plain text (controls and spoofing characters replaced).
+      const parsed = written && written.ok && written.value.ok ? parseCrossAccountNarrative(written.value.text) : null
+      const narrative = parsed ? plainCrossAccountNarrative(parsed) : null
+      if (codexRefused) {
+        run.error = `No written analysis. ${codexRefused.message}`
+      } else if (!written) {
+        run.error = `No written analysis: ${ready && !ready.ok ? ready.message : 'it could not be started.'}`
       } else if (!narrative) {
-        const why = !written.ok ? written.message : !written.value.ok ? written.value.message : 'the written analysis did not return usable output'
+        const why = stripSpoofableText(!written.ok ? written.message : !written.value.ok ? written.value.message : 'the written analysis did not return usable output', 500)
         logError(`[insights] Cross-account synthesis on Codex unusable: ${why}; falling back to a numbers-only roll-up`)
         run.error = !written.ok && written.signedOut
           ? `No written analysis: ${synthesisMember.label} needs to sign in again (${why})`
@@ -1633,14 +1737,38 @@ export async function runCrossAccountInsights(
       : resolveInsightsAccount(undefined).home
     // The synthesis is another Claude Code run: not started once Claude Code
     // has been switched off since the roll-up began (numbers only, and why).
+    // It holds no tools and loads no settings file, memory file or MCP
+    // server, keeps no transcript (buildCrossAccountSpawnArgs,
+    // CROSS_ACCOUNT_SYNTHESIS_ENV), and runs in an empty folder made for it
+    // and removed after, never this app's own folder (ADR-013 section 5).
     const synthesisRefused = providerLaunchRefusal('claude')
-    const result = synthesisRefused ? null : await spawnClaudeHeadless(buildCrossAccountSpawnArgs(), 600000, prompt, home)
+    let result: { code: number; stdout: string; stderr: string } | null = null
+    let noFolder = false
+    if (!synthesisRefused) {
+      const parent = runsParentFor(CLAUDE_SYNTHESIS_FOLDERS)
+      let folder: string | null = null
+      try { folder = parent ? makeRunFolder(parent, CLAUDE_SYNTHESIS_FOLDERS) : null } catch { folder = null }
+      if (!parent || !folder) {
+        noFolder = true
+      } else {
+        try {
+          result = await spawnClaudeHeadless(buildCrossAccountSpawnArgs(), 600000, prompt, home, undefined, {
+            cwd: folder, env: CROSS_ACCOUNT_SYNTHESIS_ENV, transportEnv: synthesisTransportEnv(home),
+          })
+        } finally {
+          removeRunFolder(folder, parent, CLAUDE_SYNTHESIS_FOLDERS)
+        }
+      }
+    }
 
     const usage = result ? describeClaudeUsage(result.stdout) : null
     if (usage) logInfo(`[insights] Cross-account synthesis usage: ${usage}`)
 
     const narrative = result && result.code === 0 ? parseCrossAccountNarrative(result.stdout) : null
-    if (!result) {
+    if (!result && noFolder) {
+      logInfo('[insights] Cross-account synthesis not started (no empty folder); numbers-only roll-up')
+      run.error = 'No written analysis: no empty folder could be made for it.'
+    } else if (!result) {
       // Nothing ran: no exit code or output to report, only the reason.
       logInfo(`[insights] Cross-account synthesis not started (${synthesisRefused!.code}); numbers-only roll-up`)
       run.error = `No written analysis. ${synthesisRefused!.message}`
@@ -1702,14 +1830,56 @@ export function isValidRunId(id: unknown): id is string {
   return typeof id === 'string' && id.length > 0 && id.length <= 128 && RUN_ID_RE.test(id)
 }
 
+/** A Codex run's report.json, as main hands it to the page: a regular file
+ *  (never a link or a folder; on POSIX opened without following one, and
+ *  the open file the same one lstat saw), at most the page's own cap
+ *  (CODEX_REPORT_MAX_BYTES); anything else is no report. Never throws. */
+function readCodexReportFile(file: string): string | null {
+  try {
+    const st = lstatSync(file)
+    if (!st.isFile() || st.size > CODEX_REPORT_MAX_BYTES) return null
+    const fd = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+    try {
+      const open = fstatSync(fd)
+      if (!open.isFile() || open.dev !== st.dev || open.ino !== st.ino) return null
+      // One byte past the cap tells a file that grew since from one that fits.
+      const buf = Buffer.alloc(CODEX_REPORT_MAX_BYTES + 1)
+      let got = 0
+      for (let n = 1; n > 0 && got < buf.length; got += n) n = readSync(fd, buf, got, buf.length - got, got)
+      return got > CODEX_REPORT_MAX_BYTES ? null : buf.subarray(0, got).toString('utf-8')
+    } finally {
+      closeSync(fd)
+    }
+  } catch {
+    return null
+  }
+}
+
+/** The network settings (proxies, certificates: only what the Claude
+ *  package keeps as transport) the written analysis's account sets in its
+ *  settings file, handed to the run as variables, since it loads no
+ *  settings file (as Sentinel's analysis does). None when there is no such
+ *  file, it is too large, or the package cannot say. Never throws. */
+function synthesisTransportEnv(home: string | null): Readonly<Record<string, string>> {
+  try {
+    const pick = tryGetProviderPackage('claude')?.managedLaunch?.transportSettingsEnv
+    if (typeof pick !== 'function') return {}
+    const file = join(home ? join(home, '.claude') : sharedRoot(), 'settings.json')
+    const st = statSync(file)
+    if (!st.isFile() || st.size > 2 * 1024 * 1024) return {}
+    return pick(readFileSync(file, 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
 export function getInsightsReport(runId: string): string | null {
   if (!isValidRunId(runId)) return null
   // P4.7: a Codex run keeps its report as data (report.json), which the page
   // checks and draws as text (shared/insights-codex-report.ts); it never has
   // a report.html, and its report.json is never handed over as one.
   if (loadCatalogue().runs.find((r) => r.id === runId)?.provider === 'codex') {
-    const jsonPath = join(getInsightsDir(), runId, 'report.json')
-    return existsSync(jsonPath) ? readFileSync(jsonPath, 'utf-8') : null
+    return readCodexReportFile(join(getInsightsDir(), runId, 'report.json'))
   }
   const reportPath = join(getInsightsDir(), runId, 'report.html')
   if (!existsSync(reportPath)) return null
