@@ -43,6 +43,8 @@ const sys = vi.hoisted(() => {
     /** Real paths the OS reports (another spelling of a folder -> its long form). */
     /** Real time (ms) before the app observes a child's exit; 0 = next microtask. */
     exitDelayMs: 0,
+    /** Exits under way (ended, not yet observed): a long wait ends only after each is observed. */
+    exitsUnderWay: new Set<Promise<void>>(),
     /** Called when a process ends (a pid can be taken by another process at once). */
     onEnd: null as null | ((pid: number) => void),
     realpaths: new Map<string, string>(),
@@ -65,10 +67,15 @@ const sys = vi.hoisted(() => {
       s.events.push(`end:${pid}`)
       const child = s.children.get(pid)
       if (child && child.exitCode === null && child.signalCode === null) {
+        let observed: () => void = () => {}
+        const underWay = new Promise<void>((resolve) => { observed = resolve })
+        s.exitsUnderWay.add(underWay)
         const observe = () => {
           if (sig) child.signalCode = sig; else child.exitCode = 1
           s.events.push(`exit-observed:${pid}`)
           child.emit('exit', child.exitCode, child.signalCode)
+          s.exitsUnderWay.delete(underWay)
+          observed()
         }
         if (s.exitDelayMs > 0) setTimeout(observe, s.exitDelayMs)
         else queueMicrotask(observe)
@@ -222,7 +229,16 @@ const fakePorts: OwnerPorts = {
     return held ? 'held' : 'free'
   },
   // A long wait (a grace, an exit wait) takes a little real time; a poll none.
-  sleep: async (ms) => { sys.sleeps++; await new Promise((r) => setTimeout(r, ms >= 1000 ? 10 : 0)) },
+  // Every simulated exit is far shorter than a long wait, so a long wait ends
+  // only after each exit under way has been observed: it awaits them, rather
+  // than racing its own timer against theirs (two real timers of different
+  // lengths do not fire in a fixed order once another long wait's timer is
+  // still pending, which made a 3 ms exit lose to a 3 s grace now and then).
+  sleep: async (ms) => {
+    sys.sleeps++
+    if (ms >= 1000) await Promise.all([...sys.exitsUnderWay])
+    await new Promise((r) => setTimeout(r, ms >= 1000 ? 10 : 0))
+  },
   sleepSync: (ms) => { sys.events.push(`sleepSync:${ms}`) },
   // Fixer 3 (F3): no process in the table has the pid.
   pidGone: (pid) => !sys.procs.has(pid),
@@ -271,6 +287,7 @@ describe.each(['win32', 'linux'] as const)('vision browser teardown and launch (
     sys.unkillable.clear()
     sys.realpaths.clear()
     sys.exitDelayMs = 0
+    sys.exitsUnderWay.clear()
     sys.onEnd = null
     sys.runs.length = 0
     sys.signals.length = 0
