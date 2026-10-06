@@ -321,7 +321,14 @@ Per PR:
 - **PR 4.** Phases P4.1 to P4.11 (section 9), including row 15, which OD20 D8
   makes a merge blocker. The SSH live matrix is owed (P4.1 and P4.3 edit
   `pty-manager.ts`; 9.7 gate 5). Questions 5 to 8 were answered on
-  2026-10-04 (section 10).
+  2026-10-04 (section 10). Fix pass 13 (f8f94a2b, c2510849, ba2c7524)
+  answers three review-thread findings on #625 and #628 (15 new tests, 11
+  mutants, 11 killed): a linked legacy record that cannot be stored keeps
+  its account; a session's MCP record lasts one launch, so a revived Ask
+  tab gets its own assistant's tools; the account memory listing gives
+  only paths the memory channels take. Owed for it: its spec and quality
+  reviews, the ADR-009 delta pass (the Conductor MCP server and the memory
+  channel bound) and the SSH live matrix (it changes `pty-manager.ts`).
 
 Package completion is not release completion. A complete PR merges to beta
 only on the owner's word, in the order #625, PR 3, PR 4, and nothing is
