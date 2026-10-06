@@ -129,12 +129,11 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
   const purpose = installPurpose(p)
   const codexReady = useProviderAccountsStore((s) => codexSetUp(s.snapshot))
 
-  // Each new snapshot carries main's count afresh (p.inUse), and after a
-  // refusal main publishes one each time the count moves: the line follows
-  // them and reads no snapshot of its own.
+  // Each new snapshot carries main's count afresh (p.inUse, always set), and
+  // after a refusal main publishes one each time the count moves: the line
+  // follows them and reads no snapshot of its own.
   useEffect(() => {
     const live = p.inUse
-    if (typeof live !== 'number') return
     setInUse((n) => (n === null ? null : live > 0 ? live : null))
   }, [p])
 
