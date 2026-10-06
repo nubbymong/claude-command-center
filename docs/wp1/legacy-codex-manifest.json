@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-06T15:02:32.040Z",
-  "head": "247ce4ca4205d4821f1bb56fd605fe2a5dbbc3c4",
-  "tree": "47548e9a47b4e19dbcec3e1d958f25ae6f2ff82c",
+  "generatedAt": "2026-10-06T16:19:58.739Z",
+  "head": "cb15b06042dcfbeeb0038a04c852955f23f73e61",
+  "tree": "d11c85ede372dad67f13e7941a090a27e1103965",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2805,
+  "trackedFileCount": 2809,
   "excludedFileCount": 403,
-  "scannedFileCount": 2402,
+  "scannedFileCount": 2406,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -395,7 +395,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 60
+      "lineCount": 63
     },
     {
       "path": "scripts/release.js",
@@ -6707,7 +6707,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 50
+      "lineCount": 51
     },
     {
       "path": "tests/unit/sentinel-analysis.test.ts",

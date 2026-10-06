@@ -347,28 +347,45 @@ released from it until section 7 holds.
 5. **Dependabot PRs:** every Dependabot PR open at the cut (today #620 to
    #624) rolled in (owner decision recorded 2026-09-26); #621, the Electron 44
    major, with its own ADR-009 pass and a VM packaging run.
-   *Electron 44 (#621): done in PR 4* (b84d9db3, b9e5d9fb, 1aa0a540,
-   e8317ceb; fix pass 10 is 50972cb7, 7c5d5a31 and 0bfcfb6c). ADR-009 round
-   1, three lenses (clipboard and paths; injection and the certificate rule;
-   updater and platform): FINDINGS, 1 major and minors, all answered in fix
-   pass 10 (26 mutants, 26 killed). Since then a Mac on an earlier version is
-   offered nothing from a release that needs macOS 13 (its download is named
-   `AICodeConductor-<version>-macos13.dmg`, which earlier updaters never
-   match), the release gate refuses a cut whose Electron needs a newer macOS
-   than its tag's floor, an unreadable macOS version counts as the running
-   build's floor, a file copied from `\\localhost\<share>` pastes, a path on
-   the `pipe`, `mailslot` or `IPC$` share is never opened, a copied image
-   that is gone is no image, the install uses the Windows native prebuilds
-   as CI does, and `npm run package` keeps them. The VM packaging run at
-   e8317ceb: the release-shaped package built and verified; native suite
-   under Electron 44 15 of 15 files (226 tests); the NSIS upgrade over the
-   shipped 2.1.1-beta.1 PASS; e2e 94 of 94; the packaged walk 39 parts, 0
-   errors; paste 8 of 9 cases (the ninth fixed in 7c5d5a31); a local
-   `npm ci` and `npm run package` failed (fixed in 0bfcfb6c). Owed: the
-   re-attack of fix pass 10; an intermittent finding under investigation
-   (on 2 of 3 first Codex launches on Electron 44, 0 of 2 on Electron 43,
-   the terminal's colour replies reached Codex's prompt as typed text); the
-   macOS checks (the DMG under its new name with LSMinimumSystemVersion
+   *Electron 44 (#621): built in PR 4; not done while the reviews and the
+   re-attack listed under Owed are outstanding* (b84d9db3, b9e5d9fb,
+   1aa0a540, e8317ceb; fix pass 10 is 50972cb7, 7c5d5a31 and 0bfcfb6c; the
+   colour-reply fix is ad6c7b83; fix pass 11 is f6398389 to cb15b060).
+   ADR-009 round 1, three lenses (clipboard and paths; injection and the
+   certificate rule; updater and platform): FINDINGS, 1 major and minors, all
+   answered in fix pass 10 (26 mutants, 26 killed). Since then a Mac on an
+   earlier version is offered nothing from a release that needs macOS 13
+   (its download is named `AICodeConductor-<version>-macos13.dmg`, which
+   earlier updaters never match), the release gate refuses a cut whose
+   Electron needs a newer macOS than its tag's floor, an unreadable macOS
+   version counts as the running build's floor, a file copied from
+   `\\localhost\<share>` pastes, a path on the `pipe`, `mailslot` or `IPC$`
+   share is never opened, a copied image that is gone is no image, the
+   install uses the Windows native prebuilds as CI does, and
+   `npm run package` keeps them. The Mac download's new name (U1), and the
+   one download by hand it means for a Mac on 2.1.1-beta.1 or earlier, is
+   the default the owner may override; no bridge release is built. The VM
+   packaging run at e8317ceb: the release-shaped package built and
+   verified; native suite under Electron 44 15 of 15 files (226 tests); the
+   NSIS upgrade over the shipped 2.1.1-beta.1 PASS; e2e 94 of 94; the
+   packaged walk 39 parts, 0 errors; paste 8 of 9 cases (the ninth, the
+   `\\localhost` share: fixed in 7c5d5a31, unit-tested, VM-verified at
+   ad6c7b83); a local `npm ci` and `npm run package` (fixed in 0bfcfb6c,
+   unit-tested, VM-verified at ad6c7b83). The VM re-check at ad6c7b83: the
+   `\\localhost\c$` paste copied 146,402 B; the `pipe` share pasted no image
+   with 0 connections to the pipe; a copied image whose file was deleted
+   pasted no image; `npm ci` used the shipped prebuilds with no native
+   rebuild; `npm run package` and `verify:package` PASS. The colour-reply
+   fix (ad6c7b83): main answers a local Codex session's terminal colour
+   query as the PTY emits it (12 mutants, 12 killed); on the VM 20 Codex
+   launches, the composer clean in 20 of 20, main's answer within 3.6 ms.
+   Fix pass 11 answers the fix pass 10 spec review (6 items), its quality
+   review (2 should-fix, 6 nits) and ADR-009 round 2 (the updater lens: 1
+   major and 3 minors; the native and startup lens: PASS, 4 minors): 21 new
+   tests, 29 mutants, 29 killed. Owed: the spec and quality reviews of fix
+   pass 11 and the colour-reply fix; the ADR-009 re-attack over both; the
+   SSH live matrix for the colour-reply fix (it changes `pty-manager.ts`);
+   the macOS checks (the DMG under its new name with LSMinimumSystemVersion
    13.0, Finder file paste, image paste) and the Linux checks (the CI
    matrix, the AppImage on a Rocky Linux host); real keyboard focus in the
    in-app browser and account panes on an interactive desktop.
