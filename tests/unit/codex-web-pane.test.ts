@@ -576,7 +576,7 @@ describe('[host] a load that throws at once is caught and logged by host and cod
 })
 
 describe('[host] a sign-in in the pane whose record cannot be saved is cleared, as the window does', () => {
-  it('a record that cannot be written: the session is cleared, never left live without one', async () => {
+  it('a record that cannot be written: the session is cleared, never left live without one, and the view closes saying why', async () => {
     cleared.length = 0
     writeFails.on = true
     try {
@@ -591,6 +591,11 @@ describe('[host] a sign-in in the pane whose record cannot be saved is cleared, 
       await flush(); await flush(); await flush()
       expect(cleared).toEqual([ACCT])
       expect(logged.some((l) => /could not be written/.test(l))).toBe(true)
+      // Fix pass 9: the view closes with a reason, which the renderer shows
+      // on the start page, rather than dropping to it unexplained.
+      expect(wc.destroyed).toBe(true)
+      const closes = (win.webContents.send as any).mock.calls.filter((c: any[]) => c[0] === 'accountWeb:paneClosed')
+      expect(closes).toEqual([['accountWeb:paneClosed', { sessionId: 'sess-norec', reason: expect.stringMatching(/could not be recorded/) }]])
       closeAccountPane('sess-norec')
     } finally {
       writeFails.on = false

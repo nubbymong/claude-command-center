@@ -440,6 +440,26 @@ describe('[host] at start, a Codex web session with no record is wiped', () => {
   })
 })
 
+describe('[host] a sign-in in the pane whose record cannot be written closes the view saying why (fix pass 9)', () => {
+  it('the pane closes with the reason before the wipe, and the renderer is told once', async () => {
+    const view = await openPane('s1')
+    view.webContents.executeJavaScriptInIsolatedWorld = async () => 'me@example.com'
+    S.flags.writeFails = true
+    S.sent.length = 0
+    S.trail.length = 0
+    S.sessions[PART].jar = [{ name: '__Secure-next-auth.session-token', value: 'x', expirationDate: 4102444800 }]
+    S.sessions[PART].cookies.listeners[0](null, { name: '__Secure-next-auth.session-token' })
+    const end = Date.now() + 5000
+    while (!S.trail.some((t) => t.startsWith('wipe ')) && Date.now() < end) await sleep(5)
+    await sleep(20)
+    expect(view.webContents.destroyed).toBe(true)
+    expect(S.trail.find((t) => t.startsWith('wipe '))).toBe(`wipe ${PART} (open views on it: 0, listeners: 0)`)
+    const closes = S.sent.filter(([ch, p]) => ch === IPC.ACCOUNT_WEB_PANE_CLOSED && (p as { sessionId?: string }).sessionId === 's1')
+    expect(closes).toEqual([[IPC.ACCOUNT_WEB_PANE_CLOSED, { sessionId: 's1', reason: expect.stringMatching(/could not be recorded/) }]])
+    expect(STORE.getCodexWebSession(ACCT)).toBeUndefined()
+  })
+})
+
 describe('[host] sign-out and archive over a store written by a newer build', () => {
   it('sign-out wipes and succeeds, and the archive hook resolves, leaving the newer file as it was', async () => {
     S.disk['codex-web-sessions.json'] = { schemaVersion: 2, sessions: [] }

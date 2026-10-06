@@ -208,6 +208,10 @@ const CLAUDE_PANE: PaneService = {
   stateOf: (sessionId, id, authed, email) => ({ sessionId, profileId: id, authed, email }),
 }
 
+/** What the renderer shows when a chatgpt.com pane closes because the sign-in
+ *  made in it could not be recorded. */
+const RECORD_FAILED_REASON = 'The chatgpt.com sign-in in this view could not be recorded, so the view closed and the sign-in is being cleared. Try again.'
+
 const CODEX_PANE: PaneService = {
   label: CODEX_WEB_SERVICE.label,
   startUrl: CODEX_WEB_SERVICE.startUrl,
@@ -226,6 +230,10 @@ const CODEX_PANE: PaneService = {
   },
   remove: (id) => removeCodexWebSession(id),
   recordFailed: (id) => {
+    // The account's panes close first, each with the reason (the renderer
+    // shows it on the start page); the clear starts in the same tick, so no
+    // pane opens between the two, and its own close then finds none.
+    closeCodexAccountPanes(id, RECORD_FAILED_REASON)
     void clearCodexWebSession(id).catch((err) => {
       logError(`[account-pane] could not clear the unrecorded chatgpt.com session of ${id}: ${(err as Error)?.message ?? err}`)
     })
@@ -823,10 +831,11 @@ export function closeAccountPanesForProfile(profileId: string): void {
 }
 
 /** Close every chatgpt.com account pane for one Codex ACCOUNT - its web
- *  session was cleared (sign-out, archive, an incomplete sign-in). */
-export function closeCodexAccountPanes(accountId: string): void {
+ *  session was cleared (sign-out, archive, an incomplete sign-in, a sign-in
+ *  whose record could not be written). A `reason` goes to the renderer. */
+export function closeCodexAccountPanes(accountId: string, reason?: string): void {
   for (const [sessionId, entry] of [...panes.entries()]) {
-    if (entry.svc === CODEX_PANE && entry.ownerId === accountId) closeAccountPane(sessionId)
+    if (entry.svc === CODEX_PANE && entry.ownerId === accountId) closeAccountPane(sessionId, reason)
   }
 }
 

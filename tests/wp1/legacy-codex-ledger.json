@@ -581,7 +581,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "replace",
-      "evidence": "WP2 PR 4 P4.6 second half (row 58; 10fab972, 1aac6bf8): the pane's account surface also hosts a Codex account's chatgpt.com view on its own partition; signed out it may go off-site only to the listed sign-in hosts (never any https host), signed in off-site goes to the real browser, unknown blocks; a record is made only with a valid email; Claude's claude.ai surface unchanged (WP1.68); tests/unit/codex-web-pane.test.ts, tests/unit/account-web-pane-view.test.ts",
+      "evidence": "WP2 PR 4 P4.6 second half (row 58; 10fab972, 1aac6bf8): the pane's account surface also hosts a Codex account's chatgpt.com view on its own partition; signed out it may go off-site only to the listed sign-in hosts (never any https host), signed in off-site goes to the real browser, unknown blocks; a record is made only with a valid email; Claude's claude.ai surface unchanged (WP1.68); tests/unit/codex-web-pane.test.ts, tests/unit/account-web-pane-view.test.ts; WP2 PR 4 P4.6 fix pass 9 (row 58): a chatgpt.com view closed because the sign-in made in it could not be recorded tells the renderer why, and the renderer shows it on the start page (WP1.68); tests/unit/codex-web-pane.test.ts, tests/unit/codex-web-boundary.test.ts",
       "note": "newly names Codex in WP2 PR 4 P4.6"
     },
     {
@@ -5257,7 +5257,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.6 second half (row 58, round 1 fixes; 1c23d939, 5e2d5a8d) test: the real codexWeb handlers, session, pane and record modules wired as main's start-up wires them: an archive or sign-out closes the account's panes before its partition is wiped, no sign-in or pane starts while a clear runs, a pane opens only for a session holding the account, the shared pane channels act on a Codex pane, and a record that cannot be written or removed is reported (WP1.33); tests/unit/codex-web-boundary.test.ts",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58, round 1 fixes; 1c23d939, 5e2d5a8d) test: the real codexWeb handlers, session, pane and record modules wired as main's start-up wires them: an archive or sign-out closes the account's panes before its partition is wiped, no sign-in or pane starts while a clear runs, a pane opens only for a session holding the account, the shared pane channels act on a Codex pane, and a record that cannot be written or removed is reported (WP1.33); tests/unit/codex-web-boundary.test.ts; WP2 PR 4 P4.6 fix pass 9: a sign-in in the pane whose record cannot be written closes the view with the reason before the wipe, and the renderer is told once (WP1.33); tests/unit/codex-web-boundary.test.ts",
       "note": ""
     },
     {
@@ -5303,7 +5303,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.6 second half (row 58; 10fab972, 1aac6bf8) test: the Codex pane's tri-state navigation (signed out: the listed sign-in hosts only), its partition and hardening, recording only with a valid email, the record store's metadata-only rule, and teardown kept apart from Claude's (WP1.33); tests/unit/codex-web-pane.test.ts",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58; 10fab972, 1aac6bf8) test: the Codex pane's tri-state navigation (signed out: the listed sign-in hosts only), its partition and hardening, recording only with a valid email, the record store's metadata-only rule, and teardown kept apart from Claude's (WP1.33); tests/unit/codex-web-pane.test.ts; WP2 PR 4 P4.6 fix pass 9: a view closed because its record could not be written says why (WP1.33); tests/unit/codex-web-pane.test.ts",
       "note": ""
     },
     {
