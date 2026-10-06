@@ -1,7 +1,9 @@
 // WP2 commit 6 (F4, top): one row per provider the main process knows,
 // with its machine status and the on/off switch. At least one provider
 // always stays on; the main process enforces that and this card says so
-// under the switch that tried. A provider whose CLI was not found, could not
+// under the switch that tried. A switch-off refused because the provider is
+// in use says how much, following the count each snapshot carries until
+// nothing holds it. A provider whose CLI was not found, could not
 // be checked, is too old, or has not been looked for yet gets "Check again"
 // (6e, 6g): a new discovery, which is also the executable later launches and
 // sign-ins run. The same row shows the provider's own install or update
@@ -115,18 +117,41 @@ function InstallCommands({ p, purpose }: { p: ProviderInstallationView; purpose:
   )
 }
 
+/** How often a row that says its provider is in use reads the snapshot
+ *  again, and only while it says so: what runs of a provider without an
+ *  account lease sends no snapshot of its own when it ends. */
+export const IN_USE_RECHECK_MS = 2000
+
 function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean }) {
   const [busy, setBusy] = useState(false)
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // A switch-off refused because something holds the provider: how many, as
+  // main counted at the refusal and then with every snapshot after it. The
+  // line goes once nothing holds the provider.
+  const [inUse, setInUse] = useState<number | null>(null)
   const status = providerStatus(p)
   const purpose = installPurpose(p)
   const codexReady = useProviderAccountsStore((s) => codexSetUp(s.snapshot))
+
+  // Each new snapshot carries main's count afresh (p.inUse): the line follows it.
+  useEffect(() => {
+    const live = p.inUse
+    if (typeof live !== 'number') return
+    setInUse((n) => (n === null ? null : live > 0 ? live : null))
+  }, [p])
+  const showingInUse = inUse !== null
+  useEffect(() => {
+    if (!showingInUse) return
+    const t = setInterval(() => { void useProviderAccountsStore.getState().hydrate() }, IN_USE_RECHECK_MS)
+    return () => clearInterval(t)
+  }, [showingInUse])
 
   // The result arrives with the snapshot main pushes after the check.
   const checkAgain = async () => {
     setChecking(true)
     setError(null)
+    setInUse(null)
     const r = await providerAccountActions.discover(p.providerId)
     setChecking(false)
     if (!r.ok) setError(r.message)
@@ -139,6 +164,7 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
   const toggle = async () => {
     setBusy(true)
     setError(null)
+    setInUse(null)
     // Main first (its refusals stand), then the saved setting (and, for a
     // provider not set up, the answer with it: saveProviderSwitch).
     const r = await providerAccountActions.switchProvider(p.providerId, !on)
@@ -148,9 +174,10 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
     else if (r.code === 'consumers' && typeof r.consumers === 'number' && r.consumers > 0) {
       // Everything holding the provider (sessions, reviews, sign-ins,
       // operations): never called sessions.
-      setError(`${p.displayName} is in use (${r.consumers}).`)
+      setInUse(r.consumers)
     } else setError(r.message)
   }
+  const shown = error ?? (inUse !== null ? `${p.displayName} is in use (${inUse}).` : null)
 
   return (
     <div className={`flex items-start gap-3 ${first ? 'pb-2.5' : 'py-2.5'}`} style={first ? undefined : { borderTop: '1px solid var(--border-subtle)' }} data-testid={`provider-row-${p.providerId}`}>
@@ -196,7 +223,7 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
             disabled={busy}
           />
         </div>
-        {error && <ErrorLine testId={`provider-error-${p.providerId}`}>{error}</ErrorLine>}
+        {shown && <ErrorLine testId={`provider-error-${p.providerId}`}>{shown}</ErrorLine>}
       </div>
     </div>
   )

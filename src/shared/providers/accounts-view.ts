@@ -50,6 +50,10 @@ export interface ProviderInstallationView {
   signInMethods: Readonly<Record<SignInMethod, CapabilityView>>
   status: CapabilityView
   logout: CapabilityView
+  /** How much of the provider runs now: everything holding its accounts and
+   *  what runs of it without an account lease. The count a switch-off is
+   *  refused with, read afresh for every snapshot. */
+  inUse?: number
   /** Present when this provider reviews for the other provider's sessions:
    *  whether a review could be prepared now on the account side, and on
    *  which account. The review switches and the Conductor tools switch

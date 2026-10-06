@@ -636,6 +636,7 @@ export class AccountsService {
       signInMethods: { browser: cap('auth.browser'), device: cap('auth.device'), apiKey: cap('auth.apiKey') },
       status: cap('auth.status'),
       logout: cap('auth.logout'),
+      inUse: this.providerInUse(p.id),
     }
     if (d?.version !== undefined) view.version = d.version
     if (d?.checkedAt !== undefined) view.lastCheckedAt = d.checkedAt
@@ -854,9 +855,7 @@ export class AccountsService {
         this.enabledOverride.set(providerId, { enabled: true, savedAtSet: this.savedPreference(providerId).pref })
         return { ok: true }
       }
-      let unleased = 0
-      try { unleased = this.deps.unleasedSessions?.(providerId) ?? 0 } catch { unleased = 1 }
-      const running = this.deps.leases.countForProvider(providerId) + (Number.isSafeInteger(unleased) && unleased > 0 ? unleased : 0)
+      const running = this.providerInUse(providerId)
       if (running > 0) return failure('consumers', undefined, { consumers: running })
       // Another provider that can launch: on, not merely "not off". One the
       // user has not answered for launches nothing (launchRefusal), so it
@@ -874,6 +873,16 @@ export class AccountsService {
     if (r.ok && !enabled) this.stopChecks(providerId)
     if (r.ok) this.changed()
     return r
+  }
+
+  /** How much of a provider runs now: everything holding its accounts and
+   *  what runs of it without an account lease (a count that cannot be read
+   *  counts as one). The one count a switch-off is refused with and the
+   *  snapshot shows, so Settings never shows another. */
+  private providerInUse(providerId: ProviderId): number {
+    let unleased = 0
+    try { unleased = this.deps.unleasedSessions?.(providerId) ?? 0 } catch { unleased = 1 }
+    return this.deps.leases.countForProvider(providerId) + (Number.isSafeInteger(unleased) && unleased > 0 ? unleased : 0)
   }
 
   /** What to show and copy, and, only for a recipe main allows to run, the

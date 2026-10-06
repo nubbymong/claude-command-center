@@ -167,3 +167,27 @@ describe('Codex Insights reports, for the switch-off rule (P4.7)', () => {
     expect(providerUseWithoutLease('codex')).toBe(1)
   })
 })
+
+// [host] WP2 PR 4, P4.7 fix pass 3: Settings, Accounts shows how much of a
+// provider is in use from the count each snapshot carries, the same count a
+// switch-off is refused with, so its in-use line follows that count as it
+// changes, for Claude Code and Codex alike.
+describe('the in-use count each snapshot carries', () => {
+  it('each provider carries the count a switch-off is refused with, read afresh for every snapshot [host]', async () => {
+    const svc = service()
+    const inUse = (id: string) => svc.snapshot().providers.find((p) => p.providerId === id)?.inUse
+    n.codexInsights = 1
+    expect(await svc.setProviderEnabled('codex', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+    expect(inUse('codex')).toBe(1)
+    expect(inUse('claude')).toBe(0)
+    n.codexInsights = 0
+    expect(inUse('codex')).toBe(0)
+    n.sessions.claude = 2
+    n.insights = 1
+    expect(inUse('claude')).toBe(3)
+    expect(await svc.setProviderEnabled('claude', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 3 })
+    // A counter that cannot answer counts as one here too.
+    n.throws = true
+    expect(inUse('claude')).toBe(4)
+  })
+})

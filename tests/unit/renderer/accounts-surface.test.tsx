@@ -6,7 +6,8 @@
  *
  * Verifies:
  *   - the Providers card: real marks, the Beta pill only for a beta descriptor, the status line,
- *     the last-provider refusal and the in-use count under the switch;
+ *     the last-provider refusal and the in-use count under the switch, which
+ *     follows the count each snapshot carries;
  *   - Codex rows: labels (the external home named by its label, never by an
  *     identity name), badges, and the "..." menu for each account state,
  *     hiding what the registry always refuses; the menu is portalled and
@@ -105,6 +106,7 @@ const pa = {
 }
 
 const { AccountsSurface } = await import('../../../src/renderer/components/settings/accounts/AccountsSurface')
+const { IN_USE_RECHECK_MS } = await import('../../../src/renderer/components/settings/accounts/ProvidersCard')
 
 // ---------------------------------------------------------------------------
 // Fixture
@@ -355,6 +357,62 @@ describe('Providers card', () => {
     await act(async () => { (q('provider-row-codex')!.querySelector('[role="switch"]') as HTMLElement).click() })
     await flush()
     expect(q('provider-error-codex')?.textContent).toBe('Codex is in use (3).')
+  })
+
+  // [host] P4.7 fix pass 3: the line follows the count main publishes with
+  // each snapshot, on Claude Code's row and Codex's alike.
+  const inUseSnapshot = (revision: number, claude: number, codex: number) => snapshot({
+    revision,
+    providers: [
+      provider({ providerId: 'claude', displayName: 'Claude Code', version: '2.1.281', inUse: claude }),
+      provider({ providerId: 'codex', displayName: 'Codex', version: '0.155.1', inUse: codex }),
+    ],
+  })
+  async function refuseBothSwitches(): Promise<void> {
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'consumers', consumers: 1, message: 'Sessions or operations are using this account.' } as never)
+    for (const id of ['codex', 'claude']) {
+      await act(async () => { (q(`provider-row-${id}`)!.querySelector('[role="switch"]') as HTMLElement).click() })
+      await flush()
+    }
+    expect(q('provider-error-codex')?.textContent).toBe('Codex is in use (1).')
+    expect(q('provider-error-claude')?.textContent).toBe('Claude Code is in use (1).')
+  }
+
+  it('the in-use line follows the count each new snapshot carries, and goes once nothing holds the provider [host]', async () => {
+    // The snapshot from before the refusal carries no count yet.
+    render(snapshot())
+    await refuseBothSwitches()
+    act(() => { useProviderAccountsStore.getState().receive(inUseSnapshot(2, 1, 2)) })
+    expect(q('provider-error-codex')?.textContent).toBe('Codex is in use (2).')
+    expect(q('provider-error-claude')?.textContent).toBe('Claude Code is in use (1).')
+    act(() => { useProviderAccountsStore.getState().receive(inUseSnapshot(3, 1, 0)) })
+    expect(q('provider-error-codex')).toBeNull()
+    expect(q('provider-switch-text-codex')?.textContent).toBe('On')
+    expect(q('provider-error-claude')?.textContent).toBe('Claude Code is in use (1).')
+    act(() => { useProviderAccountsStore.getState().receive(inUseSnapshot(4, 0, 0)) })
+    expect(q('provider-error-claude')).toBeNull()
+  })
+
+  it('while the line shows, the row reads the snapshot again (a run that holds no lease sends none), and stops once it goes [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      // The last snapshot already said 0: only a fresh read can tell the line it is over.
+      render(inUseSnapshot(1, 0, 0))
+      await refuseBothSwitches()
+      expect(pa.snapshot).not.toHaveBeenCalled()
+      pa.snapshot.mockResolvedValue(inUseSnapshot(2, 0, 0) as never)
+      await act(async () => { vi.advanceTimersByTime(IN_USE_RECHECK_MS) })
+      await flush()
+      expect(pa.snapshot).toHaveBeenCalled()
+      expect(q('provider-error-codex')).toBeNull()
+      expect(q('provider-error-claude')).toBeNull()
+      pa.snapshot.mockClear()
+      await act(async () => { vi.advanceTimersByTime(IN_USE_RECHECK_MS * 3) })
+      await flush()
+      expect(pa.snapshot).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('says the change was not saved when the settings save does not land (it resolves false; it does not throw)', async () => {
