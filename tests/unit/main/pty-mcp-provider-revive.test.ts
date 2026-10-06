@@ -192,4 +192,27 @@ describe('the MCP record follows each launch of a session id', () => {
     expect(mcp.mcpSessionProvider(OTHER)).toBe('codex')
     expect(mcp.mcpSessionProvider(ASK)).toBeNull()
   })
+
+  // The replaced process's exit arrives after the next launch issued its own record: only the
+  // session's current process ends the session (the exit handler's weAreCurrent guard), so the
+  // late exit leaves the new launch's record alone.
+  it('Codex, then Claude: the replaced Codex process exits late, and the Claude record stands', () => {
+    const ASK = fresh()
+    asCodex(ASK)
+    const replaced = h.spawned[h.spawned.length - 1]
+    asClaude(ASK)
+    expect(mcp.mcpSessionProvider(ASK)).toBe('claude')
+    for (const cb of [...replaced.exit]) cb({ exitCode: 0 })
+    expect(mcp.mcpSessionProvider(ASK)).toBe('claude')
+  })
+
+  it('Claude, then Codex: the replaced Claude process exits late, and the Codex record stands', () => {
+    const ASK = fresh()
+    asClaude(ASK)
+    const replaced = h.spawned[h.spawned.length - 1]
+    asCodex(ASK)
+    expect(mcp.mcpSessionProvider(ASK)).toBe('codex')
+    for (const cb of [...replaced.exit]) cb({ exitCode: 0 })
+    expect(mcp.mcpSessionProvider(ASK)).toBe('codex')
+  })
 })
