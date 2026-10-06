@@ -33,7 +33,7 @@ vi.mock('../../../src/main/memory-scanner', async (importOriginal) => {
 })
 
 const { registerMemoryHandlers } = await import('../../../src/main/ipc/memory-handlers')
-const { ACCOUNT_MEMORY_DELETE_SHOWN, MEMORY_PATH_MAX } = await import('../../../src/shared/account-memories')
+const { ACCOUNT_MEMORY_DELETE_SHOWN, MEMORY_PATH_MAX, memoryPathWithinBound } = await import('../../../src/shared/account-memories')
 
 const HOME = 'C:\\Users\\me\\res\\codex-realms\\r1'
 const MEM = `${HOME}\\memories`
@@ -116,6 +116,69 @@ describe('memory:scan', () => {
     await expect(call('memory:read', overBound)).rejects.toThrow(/Invalid parameters/)
   })
 })
+
+// The listing and the channels apply one check (memoryPathWithinBound) to the same string, so they
+// count the same unit: UTF-16 code units, where a character outside the Basic Multilingual Plane
+// (an emoji) counts as two. A path past the bound is refused by both, even one whose count of
+// code points is under it.
+const EMOJI = String.fromCodePoint(0x1f600)
+const codePoints = (s: string) => [...s].length
+
+describe('memoryPathWithinBound: the one check both sides use', () => {
+  it('counts UTF-16 code units: at the bound it holds, one unit past it does not, whatever the code point count', () => {
+    expect(memoryPathWithinBound('a'.repeat(MEMORY_PATH_MAX))).toBe(true)
+    expect(memoryPathWithinBound('a'.repeat(MEMORY_PATH_MAX + 1))).toBe(false)
+    const over = 'x' + EMOJI.repeat(MEMORY_PATH_MAX / 2)
+    expect([over.length, codePoints(over)]).toEqual([MEMORY_PATH_MAX + 1, MEMORY_PATH_MAX / 2 + 1])
+    expect(memoryPathWithinBound(over)).toBe(false)
+    expect(memoryPathWithinBound(EMOJI.repeat(MEMORY_PATH_MAX / 2))).toBe(true)
+  })
+})
+
+for (const platform of ['win32', 'linux'] as const) {
+  describe(`${platform}: a path with characters outside the BMP is listed and taken by the same bound`, () => {
+    const p = platform === 'win32' ? path.win32 : path.posix
+    const home = platform === 'win32' ? 'C:\\Users\\me\\res\\codex-realms\\r1' : '/home/me/res/codex-realms/r1'
+    const mem = p.join(home, 'memories')
+    const set = { providerId: 'codex' as const, accountId: 'acct-1', external: false, logDir: p.join(home, 'log'), memoriesDir: mem, configFile: p.join(home, 'config.toml') }
+    const dir = p.join(mem, ...['a', 'b', 'c', 'd'].map((c) => c.repeat(200)))
+    const room = MEMORY_PATH_MAX - dir.length - 1 - 3 // a separator and '.md'
+    const fill = (n: number) => (n % 2 ? 'x' : '') + EMOJI.repeat(Math.floor(n / 2))
+    const atBound = p.join(dir, fill(room) + '.md')
+    const overBound = p.join(dir, fill(room + 1) + '.md')
+
+    beforeEach(() => {
+      fake = createFakeAccountFs(platform)
+      fake.mkdir(mem)
+      fake.writeFile(atBound, '# at the bound')
+      fake.writeFile(overBound, '# one unit past it')
+      handlers.clear()
+      registerMemoryHandlers({ getWindow: () => win as never, accountFolders: (async () => [set]) as never, accountFs: fake as never, platform })
+    })
+
+    it('the paths are what they claim: one at the bound, one a unit past it with fewer code points than the bound', () => {
+      expect([atBound.length, overBound.length]).toEqual([MEMORY_PATH_MAX, MEMORY_PATH_MAX + 1])
+      expect(codePoints(overBound)).toBeLessThan(MEMORY_PATH_MAX)
+    })
+
+    it('at the bound: listed, and memory:read opens it', async () => {
+      const r = await call('memory:scan') as { accountMemories: Array<{ truncated: boolean; files: Array<{ path: string }> }> }
+      const listed = r.accountMemories[0].files.map((f) => f.path)
+      expect(listed).toContain(atBound)
+      expect(listed.every((l) => memoryPathWithinBound(l))).toBe(true)
+      expect(await call('memory:read', atBound)).toContain('# at the bound')
+    })
+
+    it('one unit past it: not listed (the account reads as listed in part), and every memory channel refuses it', async () => {
+      const r = await call('memory:scan') as { accountMemories: Array<{ truncated: boolean; files: Array<{ path: string }> }> }
+      expect(r.accountMemories[0].files.map((f) => f.path)).not.toContain(overBound)
+      expect(r.accountMemories[0].truncated).toBe(true)
+      await expect(call('memory:read', overBound)).rejects.toThrow(/Invalid parameters/)
+      await expect(call('memory:delete', overBound)).rejects.toThrow(/Invalid parameters/)
+      await expect(call('memory:writeFrontmatter', overBound, {})).rejects.toThrow(/Invalid parameters/)
+    })
+  })
+}
 
 describe('memory:read and memory:delete on an account memory path', () => {
   it('reads a listed file through the account guard', async () => {

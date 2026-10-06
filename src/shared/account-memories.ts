@@ -57,11 +57,19 @@ export interface MemoryScanWithAccounts extends MemoryScanResult {
  *  refuses an account path while it is false. */
 export const ACCOUNT_MEMORY_DELETE_SHOWN: boolean = false
 
-/** The longest path, in UTF-16 code units, the memory channels take
- *  (memory:read, memory:delete, memory:writeFrontmatter). The account listing
- *  leaves out a file whose path is longer, so every path it gives the page is
- *  one those channels accept. */
+/** The longest path the memory channels take (memory:read, memory:delete,
+ *  memory:writeFrontmatter), counted in UTF-16 code units (a JavaScript
+ *  string's length: a character outside the Basic Multilingual Plane, such as
+ *  an emoji, counts as two). Both sides apply it through memoryPathWithinBound:
+ *  the channels refuse a longer path, and the account listing leaves one out,
+ *  so every path the listing gives the page is one the channels accept. */
 export const MEMORY_PATH_MAX = 1000
+
+/** The one check the memory channels and the account listing share: the path
+ *  is no longer than MEMORY_PATH_MAX UTF-16 code units. */
+export function memoryPathWithinBound(path: string): boolean {
+  return typeof path === 'string' && path.length <= MEMORY_PATH_MAX
+}
 
 /** True for a memory that belongs to an account's own folder. */
 export function isAccountMemoryFile(m: MemoryFile): m is AccountMemoryFile {

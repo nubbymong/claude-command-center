@@ -7,14 +7,16 @@ import { scanLocalMemory, readMemoryContent, deleteMemoryFile, writeMemoryFrontm
 import { AccountPathRefused, validateMemoryPath } from '../utils/path-validator'
 import { getLogSupervisor } from '../logging/logging-service'
 import { IPC } from '../../shared/ipc-channels'
-import { ACCOUNT_MEMORY_DELETE_SHOWN, MEMORY_PATH_MAX } from '../../shared/account-memories'
+import { ACCOUNT_MEMORY_DELETE_SHOWN, MEMORY_PATH_MAX, memoryPathWithinBound } from '../../shared/account-memories'
 import type { MemoryScanWithAccounts } from '../../shared/account-memories'
 import { appWindowSender } from './trusted-sender'
 import { realAccountFileFs } from '../account-folders'
 import type { AccountFileFs, AccountFolderSet, AccountFoldersSource } from '../account-folders'
 import { deleteAccountMemory, isUnderAccountMemories, readAccountMemory, scanAccountMemories } from '../account-memories'
 
-const filePathSchema = z.string().min(1).max(MEMORY_PATH_MAX)
+// The bound is the one the account listing applies (memoryPathWithinBound), in the same unit;
+// zod's own .max counts code points, so it is not used here.
+const filePathSchema = z.string().min(1).refine(memoryPathWithinBound, { message: `longer than ${MEMORY_PATH_MAX} UTF-16 code units` })
 const frontmatterSchema = z.object({
   name: z.string().optional(),
   description: z.string().optional(),
