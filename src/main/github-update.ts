@@ -364,18 +364,6 @@ export function macosMajorAtLeast(systemVersion: string | null | undefined, runn
   return Math.max(osMajorVersion(systemVersion) ?? 0, runningFloor)
 }
 
-/**
- * Can this machine run the release `tag`? Off macOS, yes: no floor applies. On
- * macOS, when its major version (macosMajorAtLeast) is at or above the tag's
- * floor. A macOS version that cannot be read counts as the running build's own
- * floor, and on a build with none as below every floor: a release with a floor
- * above it is not offered, one without a floor still is.
- */
-export function releaseRunsOnThisOs(tag: string, platform: NodeJS.Platform, systemVersion: string | null | undefined, runningFloor = 0): boolean {
-  if (platform !== 'darwin') return true
-  const floor = macosFloorForTag(tag)
-  return floor === 0 || macosMajorAtLeast(systemVersion, runningFloor) >= floor
-}
 
 /**
  * Installer names. Every Windows and Linux installer, and every Mac download
@@ -414,6 +402,21 @@ export function macInstallers<A extends { name: string }>(assets: ReadonlyArray<
 function macReleaseFloor(assets: ReadonlyArray<{ name: string }> | undefined, tag: string): number {
   const dmgs = macInstallers(assets, tag)
   return dmgs.length ? Math.min(...dmgs.map((d) => d.floor)) : macosFloorForTag(tag)
+}
+
+/**
+ * Can this machine open the release `tag`, whose downloads are `assets`? Off
+ * macOS, yes: no floor applies. On macOS, when its major version
+ * (macosMajorAtLeast) is at or above the release's floor (macReleaseFloor: the
+ * floor of the Mac downloads this updater accepts, or the tag's when it has
+ * none). A macOS version that cannot be read counts as the running build's
+ * own floor, and on a build with none as below every floor: a release with a
+ * floor above it is not offered, one without a floor still is. This is the
+ * one place checkGitHubRelease asks.
+ */
+export function releaseRunsOnThisOs(tag: string, platform: NodeJS.Platform, systemVersion: string | null | undefined, runningFloor = 0, assets?: ReadonlyArray<{ name: string }>): boolean {
+  if (platform !== 'darwin') return true
+  return macReleaseFloor(assets, tag) <= macosMajorAtLeast(systemVersion, runningFloor)
 }
 
 /** The running OS version (Electron's process.getSystemVersion), or null. */
@@ -649,7 +652,8 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
   // On a Mac: the macOS this Mac runs, never less than the floor of the build
   // that is running (macosMajorAtLeast), so an unreadable version does not stop
   // updates that build's own macOS can open.
-  const macMajor = platform === 'darwin' ? macosMajorAtLeast(systemVersion, macosFloorForTag(`v${currentVersion}`)) : 0
+  const runningFloor = macosFloorForTag(`v${currentVersion}`)
+  const macMajor = platform === 'darwin' ? macosMajorAtLeast(systemVersion, runningFloor) : 0
 
   for (const rel of releases) {
     if (rel.draft) continue
@@ -664,13 +668,11 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
     if (compareTagToCurrentVersion(tag, currentVersion) <= 0) continue
 
     // Never a release this Mac's macOS is too old to open: its tag's floor
-    // (MACOS_RELEASE_FLOORS) or the floor its Mac download's name declares.
-    if (platform === 'darwin') {
-      const floor = macReleaseFloor(rel.assets, tag)
-      if (floor > macMajor) {
-        logInfo(`[github-update] Skipping ${tag}: it needs macOS ${floor} or later (this Mac: ${systemVersion ?? 'unknown'}, taken as ${macMajor})`)
-        continue
-      }
+    // (MACOS_RELEASE_FLOORS) or the floor its Mac download's name declares
+    // (releaseRunsOnThisOs decides).
+    if (!releaseRunsOnThisOs(tag, platform, systemVersion, runningFloor, rel.assets)) {
+      logInfo(`[github-update] Skipping ${tag}: it needs macOS ${macReleaseFloor(rel.assets, tag)} or later (this Mac: ${systemVersion ?? 'unknown'}, taken as ${macMajor})`)
+      continue
     }
 
     if (!best || compareTags(tag, best.tag) > 0) {

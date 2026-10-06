@@ -67,12 +67,17 @@ vi.mock('../../../src/main/pty-manager', () => ({ killAllPty: vi.fn() }))
 import { registerUpdateHandlers } from '../../../src/main/ipc/update-handlers'
 
 const realPlatform = process.platform
+const realArch = process.arch
+const PKG = s.pkg
 beforeEach(() => {
   Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-  handlers.clear(); s.present.clear(); s.copies.length = 0; s.opened.length = 0
+  handlers.clear(); s.present.clear(); s.copies.length = 0; s.opened.length = 0; s.pkg = PKG
   registerUpdateHandlers()
 })
-afterEach(() => { Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true }) })
+afterEach(() => {
+  Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true })
+  Object.defineProperty(process, 'arch', { value: realArch, configurable: true })
+})
 
 const install = () => Promise.resolve(handlers.get('update:installAndRestart')!())
 
@@ -83,6 +88,22 @@ describe('the dev-only local installer on a Mac', () => {
     await expect(install()).resolves.toBe(true)
     expect(s.copies).toEqual([[built, path.join('/stage', 'AICodeConductor-2.1.1-beta.2-macos13.dmg')]])
     expect(s.opened).toEqual([{ cmd: 'open', args: [path.join('/stage', 'AICodeConductor-2.1.1-beta.2-macos13.dmg')] }])
+  })
+
+  it('a template naming ${arch} is expanded with this Mac\'s architecture, as electron-builder names the build', async () => {
+    s.pkg = { version: '2.1.1-beta.2', build: { mac: { artifactName: 'AICodeConductor-${version}-macos13-${arch}.${ext}' } } }
+    Object.defineProperty(process, 'arch', { value: 'arm64', configurable: true })
+    const built = path.join('/proj', 'dist', 'AICodeConductor-2.1.1-beta.2-macos13-arm64.dmg')
+    s.present.add(built)
+    await expect(install()).resolves.toBe(true)
+    expect(s.copies).toEqual([[built, path.join('/stage', 'AICodeConductor-2.1.1-beta.2-macos13-arm64.dmg')]])
+  })
+
+  it('a template that does not expand to a plain file name is not looked for', async () => {
+    s.pkg = { version: '2.1.1-beta.2', build: { mac: { artifactName: '${productName}-${version}.${ext}' } } }
+    s.present.add(path.join('/proj', 'dist', '${productName}-2.1.1-beta.2.dmg'))
+    await expect(install()).rejects.toThrow(/Installer not found/)
+    expect(s.copies).toEqual([])
   })
 
   it('a dist/ built under the earlier name is still found', async () => {

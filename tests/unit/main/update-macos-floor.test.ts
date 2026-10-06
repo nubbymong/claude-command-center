@@ -17,6 +17,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { shippedUpdateCheck } from '../../fixtures/updater/shipped-update-check'
 import { macosFloorForTag as gateMacosFloorForTag } from '../../../scripts/release-gate.mjs'
+import { expandArtifactName } from '../../../src/main/artifact-name'
 
 const h = vi.hoisted(() => ({ releases: [] as unknown[], channel: 'beta', running: '2.1.0' }))
 
@@ -47,10 +48,11 @@ const floorsFile = JSON.parse(fs.readFileSync(path.join(ROOT, 'resources/macos-r
   floors: Array<{ fromTag: string; electronMajor: number; macosMajor: number }>
 }
 
-/** The Mac download name electron-builder makes for `version` from package.json build.mac.artifactName. */
+/** The Mac download name electron-builder makes for `version` from package.json build.mac.artifactName (the app's own rule). */
 function builtMacName(version: string): string {
-  return String(pkg.build.mac.artifactName)
-    .replace(/\$\{version\}/g, version).replace(/\$\{ext\}/g, 'dmg').replace(/\$\{arch\}/g, 'arm64')
+  const name = expandArtifactName(String(pkg.build.mac.artifactName), { version, ext: 'dmg', arch: 'arm64' })
+  if (!name) throw new Error('package.json build.mac.artifactName does not expand to a plain file name')
+  return name
 }
 /** The Mac download name 2.1.0 to 2.1.1-beta.1 shipped under. */
 const legacyMacName = (version: string) => `AI-Code-Conductor-${version}-mac.dmg`
@@ -148,6 +150,25 @@ describe('the macOS floor of each release', () => {
     }
   })
 
+  it('releaseRunsOnThisOs takes the floor a Mac download\'s name declares, the one decision checkGitHubRelease makes', async () => {
+    const u = await updaterOn(realPlatform, undefined)
+    const on14 = [{ name: 'AICodeConductor-2.2.0-beta.1-macos14.dmg' }]
+    expect(u.releaseRunsOnThisOs('v2.2.0-beta.1', 'darwin', '13.6', 0, on14)).toBe(false)
+    expect(u.releaseRunsOnThisOs('v2.2.0-beta.1', 'darwin', '14.1', 0, on14)).toBe(true)
+    expect(u.releaseRunsOnThisOs('v2.2.0-beta.1', 'darwin', null, 13, on14)).toBe(false)
+    for (const p of ['win32', 'linux'] as const) expect(u.releaseRunsOnThisOs('v2.2.0-beta.1', p, '13.6', 0, on14), p).toBe(true)
+    // With no downloads named, the tag's own floor decides.
+    expect(u.releaseRunsOnThisOs('v2.2.0-beta.1', 'darwin', '13.6')).toBe(true)
+  })
+
+  it('a Mac download named for an earlier macOS than its tag\'s floor still needs the tag\'s floor', async () => {
+    const u = await updaterOn(realPlatform, undefined)
+    const low = [{ name: 'AICodeConductor-2.1.1-beta.2-macos12.dmg' }]
+    expect(u.macInstallers(low, 'v2.1.1-beta.2').map((d) => d.floor)).toEqual([13])
+    expect(u.releaseRunsOnThisOs('v2.1.1-beta.2', 'darwin', '12.7.4', 0, low)).toBe(false)
+    expect(u.releaseRunsOnThisOs('v2.1.1-beta.2', 'darwin', '13.0', 0, low)).toBe(true)
+  })
+
   it('the floor of the build that is running is a lower bound: macOS opened it, so the Mac is at least that', async () => {
     const u = await updaterOn(realPlatform, undefined)
     for (const unknown of [null, undefined, '', 'Darwin']) {
@@ -233,6 +254,14 @@ describe('checkGitHubRelease never offers a Mac a release it cannot open', () =>
     expect(r?.installerName).toBe('AICodeConductor-2.2.0-beta.1-macos14.dmg')
   })
 
+  it('macOS 12: a release that needs macOS 13 is not offered under a download named for macOS 12; the newest release it can run is', async () => {
+    h.releases = [release('v2.1.1-beta.1', 'legacy'), release('v2.1.1-beta.2', { name: 'AICodeConductor-2.1.1-beta.2-macos12.dmg' })]
+    const u = await updaterOn('darwin', '12.7.4')
+    const r = await u.checkGitHubRelease()
+    expect(r?.tagName).toBe('v2.1.1-beta.1')
+    expect(r?.installerName).toBe('AI-Code-Conductor-2.1.1-beta.1-mac.dmg')
+  })
+
   it('a release carrying both kinds of Mac download gives each Mac the newest build it can open', async () => {
     // e.g. an earlier release re-published with a floored build beside its old one
     const both = release('v2.1.1-beta.1', 'legacy')
@@ -277,15 +306,17 @@ describe('the packaged app declares the floor the updater applies', () => {
     expect(pkg.build?.mac?.minimumSystemVersion).toBe(`${newest}.0`)
   })
 
-  it('the Feature Guide and the release notes tell a Mac on an earlier version what to do, and no longer say it will be offered this release', () => {
+  it('the Feature Guide, the release notes and the README tell a Mac on an earlier version what to do, and no longer say it will be offered this release', () => {
     const knowledge = fs.readFileSync(path.join(ROOT, 'src/shared/app-knowledge.ts'), 'utf8')
     const changelog = fs.readFileSync(path.join(ROOT, 'src/renderer/changelog.ts'), 'utf8')
+    const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8')
     expect(knowledge).not.toMatch(/can still offer this update/)
-    for (const text of [knowledge, changelog]) {
+    for (const text of [knowledge, changelog, readme]) {
       expect(text).toMatch(/On macOS 12, stay on 2\.1\.1-beta\.1\./)
       expect(text).toMatch(/On macOS 13 or later, download .{1,40}\.dmg from the Releases page on GitHub once by hand/)
-      expect(text).toMatch(/ending in macos13\.dmg/)
     }
+    for (const text of [knowledge, changelog]) expect(text).toMatch(/ending in macos13\.dmg/)
+    expect(readme).toMatch(/AICodeConductor-x\.y\.z-macos13\.dmg/)
     expect(builtMacName('2.1.1-beta.2').endsWith('macos13.dmg')).toBe(true)
   })
 

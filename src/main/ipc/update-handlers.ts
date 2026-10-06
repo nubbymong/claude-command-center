@@ -5,6 +5,7 @@ import * as fs from 'fs'
 import { checkForUpdatesOnDemand, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath, isPackagedApp, isStoreBuild } from '../update-watcher'
 import { checkGitHubRelease, downloadGitHubRelease, prepareLinuxAppImageUpdate, isPathOnNoexecMount, InstallerIntegrityError, stillMatchesDigest, createInstallerDir } from '../github-update'
 import { killAllPty } from '../pty-manager'
+import { expandArtifactName } from '../artifact-name'
 import { logInfo, logError } from '../debug-logger'
 
 // Cache the latest release info from GitHub so installAndRestart can use it without a re-check
@@ -169,7 +170,8 @@ export function registerUpdateHandlers(): void {
     // 3. Dev-only fallback: look for a locally-built installer in the source folder.
     // Mirrors electron-builder's `artifactName` (package.json build.*):
     //   Windows: AI-Code-Conductor-${version}.exe
-    //   macOS:   build.mac.artifactName read from package.json
+    //   macOS:   build.mac.artifactName read from package.json and expanded
+    //            as electron-builder does (expandArtifactName, this Mac's arch)
     //            (AICodeConductor-${version}-macosNN.dmg), then the earlier
     //            AI-Code-Conductor-${version}-mac.dmg
     // Checks both a `-latest` convenience file and the versioned file, in both
@@ -194,9 +196,9 @@ export function registerUpdateHandlers(): void {
           const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf-8'))
           const macTemplate: unknown = pkg?.build?.mac?.artifactName
           const macName = isMac && typeof macTemplate === 'string'
-            ? macTemplate.replace(/\$\{version\}/g, String(pkg.version)).replace(/\$\{ext\}/g, 'dmg')
+            ? expandArtifactName(macTemplate, { version: String(pkg.version), ext: 'dmg', arch: process.arch })
             : null
-          if (macName && !/[\\/]/.test(macName)) {
+          if (macName) {
             candidates.push(path.join(projectRoot, macName), path.join(projectRoot, 'dist', macName))
           }
           for (const brand of brands) {
