@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-06T05:46:11.311Z",
-  "head": "6f9cbd4f6b0ccbb843c3209ba728ef149b427055",
-  "tree": "a1b1f6e567f8153a5f8a02283bddff91c2937419",
+  "generatedAt": "2026-10-06T07:09:14.375Z",
+  "head": "cc6f2ac166a6a5625a24e2abc0387b6502d9ab59",
+  "tree": "846623323cabe43f94ab8a09eed043d4e433da2e",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -4429,7 +4429,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 58
+      "lineCount": 62
     },
     {
       "path": "tests/unit/main/insights-codex-links.test.ts",
@@ -4454,7 +4454,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 91
+      "lineCount": 99
     },
     {
       "path": "tests/unit/main/insights-codex-run.test.ts",
@@ -4463,7 +4463,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 114
+      "lineCount": 119
     },
     {
       "path": "tests/unit/main/insights-run-handler.test.ts",
@@ -4529,7 +4529,7 @@
         "P10",
         "P13"
       ],
-      "lineCount": 67
+      "lineCount": 69
     },
     {
       "path": "tests/unit/main/provider-launch-gate.test.ts",

@@ -200,7 +200,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 65 | GitHub session context | DONE (P3.12, d86fd80f and its fixes; mocked; VM at ff7be273 (WINDOWS_1, real Codex 0.155.1 and 0.153.4), and its re-check with the fixes: a Codex session's commands and edited files, nothing before its first turn, the heading naming Codex, PASS): a Codex session reads the rollout its watcher holds, checked again inside its realm, with Claude's bounded tail, for the unchanged reference scanner and file-signal inspector (`src/main/github/session/codex-rollout-loader.ts`), read only from the realm's real day folder (a path check: see P3.12's limits); both assistants: a recent file shown as plain text, relative to the session's folder when inside it, once per file, under a heading that names the session's assistant; after Switch Account the earlier account's rollout is not read | Parity: read the session's realm rollouts | verification: done, the VM re-checks of P3.12's fixes (P3.12's record); ADR-009: done, PR 3's PR-level pass (P3.16), PASS at 525a00ac, which covers P3.12 (quarantined after its own bounded rounds); owed: the owner's screenshot review; the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused) | 3 |
 | 66 | Packaged smoke | PARTIAL: Windows only, an unsigned candidate on a used VM | OD20 D8; WP1.63 | verification (release level; owner hosts) | 4 |
 | 67 | E2E mode matrix | DONE (P4.9, 7f15e2ec, d31d4940, b26079e9; VERIFIED): every cell of WP1.60's matrix has its e2e spec; on the Windows test VM the 26 specs passed 94 of 94, twice at 69c98042 (runs e2e-69c98042 and e2e-69c98042-run2), at f73f1785 (run e2e-f73f1785) and at bdc0c019 (run e2e-bdc0c019), the real launch of 0.153.4 (`codex.cmd`) and 0.155.1 (`codex.exe`) included | WP1.1, WP1.60 | none: the runs are recorded in `docs/wp1/evidence/mode-matrix.md`; WP1.1 and WP1.60 move to evidenced with row 16's traceability binding (P4.10) | 2; 4 |
-| 68 | Insights | DONE (P4.7, d99a553b to c293f847 with fix passes 1 to 4; mocked): a Codex account's report, which the app makes from the account's own sessions with one read-only `codex exec` and shows in the page's own layout, figures and history; Run all over both assistants (C1 = A) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. The mockup was approved on the Agent Canvas on 2026-10-05 (v1, no notes) | verification: the confirmation of fix pass 4 (ADR-009 round 1: FINDINGS, fixed in fix pass 2; round 2: PASS, its minors and the fix pass 3 reviews' minors fixed in fix pass 4), the VM run, OR4 (a real report's content) | 4 |
+| 68 | Insights | DONE (P4.7, d99a553b to c293f847 with fix passes 1 to 4; mocked): a Codex account's report, which the app makes from the account's own sessions with one read-only `codex exec` and shows in the page's own layout, figures and history; Run all over both assistants (C1 = A) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. The mockup was approved on the Agent Canvas on 2026-10-05 (v1, no notes) | verification: the confirmation of fix pass 4 (ADR-009 round 1: FINDINGS (14 fixed, 5 on the closeout list), fixed in fix pass 2; round 2: PASS, its minors and the fix pass 3 reviews' minors fixed in fix pass 4), the VM run, OR4 (a real report's content) | 4 |
 | 69 | Plan mode | DONE (P3.8 round 1, caef0d42; round 2, f1783110): a "Plan mode" permissions choice, as Claude's launch option: the session starts READ-ONLY and Codex's own `/plan` is typed into its first ready prompt only (never the folder-trust prompt, the user's typing or after a turn), within a bounded wait; otherwise a note says Plan mode is not on and the session is read-only. The pill reads "plan" only while Codex's footer shows its Plan mode | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM, done: round 3 PASS at c67b1041, and rounds 4 and 5 at 525a00ac (PR 3 gate 6, P3.16): 3 of 3 fresh launches on 0.155.1 and 5 of 5 on 0.153.4, a Restart and a tab switch PASS (no erase was needed in those runs, so the erase after a second read and the start-up row's place are unit-tested only); the attackers' confirmation of the launched answer on `pty:spawn`, done: PASS by ADR-009 lens C in its round 3 on fixer 11 (P3.8); the approval flow with a working model (owner-only) | 3 |
 | 70 | Image paste | DONE (P3.15, bbcb6ef8; the focused key on the VM at c11fb360, both versions): with the terminal focused Alt+V goes to the CLI and Codex attaches the image itself ("[Image #1]"); with focus elsewhere a Codex session's line is ASCII and typed by the Codex typing rule, its notes in the paste hint (mocked: `codex-image-paste.test.ts`, `alt-v-image-route.test.tsx`); the tip and the Tips and Shortcuts card say both | Parity | verification: the wrapped line on the VM (round 1), done: PASS at 525a00ac (PR 3 gate 6, 0.155.1: a line over two composer rows at 91 columns, Enter 302 ms later; P3.16); real Claude Code's own Alt+V, signed in, and the focused key over SSH (owner); macOS, Linux | 3 |
 | 71 | Copy, paste, scrollback, mouse | DONE (P3.15, bbcb6ef8; the VM at c11fb360): copy, paste (Ctrl+V and right-click, bracketed) and mouse (Codex sets no mouse mode) as Claude's; scrollback: a local Codex session on Windows runs under node-pty's bundled ConPTY, which keeps it (122 lines and the wheel scrolling in the VM's in-app trial, against 38 and an inert wheel under the system ConPTY), with the system ConPTY as the fallback (mocked: `bundled-conpty.test.ts`, `pty-conpty-per-provider.test.ts`) | Parity | verification: re-checked packaged at 7c52a432, 98455d52, 855e1484 and f2b1cf65 (the fallbacks, the input guard: 0 app exits in 40 tries, and again at f2b1cf65, where the input failure's cause was confirmed: keys typed after Codex ended); the TUI trace fixture replaced; macOS, Linux. A tab left open by a background command is a known issue | 3 |
@@ -268,7 +268,8 @@ Per PR:
   delta pass during PR 4: FINDINGS, four minors, fixed on PR 4's branch in
   fix pass 5 (a5b181ea, 6f9cbd4f, and the copy with this record), each with
   a test red before its fix and the behaviour fixes mutation-proved; the two
-  tests its spec review owed are added (932b7d00). Confirmation owed.
+  tests its spec review owed are added (932b7d00), and fix pass 6 brings the
+  README's summary into line (cc6f2ac1). Confirmation owed.
 - **PR 3.** Phases P3.1 to P3.16 (section 8). Done: its PR-level ADR-009
   pass, PASS at 525a00ac; the VM checks at its earlier heads b3937173 and
   1e14b611, where the listed checks (section 8, P3.16) PASS at b3937173 and
@@ -6637,6 +6638,19 @@ Probe: PB5 (shared with P4.5).
     moves, until nothing holds it, and the row reads no snapshot of its own;
     `inUse` is a required field. A read stopped at its time limit lets go of
     its stream and file once each, and its walk stops.
+  - *Fix pass 6* (46510944, fac9a38a, cecc57a8, d01c91e5, and this record),
+    for ADR-009 round 3 over fix pass 4 and the reviews of fix passes 4 and
+    5. On POSIX `insights` is made owner-only (0700) through a handle on the
+    folder its check saw: opened without following a link, and changed only
+    when it is a folder, this user's, and that same folder (device and
+    inode); otherwise nothing is changed and the run is refused before
+    anything is made in it or launched. After a refused switch-off, main's
+    watch of the in-use count ends only once a snapshot carried 0, so a run
+    that starts as the count reaches 0 is followed until it ends. A report
+    whose sessions cannot be marked off, and a roll-up whose comparison
+    cannot be, on either assistant, are covered by tests. The provider row
+    reads the in-use count every snapshot carries, and every renderer
+    fixture carries it.
   - *Deviations, recorded.* D10: the banner's Sign in button for a Codex
     account opens Settings, Accounts, where that account's Sign in again is
     (the Usage page's way, `AccountUsagePanel.tsx:277`), rather than starting
@@ -6653,9 +6667,10 @@ Probe: PB5 (shared with P4.5).
     denied.", a shell that could not start, "Failed to write file"), since
     the output alone cannot tell that denial from any other. On POSIX an
     `insights` folder of this user's that others can write to (one made
-    under a group-writable umask) is first made writable by this user only,
-    as the app's other owner-only folders are, and refused if it stays
-    writable by others or is another user's (fix pass 4).
+    under a group-writable umask) is first made owner-only (0700), as the
+    app's other owner-only folders are, through a handle on the folder its
+    check saw (fix pass 6), and refused if it stays writable by others or is
+    another user's (fix pass 4).
   - *Tests.* [host] `insights-codex-report.test.ts`, `insights-codex-run.test.ts`,
     `insights-codex-rollup.test.ts`, `insights-run-handler.test.ts`,
     `providers/codex/insights-exec.test.ts`, `shared/insights-codex-report.test.ts`,
@@ -6678,10 +6693,15 @@ Probe: PB5 (shared with P4.5).
     b0165c10 (the focused set, 19 files, 432 tests); 14 mutants, 14 killed.
     Fix pass 4 extends the fs-guards, report, run, roll-up, cross-account,
     provider-in-use and Accounts surface tests: red first against 330cbe45
-    (30 of those 7 files' 250 tests), green at c293f847 (the focused set, 22
-    files, 535 tests); 26 mutants, 26 killed, among them the runs folder's
-    real-path match alone (a mutant that survived the VM run), now killed on
-    the host by a modelled swap after its lstat.
+    (26 of 229 tests in those 7 files, the roll-up file not loading, then 12
+    of 64 in the report and roll-up files), green at c293f847 (the focused
+    set, 22 files, 535 tests); 26 mutants, 26 killed, among them the runs
+    folder's real-path match alone (a mutant that survived the VM run), now
+    killed on the host by a modelled swap after its lstat. Fix pass 6
+    extends the fs-guards, provider-in-use, run, roll-up and kpis.json mode
+    tests and the renderer provider fixtures: red first against 5444eeaf (5
+    of 104 tests in 5 files), green at cc6f2ac1 (the focused set, 24 files,
+    731 tests); 8 mutants, 8 killed.
   - *Reviews.* Spec: PASS at daf4083e (minors fixed after: the record and
     statuses here, the copy); confirmation PASS at 664931b0. Quality: FAIL at
     daf4083e (one major: a session over 16 MB was cut silently), fixed in
@@ -6694,8 +6714,9 @@ Probe: PB5 (shared with P4.5).
     passes 2 and 3: PASS (0 blocker, 0 major; its minors fixed in fix pass
     4). At 330cbe45 the spec and quality reviews of fix pass 3: their minors
     fixed in fix pass 4, their nits on the closeout list.
-  - *Owed.* The confirmation of fix pass 4 (the spec and quality reviews and
-    ADR-009's lenses over it); the closeout list's coverage and tidy items;
+  - *Owed.* The confirmation of fix passes 4 and 6 (the spec and quality
+    reviews and ADR-009's lenses over them); the closeout list's coverage and
+    tidy items;
     the VM run at the candidate (a report on each version through the real
     CLI and the fake model, the refusal counts on the recorded wording, the
     HOST QUARANTINE file); OR4, a real report's content.

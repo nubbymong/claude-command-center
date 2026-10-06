@@ -94,9 +94,11 @@ checklist):
   account whose sign-in check failed named in Run all with its reason, and
   the provider row's in-use line following the count; fix pass 4
   (df25c65b, c293f847) answers ADR-009 round 2 (PASS: 0 blocker, 0 major)
-  and the fix pass 3 reviews, their minors fixed (26 mutants, 26 killed).
-  Row 58's artifacts record is signed (67f44333). The confirmation of fix
-  pass 4, the VM run and OR4 (a real report's content) are owed.
+  and the fix pass 3 reviews, their minors fixed (26 mutants, 26 killed);
+  fix pass 6 (46510944 to d01c91e5) answers ADR-009 round 3 and the fix
+  pass 4 reviews (8 mutants, 8 killed). Row 58's artifacts record is signed
+  (67f44333). The confirmation of fix passes 4 and 6, the VM run and OR4 (a
+  real report's content) are owed.
 
 **Why this way.** The parity rule (OD26 P1): Claude's behaviour in the code
 is the spec. Where it carries over it decides, as when the re-review sent
@@ -156,4 +158,5 @@ ASCII-only case folding and an exact registry link first (a5b181ea);
 attributions are kept, never queued, while the index is not listening
 (6f9cbd4f); the first-index and re-read progress tests (932b7d00); the guide
 and app knowledge say how a resumed session is attributed (the records
-commit). Confirmation owed.
+commit), and fix pass 6 brings the README's summary into line (cc6f2ac1).
+Confirmation owed.
