@@ -348,10 +348,10 @@ released from it until section 7 holds.
    #624) rolled in (owner decision recorded 2026-09-26); #621, the Electron 44
    major, with its own ADR-009 pass and a VM packaging run.
    *Electron 44 (#621): built in PR 4; not done while the reviews and the
-   re-attack listed under Owed are outstanding* (b84d9db3, b9e5d9fb,
-   1aa0a540, e8317ceb; fix pass 10 is 50972cb7, 7c5d5a31 and 0bfcfb6c; the
-   colour-reply fix is ad6c7b83; fix pass 11 is f6398389 to cb15b060;
-   fix pass 12 is 205ff34f and 64f4e68e).
+   re-attack listed under Owed are outstanding* (b84d9db3, 8c5a2c74,
+   4a619d66, f9c2eb05; fix pass 10 is a8a1aca0, 999d8113 and d59ac07d; the
+   colour-reply fix is 409b455a; fix pass 11 is 64647e22 to 668cc0d8;
+   fix pass 12 is c07b95dd and 27de6206).
    ADR-009 round 1, three lenses (clipboard and paths; injection and the
    certificate rule; updater and platform): FINDINGS, 1 major and minors, all
    answered in fix pass 10 (26 mutants, 26 killed). Since then a Mac on an
@@ -366,24 +366,24 @@ released from it until section 7 holds.
    `npm run package` keeps them. The Mac download's new name (U1), and the
    one download by hand it means for a Mac on 2.1.1-beta.1 or earlier, is
    the default the owner may override; no bridge release is built. The VM
-   packaging run at e8317ceb: the release-shaped package built and
+   packaging run at f9c2eb05: the release-shaped package built and
    verified; native suite under Electron 44 15 of 15 files (226 tests); the
    NSIS upgrade over the shipped 2.1.1-beta.1 PASS; e2e 94 of 94; the
    packaged walk 39 parts, 0 errors; paste 8 of 9 cases (the ninth, the
-   `\\localhost` share: fixed in 7c5d5a31, unit-tested, VM-verified at
-   ad6c7b83); a local `npm ci` and `npm run package` (fixed in 0bfcfb6c,
-   unit-tested, VM-verified at ad6c7b83). The VM re-check at ad6c7b83: the
+   `\\localhost` share: fixed in 999d8113, unit-tested, VM-verified at
+   409b455a); a local `npm ci` and `npm run package` (fixed in d59ac07d,
+   unit-tested, VM-verified at 409b455a). The VM re-check at 409b455a: the
    `\\localhost\c$` paste copied 146,402 B; the `pipe` share pasted no image
    with 0 connections to the pipe; a copied image whose file was deleted
    pasted no image; `npm ci` used the shipped prebuilds with no native
    rebuild; `npm run package` and `verify:package` PASS. The colour-reply
-   fix (ad6c7b83): main answers a local Codex session's terminal colour
+   fix (409b455a): main answers a local Codex session's terminal colour
    query as the PTY emits it (12 mutants, 12 killed); on the VM 20 Codex
    launches, the composer clean in 20 of 20, main's answer within 3.6 ms.
    Fix pass 11 answers the fix pass 10 spec review (6 items), its quality
    review (2 should-fix, 6 nits) and ADR-009 round 2 (the updater lens: 1
    major and 3 minors; the native and startup lens: PASS, 4 minors): 21 new
-   tests, 29 mutants, 29 killed. Fix pass 12 (205ff34f, 64f4e68e) answers
+   tests, 29 mutants, 29 killed. Fix pass 12 (c07b95dd, 27de6206) answers
    the colour-reply fix's spec review (2 items) and quality review (1
    should-fix, 4 nits) and ADR-009 round 2b over the colour reply and paste
    (2 lenses: PASS, 5 minors, one already answered in fix pass 11): 13 new

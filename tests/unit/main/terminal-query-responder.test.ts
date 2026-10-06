@@ -63,7 +63,7 @@ describe('a Codex colour query in the PTY output', () => {
   it('a query in the middle of output: the output around it is forwarded intact and in order', () => {
     const { r, replies } = responder()
     const before = `${ESC}[?25l${ESC}[2;1Hhooks ok${ESC}[0m\r\n`
-    const after = `${ESC}[3;1H› Ask Codex to do anything${ESC}[?25h`
+    const after = `${ESC}[3;1H\u203a Ask Codex to do anything${ESC}[?25h`
     expect(r.filter(before + CODEX_QUERY + after)).toBe(before + CUT + CUT + after)
     expect(replies).toEqual([XTERM_DARK_FG, XTERM_DARK_BG])
   })

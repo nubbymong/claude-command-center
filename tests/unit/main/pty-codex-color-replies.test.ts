@@ -179,9 +179,9 @@ describe('a local Codex session: main answers its colour query (OSC 10/11)', () 
     p.emitData(CODEX_QUERY)
     // Synchronously, inside the data event: no timer, no renderer round trip.
     expect(colourReplies(p)).toEqual(DARK_REPLIES)
-    p.emitData(`${ESC}[3;1H› Ask Codex`)
+    p.emitData(`${ESC}[3;1H\u203a Ask Codex`)
     // In each query's place the renderer gets ST alone (it ends what the query's ESC would have ended).
-    expect(forwarded(CX)).toBe(`${ESC}[2J${ESC}[1;1Hready${ST}${ST}${ESC}[3;1H› Ask Codex`)
+    expect(forwarded(CX)).toBe(`${ESC}[2J${ESC}[1;1Hready${ST}${ST}${ESC}[3;1H\u203a Ask Codex`)
     expect(forwarded(CX)).not.toContain(']10;?')
     expect(forwarded(CX)).not.toContain(']11;?')
     readersSawWhatTheRendererGot(CX)
