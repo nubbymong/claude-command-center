@@ -180,7 +180,8 @@ describe('a local Codex session: main answers its colour query (OSC 10/11)', () 
     // Synchronously, inside the data event: no timer, no renderer round trip.
     expect(colourReplies(p)).toEqual(DARK_REPLIES)
     p.emitData(`${ESC}[3;1H› Ask Codex`)
-    expect(forwarded(CX)).toBe(`${ESC}[2J${ESC}[1;1Hready${ESC}[3;1H› Ask Codex`)
+    // In each query's place the renderer gets ST alone (it ends what the query's ESC would have ended).
+    expect(forwarded(CX)).toBe(`${ESC}[2J${ESC}[1;1Hready${ST}${ST}${ESC}[3;1H› Ask Codex`)
     expect(forwarded(CX)).not.toContain(']10;?')
     expect(forwarded(CX)).not.toContain(']11;?')
     readersSawWhatTheRendererGot(CX)
@@ -193,7 +194,7 @@ describe('a local Codex session: main answers its colour query (OSC 10/11)', () 
     expect(colourReplies(p)).toEqual([DARK_REPLIES[0]])
     p.emitData(CODEX_QUERY.slice(11) + 'b')
     expect(colourReplies(p)).toEqual(DARK_REPLIES)
-    expect(forwarded(CX)).toBe('ab')
+    expect(forwarded(CX)).toBe(`a${ST}${ST}b`)
     // Both chunks held a query AND other bytes: main's other readers got only
     // the other bytes too (round 1 review).
     readersSawWhatTheRendererGot(CX)

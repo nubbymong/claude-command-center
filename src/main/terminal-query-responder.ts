@@ -14,16 +14,29 @@
  *
  * So for a local Codex session main answers the query itself, the moment the PTY
  * emits it, with exactly the bytes xterm.js sends, and keeps the query from the
- * renderer so it is never answered twice. Nothing else is answered: any other
- * query, and any query once the program has SET a default colour (main would no
- * longer know what the terminal shows), still goes to xterm.js as before, as
- * does a query whose colours main cannot know exactly.
+ * renderer so it is never answered twice. In the query's place the renderer
+ * gets ST alone (`ESC \`), which ends whatever sequence the query's ESC would
+ * have ended there, so xterm.js reads the bytes after it as it would have.
+ * Nothing else is answered: any other query, and any query once the program has
+ * SET a default colour (main would no longer know what the terminal shows),
+ * still goes to xterm.js as before, as does a query whose colours main cannot
+ * know exactly. A SET is recognised as xterm.js 6.0.0 reads an OSC: started by
+ * `ESC ]` or the 8-bit OSC (U+009D), its id the digits up to `;` (leading zeros
+ * included), with the C0 controls xterm.js drops inside it left out.
  *
- * Two limits, neither reachable with Codex as it is (it writes the probe on its
- * own and never sets these colours): the query is cut out without regard to a
- * sequence left unfinished just before it, which the query's ESC would have
- * ended in xterm.js; and a responder lives for one run, so a colour SET by an
- * earlier run in the same terminal (before a Restart) is not known to it.
+ * Platforms: this runs for a local Codex session on every OS, and was verified
+ * live on Windows, where Codex sends only the two colour queries. On macOS and
+ * Linux Codex sends them in one write with a cursor position, keyboard and
+ * device attributes query (`ESC[6n ... ESC[?u ESC[c`); main's colour answers
+ * then reach Codex before xterm.js's answers to the others, which Codex reads
+ * each on its own (terminal_probe.rs update_startup_probe).
+ *
+ * Limits, none reachable with Codex as it is (it writes the probe on its own and
+ * never sets these colours): a responder lives for one run, so a colour SET by
+ * an earlier run in the same terminal (before a Restart) is not known to it; and
+ * up to 7 characters of an unfinished query held at the end of a chunk are
+ * dropped if the run ends right after them (an unfinished escape sequence, which
+ * xterm.js could not act on either).
  */
 import { TERMINAL_DEFAULT_COLORS } from '../shared/terminal-colors'
 import { resolveHostColorScheme } from './providers/host-color-scheme'
@@ -75,6 +88,9 @@ export function colorQueryReply(id: 10 | 11, rgb: Rgb): string {
   return `\x1b]${id};rgb:${ch(rgb[0])}/${ch(rgb[1])}/${ch(rgb[2])}\x1b\\`
 }
 
+/** What the renderer gets in place of an answered query: ST, ending what the query's ESC would have ended. */
+export const ANSWERED_QUERY_STAND_IN = '\x1b\\'
+
 /** The four exact queries main answers. */
 const QUERIES: ReadonlyArray<{ id: 10 | 11; text: string }> = [
   { id: 10, text: '\x1b]10;?\x1b\\' },
@@ -88,6 +104,7 @@ const LONGEST_QUERY = Math.max(...QUERIES.map((q) => q.text.length))
  * Where a query that the chunk ends in the middle of starts (a proper prefix of
  * one, from an ESC), or -1. Those bytes wait for the next chunk: on their own
  * they are an unfinished escape sequence, which a terminal cannot act on yet.
+ * At most LONGEST_QUERY - 1 (7) characters are ever held.
  */
 function partialQueryStart(buf: string): number {
   for (let i = Math.max(0, buf.length - (LONGEST_QUERY - 1)); i < buf.length; i++) {
@@ -98,8 +115,26 @@ function partialQueryStart(buf: string): number {
   return -1
 }
 
+// Where xterm.js 6.0.0's parser is, as far as a colour SET goes (EscapeSequenceParser.ts,
+// OscParser.ts). ESC moves it to ESCAPE and U+009D starts an OSC from ANY state, so
+// nothing else needs tracking.
+const GROUND = 0
+const ESCAPE = 1
+const OSC_ID = 2
+/** ESC or the 8-bit OSC introducer, the only characters that change what is tracked from GROUND. */
+const INTRODUCER = /[\x1b\x9d]/g
+
+/** A C0 control xterm.js drops inside an OSC string (IGNORE in OSC_STRING); BEL ends the string. */
+function droppedInOsc(c: number): boolean {
+  return (c <= 0x17 && c !== 0x07) || c === 0x19 || (c >= 0x1c && c <= 0x1f)
+}
+/** A character after which xterm.js stays in ESCAPE: a C0 control it runs there, or DEL, which it ignores. */
+function staysInEscape(c: number): boolean {
+  return c <= 0x17 || c === 0x19 || (c >= 0x1c && c <= 0x1f) || c === 0x7f
+}
+
 export interface ColorQueryResponder {
-  /** One chunk of PTY output in; what goes on to the renderer out (the answered queries removed). */
+  /** One chunk of PTY output in; what goes on to the renderer out (each answered query replaced by ST). */
   filter(chunk: string): string
 }
 
@@ -110,9 +145,13 @@ export function createColorQueryResponder(opts: {
   reply: (bytes: string) => void
 }): ColorQueryResponder {
   let held = ''
-  // An OSC 10/11 that is not one of the exact queries (a colour SET, a
-  // two-slot query): from then on every query goes to xterm.js.
+  // An OSC xterm.js reads as 10 or 11 that is not one of the exact queries (a
+  // colour SET, a two-slot query, any other form): from then on every query goes
+  // to xterm.js.
   let leftToTerminal = false
+  // The parser position, carried across chunks: an OSC id can be cut by a chunk end.
+  let state = GROUND
+  let oscId = -1
   return {
     filter(chunk: string): string {
       if (leftToTerminal) return chunk
@@ -124,20 +163,58 @@ export function createColorQueryResponder(opts: {
       let out = ''
       let from = 0
       let colors: ReplyColors | null | undefined
-      const osc = /\x1b\]1[01];/g
-      for (let m = osc.exec(body); m; m = osc.exec(body)) {
-        const at = m.index
-        const query = QUERIES.find((q) => body.startsWith(q.text, at))
-        if (!query) {
-          leftToTerminal = true
-          return out + body.slice(from) + tail
+      for (let i = 0; i < body.length;) {
+        if (state === GROUND) {
+          INTRODUCER.lastIndex = i
+          const next = INTRODUCER.exec(body)
+          if (!next) break
+          i = next.index
+          if (body.charCodeAt(i) === 0x9d) { state = OSC_ID; oscId = -1; i++; continue }
+          const query = QUERIES.find((q) => body.startsWith(q.text, i))
+          if (!query) { state = ESCAPE; i++; continue }
+          // An exact query: answered here when the colours are known, else left in place for
+          // xterm.js. Either way it is a complete OSC, after which xterm.js is back in GROUND.
+          if (colors === undefined) colors = opts.colors()
+          if (colors) {
+            out += body.slice(from, i) + ANSWERED_QUERY_STAND_IN
+            from = i + query.text.length
+            opts.reply(colorQueryReply(query.id, query.id === 10 ? colors.foreground : colors.background))
+          }
+          i += query.text.length
+          continue
         }
-        if (colors === undefined) colors = opts.colors()
-        if (!colors) continue
-        out += body.slice(from, at)
-        from = at + query.text.length
-        osc.lastIndex = from
-        opts.reply(colorQueryReply(query.id, query.id === 10 ? colors.foreground : colors.background))
+        const c = body.charCodeAt(i)
+        if (state === ESCAPE) {
+          if (c === 0x5d) {
+            state = OSC_ID
+            oscId = -1
+            i++
+          } else if (c === 0x1b || c === 0x9d) {
+            state = GROUND // read again from GROUND: a new escape, or an exact query
+          } else if (staysInEscape(c)) {
+            i++
+          } else {
+            state = GROUND
+            i++
+          }
+          continue
+        }
+        // OSC_ID: digits up to `;` name the OSC (OscParser); any other character ends or abandons it.
+        if (c >= 0x30 && c <= 0x39) {
+          oscId = Math.min(12, (oscId < 0 ? 0 : oscId) * 10 + (c - 0x30))
+          i++
+        } else if (c === 0x3b) {
+          if (oscId === 10 || oscId === 11) {
+            leftToTerminal = true
+            return out + body.slice(from) + tail
+          }
+          state = GROUND
+          i++
+        } else if (droppedInOsc(c)) i++
+        else {
+          state = GROUND
+          if (c !== 0x1b && c !== 0x9d) i++
+        }
       }
       held = tail
       return out + body.slice(from)
