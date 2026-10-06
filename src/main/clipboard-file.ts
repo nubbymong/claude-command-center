@@ -22,9 +22,12 @@ export const URI_LIST_TYPE = 'text/uri-list'
 /**
  * UNC share names that are not file shares on any Windows server: a stat of a
  * path under one opens a named pipe or a mailslot (on this computer or
- * another) instead of reading a file's attributes.
+ * another) instead of reading a file's attributes. Upper case: Windows
+ * compares names by converting them to upper case, so a share name is
+ * converted the same way before it is looked up here (`p\u0131pe` and
+ * `mail\u017flot`, with a dotless i or a long s, are PIPE and MAILSLOT).
  */
-const NON_FILE_SHARES = new Set(['pipe', 'mailslot', 'ipc$'])
+const NON_FILE_SHARES = new Set(['PIPE', 'MAILSLOT', 'IPC$'])
 
 /**
  * A path the paste may stat and copy from. Refused: a path that is empty or
@@ -44,7 +47,7 @@ export function isClipboardFilePath(p: string, platform: NodeJS.Platform = proce
     if (/^\\\\[.?]\\/.test(w)) return false
     if (/^[A-Za-z]:\\/.test(w)) return true
     const unc = /^\\\\[^\\]+\\([^\\]+)/.exec(w)
-    return unc !== null && !NON_FILE_SHARES.has(unc[1].replace(/[. ]+$/, '').toLowerCase())
+    return unc !== null && !NON_FILE_SHARES.has(unc[1].replace(/[. ]+$/, '').toUpperCase())
   }
   return p.startsWith('/')
 }
@@ -117,8 +120,8 @@ export type PasteableImage = { path: string } | { error: 'no-image' | 'too-large
 /**
  * Pick the first clipboard file that's a pasteable raster image, enforcing the
  * 10 MB cap. `sizeOf` gives a file's size, or null when it cannot be read (the
- * file is gone), which is no image rather than too large. Pure (size
- * injected) so it's unit-testable. (Unit 5 W1)
+ * file is gone) or is not a plain file, which is no image rather than too
+ * large. Pure (size injected) so it's unit-testable. (Unit 5 W1)
  */
 export function pickPasteableImage(paths: string[], sizeOf: (p: string) => number | null): PasteableImage {
   const images = paths.filter((p) => ALLOWED_IMAGE_EXTS.has(extOf(p)))
@@ -151,12 +154,16 @@ export async function readClipboardFilePaths(): Promise<string[]> {
  * path. Returns {error} for no usable image / oversize. (Unit 5 W1)
  */
 export async function readClipboardImageFilePath(screenshotsDir: string): Promise<PasteableImage> {
+  // One stat gives both answers: a path that is not a plain file (a folder
+  // named like an image, a device) is no image, the same as one that is gone.
   const picked = pickPasteableImage(await readClipboardFilePaths(), (p) => {
-    try { return statSync(p).size } catch { return null }
+    try {
+      const st = statSync(p)
+      return st.isFile() ? st.size : null
+    } catch { return null }
   })
   if (!('path' in picked)) return picked
   try {
-    if (!statSync(picked.path).isFile()) return { error: 'no-image' }
     mkdirSync(screenshotsDir, { recursive: true })
     const dest = join(screenshotsDir, `clipboard-${Date.now()}-${randomBytes(4).toString('hex')}${extOf(picked.path)}`)
     copyFileSync(picked.path, dest)

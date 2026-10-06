@@ -41,6 +41,18 @@ describe('isClipboardFilePath', () => {
       }
     }
   })
+  it('Windows: a share name that reads PIPE, MAILSLOT or IPC$ in upper case, as Windows compares names, is refused (a dotless i or a long s included)', () => {
+    const dotlessI = String.fromCharCode(0x131)
+    const longS = String.fromCharCode(0x17f)
+    const shares = [`p${dotlessI}pe`, `P${dotlessI}PE`, `ma${dotlessI}lslot`, `mail${longS}lot`, `ma${dotlessI}l${longS}lot`, `${dotlessI}pc$`, `p${dotlessI}pe. `]
+    for (const server of ['127.0.0.1', 'localhost', hostname(), 'server']) {
+      for (const share of shares) {
+        for (const p of [`\\\\${server}\\${share}\\shot.png`, `//${server}/${share}/shot.png`]) {
+          expect(isClipboardFilePath(p, 'win32'), p).toBe(false)
+        }
+      }
+    }
+  })
   it('Windows: any other share passes, a share named like those but longer included', () => {
     for (const p of ['\\\\localhost\\c$\\a.png', '\\\\127.0.0.1\\share\\a.png', '\\\\server\\pipes\\a.png', '\\\\server\\pipe2\\a.png', '\\\\server\\ipc\\a.png', '\\\\server\\my pipe\\a.png']) {
       expect(isClipboardFilePath(p, 'win32'), p).toBe(true)

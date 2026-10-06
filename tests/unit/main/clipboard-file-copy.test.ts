@@ -95,6 +95,11 @@ describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('r
     expect(h.made).toEqual([])
   })
 
+  it('the picked file is stat-ed once: its size and whether it is a plain file come from the same stat', async () => {
+    expect(await readClipboardImageFilePath(SHOTS)).toEqual({ path: h.copies[0][1] })
+    expect(h.statted).toEqual([PICKED])
+  })
+
   it('the first image among several copied files is the one taken', async () => {
     const other = process.platform === 'win32' ? 'C:\\Users\\me\\notes.txt' : '/Users/me/notes.txt'
     h.items = [item({ [URI_LIST]: [pathToFileURL(other).href, pathToFileURL(PICKED).href].join('\r\n') })]
@@ -148,7 +153,9 @@ describe.runIf(process.platform === 'win32')('Windows: shares, pipes and the dev
 
   it('a text/uri-list naming the pipe, mailslot or IPC$ share of this or any computer is never stat-ed', async () => {
     for (const u of ['file://127.0.0.1/pipe/shot.png', 'file://localhost/pipe/shot.png', 'file://localhost/PIPE/shot.png',
-      'file://server/mailslot/shot.png', 'file://localhost/IPC$/shot.png', 'file://127.0.0.1/pipe./shot.png']) {
+      'file://server/mailslot/shot.png', 'file://localhost/IPC$/shot.png', 'file://127.0.0.1/pipe./shot.png',
+      // PIPE and MAILSLOT once in upper case, as Windows compares share names: a dotless i, a long s
+      'file://localhost/p%C4%B1pe/shot.png', 'file://127.0.0.1/ma%C4%B1lslot/shot.png', 'file://server/mail%C5%BFlot/shot.png', 'file://localhost/%C4%B1pc$/shot.png']) {
       h.items = [item({ [URI_LIST]: `${u}\r\n` })]
       expect(await readClipboardImageFilePath(SHOTS), u).toEqual({ error: 'no-image' })
     }
