@@ -19,7 +19,7 @@ import { makeObserver, type Observation } from './sentinel-observe'
 import { parseClaudeVersion, minVersionFindings, type ManifestEntry } from './sentinel-version'
 import { fetchChangelog, sliceChangelog } from './sentinel-changelog'
 import { fetchCodexReleaseNotes } from './sentinel-codex-changelog'
-import { runAnalysis, CLAUDE_ANALYSIS_ENV, createClaudeRetryWatch, claudeAnalysisOutcome, type HeadlessRunner } from './sentinel-analysis'
+import { runAnalysis, CLAUDE_ANALYSIS_ENV, createClaudeRetryWatch, claudeAnalysisOutcome, claudeSettingsTransportEnv, type HeadlessRunner } from './sentinel-analysis'
 import { validateProposal } from './sentinel-apply'
 import { modelCoverageFindings, modelCheckFailedFinding, EXPECTED_MODEL_SET, codexModelCoverageFindings, CODEX_EXPECTED_MODEL_SET, type CodexLiveModelList } from './sentinel-models'
 import { codexVersionFindings, type SupportedVersions } from './sentinel-codex'
@@ -323,7 +323,7 @@ async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner
   try {
     const { spawnClaudeHeadless } = await headlessRunner()
     const { home, accountLabel } = await analysisHome()
-    const transportEnv = await analysisTransportEnv(home)
+    const transportEnv = await claudeSettingsTransportEnv(home)
     const parent = analysisParent()
     let cwd: string
     try {
@@ -351,31 +351,6 @@ async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner
     }
   } finally {
     if (!handedOver) begun.end()
-  }
-}
-
-/** The largest settings file read for its transport variables (the CLI's own cap). */
-const SETTINGS_READ_MAX_BYTES = 2 * 1024 * 1024
-
-/** P3.9 round 3: the analysis loads no settings file, so the network
- *  settings its account's settings file sets (proxies, certificates: only
- *  what the Claude package classifies as transport and keeps) are handed to
- *  it as variables. The account's own settings file: its profile home's, or
- *  the shared Claude folder for the default account. None when there is no
- *  such file, it is too large, or the package cannot say. Never throws. */
-async function analysisTransportEnv(home: string | null): Promise<Readonly<Record<string, string>>> {
-  try {
-    const { tryGetProviderPackage } = await import('../providers/core')
-    const pick = tryGetProviderPackage('claude')?.managedLaunch?.transportSettingsEnv
-    if (typeof pick !== 'function') return {}
-    const { sharedRoot } = await import('../account-profiles')
-    const dir = home ? path.join(home, '.claude') : sharedRoot()
-    const file = path.join(dir, 'settings.json')
-    const st = fs.statSync(file)
-    if (!st.isFile() || st.size > SETTINGS_READ_MAX_BYTES) return {}
-    return pick(fs.readFileSync(file, 'utf8'))
-  } catch {
-    return {}
   }
 }
 

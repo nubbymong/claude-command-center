@@ -36,8 +36,14 @@ const h = vi.hoisted(() => ({
   /** The registered Codex package has no Insights port. */
   noInsightsPort: false,
   deepCalls: 0,
+  /** What the runner wrote to the app log with logError. */
+  logged: [] as string[],
 }))
 
+vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/debug-logger')>()),
+  logError: (...a: unknown[]) => { h.logged.push(a.map(String).join(' ')) },
+}))
 vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => h.resourcesDir, registerSetupHandlers: () => {} }))
 vi.mock('../../../src/main/update-watcher', () => ({ getInstallPath: () => '', getProjectRootPath: () => '' }))
 vi.mock('../../../src/main/profile-consumers', () => ({ acquireProfileConsumer: () => () => {}, waitForProfileRefresh: async () => {} }))
@@ -435,7 +441,7 @@ describe("the previous run's figures reach the next report as numbers only", () 
     expect(p).toContain('Volume / sessions: 2')
     expect(p).not.toContain('SYSTEM NOTE')
     expect(p).not.toContain('GOAL-PROSE')
-    expect(p.split('PREVIOUS>>>').length - 1).toBe(1)
+    expect(p.match(/\nPREVIOUS-[0-9a-f]{16}>>>/g)).toHaveLength(1)
     expect(p.split('<<<DIGEST').length - 1).toBe(1)
   })
 })
@@ -474,5 +480,17 @@ describe("a failure's text is plain before it is kept or logged", () => {
     const err = runOf(id).error!
     expect(err.startsWith('This report could not be written: quota ')).toBe(true)
     expect(err).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2028\u2029]/)
+  })
+
+  // [host] P4.7 fix pass 4: the app log line says what the run record says.
+  it('the same failure reaches the app log as plain text too [host]', async () => {
+    h.execAnswer = { ok: false, code: 'failed', message: 'quota \u202eevil\u202c \u001b[31mred\u001b[0m \u2028next' }
+    h.logged = []
+    const id = await runCodexInsights(win, { accountId: ACCT }) as string
+    const line = h.logged.find((l) => l.includes(`Codex run ${id} failed`))
+    expect(line).toBeDefined()
+    expect(line).toContain('quota ')
+    expect(line).toContain('evil')
+    expect(line).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2028\u2029]/)
   })
 })

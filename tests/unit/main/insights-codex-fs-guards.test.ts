@@ -10,14 +10,16 @@
 //
 // Guarantees held here:
 //  - the runs folder, and `insights` above it, are real folders (never links)
-//    and (POSIX) the runs folder is writable by no one else, checked before
-//    any launch, again just before the stale sweep and again just before the
-//    run's folder is removed: nothing in a link's target is swept or removed;
+//    and (POSIX) both writable by no one else, checked before any launch,
+//    again just before the stale sweep and again just before the run's
+//    folder is removed (each check by lstat and by real path): a runs folder
+//    found to be a link at a check is never swept or removed through;
 //  - `insights` is checked before the runs folder is made in it;
 //  - each session is read through the file the walk saw (the same file, a
-//    regular one), never one that took its place, and the whole read has a
-//    time limit: a read that does not end fails the run and lets go of the
-//    account and the lock;
+//    regular one with no second name), never one that took its place, and
+//    the whole read has a time limit: a read that does not end fails the run
+//    and lets go of the account and the lock, its stream and file are let go
+//    once each, and its walk stops;
 //  - main hands the page a Codex run's report.json only as the regular file
 //    its lstat saw.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -44,7 +46,27 @@ const h = vi.hoisted(() => ({
   hang: new Set<string>(),
   release: null as null | (() => void),
   gate: null as null | Promise<void>,
-  hangStreams: [] as Array<{ destroy(e?: Error): void }>,
+  hangStreams: [] as Array<{ destroy(e?: Error): void; destroyed: boolean }>,
+  /** path -> the file a modelled HARD link there is a second name of: every
+   *  call on the path lands on the target, and its stats say nlink 2. */
+  hard: new Map<string, string>(),
+  /** Files that gain a second name after the walk: the open file says nlink 2. */
+  hardOnOpen: new Set<string>(),
+  /** Modelled hard links whose other name is gone by the open: the open file says nlink 1. */
+  hardGoneOnOpen: new Set<string>(),
+  /** Files that open as regular files but whose data never comes. */
+  stall: new Set<string>(),
+  /** Folders whose listing does not answer until `release`. */
+  hangReaddir: new Set<string>(),
+  /** destroy() calls on a stalled stream, and closes of a stalled file. */
+  destroys: 0,
+  closes: 0,
+  /** An inode number a stat of the path reports (lstat, or fstat of an open descriptor). */
+  inoFor: null as null | ((p: string, how: 'lstat' | 'fstat') => bigint | undefined),
+  /** Told of each chmodSync (POSIX modes are modelled in `modeFor`). */
+  onChmod: null as null | ((p: string, mode: number) => void),
+  /** Open descriptors and the path each was opened by (the sync calls). */
+  fdPaths: new Map<number, string>(),
   prepareCalls: [] as Array<Record<string, unknown>>,
   execCalls: [] as Array<{ cwd: string; env: Record<string, string>; prompt: string }>,
   released: 0,
@@ -71,8 +93,9 @@ async function wrapFs(real: any): Promise<any> {
       }
       if (!hit) break
     }
-    return r
+    return h.hard.get(key(r)) ?? r
   }
+  const isHard = (p: string) => h.hard.has(key(p))
   const linkAt = (q: string) => [...h.links.keys()].some((L) => key(L) === key(q))
   const delLink = (q: string) => { for (const L of [...h.links.keys()]) if (key(L) === key(q)) h.links.delete(L) }
   const fakeLinkStats = () => ({
@@ -81,15 +104,23 @@ async function wrapFs(real: any): Promise<any> {
   })
   /** The same stats, answering as a FIFO would. */
   const asFifo = (s: any) => Object.assign(Object.create(Object.getPrototypeOf(s)), s, { isFile: () => false, isFIFO: () => true })
+  /** The same stats with some fields answering otherwise (bigint stats keep bigints). */
+  const patch = (st: any, fields: Record<string, number | bigint>) => {
+    const out = Object.assign(Object.create(Object.getPrototypeOf(st)), st)
+    for (const [k, v] of Object.entries(fields)) out[k] = typeof st[k] === 'bigint' ? BigInt(v) : Number(v)
+    return out
+  }
   const own = (p: string, st: any) => {
     if (!st) return st
+    const fields: Record<string, number | bigint> = {}
     const u = h.uidFor?.(path.resolve(p))
     const m = h.modeFor?.(path.resolve(p))
-    if (u === undefined && m === undefined) return st
-    const out = Object.assign(Object.create(Object.getPrototypeOf(st)), st)
-    if (u !== undefined) out.uid = typeof st.uid === 'bigint' ? BigInt(u) : u
-    if (m !== undefined) out.mode = typeof st.mode === 'bigint' ? BigInt(m) : m
-    return out
+    const i = h.inoFor?.(path.resolve(p), 'lstat')
+    if (u !== undefined) fields.uid = u
+    if (m !== undefined) fields.mode = m
+    if (i !== undefined) fields.ino = i
+    if (isHard(p)) fields.nlink = 2
+    return Object.keys(fields).length ? patch(st, fields) : st
   }
   const fakeDirent = (name: string, dir: string) => ({
     name, parentPath: dir, path: dir, isSymbolicLink: () => true, isDirectory: () => false, isFile: () => false,
@@ -103,23 +134,32 @@ async function wrapFs(real: any): Promise<any> {
     const kept = entries.filter((e) => !names.has(k(withTypes ? e.name : String(e))))
     return [...kept, ...extra.map((n) => (withTypes ? fakeDirent(n, dirQ) : n))]
   }
-  const hanging = () => { const st = new Readable({ read() {} }); h.hangStreams.push(st); return st }
+  const hanging = () => {
+    const st = new Readable({ read() {} })
+    const destroy = st.destroy.bind(st)
+    st.destroy = ((e?: Error) => { h.destroys++; return destroy(e) }) as typeof st.destroy
+    h.hangStreams.push(st)
+    return st
+  }
   const f1 = (fn: string, final = true) => (p: any, ...rest: any[]) => real[fn](isStr(p) ? follow(p, final) : p, ...rest)
   function realpathSync(p: any, o?: any) { return real.realpathSync(isStr(p) ? follow(p, true) : p, o) }
   realpathSync.native = (p: any, o?: any) => real.realpathSync.native(isStr(p) ? follow(p, true) : p, o)
   const NOFOLLOW = real.constants.O_NOFOLLOW ?? 0
-  /** A handle that answers as a FIFO would: open, but not a regular file. */
-  const fifoHandle = (fh: any) => new Proxy(fh, {
+  /** A handle that answers as a FIFO would (open, but not a regular file),
+   *  as a file with a second name, or as a file whose data never comes. */
+  const wrapHandle = (fh: any, as: { fifo: boolean; hard: boolean; stall: boolean }) => new Proxy(fh, {
     get(t, k) {
-      if (k === 'stat') return async (o?: any) => asFifo(await t.stat(o))
-      if (k === 'createReadStream') return () => hanging()
+      if (k === 'stat') return async (o?: any) => { const s = await t.stat(o); return as.fifo ? asFifo(s) : as.hard ? patch(s, { nlink: 2 }) : s }
+      if (k === 'createReadStream' && (as.fifo || as.stall)) return () => hanging()
+      if (k === 'close' && as.stall) return async () => { h.closes++; return t.close() }
       const v = Reflect.get(t, k, t)
       return typeof v === 'function' ? v.bind(t) : v
     },
   })
   const over: Record<string, any> = {
     existsSync: f1('existsSync'), statSync: f1('statSync'), readFileSync: f1('readFileSync'), writeFileSync: f1('writeFileSync'),
-    appendFileSync: f1('appendFileSync'), utimesSync: f1('utimesSync'), chmodSync: f1('chmodSync'),
+    appendFileSync: f1('appendFileSync'), utimesSync: f1('utimesSync'),
+    chmodSync: (p: any, mode: any) => { if (isStr(p)) h.onChmod?.(path.resolve(p), Number(mode)); return real.chmodSync(isStr(p) ? follow(p, true) : p, mode) },
     accessSync: f1('accessSync'),
     // O_NOFOLLOW refuses a link as the last part (POSIX); other links are followed.
     openSync: (p: any, flags?: any, mode?: any) => {
@@ -129,10 +169,16 @@ async function wrapFs(real: any): Promise<any> {
       }
       const fd = real.openSync(follow(p, true), flags, mode)
       if (h.fifo.has(key(p))) h.fifoFds.add(fd)
+      h.fdPaths.set(fd, path.resolve(p))
       return fd
     },
-    fstatSync: (fd: any, o?: any) => (h.fifoFds.has(fd) ? asFifo(real.fstatSync(fd, o)) : real.fstatSync(fd, o)),
-    closeSync: (fd: any) => { h.fifoFds.delete(fd); return real.closeSync(fd) },
+    fstatSync: (fd: any, o?: any) => {
+      const st = h.fifoFds.has(fd) ? asFifo(real.fstatSync(fd, o)) : real.fstatSync(fd, o)
+      const p = h.fdPaths.get(fd)
+      const i = p !== undefined ? h.inoFor?.(p, 'fstat') : undefined
+      return i !== undefined ? patch(st, { ino: i }) : st
+    },
+    closeSync: (fd: any) => { h.fifoFds.delete(fd); h.fdPaths.delete(fd); return real.closeSync(fd) },
     createReadStream: (p: any, o?: any) => {
       const q = isStr(p) ? follow(p, true) : p
       if (isStr(p) && (h.fifo.has(key(p)) || h.hang.has(key(p)))) return hanging()
@@ -174,6 +220,7 @@ async function wrapFs(real: any): Promise<any> {
   const promises = {
     ...real.promises,
     readdir: async (p: any, o?: any) => {
+      if (h.hangReaddir.has(key(String(p)))) { await h.gate }
       const q = follow(String(p), true)
       h.onReaddir?.(path.resolve(String(p)))
       return addLinks(await real.promises.readdir(q, o), path.resolve(String(p)), !!(o && typeof o === 'object' && o.withFileTypes))
@@ -194,7 +241,8 @@ async function wrapFs(real: any): Promise<any> {
         throw Object.assign(new Error(`ELOOP: ${s}`), { code: 'ELOOP' })
       }
       const fh = await real.promises.open(follow(s, true), flags, mode)
-      return h.fifo.has(key(s)) ? fifoHandle(fh) : fh
+      const as = { fifo: h.fifo.has(key(s)), hard: (isHard(s) && !h.hardGoneOnOpen.has(key(s))) || h.hardOnOpen.has(key(s)), stall: h.stall.has(key(s)) }
+      return as.fifo || as.hard || as.stall ? wrapHandle(fh, as) : fh
     },
   }
   const wrapped = { ...real, ...over, promises }
@@ -308,6 +356,8 @@ beforeEach(() => {
   h.onReaddir = null; h.onLstat = null; h.onRun = null; h.uidFor = null; h.modeFor = null
   h.prepareCalls = []; h.execCalls = []; h.released = 0
   h.fifo.clear(); h.fifoFds.clear(); h.hang.clear(); h.hangStreams = []
+  h.hard.clear(); h.hardOnOpen.clear(); h.hardGoneOnOpen.clear(); h.stall.clear(); h.hangReaddir.clear(); h.destroys = 0; h.closes = 0
+  h.inoFor = null; h.onChmod = null; h.fdPaths.clear()
   h.gate = new Promise<void>((r) => { h.release = r })
 })
 afterEach(() => {
@@ -315,8 +365,8 @@ afterEach(() => {
   for (const s of h.hangStreams) s.destroy(new Error('the test is over'))
   if (realGetuid === undefined) delete (process as any).getuid
   else (process as any).getuid = realGetuid
-  h.links.clear()
-  h.onReaddir = null; h.onLstat = null; h.onRun = null; h.uidFor = null; h.modeFor = null
+  h.links.clear(); h.hard.clear()
+  h.onReaddir = null; h.onLstat = null; h.onRun = null; h.uidFor = null; h.modeFor = null; h.inoFor = null; h.onChmod = null
   const t = h.tmpRoot
   if (t && basename(t).startsWith(PREFIX) && nodePath.resolve(dirname(t)) === nodePath.resolve(os.tmpdir())) {
     try { R().rmSync(t, { recursive: true, force: true }) } catch { /* ignore */ }
@@ -352,12 +402,64 @@ describe('the runs folder is a real folder, checked before any launch [host]', (
   it('on POSIX a runs folder that others can write to is refused before any launch [host]', async () => {
     const parentKey = () => nodePath.resolve(runsParent())
     for (const mode of [0o040770, 0o040707, 0o040777]) {
-      posixAs(() => 4242, (p) => (p === parentKey() ? mode : undefined))
+      // `insights` above it is this user's only, so the runs folder's own mode is what is refused.
+      posixAs(() => 4242, (p) => (p === parentKey() ? mode : fkey(p) === fkey(insightsDir()) ? 0o040700 : undefined))
       h.prepareCalls = []
       const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
       expect(runOf(id), mode.toString(8)).toMatchObject({ status: 'failed', error: NO_FOLDER })
       expect(h.prepareCalls).toEqual([])
     }
+  })
+
+  // [host] P4.7 fix pass 4: `insights` above the runs folder is held to the
+  // runs folder's rule on POSIX. One this user owns that others can write to
+  // (an older folder made under a group-writable umask) is made writable by
+  // this user only before anything is made in it; one that stays writable by
+  // others, or is another user's, is refused before any launch.
+  it('on POSIX an insights folder others can write to is made writable by this user only, or refused before any launch [host]', async () => {
+    const ins = () => nodePath.resolve(insightsDir())
+    const runs = () => nodePath.resolve(runsParent())
+    R().mkdirSync(runsParent(), { recursive: true })
+    let insMode = 0o040777
+    const chmods: number[] = []
+    h.onChmod = (p, m) => { if (fkey(p) === fkey(ins())) { chmods.push(m); insMode = 0o040000 | m } }
+    posixAs(() => 4242, (p) => (fkey(p) === fkey(ins()) ? insMode : fkey(p) === fkey(runs()) ? 0o040700 : undefined))
+    const ok = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(ok).status).toBe('complete')
+    expect(chmods).toEqual([0o755])
+    // The folder stays writable by others: refused, nothing launched.
+    h.onChmod = null
+    for (const mode of [0o040775, 0o040757, 0o040777]) {
+      insMode = mode
+      h.prepareCalls = []
+      const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+      expect(runOf(id), mode.toString(8)).toMatchObject({ status: 'failed', error: NO_FOLDER })
+      expect(h.prepareCalls).toEqual([])
+    }
+    // Another user's insights folder: refused, never changed.
+    insMode = 0o040700
+    h.onChmod = (p) => { if (fkey(p) === fkey(ins())) chmods.push(-1) }
+    posixAs((p) => (fkey(p) === fkey(ins()) ? 7 : 4242), (p) => (fkey(p) === fkey(ins()) ? 0o040777 : fkey(p) === fkey(runs()) ? 0o040700 : undefined))
+    h.prepareCalls = []
+    const other = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(other)).toMatchObject({ status: 'failed', error: NO_FOLDER })
+    expect(h.prepareCalls).toEqual([])
+    expect(chmods).not.toContain(-1)
+  })
+
+  // [host] P4.7 fix pass 4: each check matches the runs folder's real path
+  // too, so one that turns into a link after its lstat is still caught.
+  it('the runs folder swapped for a link just after its lstat in the check before the sweep: nothing in the link target is swept; no model run [host]', async () => {
+    const elsewhere = join(h.tmpRoot, 'elsewhere-rp')
+    const victim = staleVictim(elsewhere)
+    R().mkdirSync(runsParent(), { recursive: true })
+    let seen = 0
+    h.onLstat = (p) => { if (fkey(p) === fkey(runsParent()) && ++seen === 2) { h.links.set(nodePath.resolve(runsParent()), elsewhere); h.onLstat = null } }
+    const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    expect(seen).toBe(2)
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: NO_FOLDER })
+    expect(h.execCalls).toHaveLength(0)
+    expect(R().existsSync(join(victim, 'keep.txt'))).toBe(true)
   })
 })
 
@@ -427,6 +529,48 @@ describe('each session is read through the file the walk saw [host]', () => {
     expect(read.sessions).toHaveLength(1)
     expect(codex.buildCodexDigest(read.sessions).text).toContain('SECOND-SESSION')
   })
+
+  // [host] P4.7 fix pass 4: a rollout with a second name (a hard link) may be
+  // another account's session under this account's folder: it is not read,
+  // whether the walk sees the second name or the open file does.
+  it("a rollout with a second name when the walk finds it is not read, and is counted with the links not followed; the account's own sessions are [host]", async () => {
+    const other = join(h.tmpRoot, 'realm-B', 'sessions', 'rollout-B.jsonl')
+    R().mkdirSync(dirname(other), { recursive: true })
+    R().writeFileSync(other, rollout('C:\\proj\\b', 'ACCOUNT-B-PLAN'))
+    const second = join(dayDir(), 'rollout-h.jsonl')
+    R().writeFileSync(second, 'placeholder')
+    h.hard.set(fkey(second), nodePath.resolve(other))
+    const st = await (await import('node:fs')).promises.lstat(second, { bigint: true })
+    expect(st.isFile() && !st.isSymbolicLink() && st.nlink === 2n).toBe(true)
+    const read = await codex.readCodexSessions(h.sessionsDir, { runsParent: null, timeLimitMs: 5000 })
+    expect(codex.buildCodexDigest(read.sessions).text).not.toContain('ACCOUNT-B-PLAN')
+    expect(codex.buildCodexDigest(read.sessions).text).toContain('ACCOUNT-A-TEXT')
+    expect(read.linksSkipped).toBe(1)
+    const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(id).status).toBe('complete')
+    expect(h.execCalls[0].prompt).toContain('ACCOUNT-A-TEXT')
+    expect(h.execCalls[0].prompt).not.toContain('ACCOUNT-B-PLAN')
+  })
+
+  it("a rollout with a second name when the walk finds it is not read even when its other name is gone by the open [host]", async () => {
+    const other = join(h.tmpRoot, 'realm-B', 'sessions', 'rollout-B.jsonl')
+    R().mkdirSync(dirname(other), { recursive: true })
+    R().writeFileSync(other, rollout('C:\\proj\\b', 'ACCOUNT-B-PLAN'))
+    const second = join(dayDir(), 'rollout-h.jsonl')
+    R().writeFileSync(second, 'placeholder')
+    h.hard.set(fkey(second), nodePath.resolve(other))
+    h.hardGoneOnOpen.add(fkey(second))
+    const read = await codex.readCodexSessions(h.sessionsDir, { runsParent: null, timeLimitMs: 5000 })
+    expect(codex.buildCodexDigest(read.sessions).text).not.toContain('ACCOUNT-B-PLAN')
+    expect(read.linksSkipped).toBe(1)
+  })
+
+  it('a rollout that has a second name by the time it is opened is not read, and is counted [host]', async () => {
+    h.hardOnOpen.add(fkey(join(dayDir(), 'rollout-a.jsonl')))
+    const read = await codex.readCodexSessions(h.sessionsDir, { runsParent: null, timeLimitMs: 5000 })
+    expect(read.sessions).toEqual([])
+    expect(read.linksSkipped).toBe(1)
+  })
 })
 
 describe('the sessions read has a time limit [host]', () => {
@@ -449,6 +593,33 @@ describe('the sessions read has a time limit [host]', () => {
     expect(h.released).toBe(1)
     expect(runner.isRunning()).toBe(false)
   }, 5000)
+
+  // [host] P4.7 fix pass 4: what a read stopped at the limit holds is let go.
+  it('a file that opens but whose data never comes: the read stops at the limit; its stream is destroyed and the file closed, once each [host]', async () => {
+    h.stall.add(fkey(join(dayDir(), 'rollout-a.jsonl')))
+    const read = await codex.readCodexSessions(h.sessionsDir, { runsParent: null, timeLimitMs: 300 })
+    expect(read.timedOut).toBe(true)
+    expect(read.sessions).toEqual([])
+    await new Promise((r) => setTimeout(r, 150))
+    expect(h.hangStreams).toHaveLength(1)
+    expect(h.hangStreams[0].destroyed).toBe(true)
+    expect(h.destroys).toBe(1)
+    expect(h.closes).toBe(1)
+  })
+
+  it('a walk still going at the limit stops: nothing more is looked at once the read has ended [host]', async () => {
+    const day2 = join(h.sessionsDir, '2026', '10', '02')
+    R().mkdirSync(day2, { recursive: true })
+    R().writeFileSync(join(day2, 'rollout-b.jsonl'), rollout('C:\\proj\\b', 'LATE'))
+    h.hangReaddir.add(fkey(day2))
+    const read = await codex.readCodexSessions(h.sessionsDir, { runsParent: null, timeLimitMs: 150 })
+    expect(read.timedOut).toBe(true)
+    const after: string[] = []
+    h.onLstat = (p) => { after.push(p) }
+    h.release!()
+    await new Promise((r) => setTimeout(r, 150))
+    expect(after).toEqual([])
+  })
 })
 
 describe("main hands the page a Codex run's report.json only as the regular file it saw [host]", () => {
@@ -479,5 +650,16 @@ describe("main hands the page a Codex run's report.json only as the regular file
     const target = nodePath.resolve(file)
     h.onLstat = (p) => { if (p === target) { h.links.set(target, other); h.onLstat = null } }
     expect(runner.getInsightsReport('r-swap')).toBeNull()
+  })
+
+  // [host] P4.7 fix pass 4: inode numbers past 2^53 (as NTFS gives) are
+  // compared whole, never as rounded numbers.
+  it('the open file and its lstat are matched on their whole inode numbers [host]', () => {
+    const file = codexRun('r-ino')
+    const big = 2n ** 60n
+    h.inoFor = (p, how) => (fkey(p) === fkey(file) ? (how === 'lstat' ? big : big + 1n) : undefined)
+    expect(runner.getInsightsReport('r-ino')).toBeNull()
+    h.inoFor = (p) => (fkey(p) === fkey(file) ? big : undefined)
+    expect(JSON.parse(runner.getInsightsReport('r-ino')!).subtitle).toBe('THE-RUN-OWN')
   })
 })

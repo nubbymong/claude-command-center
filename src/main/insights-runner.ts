@@ -15,6 +15,7 @@ import {
   realpathSync,
   rmdirSync,
   rmSync,
+  chmodSync,
   openSync,
   fstatSync,
   readSync,
@@ -33,7 +34,8 @@ import { spawnClaudeHeadless } from './claude-headless'
 import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
 import { providerLaunchRefusal, providerProbeRefusal } from './provider-launch-gate'
 import type { ProviderLaunchRefused } from '../shared/providers'
-import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId, sharedRoot } from './account-profiles'
+import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
+import { claudeSettingsTransportEnv } from './sentinel/sentinel-analysis'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import type { AccountProfile } from '../shared/account-types'
@@ -1123,10 +1125,10 @@ const CLAUDE_SYNTHESIS_FOLDERS: RunFolders = { dirname: '.insights-claude-runs',
  * Whether `parent` is still the runs folder it was checked to be: `insights`
  * and it real folders (never links), its real path
  * `<real resources>/insights/<runs folder>`, and on POSIX both this user's
- * and the runs folder writable by no one else. Asked before any launch,
- * again just before the stale sweep, and again just before a run's folder
- * is removed, so nothing is ever swept or removed through a link. Never
- * throws.
+ * and both writable by no one else. Asked before any launch, again just
+ * before the stale sweep, and again just before a run's folder is removed:
+ * the sweep and the removal go ahead only on a runs folder that holds at
+ * that check. Never throws.
  */
 function runsFolderHolds(parent: string, kind: RunFolders): boolean {
   try {
@@ -1137,7 +1139,7 @@ function runsFolderHolds(parent: string, kind: RunFolders): boolean {
       const st = lstatSync(dir)
       if (st.isSymbolicLink() || !st.isDirectory()) return false
       if (posix && st.uid !== process.getuid!()) return false
-      if (posix && dir === parent && (st.mode & 0o022) !== 0) return false
+      if (posix && (st.mode & 0o022) !== 0) return false
     }
     const expected = join(realpathSync.native(dirname(insights)), basename(insights), kind.dirname)
     return samePath(realpathSync.native(parent), expected)
@@ -1149,7 +1151,10 @@ function runsFolderHolds(parent: string, kind: RunFolders): boolean {
 /** The runs folder of `kind`, made owner-only (0700) when it is not there
  *  yet; null when it cannot be, or does not hold (runsFolderHolds). The
  *  insights folder is checked before anything is made in it: a link there
- *  is refused, never made through. */
+ *  is refused, never made through. On POSIX an insights folder of this
+ *  user's that others can write to (one made under a group-writable umask)
+ *  is first made writable by this user only, as the app's other owner-only
+ *  folders are; one that stays writable by others is refused. */
 function runsParentFor(kind: RunFolders): string | null {
   const insights = getInsightsDir()
   const parent = join(insights, kind.dirname)
@@ -1157,6 +1162,9 @@ function runsParentFor(kind: RunFolders): string | null {
     let st: Stats | null = null
     try { st = lstatSync(insights) } catch (e) { if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') return null }
     if (st && (st.isSymbolicLink() || !st.isDirectory())) return null
+    if (st && typeof process.getuid === 'function' && st.uid === process.getuid() && (st.mode & 0o022) !== 0) {
+      try { chmodSync(insights, st.mode & 0o7777 & ~0o022) } catch { /* checked below either way */ }
+    }
     mkdirSync(parent, { recursive: true, mode: 0o700 })
     return runsFolderHolds(parent, kind) ? parent : null
   } catch {
@@ -1322,6 +1330,14 @@ async function codexModelRun(launch: { executable: string; env: Record<string, s
  *  (CODEX_INSIGHTS_READ_TIME_LIMIT_MS). */
 const CODEX_SESSIONS_READ_TOO_SLOW = "This account's Codex sessions could not be read in time, so nothing was sent to Codex. Try New run again."
 
+/** What a Codex report says when no marker could fence what it would send
+ *  (insights-codex.ts, buildCodexInsightsPrompt): nothing is sent. */
+const CODEX_SESSIONS_UNFENCED = "This account's Codex sessions could not be marked off for the report, so nothing was sent to Codex. Try New run again."
+
+/** Why a roll-up has no written analysis when no marker could fence the
+ *  comparison (insights-cross-account.ts): nothing is sent. */
+const CROSS_ACCOUNT_UNFENCED = 'No written analysis: the comparison could not be marked off for it, so it was not sent.'
+
 /**
  * A Codex account's Insights report (mockup screens 1 to 9, approved on the
  * Agent Canvas 2026-10-05). Refused while Codex is off, before a run record
@@ -1399,6 +1415,7 @@ export async function runCodexInsights(
       const digest = buildCodexDigest(read.sessions)
       // The previous run's figures as numbers only, never its words.
       const prompt = buildCodexInsightsPrompt(counts, digest, codexPreviousFigures(loadPreviousKpis(id)), read)
+      if (prompt === null) return { failed: CODEX_SESSIONS_UNFENCED }
       logInfo(`[insights] Codex run ${id}: ${counts.sessions} sessions (${read.filesFound} files, ${read.filesNotRead} not read at the byte limit, ${read.skippedLines} oversized lines skipped, ${read.linksSkipped} links not followed), digest ${digest.included} sessions, prompt ${prompt.length} chars`)
       run.statusMessage = 'Step 2/3: Writing the report...'
       publish()
@@ -1702,10 +1719,21 @@ export async function runCrossAccountInsights(
     // Claude Code members all failed compares Codex accounts only).
     const prompt = buildCrossAccountPromptFrom(baseline, new Set(members.map((m) => m.provider ?? 'claude')))
     logInfo(
-      `[insights] Cross-account synthesis payload: ${prompt.length} chars, ` +
+      `[insights] Cross-account synthesis payload: ${prompt?.length ?? 0} chars, ` +
       `${baseline.comparison.length} shared / ${baseline.uniqueMetrics.length} unique metrics, ` +
       `windowsComparable=${baseline.windowsComparable}`
     )
+    if (prompt === null) {
+      // No marker could fence the comparison: nothing is sent, numbers only.
+      run.error = CROSS_ACCOUNT_UNFENCED
+      atomicWriteFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(withNarrative(baseline, null), null, 2), { mode: 0o600 })
+      run.status = 'complete'
+      run.statusMessage = undefined
+      run.memberRunIds = members.map(m => m.runId)
+      publish()
+      logInfo(`[insights] Cross-account run ${id} complete: ${members.length} accounts, synthesis=deterministic (not sent)`)
+      return id
+    }
     if (synthesisMember.provider === 'codex') {
       // P4.7: the written analysis runs on a Codex account (the first that
       // produced figures, when the primary did not): one text-only `codex
@@ -1762,8 +1790,11 @@ export async function runCrossAccountInsights(
         noFolder = true
       } else {
         try {
+          // The network settings of the account's settings file, as variables
+          // (it loads no settings file): Sentinel's one reader.
+          const transportEnv = await claudeSettingsTransportEnv(home)
           result = await spawnClaudeHeadless(buildCrossAccountSpawnArgs(), 600000, prompt, home, undefined, {
-            cwd: folder, env: CROSS_ACCOUNT_SYNTHESIS_ENV, transportEnv: synthesisTransportEnv(home),
+            cwd: folder, env: CROSS_ACCOUNT_SYNTHESIS_ENV, transportEnv,
           })
         } finally {
           removeRunFolder(folder, parent, CLAUDE_SYNTHESIS_FOLDERS)
@@ -1841,16 +1872,17 @@ export function isValidRunId(id: unknown): id is string {
 }
 
 /** A Codex run's report.json, as main hands it to the page: a regular file
- *  (never a link or a folder; on POSIX opened without following one, and
- *  the open file the same one lstat saw), at most the page's own cap
+ *  (never a link or a folder; on POSIX opened without following one and
+ *  without waiting on a FIFO's writer, and the open file the same one lstat
+ *  saw, device and inode compared whole), at most the page's own cap
  *  (CODEX_REPORT_MAX_BYTES); anything else is no report. Never throws. */
 function readCodexReportFile(file: string): string | null {
   try {
-    const st = lstatSync(file)
-    if (!st.isFile() || st.size > CODEX_REPORT_MAX_BYTES) return null
-    const fd = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+    const st = lstatSync(file, { bigint: true })
+    if (!st.isFile() || st.size > BigInt(CODEX_REPORT_MAX_BYTES)) return null
+    const fd = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0))
     try {
-      const open = fstatSync(fd)
+      const open = fstatSync(fd, { bigint: true })
       if (!open.isFile() || open.dev !== st.dev || open.ino !== st.ino) return null
       // One byte past the cap tells a file that grew since from one that fits.
       const buf = Buffer.alloc(CODEX_REPORT_MAX_BYTES + 1)
@@ -1862,24 +1894,6 @@ function readCodexReportFile(file: string): string | null {
     }
   } catch {
     return null
-  }
-}
-
-/** The network settings (proxies, certificates: only what the Claude
- *  package keeps as transport) the written analysis's account sets in its
- *  settings file, handed to the run as variables, since it loads no
- *  settings file (as Sentinel's analysis does). None when there is no such
- *  file, it is too large, or the package cannot say. Never throws. */
-function synthesisTransportEnv(home: string | null): Readonly<Record<string, string>> {
-  try {
-    const pick = tryGetProviderPackage('claude')?.managedLaunch?.transportSettingsEnv
-    if (typeof pick !== 'function') return {}
-    const file = join(home ? join(home, '.claude') : sharedRoot(), 'settings.json')
-    const st = statSync(file)
-    if (!st.isFile() || st.size > 2 * 1024 * 1024) return {}
-    return pick(readFileSync(file, 'utf8'))
-  } catch {
-    return {}
   }
 }
 

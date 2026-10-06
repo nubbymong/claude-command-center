@@ -5,6 +5,8 @@
 // old ~21KB manifest prompt (anthropics/claude-code#7263).
 import { z } from 'zod'
 import { randomBytes } from 'crypto'
+import * as fs from 'fs'
+import * as path from 'path'
 import type { SentinelFinding, SentinelProvider } from '../../shared/sentinel-types'
 import { stripSpoofableText } from '../../shared/safe-text'
 import { redactFailure } from '../providers/review-support'
@@ -71,13 +73,20 @@ export const CLAUDE_ANALYSIS_ARGS: readonly string[] = [
   '-p', '--model', 'sonnet', '--output-format', 'stream-json', '--verbose', '--no-session-persistence', '--strict-mcp-config', '--setting-sources=', '--tools=', '--disallowedTools', CLAUDE_ANALYSIS_DENIED_TOOLS,
 ]
 
-/** Claude Code's own switches for the analysis run: no CLAUDE.md or memory
+/** Claude Code's own switches for a text-only run: no CLAUDE.md or memory
  *  file of any scope, no auto memory, and no git status or git instructions
- *  in its context. */
-export const CLAUDE_ANALYSIS_ENV: Readonly<Record<string, string>> = Object.freeze({
+ *  in its context. The analysis's (CLAUDE_ANALYSIS_ENV) and the Insights
+ *  roll-up's written analysis's (insights-cross-account.ts). */
+export const CLAUDE_TEXT_RUN_SWITCHES: Readonly<Record<string, string>> = Object.freeze({
   CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1',
+})
+
+/** Claude Code's own switches for the analysis run: the text-only run's
+ *  (CLAUDE_TEXT_RUN_SWITCHES), and its retry backstop. */
+export const CLAUDE_ANALYSIS_ENV: Readonly<Record<string, string>> = Object.freeze({
+  ...CLAUDE_TEXT_RUN_SWITCHES,
   // PR 4 (owner answers review): a backstop for a Claude Code that prints no
   // retry line (the pinned 2.1.287 to 2.1.289 print one; which older versions
   // do not is unread, and the VM run checks 2.1.278, the managed floor), where
@@ -93,6 +102,32 @@ export const CLAUDE_ANALYSIS_ENV: Readonly<Record<string, string>> = Object.free
   // the backoff, where the 3-minute cap ends most runs anyway.
   CLAUDE_CODE_MAX_RETRIES: '8',
 })
+
+/** The largest settings file read for its transport variables (the CLI's own cap). */
+const SETTINGS_READ_MAX_BYTES = 2 * 1024 * 1024
+
+/** P3.9 round 3: a text-only run loads no settings file, so the network
+ *  settings its account's settings file sets (proxies, certificates: only
+ *  what the Claude package classifies as transport and keeps) are handed to
+ *  it as variables. The account's own settings file: its profile home's, or
+ *  the shared Claude folder for the default account. None when there is no
+ *  such file, it is too large, or the package cannot say. Never throws. The
+ *  one reader for the analysis and the Insights roll-up's written analysis. */
+export async function claudeSettingsTransportEnv(home: string | null): Promise<Readonly<Record<string, string>>> {
+  try {
+    const { tryGetProviderPackage } = await import('../providers/core')
+    const pick = tryGetProviderPackage('claude')?.managedLaunch?.transportSettingsEnv
+    if (typeof pick !== 'function') return {}
+    const { sharedRoot } = await import('../account-profiles')
+    const dir = home ? path.join(home, '.claude') : sharedRoot()
+    const file = path.join(dir, 'settings.json')
+    const st = fs.statSync(file)
+    if (!st.isFile() || st.size > SETTINGS_READ_MAX_BYTES) return {}
+    return pick(fs.readFileSync(file, 'utf8'))
+  } catch {
+    return {}
+  }
+}
 
 /** PR 4 (owner answers review): how many retries in a row that got no answer
  *  from its service end a Claude Code analysis early. Claude Code prints one
