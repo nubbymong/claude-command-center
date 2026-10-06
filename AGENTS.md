@@ -82,7 +82,7 @@ npm run test         # both
   rewrites the tree and can leave it looking fully installed while Electron's own
   binary is absent: `node_modules/electron/` exists, `package.json` is satisfied
   and `npm ls` is clean, but `path.txt` and `dist/electron.exe` are gone. The
-  repo's `postinstall` only rebuilds the two native addons, so nothing replaces
+  repo's `postinstall` only prepares the two native addons, so nothing replaces
   them. electron-vite then dies with an opaque `Error: Electron uninstall`, the
   launcher window closes instantly, and the real message is only in
   `dev-logs/ccc-dev-*.log`. `predev` (`scripts/preflight-electron.mjs`) now
