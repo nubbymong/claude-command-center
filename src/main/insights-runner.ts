@@ -1466,28 +1466,37 @@ export interface CodexRollupTarget {
  *  confirmation (mockup D12): it is named, never run without one. */
 export const CODEX_NEEDS_OWN_CONFIRMATION = 'needs its own confirmation: run it on its own'
 
+/** Why a roll-up leaves out an account whose sign-in check failed (its row
+ *  in Settings, Accounts reads "Needs attention", and nothing runs on it
+ *  until it is confirmed there): it is named with this reason, never run, as
+ *  a Claude Code account whose sign-in fails is named with its reason. */
+export const CODEX_NEEDS_ATTENTION = 'needs attention: signed in a different way than before; confirm it in Settings, Accounts'
+
 /**
  * P4.7 (mockup C1 A): the Codex accounts a roll-up names, from the accounts
- * snapshot: active and not blocked. One marked "confirm at launch" (this
- * computer's own Codex sign-in, or an unverified one) is LEFT OUT: a roll-up
- * cannot carry a per-run confirmation for it, so it is named under "Left out
- * of this comparison" and never run. An explicit id list is intersected with
- * that set, never trusted. No snapshot: none.
+ * snapshot: the active ones. Each is run, or LEFT OUT and named under "Left
+ * out of this comparison" with its reason, never run: one whose sign-in
+ * check failed (blocked) needs attention first; one marked "confirm at
+ * launch" (this computer's own Codex sign-in, or an unverified one) needs a
+ * per-run confirmation a roll-up cannot carry. An explicit id list is
+ * intersected with the active set, never trusted; a left-out account never
+ * counts toward the accounts a roll-up needs. No snapshot: none.
  */
-export function resolveCodexCrossAccountTargets(accountIds?: string[]): { run: CodexRollupTarget[]; leftOut: CodexRollupTarget[] } {
+export function resolveCodexCrossAccountTargets(accountIds?: string[]): { run: CodexRollupTarget[]; leftOut: Array<CodexRollupTarget & { reason: string }> } {
   const snapshot = accountsSnapshot()
   if (!snapshot) return { run: [], leftOut: [] }
   const wanted = accountIds && accountIds.length > 0 ? new Set(accountIds) : null
-  const out = { run: [] as CodexRollupTarget[], leftOut: [] as CodexRollupTarget[] }
+  const out = { run: [] as CodexRollupTarget[], leftOut: [] as Array<CodexRollupTarget & { reason: string }> }
   const accounts = snapshot.accounts
-    .filter((a) => a.providerId === 'codex' && a.lifecycle === 'active' && a.operationalState !== 'blocked' && isOpaqueId(a.id, 'account'))
+    .filter((a) => a.providerId === 'codex' && a.lifecycle === 'active' && isOpaqueId(a.id, 'account'))
     .filter((a) => !wanted || wanted.has(a.id))
     // The provider default first, then by name (the New session dialog's order).
     .sort((x, y) => Number(y.isProviderDefault) - Number(x.isProviderDefault) || codexAccountInfo(snapshot, x.id).label.localeCompare(codexAccountInfo(snapshot, y.id).label))
   for (const a of accounts) {
     const info = codexAccountInfo(snapshot, a.id)
     const t: CodexRollupTarget = { id: a.id, label: info.label, ...(info.email ? { accountEmail: info.email } : {}) }
-    if (a.external || a.unverified) out.leftOut.push(t)
+    if (a.operationalState === 'blocked') out.leftOut.push({ ...t, reason: CODEX_NEEDS_ATTENTION })
+    else if (a.external || a.unverified) out.leftOut.push({ ...t, reason: CODEX_NEEDS_OWN_CONFIRMATION })
     else out.run.push(t)
   }
   return out
@@ -1564,13 +1573,14 @@ export async function runCrossAccountInsights(
         label: t.label,
         status: 'running'
       })),
-      // Named, never run: each needs its own per-run confirmation (D12).
+      // Named, never run, each with its reason: it needs attention first, or
+      // its own per-run confirmation (D12).
       ...codexTargets.leftOut.map<InsightsRunMember>(t => ({
         profileId: t.id,
         accountEmail: t.accountEmail,
         label: t.label,
         status: 'failed',
-        error: CODEX_NEEDS_OWN_CONFIRMATION
+        error: t.reason
       }))
     ]
   }

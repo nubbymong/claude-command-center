@@ -1,7 +1,9 @@
 // [host] WP2 PR 4, P4.7 (row 68), mockup choice C1 = A (approved on the Agent
 // Canvas 2026-10-05): Run all makes ONE roll-up over every account of both
 // assistants that is on. An account marked "confirm at launch" is named under
-// "Left out of this comparison", never run (D12). The written analysis runs
+// "Left out of this comparison", never run (D12); so is one whose sign-in
+// check failed, with that reason (as a Claude Code account whose sign-in
+// fails is named with its reason). The written analysis runs
 // where it runs today (the primary when it produced figures, else the first
 // member that did); on a Codex account, or with Claude Code off, Codex writes
 // it. The roll-up's own rules are unchanged.
@@ -131,12 +133,12 @@ vi.mock('../../../src/main/provider-accounts', () => ({
     },
     snapshot: () => ({
       revision: 1, providers: [], groups: [], pendingSetups: [], externalDefaults: [], conflicts: [], reviewerNotices: [],
-      identities: [{ id: 'work', friendlyName: 'Work' }, { id: 'rev', friendlyName: 'Reviewer' }, { id: 'ext', friendlyName: '' }],
+      identities: [{ id: 'work', friendlyName: 'Work' }, { id: 'rev', friendlyName: 'Reviewer' }, { id: 'ext', friendlyName: '' }, { id: 'old', friendlyName: 'Old laptop' }],
       accounts: [
         codexAccount(ACCT, 'work', { isProviderDefault: true }),
         codexAccount(ACCT2, 'rev'),
         codexAccount(EXT, 'ext', { external: true }),
-        codexAccount(BLOCKED, 'rev', { operationalState: 'blocked' }),
+        codexAccount(BLOCKED, 'old', { operationalState: 'blocked' }),
         codexAccount(ARCHIVED, 'rev', { lifecycle: 'archived' }),
         ...h.extraAccounts,
       ],
@@ -154,7 +156,7 @@ vi.mock('../../../src/main/provider-accounts', () => ({
   }),
 }))
 
-const { runCrossAccountInsights, getCatalogue, getInsightsKpis, countCodexInsightsRunsUnleased, countInsightsRunsInFlight, CODEX_NEEDS_OWN_CONFIRMATION } = await import('../../../src/main/insights-runner')
+const { runCrossAccountInsights, getCatalogue, getInsightsKpis, countCodexInsightsRunsUnleased, countInsightsRunsInFlight, CODEX_NEEDS_OWN_CONFIRMATION, CODEX_NEEDS_ATTENTION } = await import('../../../src/main/insights-runner')
 const win = () => null
 let tmpRoot = ''
 
@@ -222,10 +224,12 @@ describe('Run all over both assistants (C1 A)', () => {
       ['Personal', 'complete'],
       ['Work (Codex)', 'complete'],
       ['Reviewer (Codex)', 'complete'],
+      ['Old laptop (Codex)', 'failed'],
       ["This computer's Codex", 'failed'],
     ])
     expect(agg.members!.find((m) => m.profileId === EXT)!.error).toBe(CODEX_NEEDS_OWN_CONFIRMATION)
-    // The one needing its own confirmation was never launched; blocked and archived ones are not named.
+    expect(agg.members!.find((m) => m.profileId === BLOCKED)!.error).toBe(CODEX_NEEDS_ATTENTION)
+    // The one needing its own confirmation and the one needing attention were never launched; an archived one is not named.
     expect(h.prepareCalls.map((c) => c.providerAccountId)).toEqual([ACCT, ACCT2])
     expect(agg.memberRunIds).toHaveLength(4)
     // The PTY fake is the one the Claude Code members ran on (nothing real started).
@@ -276,7 +280,7 @@ describe('Run all over both assistants (C1 A)', () => {
     const id = await runCrossAccountInsights(win) as string
     const agg = getCatalogue().runs.find((r) => r.id === id)!
     expect(agg.status).toBe('complete')
-    expect(agg.members!.map((m) => m.label)).toEqual(['Work (Codex)', 'Reviewer (Codex)', "This computer's Codex"])
+    expect(agg.members!.map((m) => m.label)).toEqual(['Work (Codex)', 'Reviewer (Codex)', 'Old laptop (Codex)', "This computer's Codex"])
     const synth = h.execPrompts.filter((p) => p.startsWith('You are comparing'))
     expect(synth).toHaveLength(1)
     expect(synth[0].startsWith('You are comparing Codex usage across several accounts')).toBe(true)
@@ -324,6 +328,21 @@ describe('Run all over both assistants (C1 A)', () => {
     h.claude = 'off'
     await expect(runCrossAccountInsights(win, { profileIds: [ACCT, EXT] })).rejects.toThrow('A cross-account report needs at least 2 signed-in accounts (found 1)')
   })
+
+  it("this computer's sign-in after its sign-in check failed is named with that reason, never run, whether or not a list names it [host]", async () => {
+    h.claude = 'off'
+    const EXT_CHECK_FAILED = `acct-${'3'.repeat(16)}`
+    h.extraAccounts = [codexAccount(EXT_CHECK_FAILED, 'ext', { external: true, operationalState: 'blocked' })]
+    for (const list of [undefined, [ACCT, ACCT2, EXT_CHECK_FAILED]]) {
+      h.prepareCalls = []
+      const id = await runCrossAccountInsights(win, list ? { profileIds: list } : undefined) as string
+      const agg = getCatalogue().runs.find((r) => r.id === id)!
+      expect(agg.status).toBe('complete')
+      const named = agg.members!.find((m) => m.profileId === EXT_CHECK_FAILED)
+      expect(named).toMatchObject({ label: "This computer's Codex", status: 'failed', error: CODEX_NEEDS_ATTENTION })
+      expect(h.prepareCalls.map((c) => c.providerAccountId)).not.toContain(EXT_CHECK_FAILED)
+    }
+  })
 })
 
 describe("the written analysis on Codex is checked before its account is launched", () => {
@@ -347,8 +366,9 @@ describe('an explicit Run all list only narrows (T6)', () => {
     const id = await runCrossAccountInsights(win, { profileIds: [ACCT, ACCT2, BLOCKED, ARCHIVED, UNKNOWN, OTHERPROV, EXT, UNVER, ACCT, ACCT2] }) as string
     const agg = getCatalogue().runs.find((r) => r.id === id)!
     expect(agg.status).toBe('complete')
-    expect(agg.members!.map((m) => m.profileId).sort()).toEqual([ACCT, ACCT2, EXT, UNVER].sort())
+    expect(agg.members!.map((m) => m.profileId).sort()).toEqual([ACCT, ACCT2, BLOCKED, EXT, UNVER].sort())
     for (const m of agg.members!.filter((m) => m.profileId === EXT || m.profileId === UNVER)) expect(m.error).toBe(CODEX_NEEDS_OWN_CONFIRMATION)
+    expect(agg.members!.find((m) => m.profileId === BLOCKED)!.error).toBe(CODEX_NEEDS_ATTENTION)
     expect(h.prepareCalls.filter((c) => !String(c.ownerId).endsWith(':synthesis')).map((c) => c.providerAccountId).sort()).toEqual([ACCT, ACCT2].sort())
     for (const bad of [BLOCKED, ARCHIVED, UNKNOWN, OTHERPROV, EXT, UNVER]) {
       expect(h.prepareCalls.map((c) => c.providerAccountId)).not.toContain(bad)

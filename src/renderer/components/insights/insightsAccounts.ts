@@ -13,9 +13,9 @@
 //   name that does not already say Codex, and "- confirm at launch" where a
 //   run needs its own confirmation. With Codex off or not set up, none.
 // - The picker shows with two or more accounts across both assistants.
-// - Run all counts every account of every assistant that is on, less an
-//   account whose runs need their own confirmation (main names it under
-//   "Left out of this comparison").
+// - Run all counts every account of every assistant that is on, less a
+//   blocked one and one whose runs need their own confirmation (main names
+//   each under "Left out of this comparison", with its reason).
 // No default export (project convention).
 import type { AccountsSnapshot, AccountView } from '../../../shared/providers'
 import { accountDisplayName } from '../../stores/providerAccountsStore'
