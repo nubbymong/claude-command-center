@@ -78,8 +78,8 @@ checklist):
   cards for the assistants in use, and the PR 4 user-facing sweep with the
   2.1.1 changelog lines, built on the defaults of questions 5 to 8; seven
   listed items are owner calls (the plan's P4.11 record).
-- P4.7 (row 68, DONE, mocked; d99a553b to a566fff8 with fix passes 1 and
-  2): Insights for a Codex account as the OR3 mockup drew it, approved on the
+- P4.7 (row 68, DONE, mocked; d99a553b to b0165c10 with fix passes 1 to
+  3): Insights for a Codex account as the OR3 mockup drew it, approved on the
   canvas 2026-10-05 (C1 = A): the app reads and counts that account's own
   sessions, and one read-only `codex exec` with no tools, under the
   account's lease, writes the cards, which the page draws in its layout,
@@ -88,7 +88,11 @@ checklist):
   comparison as data; `insights:run` answers the app window only and checks
   the provider and id class. Fix pass 1 (23505eaa to 63878767) cleared the
   three WP1 gate failures found at integration; fix pass 2 (b896c5d9,
-  a566fff8) answers ADR-009 round 1 and the spec and quality reviews. Row
+  a566fff8) answers ADR-009 round 1 and the spec and quality reviews; fix
+  pass 3 (228af0d5 to b0165c10) answers the VM dry run with the real CLI:
+  the sandbox refusals counted in the words real sessions record, an
+  account whose sign-in check failed named in Run all with its reason, and
+  the provider row's in-use line following the count. Row
   58's artifacts record is signed (67f44333). The ADR-009 re-attack, the VM
   run and OR4 (a real report's content) are owed.
 
