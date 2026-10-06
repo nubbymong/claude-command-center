@@ -509,9 +509,13 @@ Tokenomics shows Claude Code and Codex apart once both have usage:
   range.
 - Codex usage belongs to the account whose folder it was written in, and
   Claude usage to the account profile a local session runs under, from this
-  version on. Older usage, SSH sessions, sessions run outside the app and
-  sessions with no account profile read *Not recorded*; usage cannot be
-  assigned by hand.
+  version on. A session resumed under another account profile counts toward
+  that one from then on; what it used before keeps its account.
+- Older usage, SSH sessions, sessions run outside the app and sessions with
+  no account profile read *Not recorded*, and usage cannot be assigned by
+  hand, with one exception: when a local session that reads *Not recorded*
+  is later resumed in the app under an account profile, its earlier usage
+  moves to that profile's account too.
 - A model with no price yet reads **no price** instead of costing $0, and a
   notice names it and its tokens; its cost is not in the totals.
 - The first start after updating sorts your earlier Codex history by account

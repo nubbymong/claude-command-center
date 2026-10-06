@@ -263,7 +263,12 @@ Per PR:
 - **PR 2 (#625).** P2 and the usage track are built, reviewed, VM-checked (e2e
   81/81 at `7c2739bf`) and their screens approved. Left for the package: the PR
   body and the ADR-009 verdict comment for the final head, and CI at that head.
-  The verification its rows still owe is recorded in PR 4 (section 2).
+  The verification its rows still owe is recorded in PR 4 (section 2). Its
+  usage attribution commits (MP10 and the registry settle) had an ADR-009
+  delta pass during PR 4: FINDINGS, four minors, fixed on PR 4's branch in
+  fix pass 5 (a5b181ea, 6f9cbd4f, and the copy with this record), each with
+  a test red before its fix and the behaviour fixes mutation-proved; the two
+  tests its spec review owed are added (932b7d00). Confirmation owed.
 - **PR 3.** Phases P3.1 to P3.16 (section 8). Done: its PR-level ADR-009
   pass, PASS at 525a00ac; the VM checks at its earlier heads b3937173 and
   1e14b611, where the listed checks (section 8, P3.16) PASS at b3937173 and

@@ -1094,17 +1094,22 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
 - **Residual, accepted (MP10, the path decides):** Claude usage is attributed
   from the transcript path a local session reports (a hook or the
   statusline): the profile whose config folder holds it names the account
-  (as a Codex realm's folder does). The folder is the profile home's
-  `.claude/projects`, the layout the homes are built with (MP10 round 1). A session resumed under another profile
-  keeps its session id and moves on to that account from then on (MP10
-  round 1); its turns already attributed keep theirs, its session row keeps
-  the account it began under, and turns stored between the resume and the
-  first report under the new profile stay with the old one. A transcript
-  with no account yet when first attributed is attributed whole, turns from
-  before the resume included. Sessions from before this build, sessions run
-  outside the app, SSH sessions (their transcripts are on the remote host)
-  and sessions on the default home stay not recorded. There is no manual
-  attribution.
+  (as a Codex realm's folder does), and a report counts only when that is
+  the profile the reporting session runs under now (captured at its latest
+  spawn), so a session attributes usage to its own account only. The folder
+  is the profile home's `.claude/projects`, the layout the homes are built
+  with (MP10 round 1). A session resumed under another profile keeps its
+  session id and moves on to that account from then on (MP10 round 1): its
+  turns already attributed keep theirs, its session row keeps the first
+  account it was given, and turns stored between the resume and the first
+  report under the new profile stay with the old one. Whenever a session is
+  given an account, its turns stored with none take that account, turns
+  from before the resume included. So sessions from before this build,
+  sessions run outside the app and sessions on the default home stay not
+  recorded until one of them is resumed in the app under a profile; then
+  its earlier turns take that profile's account too (accepted). SSH
+  sessions (their transcripts are on the remote host) stay not recorded.
+  There is no manual attribution.
 
 ## Out of this PR (remaining Codex-parity work, carried to PR3/PR4 or 2.1.1 gates)
 

@@ -148,3 +148,12 @@ dependency floors are raised (198b0412, ca965fd7); the electron-builder 26 and
 excalidraw chains need major changes and are the owner's. P4.10's second part
 is done; OR1, OR4, the VM rollback run and the release-level items stay
 owner-gated.
+
+**Usage attribution, fix pass 5.** #625's attribution delta pass (four
+minors) and the two tests its spec review owed are answered on this branch:
+a session's usage is attributed only to the profile it runs under now, with
+ASCII-only case folding and an exact registry link first (a5b181ea);
+attributions are kept, never queued, while the index is not listening
+(6f9cbd4f); the first-index and re-read progress tests (932b7d00); the guide
+and app knowledge say how a resumed session is attributed (the records
+commit). Confirmation owed.

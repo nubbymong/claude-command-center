@@ -775,3 +775,16 @@ describe('Insights for Codex, said where Ask Conductor reads it (P4.7)', () => {
     expect(privacy).not.toMatch(/and no conversation text, the same way/)
   })
 })
+
+// [host] Usage track MP10: which account Claude usage counts under, said
+// exactly, a resumed session included.
+describe('Claude usage by account, said where Ask Conductor reads it (MP10)', () => {
+  const pages = () => APP_KNOWLEDGE_SECTIONS.find((s) => s.id === 'pages')!.body
+  const guide = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'docs', 'USER_GUIDE.md'), 'utf8').replace(/\s+/g, ' ')
+  it('a resumed session moves on to its new profile, and a Not recorded one resumed under a profile takes that account for its earlier usage', () => {
+    expect(pages()).toMatch(/a session resumed under another account profile counts toward that one from then on, and what it used before keeps its account\./)
+    expect(pages()).toMatch(/with one exception: when a local session listed as Not recorded is later resumed in the app under an account profile, its earlier usage moves to that profile's account too\./)
+    expect(guide).toMatch(/A session resumed under another account profile counts toward that one from then on; what it used before keeps its account\./)
+    expect(guide).toMatch(/with one exception: when a local session that reads \*Not recorded\* is later resumed in the app under an account profile, its earlier usage moves to that profile's account too\./)
+  })
+})
