@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-06T21:56:15.707Z",
-  "head": "24ce2e7abfa513b1bffce17a31b4b0032ec5e4b3",
-  "tree": "b6a51060097284a435b4088ab4dc40eda823d41b",
+  "generatedAt": "2026-10-06T22:49:58.928Z",
+  "head": "6990abaa0355af3452530224a0cf1ab7499bc9e8",
+  "tree": "2747a50c04db326df62fb4b657ab9ae21850a969",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -2309,7 +2309,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 14
+      "lineCount": 15
     },
     {
       "path": "src/renderer/onboarding/codex-reconfirm-gate.ts",
@@ -2530,14 +2530,14 @@
         "P11",
         "P12"
       ],
-      "lineCount": 220
+      "lineCount": 224
     },
     {
       "path": "src/renderer/training-steps.ts",
       "predicates": [
         "P11"
       ],
-      "lineCount": 110
+      "lineCount": 112
     },
     {
       "path": "src/renderer/types/electron.d.ts",
@@ -2616,7 +2616,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 110
+      "lineCount": 112
     },
     {
       "path": "src/shared/ask-conductor-provider.ts",

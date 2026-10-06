@@ -713,7 +713,11 @@ describe('the P4.11 review: images, privacy and the first-launch session', () =>
     expect(read('README.md')).not.toMatch(/shot-memory\.png/)
     const rq = read('docs', 'wp1', 'evidence', 'release-qualification.md').replace(/\s+/g, ' ')
     expect(rq).not.toMatch(/shows a surface WP2 changed, so all references stay/)
-    for (const img of ['shot-memory.png', 'shot-tokenomics.png', 'shot-sessions.png', 'shot-canvas.png']) expect(rq).toMatch(new RegExp('`docs/screenshots/' + img.replace('.', '\\.') + '` \\| [^|]+ \\| Recaptured at the final head'))
+    // The record says what was done: the images are being recaptured, for the owner's approval,
+    // and none is claimed recaptured before that.
+    for (const img of ['shot-memory.png', 'shot-tokenomics.png', 'shot-sessions.png', 'shot-canvas.png']) expect(rq).toMatch(new RegExp('`docs/screenshots/' + img.replace('.', '\\.') + '` \\| [^|]+ \\| Not yet recaptured'))
+    expect(rq).not.toMatch(/\| Recaptured at the final head/)
+    expect(rq).toMatch(/The README and Feature Guide images are being recaptured and await the owner's approval\./)
   })
 
   it('privacy: when the staged skills are written and removed, in a managed account\'s folder and in your own (question 5, answered C)', () => {
