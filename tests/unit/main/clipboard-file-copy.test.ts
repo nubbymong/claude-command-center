@@ -6,13 +6,16 @@
  * and the file system are faked: nothing real is read or written.
  *
  * Electron 44: the clipboard is read with clipboard.read() (ClipboardItem[]); a
- * copied file arrives as `text/uri-list` (file:// URIs), and on Windows the raw
- * FileNameW format is the fallback. The fake below has that shape.
+ * copied file arrives as `text/uri-list` (file:// URIs), the only format read
+ * for it (Electron 44 does not offer Windows' FileNameW). The fake below has
+ * that shape.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { pathToFileURL } from 'url'
 
 const PICKED = process.platform === 'win32' ? 'C:\\Users\\me\\Pictures\\shot.png' : '/Users/me/Pictures/shot.png'
+/** A png copied in Explorer from \\localhost\c$ (Windows hands it over as file://localhost/c$/...). */
+const ON_LOCALHOST_SHARE = '\\\\localhost\\c$\\Users\\me\\Pictures\\shot.png'
 
 type FakeItem = { types: string[]; getType: (t: string) => Promise<Blob> }
 const h = vi.hoisted(() => ({
@@ -54,7 +57,7 @@ vi.mock('fs', async (importOriginal) => {
     ...actual,
     statSync: (p: string) => {
       h.statted.push(p)
-      if (p === PICKED) return { size: 1024, isFile: () => h.isFile }
+      if (p === PICKED || p === ON_LOCALHOST_SHARE) return { size: 1024, isFile: () => h.isFile }
       throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' })
     },
     mkdirSync: (p: string) => { h.made.push(p) },
@@ -113,15 +116,25 @@ describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('r
   })
 })
 
-describe.runIf(process.platform === 'win32')('Windows: the raw FileNameW fallback and the device namespaces', () => {
-  it('with no text/uri-list, the FileNameW path is taken, up to its NUL (what follows is not a path)', async () => {
-    h.items = [item({ [FILENAMEW]: Buffer.from(`${PICKED}\0D:\\junk.png\0`, 'ucs2') })]
-    expect(await readClipboardFilePaths()).toEqual([PICKED])
+describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a copied image file that is gone', () => {
+  it('is no image, not too large, and nothing is copied', async () => {
+    const gone = process.platform === 'win32' ? 'C:\\Users\\me\\Pictures\\gone.png' : '/Users/me/Pictures/gone.png'
+    h.items = [item({ [URI_LIST]: `${pathToFileURL(gone).href}\r\n` })]
+    expect(await readClipboardImageFilePath(SHOTS)).toEqual({ error: 'no-image' })
+    expect(h.copies).toEqual([])
+  })
+})
+
+describe.runIf(process.platform === 'win32')('Windows: shares, pipes and the device namespaces', () => {
+  it('a png copied from \\\\localhost\\c$ (file://localhost/c$/...) is copied like any other', async () => {
+    h.items = [item({ [URI_LIST]: 'file://localhost/c$/Users/me/Pictures/shot.png\r\n' })]
+    expect(await readClipboardFilePaths()).toEqual([ON_LOCALHOST_SHARE])
     expect(await readClipboardImageFilePath(SHOTS)).toEqual({ path: h.copies[0][1] })
+    expect(h.copies[0][0]).toBe(ON_LOCALHOST_SHARE)
   })
 
-  it('a FileNameW naming a device-namespace path is refused, and never stat-ed', async () => {
-    h.items = [item({ [FILENAMEW]: Buffer.from('\\\\.\\pipe\\shot.png\0', 'ucs2') })]
+  it('Windows FileNameW alone is not read: Electron 44 never offers it, and Explorer copies arrive as text/uri-list', async () => {
+    h.items = [item({ [FILENAMEW]: Buffer.from(`${PICKED}\0`, 'ucs2') })]
     expect(await readClipboardFilePaths()).toEqual([])
     expect(await readClipboardImageFilePath(SHOTS)).toEqual({ error: 'no-image' })
     expect(h.statted).toEqual([])
@@ -131,6 +144,16 @@ describe.runIf(process.platform === 'win32')('Windows: the raw FileNameW fallbac
     h.items = [item({ [URI_LIST]: 'file://./pipe/shot.png\r\n' })]
     expect(await readClipboardImageFilePath(SHOTS)).toEqual({ error: 'no-image' })
     expect(h.statted).toEqual([])
+  })
+
+  it('a text/uri-list naming the pipe, mailslot or IPC$ share of this or any computer is never stat-ed', async () => {
+    for (const u of ['file://127.0.0.1/pipe/shot.png', 'file://localhost/pipe/shot.png', 'file://localhost/PIPE/shot.png',
+      'file://server/mailslot/shot.png', 'file://localhost/IPC$/shot.png', 'file://127.0.0.1/pipe./shot.png']) {
+      h.items = [item({ [URI_LIST]: `${u}\r\n` })]
+      expect(await readClipboardImageFilePath(SHOTS), u).toEqual({ error: 'no-image' })
+    }
+    expect(h.statted).toEqual([])
+    expect(h.copies).toEqual([])
   })
 })
 

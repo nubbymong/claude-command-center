@@ -1,8 +1,10 @@
 // [host] Unit 5 W1: pure helpers for clipboard file references (BUG-8 fallback).
 // Electron 44 hands copied files over as `text/uri-list` (an RFC 2483 list of
-// file:// URIs), so the paths come from uriListToPaths, and every path, from
-// the list or from Windows' raw FileNameW, passes isClipboardFilePath first.
+// file:// URIs), so the paths come from uriListToPaths, and every path passes
+// isClipboardFilePath first. Both take the platform whose rules apply, so the
+// Windows rules are checked on every OS.
 import { describe, it, expect } from 'vitest'
+import { hostname } from 'os'
 import { uriListToPaths, isClipboardFilePath, pickPasteableImage, mimeForImage, isReapableImageFile } from '../../../src/main/clipboard-file'
 
 const onWindows = process.platform === 'win32'
@@ -27,6 +29,22 @@ describe('isClipboardFilePath', () => {
     expect(isClipboardFilePath('/Users/me/a.png', 'darwin')).toBe(true)
     expect(isClipboardFilePath('Users/me/a.png', 'darwin')).toBe(false)
     expect(isClipboardFilePath('C:\\a.png', 'linux')).toBe(false)
+  })
+  it('Windows: a UNC path on the pipe, mailslot or IPC$ share is refused on any server, in any case, with either slash', () => {
+    const servers = ['127.0.0.1', 'localhost', 'LocalHost', hostname(), 'server', '..', '[::1]']
+    const shares = ['pipe', 'PIPE', 'Pipe', 'mailslot', 'MailSlot', 'IPC$', 'ipc$', 'pipe.', 'pipe ', 'pipe. .', 'IPC$.']
+    for (const server of servers) {
+      for (const share of shares) {
+        for (const p of [`\\\\${server}\\${share}\\shot.png`, `//${server}/${share}/shot.png`, `\\\\${server}\\${share}`]) {
+          expect(isClipboardFilePath(p, 'win32'), p).toBe(false)
+        }
+      }
+    }
+  })
+  it('Windows: any other share passes, a share named like those but longer included', () => {
+    for (const p of ['\\\\localhost\\c$\\a.png', '\\\\127.0.0.1\\share\\a.png', '\\\\server\\pipes\\a.png', '\\\\server\\pipe2\\a.png', '\\\\server\\ipc\\a.png', '\\\\server\\my pipe\\a.png']) {
+      expect(isClipboardFilePath(p, 'win32'), p).toBe(true)
+    }
   })
   it('a path with a NUL, or no path, is refused on every platform', () => {
     for (const platform of ['win32', 'darwin', 'linux'] as const) {
@@ -54,6 +72,30 @@ describe('uriListToPaths (text/uri-list, RFC 2483)', () => {
     expect(uriListToPaths(onWindows ? 'file:///C:/a%00b.png' : 'file:///a%00b.png')).toEqual([])
   })
 
+  describe('with the Windows rules (on every OS)', () => {
+    it('file://localhost/<share>/ (a file copied from \\\\localhost\\<share>) is that UNC path, not a refused drive path', () => {
+      expect(uriListToPaths('file://localhost/c$/Users/me/a.png', 'win32')).toEqual(['\\\\localhost\\c$\\Users\\me\\a.png'])
+      expect(uriListToPaths('file://LOCALHOST/My%20Share/a%20b.png', 'win32')).toEqual(['\\\\localhost\\My Share\\a b.png'])
+    })
+    it('file://localhost/C:/ and file:/// with a drive are the drive path', () => {
+      expect(uriListToPaths('file://localhost/C:/a.png\r\nfile:///D:/b.png\r\nfile://localhost/e|/c.png', 'win32')).toEqual(['C:\\a.png', 'D:\\b.png', 'e:\\c.png'])
+    })
+    it('a localhost URI keeps every other refusal: no share, an encoded slash or backslash, a NUL', () => {
+      for (const u of ['file://localhost/', 'file://localhost/c$/a%2Fb.png', 'file://localhost/c$/a%5cb.png', 'file://localhost/c$/a%00.png', 'file:///c$/a.png']) {
+        expect(uriListToPaths(u, 'win32'), u).toEqual([])
+      }
+    })
+    it('a URI naming the pipe, mailslot or IPC$ share of any server never becomes a path', () => {
+      for (const host of ['localhost', 'LOCALHOST', '127.0.0.1', hostname().toLowerCase(), 'server']) {
+        for (const share of ['pipe', 'PIPE', 'mailslot', 'IPC$', 'ipc%24', 'pipe.']) {
+          const u = `file://${host}/${share}/shot.png`
+          expect(uriListToPaths(u, 'win32'), u).toEqual([])
+        }
+      }
+      expect(uriListToPaths('file://localhost/pipe/a.png\r\nfile://server/share/b.png', 'win32')).toEqual(['\\\\server\\share\\b.png'])
+    })
+  })
+
   describe.runIf(onWindows)('on Windows', () => {
     it('decodes each file URI to a drive path, percent-decoding, in order, CRLF or LF', () => {
       const list = 'file:///C:/Users/me/My%20Pics/a.png\r\nfile:///D:/caf%C3%A9.jpg\nfile:///c|/b.gif\r\n'
@@ -68,6 +110,12 @@ describe('uriListToPaths (text/uri-list, RFC 2483)', () => {
     })
     it('a URI with no drive (not absolute on Windows) is dropped, and the rest are kept', () => {
       expect(uriListToPaths('file:///a.png\r\nfile:///C:/b.png')).toEqual(['C:\\b.png'])
+    })
+  })
+
+  describe('with the macOS and Linux rules (on every OS)', () => {
+    it('file://localhost/ is this computer, and another host is dropped', () => {
+      expect(uriListToPaths('file://localhost/Users/me/a.png\r\nfile:///tmp/b.png\r\nfile://server/share/c.png', 'darwin')).toEqual(['/Users/me/a.png', '/tmp/b.png'])
     })
   })
 
@@ -92,6 +140,9 @@ describe('pickPasteableImage', () => {
   })
   it('returns no-image when nothing qualifies', () => {
     expect(pickPasteableImage(['/a/doc.pdf', '/a/folder'], sizeOf)).toEqual({ error: 'no-image' })
+  })
+  it('an image file whose size cannot be read (it is gone) is no image, not too large', () => {
+    expect(pickPasteableImage(['/a/gone.png'], () => null)).toEqual({ error: 'no-image' })
   })
 })
 
