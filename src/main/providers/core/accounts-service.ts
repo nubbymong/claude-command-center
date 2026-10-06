@@ -339,9 +339,9 @@ export class AccountsService {
   /** Providers whose switch-off was refused while in use, with the count
    *  last published for each; one timer follows them all (watchInUse). */
   private readonly inUseWatched = new Map<ProviderId, number>()
-  /** Providers whose count reached 0 at a tick, until a snapshot carrying
-   *  them is built: one that carries a count above 0 (a run that started
-   *  before it was built) watches the provider again (snapshot). */
+  /** Providers whose count reached 0 at a tick, until the next tick or a
+   *  snapshot carrying them above 0 (a run that started before it was
+   *  built), which watches the provider again (snapshot, inUseTick). */
   private readonly inUseEnding = new Set<ProviderId>()
   private inUseTimer: ReturnType<typeof setInterval> | null = null
   private readonly enabledOverride = new Map<ProviderId, EnabledOverride>()
@@ -615,11 +615,11 @@ export class AccountsService {
     })
     // A provider whose in-use count reached 0 at a tick is watched again when
     // this snapshot carries it above 0 (a run started before this snapshot
-    // was built), so the line never stays at a count nothing holds: the
-    // watch ends only once a snapshot carried 0 (watchInUse).
+    // was built). A snapshot carrying 0 leaves it to the next tick, which
+    // lets it go or watches it again (inUseTick), so whichever snapshot is
+    // built first, the line never stays at a count nothing holds.
     for (const p of providers) {
-      if (!this.inUseEnding.delete(p.providerId)) continue
-      if (p.inUse > 0) this.watchInUse(p.providerId, p.inUse)
+      if (p.inUse > 0 && this.inUseEnding.has(p.providerId)) this.watchInUse(p.providerId, p.inUse)
     }
     return {
       revision: this.revision,
@@ -914,10 +914,11 @@ export class AccountsService {
    *  of it without an account lease publishes no change of its own when it
    *  starts or ends, so its count is looked at again every IN_USE_WATCH_MS,
    *  and each time it has moved (up or down) a new snapshot is published,
-   *  which Settings' in-use line follows. A provider is let go once nothing
-   *  holds it, and the one timer with the last; the watch ends for good only
-   *  once a snapshot built after that carries 0 (snapshot watches again a
-   *  provider it carries above 0). */
+   *  which Settings' in-use line follows. Once nothing holds a provider it
+   *  is looked at once more, at the next tick: let go if nothing holds it
+   *  then, watched again (and published) if something does; a snapshot that
+   *  carries it above 0 before that watches it again at once. The one timer
+   *  stops with the last provider let go. */
   private watchInUse(providerId: ProviderId, count: number): void {
     this.inUseEnding.delete(providerId)
     this.inUseWatched.set(providerId, count)
@@ -928,6 +929,15 @@ export class AccountsService {
 
   private inUseTick(): void {
     let moved = false
+    // Reached 0 at the last tick and carried above 0 by no snapshot since.
+    for (const providerId of [...this.inUseEnding]) {
+      this.inUseEnding.delete(providerId)
+      const now = this.providerInUse(providerId)
+      if (now > 0) {
+        this.inUseWatched.set(providerId, now)
+        moved = true
+      }
+    }
     for (const [providerId, seen] of [...this.inUseWatched]) {
       const now = this.providerInUse(providerId)
       if (now === seen) continue
@@ -939,7 +949,7 @@ export class AccountsService {
         this.inUseEnding.add(providerId)
       }
     }
-    if (this.inUseWatched.size === 0 && this.inUseTimer) {
+    if (this.inUseWatched.size === 0 && this.inUseEnding.size === 0 && this.inUseTimer) {
       clearInterval(this.inUseTimer)
       this.inUseTimer = null
     }

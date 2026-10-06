@@ -255,25 +255,32 @@ describe('main publishes the in-use count as it moves after a refused switch-off
     }
   })
 
+  /** The Claude Code counts main's push publishes, in order. */
+  const publishLikeMain = (svc: ReturnType<typeof service>): number[] => {
+    const published: number[] = []
+    // As main's push (provider-accounts-handlers): coalesced, the snapshot
+    // built on the next turn of the loop.
+    let pending = false
+    svc.subscribe(() => {
+      if (pending) return
+      pending = true
+      setImmediate(() => { pending = false; published.push(svc.snapshot().providers.find((p) => p.providerId === 'claude')!.inUse) })
+    })
+    return published
+  }
+  const nextTurn = () => new Promise<void>((r) => setImmediate(r))
+  const claudeInUse = (svc: ReturnType<typeof service>) => svc.snapshot().providers.find((p) => p.providerId === 'claude')!.inUse
+
   // [host] P4.7 fix pass 6: main's push builds its snapshot on the next turn
   // of the loop, so a run can start between the tick that sees the count
-  // reach 0 and the snapshot that carries it. The watch ends only once a
-  // published snapshot carried 0: one that carries a count above 0 follows
-  // that count again, so the line never stays at a count nothing holds.
+  // reach 0 and the snapshot that carries it. A snapshot that carries a
+  // count above 0 follows that count again, so the line never stays at a
+  // count nothing holds.
   it('a run that starts as the count reaches 0, before that snapshot is built, is followed until it ends; the watch then ends [host]', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     try {
       const svc = service()
-      const published: number[] = []
-      // As main's push (provider-accounts-handlers): coalesced, the snapshot
-      // built on the next turn of the loop.
-      let pending = false
-      svc.subscribe(() => {
-        if (pending) return
-        pending = true
-        setImmediate(() => { pending = false; published.push(svc.snapshot().providers.find((p) => p.providerId === 'claude')!.inUse) })
-      })
-      const nextTurn = () => new Promise<void>((r) => setImmediate(r))
+      const published = publishLikeMain(svc)
       n.sessions.claude = 1
       expect(await svc.setProviderEnabled('claude', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
       n.sessions.claude = 0
@@ -282,11 +289,13 @@ describe('main publishes the in-use count as it moves after a refused switch-off
       n.sessions.claude = 1
       await nextTurn()
       expect(published).toEqual([1])
-      // It ends: the snapshot that follows carries 0, and the watch ends.
+      // It ends: the snapshot that follows carries 0, and the next look, with
+      // nothing holding the provider, ends the watch.
       n.sessions.claude = 0
       vi.advanceTimersByTime(1_000)
       await nextTurn()
       expect(published).toEqual([1, 0])
+      vi.advanceTimersByTime(1_000)
       expect(vi.getTimerCount()).toBe(0)
       // Nothing is watched now: a count that moves again pushes nothing, and
       // a snapshot read while nothing was refused starts no watch.
@@ -294,7 +303,81 @@ describe('main publishes the in-use count as it moves after a refused switch-off
       vi.advanceTimersByTime(10_000)
       await nextTurn()
       expect(published).toEqual([1, 0])
-      expect(svc.snapshot().providers.find((p) => p.providerId === 'claude')!.inUse).toBe(2)
+      expect(claudeInUse(svc)).toBe(2)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // [host] P4.7 fix pass 7: other parts of main read snapshots too (a
+  // roll-up reads one before its run is counted). Only a snapshot carrying
+  // the provider above 0 hands the watch on; one carrying 0 leaves the
+  // provider to the next look, which lets it go if nothing holds it then and
+  // follows its count again if something does. Whichever snapshot is built
+  // first, the last count published is 0 and no timer is left.
+  it('a snapshot read at 0 before the published one, then a run that starts, is followed until it ends; the last count published is 0 [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const svc = service()
+      const published = publishLikeMain(svc)
+      n.sessions.claude = 1
+      expect(await svc.setProviderEnabled('claude', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+      n.sessions.claude = 0
+      vi.advanceTimersByTime(1_000)
+      // Another reader builds a snapshot in the same turn, at 0, and only
+      // then is its run counted.
+      expect(claudeInUse(svc)).toBe(0)
+      n.sessions.claude = 1
+      await nextTurn()
+      expect(published).toEqual([1])
+      n.sessions.claude = 0
+      vi.advanceTimersByTime(600_000)
+      await nextTurn()
+      expect(published).toEqual([1, 0])
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a run that starts after the snapshot carrying 0 is published, before the next look, is followed until it ends [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const svc = service()
+      const published = publishLikeMain(svc)
+      n.sessions.claude = 1
+      expect(await svc.setProviderEnabled('claude', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+      n.sessions.claude = 0
+      vi.advanceTimersByTime(1_000)
+      await nextTurn()
+      expect(published).toEqual([0])
+      n.sessions.claude = 2
+      vi.advanceTimersByTime(1_000)
+      await nextTurn()
+      expect(published).toEqual([0, 2])
+      n.sessions.claude = 0
+      vi.advanceTimersByTime(5_000)
+      await nextTurn()
+      expect(published).toEqual([0, 2, 0])
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('with no window to publish to, the next look ends the watch, and a snapshot read much later starts none [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const svc = service()
+      n.sessions.claude = 1
+      expect(await svc.setProviderEnabled('claude', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+      n.sessions.claude = 0
+      vi.advanceTimersByTime(2_000)
+      expect(vi.getTimerCount()).toBe(0)
+      n.sessions.claude = 2
+      vi.advanceTimersByTime(3_600_000)
+      expect(claudeInUse(svc)).toBe(2)
       expect(vi.getTimerCount()).toBe(0)
     } finally {
       vi.useRealTimers()
