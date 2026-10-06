@@ -7,14 +7,14 @@ import { scanLocalMemory, readMemoryContent, deleteMemoryFile, writeMemoryFrontm
 import { AccountPathRefused, validateMemoryPath } from '../utils/path-validator'
 import { getLogSupervisor } from '../logging/logging-service'
 import { IPC } from '../../shared/ipc-channels'
-import { ACCOUNT_MEMORY_DELETE_SHOWN } from '../../shared/account-memories'
+import { ACCOUNT_MEMORY_DELETE_SHOWN, MEMORY_PATH_MAX } from '../../shared/account-memories'
 import type { MemoryScanWithAccounts } from '../../shared/account-memories'
 import { appWindowSender } from './trusted-sender'
 import { realAccountFileFs } from '../account-folders'
 import type { AccountFileFs, AccountFolderSet, AccountFoldersSource } from '../account-folders'
 import { deleteAccountMemory, isUnderAccountMemories, readAccountMemory, scanAccountMemories } from '../account-memories'
 
-const filePathSchema = z.string().min(1).max(1000)
+const filePathSchema = z.string().min(1).max(MEMORY_PATH_MAX)
 const frontmatterSchema = z.object({
   name: z.string().optional(),
   description: z.string().optional(),

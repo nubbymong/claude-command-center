@@ -33,7 +33,7 @@ vi.mock('../../../src/main/memory-scanner', async (importOriginal) => {
 })
 
 const { registerMemoryHandlers } = await import('../../../src/main/ipc/memory-handlers')
-const { ACCOUNT_MEMORY_DELETE_SHOWN } = await import('../../../src/shared/account-memories')
+const { ACCOUNT_MEMORY_DELETE_SHOWN, MEMORY_PATH_MAX } = await import('../../../src/shared/account-memories')
 
 const HOME = 'C:\\Users\\me\\res\\codex-realms\\r1'
 const MEM = `${HOME}\\memories`
@@ -92,6 +92,28 @@ describe('memory:scan', () => {
     register()
     source.mockRejectedValueOnce(new Error('boom'))
     expect(await call('memory:scan')).toMatchObject({ accountMemories: [] })
+  })
+
+  it('#628 review: every listed file fits the memory channels\' path bound; a longer one is left out and the account reads as listed in part', async () => {
+    // Four nested folders, then one file whose full path is exactly the bound and one a character longer.
+    const dir = `${MEM}\\${['a', 'b', 'c', 'd'].map((c) => c.repeat(200)).join('\\')}`
+    const atBound = `${dir}\\${'x'.repeat(MEMORY_PATH_MAX - dir.length - 1 - 3)}.md`
+    const overBound = `${dir}\\${'y'.repeat(MEMORY_PATH_MAX - dir.length - 3)}.md`
+    expect([atBound.length, overBound.length]).toEqual([MEMORY_PATH_MAX, MEMORY_PATH_MAX + 1])
+    fake.writeFile(atBound, '# At the bound')
+    fake.writeFile(overBound, '# One past it')
+    register()
+    const r = await call('memory:scan') as { accountMemories: Array<{ truncated: boolean; files: Array<{ path: string; relPath: string }> }> }
+    const listed = r.accountMemories[0].files.map((f) => f.path)
+    expect(listed).toContain(atBound)
+    expect(listed).not.toContain(overBound)
+    expect(listed.every((p) => p.length <= MEMORY_PATH_MAX)).toBe(true)
+    expect(r.accountMemories[0].truncated).toBe(true)
+    // ...the PB6 files are still all there.
+    expect(r.accountMemories[0].files.map((f) => f.relPath).filter((p) => !p.startsWith('a'))).toEqual([...PB6_LISTED_MD].filter((p) => !p.startsWith('a')))
+    // The listed one opens through memory:read; the channel refuses the longer path itself.
+    expect(await call('memory:read', atBound)).toContain('# At the bound')
+    await expect(call('memory:read', overBound)).rejects.toThrow(/Invalid parameters/)
   })
 })
 

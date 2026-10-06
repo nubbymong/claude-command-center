@@ -8,7 +8,8 @@
 // never follows a link or junction (each entry is looked at with lstat, and a
 // link is skipped; each folder is at its own real path before it is listed,
 // and each file before it is opened), lists only plain `.md` files with one
-// name, and is bounded in depth, entries and files. Each listed file's
+// name, and is bounded in depth, entries and files; a file whose path is longer
+// than the memory channels take (MEMORY_PATH_MAX) is left out. Each listed file's
 // description is read from its first bytes, from a handle checked to be the
 // file the walk saw. Without openat, what is left is a folder swapped for a
 // link and back between those checks by someone who can write in the
@@ -23,6 +24,7 @@
 import * as crypto from 'crypto'
 import * as path from 'path'
 import type { BigIntStats } from 'fs'
+import { MEMORY_PATH_MAX } from '../shared/account-memories'
 import type { AccountMemories, AccountMemoryFile } from '../shared/account-memories'
 import { readCheckedFile } from './account-folders'
 import type { AccountFileFs, AccountFolderSet } from './account-folders'
@@ -112,6 +114,9 @@ async function scanOne(set: AccountFolderSet, deps: AccountMemoryDeps): Promise<
         continue
       }
       if (!st.isFile() || st.nlink !== 1n || !/\.md$/i.test(name)) continue
+      // A path the memory channels would refuse is never listed: the folder
+      // then reads as listed in part.
+      if (abs.length > MEMORY_PATH_MAX) { truncated = true; continue }
       if (found.length >= L.maxFiles) { stop = true; break }
       found.push({ abs, rel, st })
     }
