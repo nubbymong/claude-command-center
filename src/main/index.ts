@@ -36,6 +36,7 @@ import { registerDebugHandlers, registerAccountLogFolderHandlers } from './ipc/d
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
 import { adoptRenamedRepoIfLive } from './github-update'
+import { installClientCertificatePolicy } from './client-certificate'
 import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from './ipc/setup-handlers'
 // Direct from data-paths, not the handlers barrel: this runs at module scope
 // before app-ready, so it must not pull the IPC registration side of that module
@@ -425,6 +426,10 @@ if (!gotTheLock) {
       }
     })
   }
+
+  // A main-process `net` request (the in-app browser's URL check) presents no
+  // client certificate, as on Electron 43; see client-certificate.ts.
+  installClientCertificatePolicy(app)
 
   app.whenReady().then(() => {
     // Refresh the help workspace at boot (#586), not only on Ask launch: the
