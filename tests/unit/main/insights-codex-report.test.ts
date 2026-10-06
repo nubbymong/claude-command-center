@@ -125,6 +125,48 @@ describe('reading a session (the rollout line reader the Logs page uses)', () =>
     expect(classifyToolOutput({ type: 'function_call_output', output: 'Exit code: 1\nOutput:\nexecution error: Sandbox(Denied { output: .. })' })).toBe('refused')
   })
 
+  // Tool outputs recorded from real `codex exec` sessions on 0.153.4 and
+  // 0.155.1 (the same words on both; the path made fictional). The first three
+  // carry no exit status: nothing ran, and Codex's own words are the output.
+  const RECORDED = {
+    readOnlyEdit: { type: 'custom_tool_call_output', output: 'patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings' },
+    sandboxWouldNotStart: { type: 'function_call_output', output: 'exec_command failed: CreateProcess { message: "UnsupportedOperation(\\"windows unelevated restricted-token sandbox cannot enforce split writable root sets directly; refusing to run unsandboxed\\")" }' },
+    escalationRefused: { type: 'function_call_output', output: 'approval policy is Never; reject command \u2014 you cannot ask for escalated permissions if the approval policy is Never' },
+    accessDenied: { type: 'function_call_output', output: 'Chunk ID: 6dfd81\nWall time: 0.0003 seconds\nProcess exited with code 1\nOriginal token count: 5\nOutput:\nAccess is denied.\r\n' },
+    shellDidNotStart: { type: 'function_call_output', output: 'Chunk ID: 2ce794\nWall time: 0.0000 seconds\nProcess exited with code -1073741502\nOriginal token count: 0\nOutput:\n' },
+    writeFailed: { type: 'custom_tool_call_output', output: 'Exit code: 1\nWall time: 0.6 seconds\nOutput:\nFailed to write file C:\\Users\\alex\\projects\\demo\\notes.txt\n' },
+  }
+
+  it('the refusals recorded on 0.153.4 and 0.155.1 count as sandbox refusals; a command that ran and failed, naming no sandbox, as a failed command [host]', () => {
+    expect(classifyToolOutput(RECORDED.readOnlyEdit)).toBe('refused')
+    expect(classifyToolOutput(RECORDED.sandboxWouldNotStart)).toBe('refused')
+    expect(classifyToolOutput(RECORDED.escalationRefused)).toBe('refused')
+    expect(classifyToolOutput(RECORDED.accessDenied)).toBe('failed')
+    expect(classifyToolOutput(RECORDED.shellDidNotStart)).toBe('failed')
+    expect(classifyToolOutput(RECORDED.writeFailed)).toBe('failed')
+  })
+
+  it("Codex's own words stand for a status only as the whole output: an output that merely carries them later is not a refusal [host]", () => {
+    // An output with no exit status (an MCP tool's, say) quoting them after its own words.
+    expect(classifyToolOutput({ type: 'function_call_output', output: `Log excerpt:\n${RECORDED.readOnlyEdit.output}` })).toBe('ok')
+    expect(classifyToolOutput({ type: 'function_call_output', output: `notes: ${RECORDED.escalationRefused.output}` })).toBe('ok')
+    // A command that succeeded and printed them.
+    expect(classifyToolOutput({ type: 'function_call_output', output: `Exit code: 0\nOutput:\n${RECORDED.sandboxWouldNotStart.output}` })).toBe('ok')
+    // A command runner that could not start a command for another reason: a failed command.
+    expect(classifyToolOutput({ type: 'function_call_output', output: 'exec_command failed: CreateProcess { message: "program not found" }' })).toBe('failed')
+  })
+
+  it('a session holding the recorded outputs reports 3 sandbox refusals and 3 failed commands, in the figures and the prompt [host]', () => {
+    const s = codexSessionFromLines(rollout({ sandbox: 'read-only', outputs: Object.values(RECORDED) }), never)!
+    expect(s.sandboxRefusals).toBe(3)
+    expect(s.failedCommands).toBe(3)
+    const c = countCodexSessions([s])
+    const k = codexInsightsKpis(c, { tasksCompletedRate: null, topGoals: [], summary: { improvements: [], regressions: [], suggestions: [] } })
+    expect(k.kpis!.Friction.sandboxRefusals.value).toBe(3)
+    expect(k.kpis!.Friction.failedCommands.value).toBe(3)
+    expect(buildCodexInsightsPrompt(c, { text: '', included: 0 }, null)).toContain('Sandbox refusals: 3')
+  })
+
   it('tool names: an edit is apply_patch, the command runners are shell, an MCP tool counts under its server [host]', () => {
     expect(codexToolLabel('exec', true)).toBe('apply_patch')
     for (const n of ['shell', 'shell_command', 'exec_command', 'exec', 'local_shell']) expect(codexToolLabel(n, false)).toBe('shell')

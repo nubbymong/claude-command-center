@@ -156,21 +156,35 @@ function outputOf(payload: Record<string, unknown>): { text: string; success?: b
   return { text: '' }
 }
 
-/** The words Codex uses when its sandbox stopped a command or an edit: the
- *  only one recorded from a real run is P3.1's refused edit on 0.155.1
- *  ("failed to prepare fs sandbox: ... refusing to run unsandboxed"); the
- *  others are the CLI's own sandbox error wording. A failure that merely
- *  mentions a folder or a project named sandbox is not one (review F3). */
-const SANDBOX_REFUSAL = /failed to prepare [a-z ]*sandbox|refusing to run unsandboxed|failed in sandbox|sandbox denied|Sandbox\(Denied|blocked by (the )?sandbox/i
+/** The words Codex uses when its sandbox, or the approval policy that goes
+ *  with it, stopped a command or an edit. Recorded from real sessions:
+ *  P3.1's refused edit on 0.155.1 ("failed to prepare fs sandbox: ...
+ *  refusing to run unsandboxed"), and on 0.153.4 and 0.155.1 alike an edit
+ *  the read-only sandbox blocked ("writing is blocked by read-only
+ *  sandbox"), a command the sandbox would not start ("refusing to run
+ *  unsandboxed") and a request to run outside the sandbox that the approval
+ *  policy refused ("approval policy is Never; reject command"); the others
+ *  are the CLI's own sandbox error wording. A failure that merely mentions a
+ *  folder or a project named sandbox is not one (review F3). */
+const SANDBOX_REFUSAL = /failed to prepare [a-z ]*sandbox|refusing to run unsandboxed|failed in sandbox|sandbox denied|Sandbox\(Denied|blocked by (?:the )?(?:read-only |workspace-write )?sandbox|approval policy is [a-z-]+; reject command/i
+
+/** Codex's own words in place of a tool's output when nothing ran, so there
+ *  is no exit status: a patch it rejected, a command a command runner could
+ *  not start, a command the approval policy refused (recorded on 0.153.4 and
+ *  0.155.1). Read at the very start of the output only, so an output that
+ *  merely quotes them later is not one. */
+const NOT_RUN = /^(?:patch rejected: |(?:shell|shell_command|exec_command|local_shell|unified_exec|exec|write_stdin) failed: |approval policy is [a-z-]+; reject command)/i
 
 /**
  * Whether a tool output says the command failed, and whether the sandbox
  * refused it. Read from what Codex hands the model (the rollout keeps it):
  * "Exit code: N" (a command's output), "Process exited with code N" (the
  * unified exec tool's), "Script failed" (code mode's exec), a structured
- * output's exit_code, or an explicit success: false. A failure in the
- * sandbox's own words is a refusal, counted apart from the other failures.
- * Exported for the test.
+ * output's exit_code, an explicit success: false, or Codex's own words in
+ * place of an output when nothing ran (NOT_RUN). A failure in the sandbox's
+ * own words is a refusal, counted apart from the other failures; a command
+ * that ran and failed in words that name no sandbox ("Access is denied.",
+ * "Failed to write file") is a failed command. Exported for the test.
  */
 export function classifyToolOutput(payload: unknown): 'ok' | 'failed' | 'refused' {
   if (!isObject(payload)) return 'ok'
@@ -180,6 +194,7 @@ export function classifyToolOutput(payload: unknown): 'ok' | 'failed' | 'refused
   const exit = /^(?:Exit code:|Process exited with code) (-?\d+)/m.exec(head)
   if (exit && Number(exit[1]) !== 0) failed = true
   if (/^Script failed\b/m.test(head)) failed = true
+  if (NOT_RUN.test(head)) failed = true
   if (!failed && head.trimStart().startsWith('{')) {
     try {
       const j = JSON.parse(head) as { metadata?: { exit_code?: unknown } }
