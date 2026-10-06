@@ -47,6 +47,7 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
   registerCodexReviewSession: () => {},
   registerClaudeReviewSession: () => {},
   unregisterCodexReviewSession: () => {},
+  releaseMcpSessionProvider: () => {},
 }))
 const STALE_WT = path.join('F:', 'stale-outer', 'ccc-wt', 'deadbeefdead')
 // The registered Codex provider's pane is the real one (session-screen.ts):

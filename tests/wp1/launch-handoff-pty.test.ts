@@ -92,6 +92,7 @@ vi.mock('../../src/main/conductor-mcp-server', () => ({
   registerCodexReviewSession: () => {},
   registerClaudeReviewSession: (sid: string, cwd: string) => { h.claudeReview.push({ sid, cwd }) },
   unregisterCodexReviewSession: () => {},
+  releaseMcpSessionProvider: () => {},
   disposeCodexReviewUsage: () => {},
 }))
 vi.mock('../../src/main/providers', () => ({

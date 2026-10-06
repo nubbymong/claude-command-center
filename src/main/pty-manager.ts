@@ -68,7 +68,7 @@ import {
   removeLocalSessionMcpConfig,
   removeLocalSessionStatusUrl,
 } from './hooks/per-session-settings'
-import { registerCodexReviewSession, registerClaudeReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
+import { registerCodexReviewSession, registerClaudeReviewSession, unregisterCodexReviewSession, releaseMcpSessionProvider } from './conductor-mcp-server'
 import { ensureCanvasPlugin } from './canvas/canvas-plugin'
 import { registerCanvasUatRoot, revokeCanvasUatRoots, designateCanvasWorktreeRoot, canvasRootRefusalReason, describeCanvasRootRefusal, setCanvasRootRefusal } from './canvas/canvas-store'
 import { designatedWorktreeDir } from './canvas/canvas-worktree'
@@ -6830,6 +6830,10 @@ function cleanupSessionResources(sessionId: string): void {
   // otherwise defeat the home-dir refusal and the "SSH never registers"
   // invariant. Idempotent: a no-op when the session was never registered.
   unregisterCodexReviewSession(sessionId)
+  // #628 review: the record of which assistant this session's MCP credential
+  // went to is per launch too, so a session id relaunched on another assistant
+  // (an Ask tab revived on Claude after Codex) is served that assistant's tools.
+  releaseMcpSessionProvider(sessionId)
   // SECURITY (adversarial review, 2026-08-15 — BLOCKER 1): the canvas serving
   // allowlist dies with the session, for the identical reason. The first cut
   // had NO production revocation at all — a root registered by any local spawn

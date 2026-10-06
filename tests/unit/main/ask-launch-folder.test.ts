@@ -77,7 +77,7 @@ vi.mock('../../../src/main/logging/logging-service', () => ({
   // A Restart's self-captured conversation: the exact bind of the run it ends.
   getTranscriptBinder: () => (h.captured ? { getExactResumeTarget: () => `/transcripts/${UUID}.jsonl`, getLatestTranscriptPath: () => `/transcripts/${UUID}.jsonl` } : null),
 }))
-vi.mock('../../../src/main/conductor-mcp-server', () => ({ getConductorMcpPort: () => 0, registerCodexReviewSession: () => {}, registerClaudeReviewSession: () => {}, unregisterCodexReviewSession: () => {} }))
+vi.mock('../../../src/main/conductor-mcp-server', () => ({ getConductorMcpPort: () => 0, registerCodexReviewSession: () => {}, registerClaudeReviewSession: () => {}, unregisterCodexReviewSession: () => {}, releaseMcpSessionProvider: () => {} }))
 vi.mock('../../../src/main/providers', () => ({
   getProvider: (id: string) => (id === 'codex'
     ? {

@@ -67,6 +67,7 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
   registerCodexReviewSession: () => {},
   registerClaudeReviewSession: () => {},
   unregisterCodexReviewSession: () => {},
+  releaseMcpSessionProvider: () => {},
 }))
 vi.mock('../../../src/main/providers', () => ({
   getProvider: () => ({

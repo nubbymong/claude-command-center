@@ -105,10 +105,71 @@ describe('issueMcpSessionToken', () => {
     expect(server.mcpSessionProvider('pb-latest')).toBe('codex')
   })
 
-  it('keeps a Codex record for the run: a later Claude issue for that id does not replace it', () => {
+  it('keeps a Codex record for the launch: a later Claude issue for that id does not replace it', () => {
     const first = server.issueMcpSessionToken('pb-sticky', 'codex')
     expect(server.issueMcpSessionToken('pb-sticky', 'claude')).toBe(first)
     expect(server.mcpSessionProvider('pb-sticky')).toBe('codex')
+  })
+
+  it('releasing a session at its teardown clears its record and no other; the next launch records its own provider', () => {
+    server.issueMcpSessionToken('pb-rel-a', 'codex')
+    server.issueMcpSessionToken('pb-rel-b', 'codex')
+    server.releaseMcpSessionProvider('pb-rel-a')
+    expect(server.mcpSessionProvider('pb-rel-a')).toBeNull()
+    expect(server.mcpSessionProvider('pb-rel-b')).toBe('codex')
+    // The token is the session's HMAC either way: a release changes what it is served, not what it proves.
+    expect(server.issueMcpSessionToken('pb-rel-a', 'claude')).toBe(server.mcpSessionToken('pb-rel-a'))
+    expect(server.mcpSessionProvider('pb-rel-a')).toBe('claude')
+    // An unchanged provider keeps its record across a release and the next issue.
+    server.releaseMcpSessionProvider('pb-rel-b')
+    server.issueMcpSessionToken('pb-rel-b', 'codex')
+    expect(server.mcpSessionProvider('pb-rel-b')).toBe('codex')
+    // Releasing a session that has no record is harmless.
+    expect(() => server.releaseMcpSessionProvider('pb-rel-never')).not.toThrow()
+  })
+})
+
+/** A raw tools/list on the Codex route (/mcp) with this credential, as any caller could send it. */
+async function mcpStatus(sessionId: string, token: string): Promise<number> {
+  const r = await fetch(`http://127.0.0.1:${port}/mcp?cccSessionId=${encodeURIComponent(sessionId)}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+  })
+  await r.text()
+  return r.status
+}
+
+// #628 review: an Ask tab keeps its session id when it is revived, and the
+// assistant it runs on can change. The record is released when the session's
+// process is torn down (cleanupSessionResources), so the next launch's issue
+// stands and the tab is served its new assistant's tool set on both routes.
+describe('a session revived on another assistant is served that assistant\'s tool set', () => {
+  it('Codex, then Claude: the SSE route serves the Claude set and the Codex route refuses it', async () => {
+    server.issueMcpSessionToken('pb-revive-cc', 'codex')
+    server.releaseMcpSessionProvider('pb-revive-cc')
+    const token = server.issueMcpSessionToken('pb-revive-cc', 'claude')
+    const tools = await toolsOffered('pb-revive-cc', token)
+    for (const name of CLAUDE_ONLY) expect(tools).toContain(name)
+    for (const name of CODEX_ONLY) expect(tools).not.toContain(name)
+    expect(await mcpStatus('pb-revive-cc', token)).toBe(403)
+  })
+
+  it('Claude, then Codex: the SSE route serves the Codex set and the Codex route serves it', async () => {
+    server.issueMcpSessionToken('pb-revive-xc', 'claude')
+    server.releaseMcpSessionProvider('pb-revive-xc')
+    const token = server.issueMcpSessionToken('pb-revive-xc', 'codex')
+    const tools = await toolsOffered('pb-revive-xc', token)
+    for (const name of CLAUDE_ONLY) expect(tools).not.toContain(name)
+    for (const name of CODEX_ONLY) expect(tools).toContain(name)
+    expect(await mcpStatus('pb-revive-xc', token)).toBe(200)
+  })
+
+  it('between the teardown and the next launch, the session\'s credential is served nothing on either route', async () => {
+    const token = server.issueMcpSessionToken('pb-revive-gap', 'codex')
+    server.releaseMcpSessionProvider('pb-revive-gap')
+    expect(await sseStatus('pb-revive-gap', token)).toBe(403)
+    expect(await mcpStatus('pb-revive-gap', token)).toBe(403)
   })
 })
 

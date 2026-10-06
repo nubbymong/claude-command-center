@@ -49,7 +49,7 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: () => {}, logWarn: () => {}, logError: () => {}, logDebug: () => {} }))
 vi.mock('../../../src/main/logging/logging-service', () => ({ getLogSupervisor: () => null, getTranscriptBinder: () => null }))
-vi.mock('../../../src/main/conductor-mcp-server', () => ({ getConductorMcpPort: () => h.port, registerCodexReviewSession: () => {}, registerClaudeReviewSession: () => {}, unregisterCodexReviewSession: () => {} }))
+vi.mock('../../../src/main/conductor-mcp-server', () => ({ getConductorMcpPort: () => h.port, registerCodexReviewSession: () => {}, registerClaudeReviewSession: () => {}, unregisterCodexReviewSession: () => {}, releaseMcpSessionProvider: () => {} }))
 vi.mock('../../../src/main/providers', async () => {
   const paths = await import('../../../src/main/providers/codex/realm-paths')
   return {

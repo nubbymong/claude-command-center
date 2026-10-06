@@ -91,7 +91,7 @@ vi.mock('../../../src/main/logging/logging-service', () => ({
   } : null),
 }))
 vi.mock('../../../src/main/conductor-mcp-server', () => ({
-  getConductorMcpPort: () => 0, registerCodexReviewSession: () => {}, unregisterCodexReviewSession: () => {},
+  getConductorMcpPort: () => 0, registerCodexReviewSession: () => {}, unregisterCodexReviewSession: () => {}, releaseMcpSessionProvider: () => {},
   registerClaudeReviewSession: () => {},
 }))
 vi.mock('../../../src/main/providers/claude/spawn', async (importOriginal) => ({

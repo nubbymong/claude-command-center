@@ -113,6 +113,7 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
   registerCodexReviewSession: () => {},
   registerClaudeReviewSession: () => {},
   unregisterCodexReviewSession: () => {},
+  releaseMcpSessionProvider: () => {},
 }))
 vi.mock('../../../src/main/providers', async () => {
   // End remote reaches the Claude SSH helpers through the registered provider

@@ -125,13 +125,16 @@ export function mcpSessionToken(sessionId: string): string {
 
 export type McpClientProvider = 'claude' | 'codex'
 
-/** The provider each session's credential was issued to this run, recorded
- *  when the app hands the session its token and read back when the session
- *  connects: a connection's tool set follows the session it authenticated as.
- *  The latest issue for a session id stands, except that a Codex record is
- *  kept for the run: a session's provider is fixed when it is created, so a
- *  later Claude issue for a Codex session's id is not one to honour. One small
- *  entry per session id. */
+/** The provider each session's credential was issued to for its current
+ *  launch, recorded when the app hands the session its token and read back
+ *  when the session connects: a connection's tool set follows the session it
+ *  authenticated as. The latest issue for a session id stands, except that a
+ *  Codex record is kept for the launch: a launch's provider is fixed when it
+ *  starts, so a later Claude issue for a Codex launch's id is not one to
+ *  honour. The record is released when the session's process is torn down
+ *  (releaseMcpSessionProvider), so the next launch under the same id (an Ask
+ *  tab revived on another assistant) records its own. One small entry per
+ *  session id. */
 const sessionProviders = new Map<string, McpClientProvider>()
 
 /** Hand a session its MCP credential, recording the provider it goes to.
@@ -142,8 +145,17 @@ export function issueMcpSessionToken(sessionId: string, provider: McpClientProvi
   return mcpSessionToken(sessionId)
 }
 
-/** The provider a session's credential was issued to this run, or null when
- *  none was: such a session is not offered a tool set on the SSE route. */
+/** Release a session's record when its process is torn down
+ *  (pty-manager.ts cleanupSessionResources, which runs before every launch
+ *  and when a session ends). Until its next launch issues again, the
+ *  session's credential is served no tool set on either route. */
+export function releaseMcpSessionProvider(sessionId: string): void {
+  sessionProviders.delete(sessionId)
+}
+
+/** The provider a session's credential was issued to for its current launch,
+ *  or null when none was: such a session is not offered a tool set on the SSE
+ *  route. */
 export function mcpSessionProvider(sessionId: string): McpClientProvider | null {
   return sessionProviders.get(sessionId) ?? null
 }
