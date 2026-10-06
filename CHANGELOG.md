@@ -92,6 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Usage page's Updated line now ages while the page stays open. It used to read Updated just now until the page was left or refreshed.
 - A canvas review with one note now says 1 note, not 1 notes, in the line it writes into the session.
 - The Cost over time chart in Tokenomics reads clearly on long ranges such as All: the dates under it are spaced to fit the width of the chart instead of running together, carry the year when the range crosses one, and its text and dots are no longer stretched or squashed with the window.
+- On Windows, a new Codex session no longer starts with text such as ]10;rgb:eeee/f2f2/f7f7 already in its prompt. Codex asks the terminal for its colours as it starts and waits a tenth of a second for the answer. The terminal could answer later than that while it was still drawing, which happened more often after the move to Electron 44, and Codex then took the late answer for typed text, so the next Enter would have sent it. The app now answers Codex at once, with the colours the terminal shows.
 
 ## [2.1.1-beta.1] - 2026-09-16
 

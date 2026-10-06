@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-06T08:40:36.776Z",
-  "head": "d1a126a38ca60adbed56361e63e733a4ea797ca4",
-  "tree": "adfa5d50397148cf981e7d84f95362a385dfde20",
+  "generatedAt": "2026-10-06T15:02:32.040Z",
+  "head": "247ce4ca4205d4821f1bb56fd605fe2a5dbbc3c4",
+  "tree": "47548e9a47b4e19dbcec3e1d958f25ae6f2ff82c",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2790,
-  "excludedFileCount": 402,
-  "scannedFileCount": 2388,
+  "trackedFileCount": 2805,
+  "excludedFileCount": 403,
+  "scannedFileCount": 2402,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 840,
-  "pathDigest": "b7a6e625efba33279a41815be3c47cebac3361ffa0f3562b29f5fde0201fda8c",
+  "matchedPathCount": 845,
+  "pathDigest": "159850d78a61fd32915eb6a43bd1adc8d99351a3688c6d9392d2ddb396b68b12",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1244,
+      "lineCount": 1248,
       "truncated": true
     },
     {
@@ -437,7 +437,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 43
+      "lineCount": 44
     },
     {
       "path": "src/main/account-web/claude-cli-auth.ts",
@@ -1365,7 +1365,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 446,
+      "lineCount": 449,
       "truncated": true
     },
     {
@@ -1450,6 +1450,13 @@
         "P14"
       ],
       "lineCount": 1
+    },
+    {
+      "path": "src/main/terminal-query-responder.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 6
     },
     {
       "path": "src/main/tokenomics/tk-attribution.ts",
@@ -2753,6 +2760,13 @@
       "lineCount": 8
     },
     {
+      "path": "src/shared/terminal-colors.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 1
+    },
+    {
       "path": "src/shared/types.ts",
       "predicates": [
         "P07",
@@ -3702,7 +3716,7 @@
         "P02",
         "P13"
       ],
-      "lineCount": 94
+      "lineCount": 95
     },
     {
       "path": "tests/unit/codex-web-copy.test.ts",
@@ -4568,6 +4582,14 @@
       "lineCount": 20
     },
     {
+      "path": "tests/unit/main/pty-codex-color-replies.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 31
+    },
+    {
       "path": "tests/unit/main/pty-codex-hooks.test.ts",
       "predicates": [
         "P01",
@@ -4686,6 +4708,13 @@
       "lineCount": 4
     },
     {
+      "path": "tests/unit/main/pty-ssh-color-query-passthrough.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 5
+    },
+    {
       "path": "tests/unit/main/review-provider-off.test.ts",
       "predicates": [
         "P04",
@@ -4782,6 +4811,13 @@
         "P13"
       ],
       "lineCount": 22
+    },
+    {
+      "path": "tests/unit/main/terminal-query-responder.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 16
     },
     {
       "path": "tests/unit/main/tokenomics-attribution.test.ts",
@@ -5843,7 +5879,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 111
+      "lineCount": 122
     },
     {
       "path": "tests/unit/renderer/insights-no-iframe.test.tsx",
@@ -6671,7 +6707,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 47
+      "lineCount": 50
     },
     {
       "path": "tests/unit/sentinel-analysis.test.ts",

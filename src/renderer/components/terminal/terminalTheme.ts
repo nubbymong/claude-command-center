@@ -4,10 +4,13 @@
 // where computed styles aren't available (e.g. unit tests under jsdom
 // without our `:root` block applied).
 import { LINK_HOVER_CLASS } from './terminalLinks'
+// The default foreground and background, shared with main, which answers a
+// colour query with them for some sessions (main/terminal-query-responder.ts).
+import { TERMINAL_DEFAULT_COLORS } from '../../../shared/terminal-colors'
 
 const FALLBACK_DARK = {
-  background: '#171e27',
-  foreground: '#eef2f7',
+  background: TERMINAL_DEFAULT_COLORS.dark.background,
+  foreground: TERMINAL_DEFAULT_COLORS.dark.foreground,
   surface2: '#1c2430',
   red: '#f08a8a',
   green: '#7bd88f',

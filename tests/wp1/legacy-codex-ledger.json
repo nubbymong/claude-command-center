@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "b7a6e625efba33279a41815be3c47cebac3361ffa0f3562b29f5fde0201fda8c",
-  "manifestHead": "d1a126a38ca60adbed56361e63e733a4ea797ca4",
+  "manifestPathDigest": "159850d78a61fd32915eb6a43bd1adc8d99351a3688c6d9392d2ddb396b68b12",
+  "manifestHead": "247ce4ca4205d4821f1bb56fd605fe2a5dbbc3c4",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -2040,6 +2040,16 @@
       "note": "created by WP2 PR 3 P3.9 round 1; the P14 hit is a comment naming the Codex model list read"
     },
     {
+      "path": "src/main/terminal-query-responder.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "new module for the WP2 PR 4 Electron 44 colour-reply fix (lane COLOUR): main answers a local Codex session's OSC 10/11 colour query the moment the PTY emits it, in xterm.js's bytes, and keeps it from the renderer, so a late answer never reaches the composer as typed text (WP1.68); tests/unit/main/terminal-query-responder.test.ts, tests/unit/main/pty-codex-color-replies.test.ts, tests/unit/main/pty-ssh-color-query-passthrough.test.ts",
+      "note": "created by the lane COLOUR fix; called only from the Codex branch of pty-manager.ts"
+    },
+    {
       "path": "src/main/tokenomics/tk-attribution.ts",
       "predicates": [
         "P14"
@@ -3945,6 +3955,16 @@
       "disposition": "replace",
       "evidence": "WP2 PR 3 P3.9 (rows 39, 42): a finding may name the assistant it is about (provider), and the state the Codex version last seen and whose update is being analysed; optional fields, so earlier state files still load (WP1.68); tests/unit/sentinel-state.test.ts; WP2 PR 3 P3.9 round 1: lastAnalysisNote, optional (WP1.68); tests/unit/sentinel-state.test.ts; WP2 PR 3 P3.9 round 4: unverifiedTries, optional (WP1.68); tests/unit/main/sentinel-codex-service.test.ts; WP2 PR 3 fixer 11 (gate 3 F10, row 42): highestCheckedCcVersion and highestCheckedCodexVersion, optional, so earlier state files still load; the doc of the versions the panel names (WP1.68); tests/unit/sentinel-state.test.ts; WP2 PR 3 fixer 12 (ADR-009 R3-1, row 42): the highest version checked's doc says a Re-run's record sets it (comment only) (WP1.68); tests/unit/sentinel-state.test.ts; WP2 PR 3 fixer 13 (gate 3 F17, row 42): the doc says no start-up analysis lowers the highest checked (comment only) (WP1.68); tests/unit/sentinel-state.test.ts; WP2 PR 4 owner answers review round 2 (7a2a7d71): the snapshot's lastAnalysisFailed field (WP1.68); tests/unit/sentinel-state.test.ts",
       "note": "types only"
+    },
+    {
+      "path": "src/shared/terminal-colors.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "new module for the WP2 PR 4 Electron 44 colour-reply fix (lane COLOUR): main answers a local Codex session's OSC 10/11 colour query the moment the PTY emits it, in xterm.js's bytes, and keeps it from the renderer, so a late answer never reaches the composer as typed text (WP1.68); tests/unit/main/terminal-query-responder.test.ts, tests/unit/main/pty-codex-color-replies.test.ts, tests/unit/main/pty-ssh-color-query-passthrough.test.ts",
+      "note": "created by the lane COLOUR fix; the terminal default colours shared by main and the renderer, Codex named in comments only"
     },
     {
       "path": "src/shared/types.ts",
@@ -6468,6 +6488,17 @@
       "note": ""
     },
     {
+      "path": "tests/unit/main/pty-codex-color-replies.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new test for the WP2 PR 4 Electron 44 colour-reply fix (lane COLOUR): main answers a local Codex session's OSC 10/11 colour query the moment the PTY emits it, in xterm.js's bytes, and keeps it from the renderer, so a late answer never reaches the composer as typed text (WP1.68); tests/unit/main/terminal-query-responder.test.ts, tests/unit/main/pty-codex-color-replies.test.ts, tests/unit/main/pty-ssh-color-query-passthrough.test.ts",
+      "note": "created by the lane COLOUR fix; node-pty mocked, nothing spawned"
+    },
+    {
       "path": "tests/unit/main/pty-codex-hooks.test.ts",
       "predicates": [
         "P01",
@@ -6628,6 +6659,16 @@
       "note": ""
     },
     {
+      "path": "tests/unit/main/pty-ssh-color-query-passthrough.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new test for the WP2 PR 4 Electron 44 colour-reply fix (lane COLOUR): main answers a local Codex session's OSC 10/11 colour query the moment the PTY emits it, in xterm.js's bytes, and keeps it from the renderer, so a late answer never reaches the composer as typed text (WP1.68); tests/unit/main/terminal-query-responder.test.ts, tests/unit/main/pty-codex-color-replies.test.ts, tests/unit/main/pty-ssh-color-query-passthrough.test.ts",
+      "note": "created by the lane COLOUR fix; node-pty mocked, nothing spawned"
+    },
+    {
       "path": "tests/unit/main/review-provider-off.test.ts",
       "predicates": [
         "P04",
@@ -6763,6 +6804,16 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.9 round 1 test (tests/unit/main/stale-folder-sweep.test.ts): the sweep through an injected filesystem: own-prefix real folders past the age only, a link never removed, another user's folder kept on POSIX, a short prefix or a name with a separator never touched, and one folder that cannot be read or removed never stops the rest (WP1.68)",
       "note": "created by WP2 PR 3 P3.9 round 1; pure"
+    },
+    {
+      "path": "tests/unit/main/terminal-query-responder.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new test for the WP2 PR 4 Electron 44 colour-reply fix (lane COLOUR): main answers a local Codex session's OSC 10/11 colour query the moment the PTY emits it, in xterm.js's bytes, and keeps it from the renderer, so a late answer never reaches the composer as typed text (WP1.68); tests/unit/main/terminal-query-responder.test.ts, tests/unit/main/pty-codex-color-replies.test.ts, tests/unit/main/pty-ssh-color-query-passthrough.test.ts",
+      "note": "created by the lane COLOUR fix; pure, nothing spawned"
     },
     {
       "path": "tests/unit/main/tokenomics-attribution.test.ts",

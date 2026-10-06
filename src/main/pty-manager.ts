@@ -91,6 +91,7 @@ import { readConfig, getConfigDir } from './config-manager'
 import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 import { getWatchdogManager, clampAnsiChunk } from './watchdog/watchdog-manager'
 import { clearCodexIdleAttention } from './codex-idle-attention'
+import { createColorQueryResponder, terminalReplyColors } from './terminal-query-responder'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -5255,9 +5256,24 @@ function spawnPtyResolved(
       const codexRun = started
       const runScreen = provider.runScreen
       if (codexRun && runScreen) runScreen.open(sessionId, { cols, rows, write: (data) => codexRun.write(data), current: () => ptySessions.get(sessionId)?.ptyProcess === codexRun, clamp: clampAnsiChunk })
-      ptyProcess.onData((data) => {
+      // Codex's colour query (OSC 10/11 `?`), answered here in main the moment
+      // the PTY emits it and kept from the renderer, so xterm.js does not answer
+      // it a second time (terminal-query-responder.ts). Codex waits 100 ms for
+      // the answer and reads a later one as typed text in its composer; the
+      // renderer's answer can be later than that while it is busy drawing.
+      // Only this branch: Claude sessions, plain terminals and SSH sessions keep
+      // xterm.js's own answers.
+      const colorQueries = createColorQueryResponder({
+        colors: () => terminalReplyColors(readConfig('settings'), nativeTheme.shouldUseDarkColors),
+        reply: (bytes) => {
+          try { codexRun.write(bytes) } catch (err) { logWarn(`[pty-manager] Codex ${sessionId}: the terminal colour answer could not be written: ${(err as Error)?.message ?? err}`) }
+        },
+      })
+      ptyProcess.onData((rawData) => {
         if (win.isDestroyed()) return
         if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return // rc.15 review R9
+        const data = colorQueries.filter(rawData)
+        if (data === '') return
         getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
         // P3.10 (rows 43, 46): the Watchdog's pane and silence clock, as a
         // Claude session's; a no-op until the session arms one (off by default).
