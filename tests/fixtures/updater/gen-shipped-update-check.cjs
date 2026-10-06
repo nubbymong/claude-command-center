@@ -60,7 +60,7 @@ const helpers = span('function classifyTag(', 'function compareTagToCurrentVersi
 const checkFn = span('export async function checkGitHubRelease', 'export async function checkGitHubRelease')
 const body = [...strip(types), '', ...strip(helpers), '', ...strip(checkFn)].join('\n')
   .replace(/export async function checkGitHubRelease/, 'async function checkGitHubRelease')
-  .replace(/ — no /, ' - no ')
+  .replace(/ \u2014 no /, ' - no ')
 const bad = body.match(/[^\x00-\x7f]/g)
 if (bad) throw new Error(`non-ASCII left in the copied code: ${bad.join(',')}`)
 

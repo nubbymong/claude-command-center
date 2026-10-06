@@ -6,9 +6,10 @@
  * original bytes did: the same screen, its other answers (cursor position,
  * device attributes) the same and in the same order, every colour query
  * answered exactly once, and none answered by main after a colour SET.
- * Deterministic: fixed seeds and a bounded number of streams.
+ * Deterministic: fixed seeds (reset for each test) and a bounded number of
+ * streams; a failure names the chunks the stream was cut into.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { Terminal } from '@xterm/headless'
 import { createColorQueryResponder, type ReplyColors } from '../../../src/main/terminal-query-responder'
 
@@ -80,17 +81,22 @@ function colourQueries(osc: Array<{ id: number; data: string }>) {
   return { total, beforeOther: beforeOther < 0 ? total : beforeOther }
 }
 
+/** The verdict for `s`, fed to the responder in random chunks; `chunks` is how it was cut, for the failure message. */
 async function check(s: string) {
   const replies: string[] = []
   const r = createColorQueryResponder({ colors: () => DARK, reply: (b) => replies.push(b) })
-  const fwd = chunks(s).map((c) => r.filter(c)).join('')
+  const parts = chunks(s)
+  const fwd = parts.map((c) => r.filter(c)).join('')
   const [orig, after] = await Promise.all([xterm(s), xterm(fwd)])
   const want = colourQueries(orig.osc)
   return {
-    screen: orig.screen === after.screen,
-    otherAnswers: JSON.stringify(orig.answers) === JSON.stringify(after.answers),
-    eachQueryOnce: replies.length + colourQueries(after.osc).total === want.total,
-    noAnswerAfterASet: replies.length <= want.beforeOther,
+    verdict: {
+      screen: orig.screen === after.screen,
+      otherAnswers: JSON.stringify(orig.answers) === JSON.stringify(after.answers),
+      eachQueryOnce: replies.length + colourQueries(after.osc).total === want.total,
+      noAnswerAfterASet: replies.length <= want.beforeOther,
+    },
+    chunks: parts,
   }
 }
 
@@ -99,26 +105,32 @@ async function fuzz(n: number, startSeed: number, opts: { unfinished: boolean; s
   const failed: Record<string, string[]> = { screen: [], otherAnswers: [], eachQueryOnce: [], noAnswerAfterASet: [] }
   for (let k = 0; k < n; k++) {
     const s = stream(opts)
-    const res = await check(s)
-    for (const key of Object.keys(failed) as Array<keyof typeof res>) if (!res[key] && failed[key].length < 3) failed[key].push(JSON.stringify(s))
+    const { verdict, chunks: parts } = await check(s)
+    for (const key of Object.keys(failed) as Array<keyof typeof verdict>) {
+      if (!verdict[key] && failed[key].length < 3) failed[key].push(JSON.stringify(parts))
+    }
   }
   return failed
 }
 
 const NONE = { screen: [], otherAnswers: [], eachQueryOnce: [], noAnswerAfterASet: [] }
+const SAME = { screen: true, otherAnswers: true, eachQueryOnce: true, noAnswerAfterASet: true }
+
+// Each test starts from the same seed, so its chunk cuts do not depend on which tests ran before it.
+beforeEach(() => { seed = 1 })
 
 describe('xterm.js reading what main forwards does what it did with the original bytes', () => {
   it('an unfinished sequence before a query: the same screen and the same answers (W demos)', async () => {
     for (const s of [`${ESC}[${ESC}]10;?${ST}6n`, `${ESC}[3${ESC}]11;?${BEL}1mX`, `${ESC}]2;t${ESC}]10;?${ST}visible text`, `abc${ESC}${ESC}]10;?${BEL}c`]) {
-      const res = await check(s + 'Z')
-      expect(res, JSON.stringify(s)).toEqual({ screen: true, otherAnswers: true, eachQueryOnce: true, noAnswerAfterASet: true })
+      const { verdict, chunks: parts } = await check(s + 'Z')
+      expect(verdict, JSON.stringify(parts)).toEqual(SAME)
     }
   })
 
   it('a colour SET in a form xterm.js reads (leading zeros, the 8-bit introducer, a dropped control): no later query answered by main', async () => {
     for (const set of SETS) {
-      const res = await check(`a${set}b${ESC}]10;?${ST}${ESC}]11;?${BEL}Z`)
-      expect(res, JSON.stringify(set)).toEqual({ screen: true, otherAnswers: true, eachQueryOnce: true, noAnswerAfterASet: true })
+      const { verdict, chunks: parts } = await check(`a${set}b${ESC}]10;?${ST}${ESC}]11;?${BEL}Z`)
+      expect(verdict, JSON.stringify(parts)).toEqual(SAME)
     }
   })
 

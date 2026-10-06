@@ -26,10 +26,12 @@
  *
  * Platforms: this runs for a local Codex session on every OS, and was verified
  * live on Windows, where Codex sends only the two colour queries. On macOS and
- * Linux Codex sends them in one write with a cursor position, keyboard and
- * device attributes query (`ESC[6n ... ESC[?u ESC[c`); main's colour answers
- * then reach Codex before xterm.js's answers to the others, which Codex reads
- * each on its own (terminal_probe.rs update_startup_probe).
+ * Linux Codex sends them in one write with a cursor position query, and can
+ * also send a keyboard and a device attributes query in it
+ * (`ESC[6n ... ESC[?u ESC[c`; terminal_probe.rs has a variant with only the
+ * cursor position and the two colour queries); main's colour answers then
+ * reach Codex before xterm.js's answers to the others, which Codex reads each
+ * on its own (terminal_probe.rs update_startup_probe).
  *
  * Limits, none reachable with Codex as it is (it writes the probe on its own and
  * never sets these colours): a responder lives for one run, so a colour SET by

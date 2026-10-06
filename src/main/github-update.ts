@@ -364,7 +364,6 @@ export function macosMajorAtLeast(systemVersion: string | null | undefined, runn
   return Math.max(osMajorVersion(systemVersion) ?? 0, runningFloor)
 }
 
-
 /**
  * Installer names. Every Windows and Linux installer, and every Mac download
  * up to the last release before the macOS 13 floor, is named
