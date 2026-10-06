@@ -328,9 +328,17 @@ interface EnabledOverride {
   savedAtSet: ProviderPreference
 }
 
+/** How often main looks again at a provider's in-use count after it refused
+ *  to switch the provider off, until nothing holds it (watchInUse). */
+export const IN_USE_WATCH_MS = 1000
+
 export class AccountsService {
   private revision = 0
   private readonly listeners = new Set<() => void>()
+  /** Providers whose switch-off was refused while in use, with the count
+   *  last published for each; one timer follows them all (watchInUse). */
+  private readonly inUseWatched = new Map<ProviderId, number>()
+  private inUseTimer: ReturnType<typeof setInterval> | null = null
   private readonly enabledOverride = new Map<ProviderId, EnabledOverride>()
   /** The last preference each provider's saved setting read as. */
   private readonly lastSaved = new Map<ProviderId, ProviderPreference>()
@@ -856,7 +864,10 @@ export class AccountsService {
         return { ok: true }
       }
       const running = this.providerInUse(providerId)
-      if (running > 0) return failure('consumers', undefined, { consumers: running })
+      if (running > 0) {
+        this.watchInUse(providerId, running)
+        return failure('consumers', undefined, { consumers: running })
+      }
       // Another provider that can launch: on, not merely "not off". One the
       // user has not answered for launches nothing (launchRefusal), so it
       // never lets the last provider that can be switched off.
@@ -883,6 +894,35 @@ export class AccountsService {
     let unleased = 0
     try { unleased = this.deps.unleasedSessions?.(providerId) ?? 0 } catch { unleased = 1 }
     return this.deps.leases.countForProvider(providerId) + (Number.isSafeInteger(unleased) && unleased > 0 ? unleased : 0)
+  }
+
+  /** After a switch-off refused because the provider is in use: what runs
+   *  of it without an account lease publishes no change of its own when it
+   *  starts or ends, so its count is looked at again every IN_USE_WATCH_MS,
+   *  and each time it has moved (up or down) a new snapshot is published,
+   *  which Settings' in-use line follows. A provider is let go once nothing
+   *  holds it (that change published), and the one timer with the last. */
+  private watchInUse(providerId: ProviderId, count: number): void {
+    this.inUseWatched.set(providerId, count)
+    if (this.inUseTimer) return
+    this.inUseTimer = setInterval(() => this.inUseTick(), IN_USE_WATCH_MS)
+    this.inUseTimer.unref?.()
+  }
+
+  private inUseTick(): void {
+    let moved = false
+    for (const [providerId, seen] of [...this.inUseWatched]) {
+      const now = this.providerInUse(providerId)
+      if (now === seen) continue
+      moved = true
+      if (now > 0) this.inUseWatched.set(providerId, now)
+      else this.inUseWatched.delete(providerId)
+    }
+    if (this.inUseWatched.size === 0 && this.inUseTimer) {
+      clearInterval(this.inUseTimer)
+      this.inUseTimer = null
+    }
+    if (moved) this.changed()
   }
 
   /** What to show and copy, and, only for a recipe main allows to run, the

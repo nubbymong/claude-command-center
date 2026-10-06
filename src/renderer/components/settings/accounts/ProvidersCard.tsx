@@ -2,8 +2,8 @@
 // with its machine status and the on/off switch. At least one provider
 // always stays on; the main process enforces that and this card says so
 // under the switch that tried. A switch-off refused because the provider is
-// in use says how much, following the count each snapshot carries until
-// nothing holds it. A provider whose CLI was not found, could not
+// in use says how much, following the count each snapshot main publishes
+// carries until nothing holds it. A provider whose CLI was not found, could not
 // be checked, is too old, or has not been looked for yet gets "Check again"
 // (6e, 6g): a new discovery, which is also the executable later launches and
 // sign-ins run. The same row shows the provider's own install or update
@@ -117,11 +117,6 @@ function InstallCommands({ p, purpose }: { p: ProviderInstallationView; purpose:
   )
 }
 
-/** How often a row that says its provider is in use reads the snapshot
- *  again, and only while it says so: what runs of a provider without an
- *  account lease sends no snapshot of its own when it ends. */
-export const IN_USE_RECHECK_MS = 2000
-
 function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean }) {
   const [busy, setBusy] = useState(false)
   const [checking, setChecking] = useState(false)
@@ -134,18 +129,14 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
   const purpose = installPurpose(p)
   const codexReady = useProviderAccountsStore((s) => codexSetUp(s.snapshot))
 
-  // Each new snapshot carries main's count afresh (p.inUse): the line follows it.
+  // Each new snapshot carries main's count afresh (p.inUse), and after a
+  // refusal main publishes one each time the count moves: the line follows
+  // them and reads no snapshot of its own.
   useEffect(() => {
     const live = p.inUse
     if (typeof live !== 'number') return
     setInUse((n) => (n === null ? null : live > 0 ? live : null))
   }, [p])
-  const showingInUse = inUse !== null
-  useEffect(() => {
-    if (!showingInUse) return
-    const t = setInterval(() => { void useProviderAccountsStore.getState().hydrate() }, IN_USE_RECHECK_MS)
-    return () => clearInterval(t)
-  }, [showingInUse])
 
   // The result arrives with the snapshot main pushes after the check.
   const checkAgain = async () => {

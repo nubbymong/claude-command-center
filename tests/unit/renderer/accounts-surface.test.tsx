@@ -106,7 +106,6 @@ const pa = {
 }
 
 const { AccountsSurface } = await import('../../../src/renderer/components/settings/accounts/AccountsSurface')
-const { IN_USE_RECHECK_MS } = await import('../../../src/renderer/components/settings/accounts/ProvidersCard')
 
 // ---------------------------------------------------------------------------
 // Fixture
@@ -115,7 +114,7 @@ function provider(over: Partial<ProviderInstallationView> & Pick<ProviderInstall
   const cap = { enabled: true, labelExperimental: false }
   return {
     enabled: true, preference: 'on', discoveryState: 'found', version: '1.0.0', compatibility: 'supported', managedAccounts: over.providerId === 'codex',
-    signInMethods: { browser: cap, device: cap, apiKey: cap }, status: cap, logout: cap,
+    signInMethods: { browser: cap, device: cap, apiKey: cap }, status: cap, logout: cap, inUse: 0,
     ...over,
   }
 }
@@ -393,23 +392,23 @@ describe('Providers card', () => {
     expect(q('provider-error-claude')).toBeNull()
   })
 
-  it('while the line shows, the row reads the snapshot again (a run that holds no lease sends none), and stops once it goes [host]', async () => {
+  // [host] P4.7 fix pass 4: main pushes a new snapshot each time the count
+  // moves after a refusal (provider-in-use.test.ts); the row reads none of
+  // its own, however long the line shows.
+  it('while the line shows, the row reads no snapshot of its own; the next snapshot main pushes ends it [host]', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     try {
-      // The last snapshot already said 0: only a fresh read can tell the line it is over.
+      // The last snapshot already said 0; main's push after the refusal says it again.
       render(inUseSnapshot(1, 0, 0))
       await refuseBothSwitches()
+      pa.snapshot.mockClear()
+      await act(async () => { vi.advanceTimersByTime(10 * 60_000) })
       expect(pa.snapshot).not.toHaveBeenCalled()
-      pa.snapshot.mockResolvedValue(inUseSnapshot(2, 0, 0) as never)
-      await act(async () => { vi.advanceTimersByTime(IN_USE_RECHECK_MS) })
-      await flush()
-      expect(pa.snapshot).toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+      expect(q('provider-error-codex')?.textContent).toBe('Codex is in use (1).')
+      act(() => { useProviderAccountsStore.getState().receive(inUseSnapshot(2, 0, 0)) })
       expect(q('provider-error-codex')).toBeNull()
       expect(q('provider-error-claude')).toBeNull()
-      pa.snapshot.mockClear()
-      await act(async () => { vi.advanceTimersByTime(IN_USE_RECHECK_MS * 3) })
-      await flush()
-      expect(pa.snapshot).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }

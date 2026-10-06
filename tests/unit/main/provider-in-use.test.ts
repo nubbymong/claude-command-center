@@ -191,3 +191,67 @@ describe('the in-use count each snapshot carries', () => {
     expect(inUse('claude')).toBe(4)
   })
 })
+
+// [host] WP2 PR 4, P4.7 fix pass 4: what runs a provider without an account
+// lease sends no change of its own when it starts or ends, so once main has
+// refused a switch-off it publishes a new snapshot each time that provider's
+// in-use count moves, up or down, until nothing holds the provider. The
+// renderer follows those snapshots and reads none of its own.
+describe('main publishes the in-use count as it moves after a refused switch-off', () => {
+  it('a count that rises or drops is pushed as a new snapshot; once nothing holds the provider the watch ends [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const svc = service()
+      let pushes = 0
+      svc.subscribe(() => { pushes++ })
+      const inUse = (id: string) => svc.snapshot().providers.find((p) => p.providerId === id)?.inUse
+      expect(vi.getTimerCount()).toBe(0)
+      n.codexInsights = 1
+      expect(await svc.setProviderEnabled('codex', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+      const revision = svc.snapshot().revision
+      vi.advanceTimersByTime(10_000)
+      expect(pushes).toBe(0)
+      n.codexInsights = 2
+      vi.advanceTimersByTime(5_000)
+      expect(pushes).toBe(1)
+      expect(inUse('codex')).toBe(2)
+      n.codexInsights = 0
+      vi.advanceTimersByTime(5_000)
+      expect(pushes).toBe(2)
+      expect(svc.snapshot().revision).toBeGreaterThan(revision)
+      expect(inUse('codex')).toBe(0)
+      expect(vi.getTimerCount()).toBe(0)
+      // Nothing is watched now: a count that moves again pushes nothing.
+      n.codexInsights = 3
+      vi.advanceTimersByTime(10_000)
+      expect(pushes).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('both providers refused: each is followed until it is free; a second refusal of the same provider adds no second watch [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const svc = service()
+      let pushes = 0
+      svc.subscribe(() => { pushes++ })
+      n.codexInsights = 1
+      n.insights = 1
+      expect(await svc.setProviderEnabled('codex', false)).toMatchObject({ ok: false, code: 'consumers' })
+      expect(await svc.setProviderEnabled('codex', false)).toMatchObject({ ok: false, code: 'consumers' })
+      expect(await svc.setProviderEnabled('claude', false)).toMatchObject({ ok: false, code: 'consumers' })
+      expect(vi.getTimerCount()).toBe(1)
+      n.insights = 0
+      vi.advanceTimersByTime(5_000)
+      expect(pushes).toBe(1)
+      expect(vi.getTimerCount()).toBe(1)
+      n.codexInsights = 0
+      vi.advanceTimersByTime(5_000)
+      expect(pushes).toBe(2)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
