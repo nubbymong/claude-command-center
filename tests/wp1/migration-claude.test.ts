@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto'
 import {
   emptyRegistry, checkRegistryInvariants, reconcileLegacyAccounts, updateIdentity, findIdentity,
   createIdentity, beginAccountSetup, commitAccountSetup, setProviderDefault, setAccountLifecycle, resolveIdentityConflict,
-  recordAuthCheck, parseRegistryDoc, linkAccountIdentity, normaliseLabel, FRIENDLY_NAME_MAX,
+  recordAuthCheck, parseRegistryDoc, linkAccountIdentity, normaliseLabel, FRIENDLY_NAME_MAX, setReviewerDefault,
 } from '../../src/shared/providers'
 import type { ProviderRegistryDoc, LegacyAccountSnapshot, OpaqueIdKind } from '../../src/shared/providers'
 import { ID_PREFIX } from '../../src/shared/providers'
@@ -266,6 +266,85 @@ describe('existence follows the legacy store, and one bad read never destroys it
     const r = rec(emptyRegistry(), [...one(), ...bad])
     expect(r.created).toBe(1)
     expect(r.warnings).toHaveLength(4)
+  })
+})
+
+describe('a linked record that is present in the snapshot but cannot be stored changes nothing (#625 review)', () => {
+  const two = () => claudeLegacySnapshot([P('profile-a1', { isPrimary: true }), P('profile-b2')], undefined)
+  /** `two()` with profile-b2's record given a value the registry cannot store. */
+  const withBadB2 = (over: Record<string, unknown>) =>
+    two().map((s) => (s.legacyId === 'profile-b2' ? ({ ...s, ...over } as unknown as LegacyAccountSnapshot) : s))
+  const UNSTORABLE: Array<Record<string, unknown>> = [
+    { authMethod: 'telepathy' },
+    { lifecycle: 'archived' },
+    { identityAssurance: 'verified-subject' },
+    { realm: { kind: 'bogus-kind', ownership: 'conductor-managed', pathRef: 'claude-profile:profile-b2' } },
+    { realm: { kind: 'claude-config-home', ownership: 'conductor-managed', pathRef: 'claude-profile:profile-b2 ' } },
+    { realm: { kind: 'claude-config-home', ownership: 'conductor-managed', pathRef: 'claude-profile:profile-a1' } },
+  ]
+  /** b2 signed in with a known subject and made the reviewer default: what an archive would throw away. */
+  function linked() {
+    let { doc } = rec(emptyRegistry(), two())
+    const b2 = doc.accounts[1].id
+    const signed = recordAuthCheck(doc, b2, { state: 'signed-in', providerSubject: 'subject-b2', providerAuthorityId: 'authority-1' }, 150)
+    if (!signed.ok) throw new Error(signed.message)
+    const reviewer = setReviewerDefault(signed.doc, 'claude', b2, 160)
+    if (!reviewer.ok) throw new Error(reviewer.message)
+    doc = reviewer.doc
+    return { doc, b2 }
+  }
+
+  it('its account stays linked and unarchived, with its realm, link, subject and reviewer default as they were, and a warning', () => {
+    const { doc, b2 } = linked()
+    for (const over of UNSTORABLE) {
+      const r = rec(doc, withBadB2(over), 200)
+      const what = JSON.stringify(over)
+      expect(r.archived, what).toBe(0)
+      expect(r.doc.accounts.find((a) => a.id === b2), what).toEqual(doc.accounts.find((a) => a.id === b2))
+      expect(r.doc.realms, what).toEqual(doc.realms)
+      expect(r.doc.legacyLinks, what).toEqual(doc.legacyLinks)
+      expect(r.warnings.join(' '), what).toMatch(/profile-b2/)
+      expect(checkRegistryInvariants(r.doc), what).toEqual([])
+    }
+  })
+
+  it('an open conflict on it survives the bad read', () => {
+    const { doc, b2 } = linked()
+    const id = doc.accounts.find((a) => a.id === b2)!.identityId
+    const u = updateIdentity(doc, id, { friendlyName: 'Mine' }, 170)
+    if (!u.ok) throw new Error(u.message)
+    const theirs = claudeLegacySnapshot([P('profile-a1', { isPrimary: true }), P('profile-b2', { name: 'Theirs' })], undefined)
+    const conflicted = rec(u.doc, theirs, 180).doc
+    expect(conflicted.conflicts).toMatchObject([{ legacyId: 'profile-b2', field: 'friendlyName' }])
+    const r = rec(conflicted, withBadB2({ authMethod: 'telepathy' }), 200)
+    expect(r.doc.conflicts).toEqual(conflicted.conflicts)
+    expect(r.doc.legacyLinks).toEqual(conflicted.legacyLinks)
+  })
+
+  it('a clean read afterwards changes nothing: no archive, no restore, no write', () => {
+    const { doc, b2 } = linked()
+    const bad = rec(doc, withBadB2({ authMethod: 'telepathy' }), 200).doc
+    const clean = rec(bad, two(), 300)
+    expect(clean).toMatchObject({ archived: 0, restored: 0, created: 0, writes: [] })
+    expect(clean.doc.accounts.find((a) => a.id === b2)).toEqual(doc.accounts.find((a) => a.id === b2))
+    expect(clean.doc.legacyLinks).toEqual(doc.legacyLinks)
+  })
+
+  it('the valid record beside it is reconciled as usual', () => {
+    const { doc } = linked()
+    const renamed = claudeLegacySnapshot([P('profile-a1', { isPrimary: true, name: 'Renamed' }), P('profile-b2')], undefined)
+      .map((s) => (s.legacyId === 'profile-b2' ? ({ ...s, authMethod: 'telepathy' } as unknown as LegacyAccountSnapshot) : s))
+    const r = rec(doc, renamed, 200)
+    expect(r.imported).toBe(1)
+    expect(findIdentity(r.doc, r.doc.accounts[0].identityId)?.friendlyName).toBe('Renamed')
+  })
+
+  it('an unstorable record that was never linked is skipped as before, and a linked record that is gone is still archived', () => {
+    const fresh = rec(emptyRegistry(), withBadB2({ authMethod: 'telepathy' }))
+    expect(fresh.created).toBe(1)
+    expect(fresh.doc.legacyLinks.map((l) => l.legacyId)).toEqual(['profile-a1'])
+    const { doc } = rec(emptyRegistry(), two())
+    expect(rec(doc, claudeLegacySnapshot([P('profile-a1', { isPrimary: true })], undefined), 200).archived).toBe(1)
   })
 })
 
