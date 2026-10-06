@@ -78,11 +78,11 @@ checklist):
   cards for the assistants in use, and the PR 4 user-facing sweep with the
   2.1.1 changelog lines, built on the defaults of questions 5 to 8; seven
   listed items are owner calls (the plan's P4.11 record).
-- P4.7 (row 68, DONE, mocked; d99a553b to c293f847 with fix passes 1 to
-  4): Insights for a Codex account as the OR3 mockup drew it, approved on the
-  canvas 2026-10-05 (C1 = A): the app reads and counts that account's own
-  sessions, and one read-only `codex exec` with no tools, under the
-  account's lease, writes the cards, which the page draws in its layout,
+- P4.7 (row 68, DONE, mocked; d99a553b to 23176b9c with fix passes 1 to
+  7, fix pass 5 below): Insights for a Codex account as the OR3 mockup
+  drew it, approved on the canvas 2026-10-05 (C1 = A): the app reads and
+  counts that account's own sessions, and one read-only `codex exec` with
+  no tools, under the account's lease, writes the cards, which the page draws in its layout,
   figures and history as text; Run all rolls up the accounts of both
   assistants, its written analysis holding no tools and reading the
   comparison as data; `insights:run` answers the app window only and checks
@@ -95,9 +95,13 @@ checklist):
   the provider row's in-use line following the count; fix pass 4
   (df25c65b, c293f847) answers ADR-009 round 2 (PASS: 0 blocker, 0 major)
   and the fix pass 3 reviews, their minors fixed (26 mutants, 26 killed);
-  fix pass 6 (46510944 to d01c91e5) answers ADR-009 round 3 and the fix
-  pass 4 reviews (8 mutants, 8 killed). Row 58's artifacts record is signed
-  (67f44333). The confirmation of fix passes 4 and 6, the VM run and OR4 (a
+  fix pass 6 (46510944 to d01c91e5) answers ADR-009 round 3 (four lenses,
+  PASS: 0 blocker, 0 major) and the fix pass 4 reviews (8 mutants, 8
+  killed); fix pass 7 (23176b9c; 4 mutants, 4 killed) answers the one
+  minor of ADR-009 round 4 over fix pass 6 (two lenses, PASS: 0 blocker, 0
+  major). The spec and quality reviews of fix passes 4 and 6 PASS. Row
+  58's artifacts record is signed (67f44333). The confirmation of fix
+  pass 7, the VM run at the final head, the pre-push batch, CI and OR4 (a
   real report's content) are owed.
 
 **Why this way.** The parity rule (OD26 P1): Claude's behaviour in the code
@@ -159,4 +163,5 @@ attributions are kept, never queued, while the index is not listening
 (6f9cbd4f); the first-index and re-read progress tests (932b7d00); the guide
 and app knowledge say how a resumed session is attributed (the records
 commit), and fix pass 6 brings the README's summary into line (cc6f2ac1).
-Confirmation owed.
+Confirmed: #625's delta ADR-009 confirmation over fix pass 5 (two lenses)
+PASS, and fix pass 5's spec and quality reviews PASS.
