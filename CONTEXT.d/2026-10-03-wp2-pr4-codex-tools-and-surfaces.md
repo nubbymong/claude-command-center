@@ -120,8 +120,9 @@ recorded did not say why), fixed in bafde453; row 58's round 7 quality
 review PASS at 9ab9c41c. Fix pass 9 is bafde453 and 818d45a7.
 
 **Owed for PR 4 now.** The spec and quality reviews of fix pass 9; the
-checks of the dev dependency bumps; the Electron 44 migration, its ADR-009 pass and
-its VM packaging run; the final VM e2e and packaged pass at the final
+checks of the dev dependency bumps; what the Electron 44 migration still owes
+(its 2026-10-06 fragment: the re-attack of fix pass 10, a finding under
+investigation, the macOS and Linux checks); the final VM e2e and packaged pass at the final
 head; CI at the final head; the owner's checks (OR1, OR2, OR4, OR5a and
 the screenshot review).
 

@@ -347,6 +347,31 @@ released from it until section 7 holds.
 5. **Dependabot PRs:** every Dependabot PR open at the cut (today #620 to
    #624) rolled in (owner decision recorded 2026-09-26); #621, the Electron 44
    major, with its own ADR-009 pass and a VM packaging run.
+   *Electron 44 (#621): done in PR 4* (b84d9db3, b9e5d9fb, 1aa0a540,
+   e8317ceb; fix pass 10 is 50972cb7, 7c5d5a31 and 0bfcfb6c). ADR-009 round
+   1, three lenses (clipboard and paths; injection and the certificate rule;
+   updater and platform): FINDINGS, 1 major and minors, all answered in fix
+   pass 10 (26 mutants, 26 killed). Since then a Mac on an earlier version is
+   offered nothing from a release that needs macOS 13 (its download is named
+   `AICodeConductor-<version>-macos13.dmg`, which earlier updaters never
+   match), the release gate refuses a cut whose Electron needs a newer macOS
+   than its tag's floor, an unreadable macOS version counts as the running
+   build's floor, a file copied from `\\localhost\<share>` pastes, a path on
+   the `pipe`, `mailslot` or `IPC$` share is never opened, a copied image
+   that is gone is no image, the install uses the Windows native prebuilds
+   as CI does, and `npm run package` keeps them. The VM packaging run at
+   e8317ceb: the release-shaped package built and verified; native suite
+   under Electron 44 15 of 15 files (226 tests); the NSIS upgrade over the
+   shipped 2.1.1-beta.1 PASS; e2e 94 of 94; the packaged walk 39 parts, 0
+   errors; paste 8 of 9 cases (the ninth fixed in 7c5d5a31); a local
+   `npm ci` and `npm run package` failed (fixed in 0bfcfb6c). Owed: the
+   re-attack of fix pass 10; an intermittent finding under investigation
+   (on 2 of 3 first Codex launches on Electron 44, 0 of 2 on Electron 43,
+   the terminal's colour replies reached Codex's prompt as typed text); the
+   macOS checks (the DMG under its new name with LSMinimumSystemVersion
+   13.0, Finder file paste, image paste) and the Linux checks (the CI
+   matrix, the AppImage on a Rocky Linux host); real keyboard focus in the
+   in-app browser and account panes on an interactive desktop.
 6. **Known defects settled.** The six C items in the checklist's P2
    acceptance section (the narrow-window overlap of the partner label, the
    renderer-only one-at-a-time rule, Resume replacing the tab list while its
