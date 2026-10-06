@@ -5,6 +5,8 @@
  * network and log calls replaced by the stand-ins below; the code of each
  * function is as shipped. tests/unit/main/update-macos-floor.test.ts runs it
  * over a release feed to show what a Mac on one of those builds is offered.
+ * Everything below `export type UpdateChannel` is generated: regenerate it, or
+ * check it against a tag, with `node tests/fixtures/updater/gen-shipped-update-check.cjs [tag] [--check]`.
  */
 
 let feed: { releases: GitHubRelease[] | null; running: string; channel: UpdateChannel } = { releases: null, running: '0.0.0', channel: 'stable' }
