@@ -78,8 +78,8 @@ checklist):
   cards for the assistants in use, and the PR 4 user-facing sweep with the
   2.1.1 changelog lines, built on the defaults of questions 5 to 8; seven
   listed items are owner calls (the plan's P4.11 record).
-- P4.7 (row 68, DONE, mocked; d99a553b to 699c0214 with fix passes 1 to
-  8, fix pass 5 below): Insights for a Codex account as the OR3 mockup
+- P4.7 (row 68, DONE, mocked; d99a553b to 818d45a7 with fix passes 1 to
+  9, fix pass 5 below): Insights for a Codex account as the OR3 mockup
   drew it, approved on the canvas 2026-10-05 (C1 = A): the app reads and
   counts that account's own sessions, and one read-only `codex exec` with
   no tools, under the account's lease, writes the cards, which the page draws in its layout,
@@ -100,8 +100,11 @@ checklist):
   killed); fix pass 7 (23176b9c; 4 mutants, 4 killed) answers the one
   minor of ADR-009 round 4 over fix pass 6 (two lenses, PASS: 0 blocker, 0
   major); fix pass 8 (699c0214) puts the Codex run confirmation in its own
-  file on the dialog palette, for the #360 guard CI failed on at d1a126a3.
-  The spec and quality reviews of fix passes 4 and 6 PASS; ADR-009 round 5
+  file on the dialog palette, for the #360 guard CI failed on at d1a126a3;
+  fix pass 9 (818d45a7) answers the two nits of fix pass 8's quality
+  review: the confirmation's controls show focus, and Escape and Cancel
+  give focus back to the Run button that opened it. The spec and quality
+  reviews of fix passes 4, 6 and 8 PASS; ADR-009 round 5
   over fix pass 7 (one lens) PASS at d1a126a3. At d1a126a3 the VM run
   passed every piece (3 refusals and 3 failed commands per account on
   0.153.4 and 0.155.1, the links file 6 of 6, the packaged walk), and the
@@ -109,9 +112,15 @@ checklist):
   at f9630c5d; fix pass 7 again at d1a126a3). Row 58's artifacts record
   is signed (67f44333).
 
-**Owed for PR 4 now.** The spec and quality reviews of fix pass 8; the
-spec reviews of 1daf5faa, c0a0b7f6, 07b400b8 and f6b9a086; the checks of
-the dev dependency bumps; the Electron 44 migration, its ADR-009 pass and
+**Reviews since fix pass 8.** The spec and quality reviews of fix pass 8
+PASS (two nits, fixed in 818d45a7); the spec reviews of 1daf5faa,
+c0a0b7f6, 07b400b8 and f6b9a086 PASS, with one minor on 1daf5faa (a
+chatgpt.com pane closed because the sign-in made in it could not be
+recorded did not say why), fixed in bafde453; row 58's round 7 quality
+review PASS at 9ab9c41c. Fix pass 9 is bafde453 and 818d45a7.
+
+**Owed for PR 4 now.** The spec and quality reviews of fix pass 9; the
+checks of the dev dependency bumps; the Electron 44 migration, its ADR-009 pass and
 its VM packaging run; the final VM e2e and packaged pass at the final
 head; CI at the final head; the owner's checks (OR1, OR2, OR4, OR5a and
 the screenshot review).

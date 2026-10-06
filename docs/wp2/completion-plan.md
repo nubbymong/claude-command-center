@@ -185,7 +185,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 55 | Memory | PARTIAL (P4.4, 1a12160b to 41638f93; mocked): listing, guard and read built; delete built, hidden and refused in main until the VM check; frontmatter edit does not carry over (recorded) | Parity: each realm's Codex memories on the Memory page | verification: the delete check on the VM (else OR4); OR4: the real file format | 4 |
 | 56 | Codex logs | DONE (P4.4, 1a12160b, 8fb60652; mocked) | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | verification: the VM (each account's folders open, `log_dir` from `config.toml` included) | 4 |
 | 57 | Cloud Agents | DONE (P4.5, 5d0187c6 to d41c4a8b; mocked): built, the skip-permissions choice as the owner decided on 2026-10-04 (question 7: A, kept as built); was Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | verification: the VM run, OR4 | 4 |
-| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; second half, 10fab972 to dd23a3bf, its review fixes cbb2b58d to c0a0b7f6; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10), signed by the owner on 2026-10-05: alternative A, no Codex artifacts item (`docs/wp2/evidence/codex-artifacts-section-19-record.md`) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values) | 4 |
+| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; second half, 10fab972 to dd23a3bf, its review fixes cbb2b58d to c0a0b7f6 and bafde453; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10), signed by the owner on 2026-10-05: alternative A, no Codex artifacts item (`docs/wp2/evidence/codex-artifacts-section-19-record.md`) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values) | 4 |
 
 ### E. Everything else
 
@@ -200,7 +200,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 65 | GitHub session context | DONE (P3.12, d86fd80f and its fixes; mocked; VM at ff7be273 (WINDOWS_1, real Codex 0.155.1 and 0.153.4), and its re-check with the fixes: a Codex session's commands and edited files, nothing before its first turn, the heading naming Codex, PASS): a Codex session reads the rollout its watcher holds, checked again inside its realm, with Claude's bounded tail, for the unchanged reference scanner and file-signal inspector (`src/main/github/session/codex-rollout-loader.ts`), read only from the realm's real day folder (a path check: see P3.12's limits); both assistants: a recent file shown as plain text, relative to the session's folder when inside it, once per file, under a heading that names the session's assistant; after Switch Account the earlier account's rollout is not read | Parity: read the session's realm rollouts | verification: done, the VM re-checks of P3.12's fixes (P3.12's record); ADR-009: done, PR 3's PR-level pass (P3.16), PASS at 525a00ac, which covers P3.12 (quarantined after its own bounded rounds); owed: the owner's screenshot review; the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused) | 3 |
 | 66 | Packaged smoke | PARTIAL: Windows only, an unsigned candidate on a used VM | OD20 D8; WP1.63 | verification (release level; owner hosts) | 4 |
 | 67 | E2E mode matrix | DONE (P4.9, 7f15e2ec, d31d4940, b26079e9; VERIFIED): every cell of WP1.60's matrix has its e2e spec; on the Windows test VM the 26 specs passed 94 of 94, twice at 69c98042 (runs e2e-69c98042 and e2e-69c98042-run2), at f73f1785 (run e2e-f73f1785) and at bdc0c019 (run e2e-bdc0c019), the real launch of 0.153.4 (`codex.cmd`) and 0.155.1 (`codex.exe`) included | WP1.1, WP1.60 | none: the runs are recorded in `docs/wp1/evidence/mode-matrix.md`; WP1.1 and WP1.60 move to evidenced with row 16's traceability binding (P4.10) | 2; 4 |
-| 68 | Insights | DONE (P4.7, d99a553b to 699c0214 and its record, with fix passes 1 to 8; fix pass 5, a5b181ea to 5444eeaf, answers #625's attribution findings, recorded in section 6's PR 2 entry; fix pass 6 is 46510944 to 0bd87d87; fix pass 7 is 23176b9c and d1a126a3; fix pass 8 is 699c0214; mocked): a Codex account's report, which the app makes from the account's own sessions with one read-only `codex exec` and shows in the page's own layout, figures and history; Run all over both assistants (C1 = A) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. The mockup was approved on the Agent Canvas on 2026-10-05 (v1, no notes) | verification: the spec and quality reviews of fix pass 8 (done so far: ADR-009 round 1: FINDINGS (14 fixed, 5 on the closeout list), fixed in fix pass 2; round 2: PASS, its minors and the fix pass 3 reviews' minors fixed in fix pass 4; round 3 over fix pass 4: PASS, its findings fixed in fix pass 6; the spec and quality reviews of fix passes 4, 5 and 6: PASS; round 4 over fix pass 6: PASS, its one minor fixed in fix pass 7; round 5 over fix pass 7: PASS at d1a126a3; the VM run at d1a126a3: PASS, 3 refusals and 3 failed commands per account on both Codex versions; the pre-push batch to d1a126a3: green; CI at d1a126a3: one guard failure, fixed in fix pass 8), the final VM e2e and packaged pass at the final head (after the dev dependency bumps and the Electron 44 migration), CI at the final head, OR4 (a real report's content) | 4 |
+| 68 | Insights | DONE (P4.7, d99a553b to 818d45a7 and its record, with fix passes 1 to 9; fix pass 5, a5b181ea to 5444eeaf, answers #625's attribution findings, recorded in section 6's PR 2 entry; fix pass 6 is 46510944 to 0bd87d87; fix pass 7 is 23176b9c and d1a126a3; fix pass 8 is 699c0214; fix pass 9 is 818d45a7; mocked): a Codex account's report, which the app makes from the account's own sessions with one read-only `codex exec` and shows in the page's own layout, figures and history; Run all over both assistants (C1 = A) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. The mockup was approved on the Agent Canvas on 2026-10-05 (v1, no notes) | verification: the spec and quality reviews of fix pass 9 (done so far: ADR-009 round 1: FINDINGS (14 fixed, 5 on the closeout list), fixed in fix pass 2; round 2: PASS, its minors and the fix pass 3 reviews' minors fixed in fix pass 4; round 3 over fix pass 4: PASS, its findings fixed in fix pass 6; the spec and quality reviews of fix passes 4, 5 and 6: PASS; round 4 over fix pass 6: PASS, its one minor fixed in fix pass 7; round 5 over fix pass 7: PASS at d1a126a3; the VM run at d1a126a3: PASS, 3 refusals and 3 failed commands per account on both Codex versions; the pre-push batch to d1a126a3: green; CI at d1a126a3: one guard failure, fixed in fix pass 8; the spec and quality reviews of fix pass 8: PASS, PASS, the quality review's two nits fixed in fix pass 9), the final VM e2e and packaged pass at the final head (after the dev dependency bumps and the Electron 44 migration), CI at the final head, OR4 (a real report's content) | 4 |
 | 69 | Plan mode | DONE (P3.8 round 1, caef0d42; round 2, f1783110): a "Plan mode" permissions choice, as Claude's launch option: the session starts READ-ONLY and Codex's own `/plan` is typed into its first ready prompt only (never the folder-trust prompt, the user's typing or after a turn), within a bounded wait; otherwise a note says Plan mode is not on and the session is read-only. The pill reads "plan" only while Codex's footer shows its Plan mode | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM, done: round 3 PASS at c67b1041, and rounds 4 and 5 at 525a00ac (PR 3 gate 6, P3.16): 3 of 3 fresh launches on 0.155.1 and 5 of 5 on 0.153.4, a Restart and a tab switch PASS (no erase was needed in those runs, so the erase after a second read and the start-up row's place are unit-tested only); the attackers' confirmation of the launched answer on `pty:spawn`, done: PASS by ADR-009 lens C in its round 3 on fixer 11 (P3.8); the approval flow with a working model (owner-only) | 3 |
 | 70 | Image paste | DONE (P3.15, bbcb6ef8; the focused key on the VM at c11fb360, both versions): with the terminal focused Alt+V goes to the CLI and Codex attaches the image itself ("[Image #1]"); with focus elsewhere a Codex session's line is ASCII and typed by the Codex typing rule, its notes in the paste hint (mocked: `codex-image-paste.test.ts`, `alt-v-image-route.test.tsx`); the tip and the Tips and Shortcuts card say both | Parity | verification: the wrapped line on the VM (round 1), done: PASS at 525a00ac (PR 3 gate 6, 0.155.1: a line over two composer rows at 91 columns, Enter 302 ms later; P3.16); real Claude Code's own Alt+V, signed in, and the focused key over SSH (owner); macOS, Linux | 3 |
 | 71 | Copy, paste, scrollback, mouse | DONE (P3.15, bbcb6ef8; the VM at c11fb360): copy, paste (Ctrl+V and right-click, bracketed) and mouse (Codex sets no mouse mode) as Claude's; scrollback: a local Codex session on Windows runs under node-pty's bundled ConPTY, which keeps it (122 lines and the wheel scrolling in the VM's in-app trial, against 38 and an inert wheel under the system ConPTY), with the system ConPTY as the fallback (mocked: `bundled-conpty.test.ts`, `pty-conpty-per-provider.test.ts`) | Parity | verification: re-checked packaged at 7c52a432, 98455d52, 855e1484 and f2b1cf65 (the fallbacks, the input guard: 0 app exits in 40 tries, and again at f2b1cf65, where the input failure's cause was confirmed: keys typed after Codex ended); the TUI trace fixture replaced; macOS, Linux. A tab left open by a background command is a known issue | 3 |
@@ -6436,12 +6436,23 @@ sign-in run through the built window), OR3 (the record). PB7 sized OR2.
     rewrites a file it cannot read whole). A pane whose record cannot be
     written for any other reason still clears its session. 8 of 8
     mutants killed.
+  - *Reviews of the round 7 fixes.* The spec review of 1daf5faa and
+    c0a0b7f6: PASS, with one minor (a pane closed because the sign-in made
+    in it could not be recorded did not say why, where the round 6 fix
+    spec asked for a reason on any close a failed record write sets off),
+    fixed in fix pass 9. Quality, round 7: PASS at 9ab9c41c.
+  - *Fix pass 9 (2026-10-06; bafde453).* When a sign-in made in a Codex
+    pane cannot be recorded, the account's panes close first with the
+    reason, and the renderer shows it on the start page, as it shows every
+    close main gives a reason for; the clear follows in the same tick, so
+    the renderer is told once. Red first at 9051be6b (2 tests), green
+    after; 2 mutants, 2 killed.
   - *Codex record store only.* The start sweep and the newer-store rule
     belong to the Codex record store (`codex-web-store.ts`), added in this
     release.
-  - *Owed.* The reviews of the round 7 fixes; PB7b on the VM; OR2 on the
-    final build (then a values-only fix and a re-run if a value was wrong).
-    OR3's artifacts record is signed (2026-10-05, above).
+  - *Owed.* The reviews of fix pass 9; PB7b on the VM; OR2 on the final
+    build (then a values-only fix and a re-run if a value was wrong). OR3's
+    artifacts record is signed (2026-10-05, above).
 
 **P4.7 Insights for Codex (row 68).** After P4.5 (the account hold and the
 per-run confirmation it built) and OR3's approval.
@@ -6664,6 +6675,13 @@ Probe: PB5 (shared with P4.5).
     `InsightsPage.tsx` holds no `role="dialog"`; its wording, focus, Escape,
     click outside, buttons and closing when a run starts are unchanged. Red
     first at d1a126a3 (1 of the guard's 15 tests), green after.
+  - *Fix pass 9* (818d45a7), for the two nits of fix pass 8's quality
+    review: the confirmation's tick box, Run and Cancel carry the focus
+    ring (`focus-ring`), as MultiSpawnPopover's controls do, and
+    `InsightsPage.tsx` hands it the Run button that opened it, which Escape
+    and Cancel give focus back to; a click outside leaves focus where the
+    click put it. Red first at 9051be6b (1 of the page test's 26 tests),
+    green after.
   - *Deviations, recorded.* D10: the banner's Sign in button for a Codex
     account opens Settings, Accounts, where that account's Sign in again is
     (the Usage page's way, `AccountUsagePanel.tsx:277`), rather than starting
@@ -6719,7 +6737,11 @@ Probe: PB5 (shared with P4.5).
     of 104 tests in 5 files), green at cc6f2ac1 (the focused set, 24 files,
     731 tests); 8 mutants, 8 killed. Fix pass 7 extends the provider-in-use
     tests: red first against f9630c5d (3 of 25 tests), green at 23176b9c
-    (the focused set, 16 files, 380 tests); 4 mutants, 4 killed.
+    (the focused set, 16 files, 380 tests); 4 mutants, 4 killed. Fix pass 9
+    extends the page test: red first against 9051be6b (1 of 26 tests),
+    green at 818d45a7 (17 files with row 58's fix pass 9, the dialog
+    palette guard, the WP1 gate and traceability, 379 tests); 2 mutants,
+    2 killed.
   - *Reviews.* Spec: PASS at daf4083e (minors fixed after: the record and
     statuses here, the copy); confirmation PASS at 664931b0. Quality: FAIL at
     daf4083e (one major: a session over 16 MB was cut silently), fixed in
@@ -6739,7 +6761,9 @@ Probe: PB5 (shared with P4.5).
     PASS, PASS. The spec and quality reviews of fix pass 6: PASS, PASS.
     ADR-009 round 4 over fix pass 6, two lenses (B, C): PASS (0 blocker, 0
     major; its one minor fixed in fix pass 7). ADR-009 round 5 over fix
-    pass 7, at d1a126a3, one lens: PASS, nothing new.
+    pass 7, at d1a126a3, one lens: PASS, nothing new. The spec and quality
+    reviews of fix pass 8: PASS, PASS (the quality review's two nits fixed
+    in fix pass 9).
   - *Runs at d1a126a3.* The VM (WINDOWS_1; the fake model, fictional
     accounts): every piece PASS. The app's report argv through the real
     CLI on 0.153.4 and 0.155.1, by `codex.exe` and the npm shim, 4 of 4,
@@ -6751,7 +6775,7 @@ Probe: PB5 (shared with P4.5).
     f9630c5d; fix pass 7's 41 affected files, 1,147 tests, again at
     d1a126a3). CI at d1a126a3 (run 37434087671): one failure, the #360
     dialog palette guard on all three systems, fixed in fix pass 8.
-  - *Owed.* The spec and quality reviews of fix pass 8; the final VM e2e
+  - *Owed.* The spec and quality reviews of fix pass 9; the final VM e2e
     and packaged pass at the final head, after the dev dependency bumps
     and the Electron 44 migration (with its ADR-009 pass and VM packaging
     run), since both change files the evidence binds; CI at the final
