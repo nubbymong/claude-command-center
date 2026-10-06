@@ -339,6 +339,10 @@ export class AccountsService {
   /** Providers whose switch-off was refused while in use, with the count
    *  last published for each; one timer follows them all (watchInUse). */
   private readonly inUseWatched = new Map<ProviderId, number>()
+  /** Providers whose count reached 0 at a tick, until a snapshot carrying
+   *  them is built: one that carries a count above 0 (a run that started
+   *  before it was built) watches the provider again (snapshot). */
+  private readonly inUseEnding = new Set<ProviderId>()
   private inUseTimer: ReturnType<typeof setInterval> | null = null
   private readonly enabledOverride = new Map<ProviderId, EnabledOverride>()
   /** The last preference each provider's saved setting read as. */
@@ -604,14 +608,23 @@ export class AccountsService {
       if (typeof home === 'string' && home) view.home = home
       return view
     })
+    const providers = packages.map((p) => {
+      const view = this.installationView(p)
+      const review = this.reviewReadiness(p, doc, memo)
+      return review ? { ...view, review } : view
+    })
+    // A provider whose in-use count reached 0 at a tick is watched again when
+    // this snapshot carries it above 0 (a run started before this snapshot
+    // was built), so the line never stays at a count nothing holds: the
+    // watch ends only once a snapshot carried 0 (watchInUse).
+    for (const p of providers) {
+      if (!this.inUseEnding.delete(p.providerId)) continue
+      if (p.inUse > 0) this.watchInUse(p.providerId, p.inUse)
+    }
     return {
       revision: this.revision,
       registry,
-      providers: packages.map((p) => {
-        const view = this.installationView(p)
-        const review = this.reviewReadiness(p, doc, memo)
-        return review ? { ...view, review } : view
-      }),
+      providers,
       identities: (doc?.identities ?? []).map((i) => ({ id: i.id, colourKey: i.colourKey, ...(i.friendlyName !== undefined ? { friendlyName: i.friendlyName } : {}), ...(i.groupId !== undefined ? { groupId: i.groupId } : {}) })),
       groups: (doc?.groups ?? []).map((g) => ({ id: g.id, name: g.name, order: g.order })),
       accounts,
@@ -902,8 +915,11 @@ export class AccountsService {
    *  starts or ends, so its count is looked at again every IN_USE_WATCH_MS,
    *  and each time it has moved (up or down) a new snapshot is published,
    *  which Settings' in-use line follows. A provider is let go once nothing
-   *  holds it (that change published), and the one timer with the last. */
+   *  holds it, and the one timer with the last; the watch ends for good only
+   *  once a snapshot built after that carries 0 (snapshot watches again a
+   *  provider it carries above 0). */
   private watchInUse(providerId: ProviderId, count: number): void {
+    this.inUseEnding.delete(providerId)
     this.inUseWatched.set(providerId, count)
     if (this.inUseTimer) return
     this.inUseTimer = setInterval(() => this.inUseTick(), IN_USE_WATCH_MS)
@@ -916,8 +932,12 @@ export class AccountsService {
       const now = this.providerInUse(providerId)
       if (now === seen) continue
       moved = true
-      if (now > 0) this.inUseWatched.set(providerId, now)
-      else this.inUseWatched.delete(providerId)
+      if (now > 0) {
+        this.inUseWatched.set(providerId, now)
+      } else {
+        this.inUseWatched.delete(providerId)
+        this.inUseEnding.add(providerId)
+      }
     }
     if (this.inUseWatched.size === 0 && this.inUseTimer) {
       clearInterval(this.inUseTimer)
