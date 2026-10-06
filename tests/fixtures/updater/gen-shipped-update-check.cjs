@@ -64,7 +64,10 @@ const body = [...strip(types), '', ...strip(helpers), '', ...strip(checkFn)].joi
 const bad = body.match(/[^\x00-\x7f]/g)
 if (bad) throw new Error(`non-ASCII left in the copied code: ${bad.join(',')}`)
 
-const current = fs.readFileSync(fixture, 'utf8')
+// Compared with LF line ends; written back with the line ends the checkout gave the file.
+const raw = fs.readFileSync(fixture, 'utf8')
+const eol = raw.includes('\r\n') ? '\r\n' : '\n'
+const current = raw.replace(/\r\n/g, '\n')
 const at = current.indexOf('\nexport type UpdateChannel')
 if (at < 0) throw new Error('shipped-update-check.ts has no `export type UpdateChannel` line to keep its header above')
 const next = current.slice(0, at + 1) + body + '\n'
@@ -72,6 +75,6 @@ if (check) {
   if (next !== current) { console.error(`shipped-update-check.ts differs from ${tag}'s update check`); process.exit(1) }
   console.log(`shipped-update-check.ts matches ${tag}'s update check`)
 } else {
-  fs.writeFileSync(fixture, next)
+  fs.writeFileSync(fixture, next.replace(/\n/g, eol))
   console.log(`shipped-update-check.ts written from ${tag}`)
 }
