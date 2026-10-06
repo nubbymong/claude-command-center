@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-06T16:19:58.739Z",
-  "head": "cb15b06042dcfbeeb0038a04c852955f23f73e61",
-  "tree": "d11c85ede372dad67f13e7941a090a27e1103965",
+  "generatedAt": "2026-10-06T16:42:48.366Z",
+  "head": "64f4e68ec53857a3bb3f1937215fb5d325f8a33a",
+  "tree": "4ea340b7e378d77b7b7b3c23e7401b20bae33631",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2809,
+  "trackedFileCount": 2810,
   "excludedFileCount": 403,
-  "scannedFileCount": 2406,
+  "scannedFileCount": 2407,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 845,
-  "pathDigest": "159850d78a61fd32915eb6a43bd1adc8d99351a3688c6d9392d2ddb396b68b12",
+  "matchedPathCount": 846,
+  "pathDigest": "106903ab6de47af27a64ae9c35ded1342f400dd831f3c2166ddde08713e09719",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1248,
+      "lineCount": 1249,
       "truncated": true
     },
     {
@@ -1456,7 +1456,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 6
+      "lineCount": 10
     },
     {
       "path": "src/main/tokenomics/tk-attribution.ts",
@@ -4813,11 +4813,18 @@
       "lineCount": 22
     },
     {
+      "path": "tests/unit/main/terminal-query-responder-xterm.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
       "path": "tests/unit/main/terminal-query-responder.test.ts",
       "predicates": [
         "P13"
       ],
-      "lineCount": 16
+      "lineCount": 23
     },
     {
       "path": "tests/unit/main/tokenomics-attribution.test.ts",

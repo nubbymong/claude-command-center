@@ -350,7 +350,8 @@ released from it until section 7 holds.
    *Electron 44 (#621): built in PR 4; not done while the reviews and the
    re-attack listed under Owed are outstanding* (b84d9db3, b9e5d9fb,
    1aa0a540, e8317ceb; fix pass 10 is 50972cb7, 7c5d5a31 and 0bfcfb6c; the
-   colour-reply fix is ad6c7b83; fix pass 11 is f6398389 to cb15b060).
+   colour-reply fix is ad6c7b83; fix pass 11 is f6398389 to cb15b060;
+   fix pass 12 is 205ff34f and 64f4e68e).
    ADR-009 round 1, three lenses (clipboard and paths; injection and the
    certificate rule; updater and platform): FINDINGS, 1 major and minors, all
    answered in fix pass 10 (26 mutants, 26 killed). Since then a Mac on an
@@ -382,9 +383,15 @@ released from it until section 7 holds.
    Fix pass 11 answers the fix pass 10 spec review (6 items), its quality
    review (2 should-fix, 6 nits) and ADR-009 round 2 (the updater lens: 1
    major and 3 minors; the native and startup lens: PASS, 4 minors): 21 new
-   tests, 29 mutants, 29 killed. Owed: the spec and quality reviews of fix
-   pass 11 and the colour-reply fix; the ADR-009 re-attack over both; the
-   SSH live matrix for the colour-reply fix (it changes `pty-manager.ts`);
+   tests, 29 mutants, 29 killed. Fix pass 12 (205ff34f, 64f4e68e) answers
+   the colour-reply fix's spec review (2 items) and quality review (1
+   should-fix, 4 nits) and ADR-009 round 2b over the colour reply and paste
+   (2 lenses: PASS, 5 minors, one already answered in fix pass 11): 13 new
+   tests, 13 mutants, 13 killed; the responder runs for a local Codex
+   session on every OS and was verified live on Windows. Owed: the spec and
+   quality reviews of fix passes 11 and 12; the ADR-009 re-attack over
+   them; the SSH live matrix for the colour-reply fix (it changes
+   `pty-manager.ts`);
    the macOS checks (the DMG under its new name with LSMinimumSystemVersion
    13.0, Finder file paste, image paste) and the Linux checks (the CI
    matrix, the AppImage on a Rocky Linux host); real keyboard focus in the
