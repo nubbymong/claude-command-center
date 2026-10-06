@@ -156,6 +156,18 @@ describe('pickPasteableImage', () => {
   it('an image file whose size cannot be read (it is gone) is no image, not too large', () => {
     expect(pickPasteableImage(['/a/gone.png'], () => null)).toEqual({ error: 'no-image' })
   })
+  it('the limit is 10 MB exactly: 10 MB is pasted, one byte more is too large', () => {
+    expect(pickPasteableImage(['/a/shot.png'], () => 10 * MB)).toEqual({ path: '/a/shot.png' })
+    expect(pickPasteableImage(['/a/shot.png'], () => 10 * MB + 1)).toEqual({ error: 'too-large' })
+  })
+  it('only raster images are pasted: an .svg, .tiff, .heic or .ico file is no image, whatever its size', () => {
+    for (const p of ['/a/logo.svg', '/a/LOGO.SVG', '/a/scan.tiff', '/a/photo.heic', '/a/icon.ico']) {
+      expect(pickPasteableImage([p], () => 1024), p).toEqual({ error: 'no-image' })
+    }
+    for (const p of ['/a/a.png', '/a/a.jpg', '/a/a.jpeg', '/a/a.gif', '/a/a.webp', '/a/a.bmp']) {
+      expect(pickPasteableImage([p], () => 1024), p).toEqual({ path: p })
+    }
+  })
 })
 
 describe('mimeForImage', () => {
