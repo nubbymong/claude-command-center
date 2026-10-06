@@ -90,6 +90,6 @@ export function registerClipboardHandlers(): void {
       return withShell({ path: filePath })
     }
     // No bitmap on the clipboard — fall back to a copied image FILE (BUG-8).
-    return withShell(readClipboardImageFilePath(screenshotsDir))
+    return withShell(await readClipboardImageFilePath(screenshotsDir))
   })
 }

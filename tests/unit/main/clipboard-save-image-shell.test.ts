@@ -15,7 +15,9 @@ vi.mock('electron', () => ({
 const h = vi.hoisted(() => ({ shell: '/bin/bash', shellThrows: false, picked: { path: '/res/screenshots/clipboard-1.png' } as { path: string } | { error: 'no-image' } }))
 vi.mock('../../../src/main/clipboard-image', () => ({ readClipboardImageWithRetry: async () => null }))
 vi.mock('../../../src/main/clipboard-text', () => ({ readClipboardTextWithRetry: async () => '' }))
-vi.mock('../../../src/main/clipboard-file', () => ({ readClipboardImageFilePath: () => h.picked }))
+// Electron 44: the copied-file fallback is async (it reads clipboard.read()), so
+// the handler must await it before it adds the shell answer.
+vi.mock('../../../src/main/clipboard-file', () => ({ readClipboardImageFilePath: async () => h.picked }))
 vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => '/res' }))
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: () => {}, logWarn: () => {}, logError: () => {} }))
 vi.mock('../../../src/main/login-shell', async (importOriginal) => ({
