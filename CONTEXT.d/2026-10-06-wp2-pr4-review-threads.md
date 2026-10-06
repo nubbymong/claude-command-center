@@ -9,3 +9,7 @@ the account memory listing gives only paths the memory channels take (one
 shared bound). Owed: its spec and quality reviews, the ADR-009 delta pass (the
 Conductor MCP server and the memory channel bound) and the SSH live matrix (it
 changes `pty-manager.ts`).
+
+Fix pass 13c (ad9289dc, b6548f2b): the memory channels and the account listing
+apply one path check in one unit, and the late exit of a replaced process
+leaves the next launch's MCP record alone; 9 new tests, 5 mutants, 5 red.

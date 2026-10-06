@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-06T18:45:40.815Z",
-  "head": "ba2c752491f7e356d80daeeaee6ee94ca8685e3e",
-  "tree": "bef2931873e4ab9e6580b88d2ad7ed87c6687333",
+  "generatedAt": "2026-10-06T19:21:07.147Z",
+  "head": "b6548f2b97a9ed8d6ccdcccafddc296bcfa36837",
+  "tree": "72b3c2564ab032acbec2e3589f1d526c04261552",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,8 +116,8 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2811,
-  "excludedFileCount": 403,
+  "trackedFileCount": 2812,
+  "excludedFileCount": 404,
   "scannedFileCount": 2408,
   "unscopedFileCount": 15,
   "unscoped": [
@@ -4527,7 +4527,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 3
+      "lineCount": 5
     },
     {
       "path": "tests/unit/main/path-utils-home.test.ts",
@@ -4664,7 +4664,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 23
+      "lineCount": 29
     },
     {
       "path": "tests/unit/main/pty-session-liveness.test.ts",
