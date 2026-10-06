@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-06T22:49:58.928Z",
-  "head": "6990abaa0355af3452530224a0cf1ab7499bc9e8",
-  "tree": "2747a50c04db326df62fb4b657ab9ae21850a969",
+  "generatedAt": "2026-10-06T23:50:01.989Z",
+  "head": "599efd322a004846b4bd8ac73ad03f02ca9cc0d8",
+  "tree": "206ff8209d160947497c243cbdde93e7553c88f0",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -2309,7 +2309,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 15
+      "lineCount": 16
     },
     {
       "path": "src/renderer/onboarding/codex-reconfirm-gate.ts",

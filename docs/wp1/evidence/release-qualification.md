@@ -70,7 +70,7 @@ No images were added. Images that show a surface this release retired, all due a
 Corrected in P4.11: an earlier version of this record said none of the seven
 README images showed a surface WP2 changed. Four do, listed above. The other
 three (`hero-banner.png`, `shot-logs.png`, `shot-insights.png`) show the
-2.1 sidebar the two-mode panel replaced, and the Insights account picker now
+stacked sidebar the 2.1 two-mode panel replaced, and the Insights account picker now
 lists Codex accounts too (P4.7), so they are being recaptured as well. Corrected
 again before the 2.1.1-beta.2 cut: the four rows above said the images had
 been recaptured at the final head; they had not. The README and Feature Guide
