@@ -78,8 +78,8 @@ checklist):
   cards for the assistants in use, and the PR 4 user-facing sweep with the
   2.1.1 changelog lines, built on the defaults of questions 5 to 8; seven
   listed items are owner calls (the plan's P4.11 record).
-- P4.7 (row 68, DONE, mocked; d99a553b to b0165c10 with fix passes 1 to
-  3): Insights for a Codex account as the OR3 mockup drew it, approved on the
+- P4.7 (row 68, DONE, mocked; d99a553b to c293f847 with fix passes 1 to
+  4): Insights for a Codex account as the OR3 mockup drew it, approved on the
   canvas 2026-10-05 (C1 = A): the app reads and counts that account's own
   sessions, and one read-only `codex exec` with no tools, under the
   account's lease, writes the cards, which the page draws in its layout,
@@ -92,9 +92,11 @@ checklist):
   pass 3 (228af0d5 to b0165c10) answers the VM dry run with the real CLI:
   the sandbox refusals counted in the words real sessions record, an
   account whose sign-in check failed named in Run all with its reason, and
-  the provider row's in-use line following the count. Row
-  58's artifacts record is signed (67f44333). The ADR-009 re-attack, the VM
-  run and OR4 (a real report's content) are owed.
+  the provider row's in-use line following the count; fix pass 4
+  (df25c65b, c293f847) answers ADR-009 round 2 (PASS: 0 blocker, 0 major)
+  and the fix pass 3 reviews, their minors fixed (26 mutants, 26 killed).
+  Row 58's artifacts record is signed (67f44333). The confirmation of fix
+  pass 4, the VM run and OR4 (a real report's content) are owed.
 
 **Why this way.** The parity rule (OD26 P1): Claude's behaviour in the code
 is the spec. Where it carries over it decides, as when the re-review sent

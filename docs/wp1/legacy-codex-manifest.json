@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-06T01:32:59.857Z",
-  "head": "63878767a9cff377616468aecdfd9df1ce8387c6",
-  "tree": "cb1f663c938a2fe7262edf2838801a89369148c3",
+  "generatedAt": "2026-10-06T05:20:23.111Z",
+  "head": "c293f847661768163666a1b6d670740a1af7e1b5",
+  "tree": "0897e6bb0c828df0ed2b89d8d957c04e4acf4d82",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1235,
+      "lineCount": 1242,
       "truncated": true
     },
     {
@@ -748,7 +748,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 103
+      "lineCount": 109
     },
     {
       "path": "src/main/insights-cross-account.ts",
@@ -763,7 +763,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 166
+      "lineCount": 172
     },
     {
       "path": "src/main/install-secret.ts",
@@ -4429,7 +4429,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 44
+      "lineCount": 58
     },
     {
       "path": "tests/unit/main/insights-codex-links.test.ts",
@@ -4445,7 +4445,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 117
+      "lineCount": 137
     },
     {
       "path": "tests/unit/main/insights-codex-rollup.test.ts",
@@ -4454,7 +4454,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 78
+      "lineCount": 91
     },
     {
       "path": "tests/unit/main/insights-codex-run.test.ts",
@@ -4463,7 +4463,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 112
+      "lineCount": 114
     },
     {
       "path": "tests/unit/main/insights-run-handler.test.ts",
@@ -4529,7 +4529,7 @@
         "P10",
         "P13"
       ],
-      "lineCount": 50
+      "lineCount": 67
     },
     {
       "path": "tests/unit/main/provider-launch-gate.test.ts",
@@ -5439,7 +5439,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 172
+      "lineCount": 182
     },
     {
       "path": "tests/unit/renderer/active-indicator.test.tsx",
