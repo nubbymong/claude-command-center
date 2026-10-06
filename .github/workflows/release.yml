@@ -578,10 +578,13 @@ jobs:
       # updater in shipped clients matched release assets by the literal legacy
       # prefix, so dropping it would have stranded them on "no update
       # available", unfixably. Since 2.1.0-beta.6 the updater accepts BOTH
-      # prefixes (INSTALLER_PREFIXES in src/main/github-update.ts), so every
-      # client that can reach this release already resolves the brand name.
-      # Only installs on beta.5 or older are left behind, and they can download
-      # from the release page by hand.
+      # prefixes (INSTALLER_PREFIXES in src/main/github-update.ts), so a Windows
+      # or Linux client that can reach this release resolves the brand name.
+      # Only installs on beta.5 or older are left behind there, and they can
+      # download from the release page by hand. The Mac download is named
+      # AICodeConductor-<version>-macosNN.dmg (package.json build.mac.artifactName,
+      # NN = the macOS it needs), which the updater in a build from before that
+      # floor never matches: a Mac on such a build downloads it by hand.
       #
       # electron-builder now emits the brand name directly (build.*.artifactName
       # in package.json), so the .blockmap and latest*.yml — which reference the
