@@ -763,5 +763,15 @@ describe('Insights for Codex, said where Ask Conductor reads it (P4.7)', () => {
   it('the privacy policy says what a Codex report reads and sends', () => {
     expect(privacy).toMatch(/A report on a Codex account reads that account's own conversation files \(its sessions folder\) on this computer/)
     expect(privacy).toMatch(/to Codex's model, as one read-only run of the Codex command-line tool with no tools, on that account's own sign-in and allowance/)
+    expect(privacy).toMatch(/the previous report's figures as numbers only/)
+  })
+  it("the privacy policy says what Run all's written analysis is sent, in both directions, and where that run is kept", () => {
+    expect(privacy).toMatch(/It is sent the comparison the app computed, and nothing else: each account's name as the roll-up shows it \(which can be its email\), its reporting period, its figures, and the first three items of each of its top lists\./)
+    expect(privacy).toMatch(/its most-used tool and MCP server names \(a name that is not a plain identifier is sent as "other"\), its languages, and the short goal summaries Codex wrote for its report\./)
+    expect(privacy).toMatch(/when the analysis runs on Claude Code, all of it, the Codex accounts' part included, goes to Anthropic under that Claude Code account/)
+    expect(privacy).toMatch(/when it runs on a Codex account, all of it, the other accounts' goal summaries and MCP server names included, goes to OpenAI under that Codex account/)
+    expect(privacy).toMatch(/On Claude Code it runs with no tools, keeps no transcript and loads none of your own settings or instruction files/)
+    expect(privacy).toMatch(/Codex keeps it in that account's sessions folder, as it keeps a report's run\./)
+    expect(privacy).not.toMatch(/and no conversation text, the same way/)
   })
 })

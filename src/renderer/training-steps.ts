@@ -686,7 +686,7 @@ export const trainingSteps: TrainingStep[] = [
     // WP2 PR 4, P4.7 (row 68): Insights runs for Claude Code and Codex
     // accounts alike, so the card shows for either assistant.
     summary:
-      'A digest of how your Claude Code and Codex sessions are actually going -- what is working, what is friction, and where you spend tokens disproportionately. Generated on demand, one account at a time: Claude Code\'s own /insights for a Claude account, and for a Codex account a report the app makes from that account\'s sessions, with Codex writing the cards, read-only. v1.5.10 drops the iframe and renders the report natively, so it loads faster and follows your theme.',
+      'A digest of how your Claude Code and Codex sessions are actually going -- what is working and what is friction. Generated on demand, one account at a time: Claude Code\'s own /insights for a Claude account, and for a Codex account a report the app makes from that account\'s sessions, with Codex writing the cards, read-only. v1.5.10 drops the iframe and renders the report natively, so it loads faster and follows your theme.',
     highlights: [
       'Native render -- no iframe, no theme flicker, faster paint (v1.5.10)',
       'Big wins, friction points, and key insight callouts surfaced from real sessions',

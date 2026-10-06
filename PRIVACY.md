@@ -146,17 +146,36 @@ The Tokenomics cost index is separate and is not affected by that switch.
   models --bundled`, the list built into Codex, with no sign-in).
 - **Insights for a Codex account.** A report on a Codex account reads that
   account's own conversation files (its sessions folder) on this computer, counts
-  its sessions itself, and sends a summary of them (the figures, and for each
-  recent session the start of your requests and of Codex's replies, with known
-  secret formats removed) to Codex's model, as one read-only run of the Codex
-  command-line tool with no tools, on that account's own sign-in and allowance,
-  in an empty folder the app makes for it and removes after. Codex keeps that
-  run's conversation in the account's folder, as it keeps any session's, so its
-  cost shows in Tokenomics; the next report leaves it out. The report and its
-  figures are saved in the app's data folder (`insights/`), as a Claude Code
-  report is. When Run all's written analysis runs on a Codex account, Codex is
-  sent the comparison the app computed from the accounts' figures, each
-  account named by its name or email, and no conversation text, the same way.
+  its sessions itself, and sends a summary of them (the figures, the previous
+  report's figures as numbers only, and for each recent session the start of
+  your requests and of Codex's replies, with known secret formats removed) to
+  Codex's model, as one read-only run of the Codex command-line tool with no
+  tools, on that account's own sign-in and allowance, in an empty folder the
+  app makes for it and removes after. Codex keeps that run's conversation in
+  the account's folder, as it keeps any session's, so its cost shows in
+  Tokenomics; the next report leaves it out. The report and its figures are
+  saved in the app's data folder (`insights/`), as a Claude Code report is.
+- **Run all's written analysis.** With Run all, each account's own report runs
+  as set out above, on that account. The written analysis that compares them
+  is one more run, on one account: the primary Claude Code account when it
+  produced figures, otherwise the first account that did. It is sent the
+  comparison the app computed, and nothing else: each account's name as the
+  roll-up shows it (which can be its email), its reporting period, its
+  figures, and the first three items of each of its top lists. For a Codex
+  account those lists are its most-used tool and MCP server names (a name that
+  is not a plain identifier is sent as "other"), its languages, and the short
+  goal summaries Codex wrote for its report. No request or reply text is sent,
+  though the goal summaries describe what the sessions were for. So when the
+  analysis runs on Claude Code, all of it, the Codex accounts' part included,
+  goes to Anthropic under that Claude Code account; when it runs on a Codex
+  account, all of it, the other accounts' goal summaries and MCP server names
+  included, goes to OpenAI under that Codex account. It runs in an empty
+  folder the app makes for it and removes after. On Claude Code it runs with
+  no tools, keeps no transcript and loads none of your own settings or
+  instruction files (their proxy and certificate settings alone are passed
+  on, so it can connect as your sessions do). On Codex it is the same
+  read-only run with no tools as a report, and Codex keeps it in that
+  account's sessions folder, as it keeps a report's run.
 - **The Agent Canvas and Vision guidance.** For a Codex account you added, the
   app writes its three instruction files (the canvas review loop, canvas plans
   and the Conductor browser) into that account's own folder, under `skills/`,
