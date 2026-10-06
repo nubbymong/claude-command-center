@@ -269,11 +269,13 @@ export const trainingSteps: TrainingStep[] = [
       'With two or more Codex accounts, the **account pill** on a Codex session\'s status line, or **Switch Account** in its right-click menu, moves it to another account and keeps the conversation',
       'On a running session, **Compact** and the **model pill** type Codex\'s own /compact and /model, only while Codex waits at an empty prompt',
       '**Tokenomics** shows Codex spend beside Claude, per account (the Provider and Account filters), per day and per model; each Codex account\'s allowance is on the **Usage page**; the Logs page indexes Codex conversations as it does Claude\'s',
+      'A Codex account can be signed in to **chatgpt.com** inside the app, as a Claude account can to claude.ai: the sign-in window keeps it in that account\'s own browser storage, apart from every other account, and a Codex session\'s browser pane offers chatgpt.com on its start page, as the account the session runs under',
     ],
     howToTrigger: [
       { label: 'Spawn', value: '+ New -> Config -> provider card -> Codex -> account' },
       { label: 'Auth', value: 'Settings, Accounts: add a Codex account' },
       { label: 'Reviewer', value: 'Settings, Accounts: account menu -> Make reviewer' },
+      { label: 'chatgpt.com', value: 'Settings, Accounts: account menu -> Sign in to chatgpt.com (or a Codex session\'s right-click menu)' },
       { label: 'Introduction', value: 'Show the Codex introduction, on this card once you have said you use Codex and a Codex account you added is signed in' },
     ],
     proTip:
@@ -694,7 +696,7 @@ export const trainingSteps: TrainingStep[] = [
       'Distinct from Tokenomics: qualitative ("what" / "why"), not quantitative',
     ],
     howToTrigger: [
-      { label: 'Open', value: 'Click  ✨  in the sidebar nav' },
+      { label: 'Open', value: 'Click the pulse icon (Insights) in the sidebar nav' },
       { label: 'Generate', value: 'Insights header → New run' },
       { label: 'History', value: 'Switch between past reports from the header dropdown' },
     ],
@@ -786,16 +788,18 @@ export const trainingSteps: TrainingStep[] = [
     summary:
       'An opt-in watcher that notices when Claude Code or Codex updates and checks whether the new version might affect the app. It surfaces findings in a labelled "Sentinel" chip and a panel, proposes registry fixes you apply yourself, and never changes anything automatically.',
     highlights: [
-      'Runs on startup when the Claude Code or Codex version changes; **fail-open** so it never blocks the app',
+      'At startup it analyses a Claude Code or Codex version newer than the newest one it has checked; going back to an older version runs no analysis, and **Re-run** in the panel analyses the version installed. **Fail-open**, so it never blocks the app',
       'Checks the Claude Code changelog or the Codex release notes against the app\'s compatibility assumptions',
+      'Its analysis runs on the assistant you use (with both on, the one Ask Conductor runs on), as the account chosen for it under Sentinel in Settings, General, and spends that assistant\'s usage; that is why it is off by default',
       'Proposes **model and effort registry** fixes you **Apply** (or Dismiss) -- never automatic',
       'A hot-reloadable registry means unknown or brand-new models still get a colour, label, and pricing',
-      'Opt-in -- turn it on or off in **Settings → General → Sentinel**',
+      'Opt-in -- turn it on or off in **Settings, General, under Sentinel**; it takes effect after a restart',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click the Sentinel chip in the title bar' },
-      { label: 'Enable', value: 'Settings → Sentinel → Enable' },
-      { label: 'Apply a fix', value: 'Sentinel panel → Apply on a proposal' },
+      { label: 'Enable', value: 'Settings, General, under Sentinel: Enable Sentinel' },
+      { label: 'Account', value: 'Settings, General, under Sentinel: Analysis account' },
+      { label: 'Apply a fix', value: 'Sentinel panel -> Apply on a proposal' },
     ],
     proTip:
       'When a finding offers an Apply button it is a safe registry change you can take in one click; everything else is a compatibility report so you know what to watch after a Claude Code or Codex update.',
@@ -803,7 +807,7 @@ export const trainingSteps: TrainingStep[] = [
       'Opt-in watcher that flags when a **Claude Code or Codex update** might affect the app',
       'Findings show in a labelled **Sentinel chip** and a panel',
       'Proposes **registry fixes you apply yourself** -- nothing changes automatically',
-      'Toggle it in **Settings → Sentinel**',
+      'Toggle it in **Settings, General, under Sentinel**',
     ],
     // No dedicated Sentinel capture exists yet. (Future capture:
     // step-sentinel.jpg / the Sentinel panel.)

@@ -867,6 +867,23 @@ export const TIPS_LIBRARY: Tip[] = [
   },
 
   {
+    id: 'tip.sentinel',
+    category: 'transparency',
+    complexity: 'intermediate',
+    priority: 43,
+    variants: {
+      primary: {
+        shortText: 'Let Sentinel check each new Claude Code or Codex version',
+        title: 'Sentinel',
+        body: '**Sentinel** checks a new version of the assistants you use, Claude Code, Codex or both, for changes that could affect your setup, and proposes registry fixes you apply yourself; nothing changes on its own.\n\nIt is **off by default**, because its analysis spends the usage of the assistant it runs on: the one you use, or with both on, the one Ask Conductor runs on. Turn it on, and choose the account it runs as, in **Settings > General**, under **Sentinel**; it takes effect after a restart. At start it analyses only a version newer than the newest one it has checked, and its findings show in the **Sentinel** chip in the title bar.',
+        actionLabel: 'Open Settings',
+        actionTarget: 'settings',
+        focusHint: 'Settings > General -- under Sentinel',
+      },
+    },
+  },
+
+  {
     id: 'tip.dock-right-click',
     category: 'ui-navigation',
     complexity: 'simple',

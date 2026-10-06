@@ -74,7 +74,7 @@ const SECTIONS_20: WhatsNewSection[] = [
     heading: 'Tools',
     items: [
       { title: 'Built-in Tools, your call.', desc: 'Vision, code review, host screenshots and the Agent Canvas each get a real switch.' },
-      { title: 'Codex support.', desc: "Run OpenAI's Codex CLI beside Claude, with its own switch and sign-in." },
+      { title: 'Codex support.', desc: "Run OpenAI's Codex CLI beside Claude, with its own switch and its own accounts." },
     ],
   },
   {
@@ -120,6 +120,8 @@ const SECTIONS_21: WhatsNewSection[] = [
     items: [
       // P3.6 (row 22): a Codex account switches mid-session too, keeping the
       // conversation; the claude.ai sign-in the line also named stays Claude's.
+      // 2.1.1 (surface sweep): the provider model, for an upgrade from 2.0 or 2.1.
+      { title: 'Codex, with accounts of its own.', desc: 'Codex runs beside Claude Code or alone, and each Codex account has its own sign-in, in Settings, Accounts.' },
       { title: 'Switch mid-session.', desc: 'Change a running session\'s account without losing the conversation.', seeIt: 'accounts' },
       { title: 'claude.ai in the app.', desc: 'Sign in to claude.ai in-app, for each account.', needsClaude: true },
       { title: 'Insights.', desc: 'Usage reports across every account at once, not one at a time.' },
