@@ -256,6 +256,11 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
       setParsed(text ? (codexRun ? parseCodexInsightsReport(text) : parseInsightsReport(text)) : null)
       setCurrentKpis(kpis)
       setLoading(false)
+    }).catch(() => {
+      // A read main could not make is no report, never a page left waiting.
+      setParsed(null)
+      setCurrentKpis(null)
+      setLoading(false)
     })
 
     if (catalogue) {

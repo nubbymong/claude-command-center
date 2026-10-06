@@ -76,10 +76,11 @@ function readRunRequest(opts: unknown): InsightsRunRequest | null {
   return null
 }
 
-/** P4.7: the check on `insights:runAll`: absent, or `{ profileIds }` whose
- *  every id is a Claude Code profile id or a Codex account id, at most 64.
- *  The runner intersects them with the real accounts, so an id can only
- *  narrow the set. Null for a refused request. Never throws. */
+/** P4.7: the check on `insights:runAll`: absent, or `{ profileIds }`, a list
+ *  with no holes whose every id is a Claude Code profile id or a Codex
+ *  account id, at most 64. The runner intersects them with the real
+ *  accounts, so an id can only narrow the set. Null for a refused request.
+ *  Never throws. */
 export function checkInsightsRunAllRequest(opts: unknown): { profileIds?: string[] } | null {
   try { return readRunAllRequest(opts) } catch { return null }
 }
@@ -88,9 +89,17 @@ function readRunAllRequest(opts: unknown): { profileIds?: string[] } | null {
   if (opts === undefined || opts === null) return {}
   if (!onlyKeys(opts, ['profileIds'])) return null
   if (opts.profileIds === undefined) return {}
-  if (!Array.isArray(opts.profileIds) || opts.profileIds.length > ALL_MAX) return null
-  if (!opts.profileIds.every((id) => isClaudeProfileId(id) || isCodexAccountId(id))) return null
-  return opts.profileIds.length > 0 ? { profileIds: [...opts.profileIds] as string[] } : {}
+  const list = opts.profileIds
+  if (!Array.isArray(list) || list.length > ALL_MAX) return null
+  // Every index read, so a hole (a sparse list) is refused, never skipped.
+  const ids: string[] = []
+  for (let i = 0; i < list.length; i++) {
+    if (!Object.prototype.hasOwnProperty.call(list, i)) return null
+    const id: unknown = list[i]
+    if (!isClaudeProfileId(id) && !isCodexAccountId(id)) return null
+    ids.push(id)
+  }
+  return ids.length > 0 ? { profileIds: ids } : {}
 }
 
 export function registerInsightsHandlers(getWindow: () => BrowserWindow | null): void {

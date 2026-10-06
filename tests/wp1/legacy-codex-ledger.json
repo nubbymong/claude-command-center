@@ -1154,7 +1154,7 @@
       ],
       "category": "OTHER",
       "disposition": "replace",
-      "evidence": "WP2 PR 4 P4.7 (row 68; d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): insights:run and insights:runAll answer only the app window's top frame and hold a request to a strict check: an unknown provider, a registry id on a Claude Code run, anything but a Codex account id on a Codex run, and a confirmation without its account are refused before any lease or spawn (WP1.42); tests/unit/main/insights-run-handler.test.ts",
+      "evidence": "WP2 PR 4 P4.7 (row 68; d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): insights:run and insights:runAll answer only the app window's top frame and hold a request to a strict check: an unknown provider, a registry id on a Claude Code run, anything but a Codex account id on a Codex run, and a confirmation without its account are refused before any lease or spawn (WP1.42); tests/unit/main/insights-run-handler.test.ts; WP2 PR 4 P4.7 fix pass 2: a Run all list with holes is refused (WP1.38); tests/unit/main/insights-run-handler.test.ts",
       "note": ""
     },
     {
@@ -2344,7 +2344,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 commit 6e review fix: every Run button is disabled with the reason while Claude Code is off, and the store refuses as well (WP1.2); tests/unit/renderer/claude-off-headless.test.tsx; WP2 PR 4 P4.7 (row 68; d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): Codex accounts in the account picker under their own heading, the per-run confirmation for an account marked confirm at launch, a Codex report drawn as text with Codex's mark and a help line, the Codex-only message replaced by the page's own empty state, a lapsed Codex sign-in in the banner, and a Claude account's run alone disabled while Claude Code is off (WP1.60, WP1.12); tests/unit/renderer/insights-codex-page.test.tsx, tests/unit/renderer/insights-codex-empty.test.ts; WP2 PR 4 P4.7 fix pass 1: the latest-run map and the fallback choice use insightsAccountKey, so no key reads as a codex: channel (WP1.57); tests/unit/renderer/insights-codex-page.test.tsx, tests/wp1/legacy-codex-retired.test.ts",
+      "evidence": "WP2 commit 6e review fix: every Run button is disabled with the reason while Claude Code is off, and the store refuses as well (WP1.2); tests/unit/renderer/claude-off-headless.test.tsx; WP2 PR 4 P4.7 (row 68; d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): Codex accounts in the account picker under their own heading, the per-run confirmation for an account marked confirm at launch, a Codex report drawn as text with Codex's mark and a help line, the Codex-only message replaced by the page's own empty state, a lapsed Codex sign-in in the banner, and a Claude account's run alone disabled while Claude Code is off (WP1.60, WP1.12); tests/unit/renderer/insights-codex-page.test.tsx, tests/unit/renderer/insights-codex-empty.test.ts; WP2 PR 4 P4.7 fix pass 1: the latest-run map and the fallback choice use insightsAccountKey, so no key reads as a codex: channel (WP1.57); tests/unit/renderer/insights-codex-page.test.tsx, tests/wp1/legacy-codex-retired.test.ts; WP2 PR 4 P4.7 fix pass 2: a report main could not read shows no report, never a page left waiting (WP1.68); tests/unit/renderer/insights-codex-page.test.tsx",
       "note": "the P04 match was a providerPresence.codex field the Codex-only message used; that message is gone"
     },
     {
@@ -6333,7 +6333,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.7 (row 68) test: insights:run and insights:runAll refuse an untrusted sender, an unknown provider, a wrong id class and a mismatched provider (WP1.33); tests/unit/main/insights-run-handler.test.ts",
+      "evidence": "new WP2 PR 4 P4.7 (row 68) test: insights:run and insights:runAll refuse an untrusted sender, an unknown provider, a wrong id class and a mismatched provider (WP1.33); tests/unit/main/insights-run-handler.test.ts; WP2 PR 4 P4.7 fix pass 2: a sparse Run all list refused (WP1.33); tests/unit/main/insights-run-handler.test.ts",
       "note": ""
     },
     {
@@ -8231,7 +8231,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.7 (row 68) test: the Insights page with Codex accounts as the approved mockup draws it (screens 1 to 9, C1 A), markup in a report rendered inert (WP1.33); tests/unit/renderer/insights-codex-page.test.tsx",
+      "evidence": "new WP2 PR 4 P4.7 (row 68) test: the Insights page with Codex accounts as the approved mockup draws it (screens 1 to 9, C1 A), markup in a report rendered inert (WP1.33); tests/unit/renderer/insights-codex-page.test.tsx; WP2 PR 4 P4.7 fix pass 2: a failed report read shows no report (WP1.33); tests/unit/renderer/insights-codex-page.test.tsx",
       "note": ""
     },
     {

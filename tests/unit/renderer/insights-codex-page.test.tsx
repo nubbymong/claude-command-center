@@ -304,6 +304,14 @@ describe('a Codex report (screens 1, 3, 5)', () => {
     expect(container.textContent).toContain('No report available for this run')
   })
 
+  it('a report that main could not read shows no report, never a page waiting for it [host]', async () => {
+    api.insights.getReport.mockImplementationOnce(async () => { throw new Error('the report could not be read') })
+    withRuns('r-codex')
+    await render()
+    expect(container.textContent).not.toContain('Loading report...')
+    expect(container.textContent).toContain('No report available for this run')
+  })
+
   it("a Claude Code report is drawn as before: its own title, no mark, no '?' [host]", async () => {
     files.report['r-claude'] = '<html><h1>Claude Code Insights</h1><div class="subtitle">312 messages</div><div class="narrative"><h2>How you use Claude Code</h2><p>Mostly bug fixes.</p></div></html>'
     withRuns('r-claude')

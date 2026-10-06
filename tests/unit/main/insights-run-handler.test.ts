@@ -118,6 +118,16 @@ describe('insights:runAll', () => {
     expect(await runAll(otherEvent)).toEqual(INSIGHTS_REJECTED_UNTRUSTED)
     expect(h.calls).toHaveLength(2)
   })
+
+  it('refuses a list with holes in it (a sparse array), and anything list-like that is not a list [host]', async () => {
+    const sparse: string[] = ['profile-a', ACCT]
+    sparse.length = 4
+    // eslint-disable-next-line no-sparse-arrays
+    expect(await runAll(appEvent, { profileIds: ['profile-a', , ACCT] })).toEqual(INSIGHTS_REJECTED_INVALID)
+    expect(await runAll(appEvent, { profileIds: sparse })).toEqual(INSIGHTS_REJECTED_INVALID)
+    expect(checkInsightsRunAllRequest({ profileIds: { 0: 'profile-a', length: 1 } })).toBeNull()
+    expect(h.calls).toEqual([])
+  })
 })
 
 describe('the checks themselves', () => {
