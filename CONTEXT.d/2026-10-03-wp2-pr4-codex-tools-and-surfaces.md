@@ -122,9 +122,10 @@ review PASS at 9ab9c41c. Fix pass 9 is bafde453 and 818d45a7.
 **Owed for PR 4 now.** The spec and quality reviews of fix pass 9; the
 checks of the dev dependency bumps; what the Electron 44 migration still owes
 (the Owed list in its 2026-10-06 fragment; the finding that was under
-investigation, the colour reply, was fixed in 409b455a); the final VM e2e and packaged pass at the final
-head; CI at the final head; the owner's checks (OR1, OR2, OR4, OR5a and
-the screenshot review).
+investigation, the colour reply, was fixed in 409b455a); the owner's checks
+(OR1, OR2, OR4, OR5a and the screenshot review). Done since: the VM final
+pass ran at dc9d6aeb, and the commits from there to 91e438fd change no main
+or preload source; CI is green at 91e438fd (run 37553704348).
 
 **Why this way.** The parity rule (OD26 P1): Claude's behaviour in the code
 is the spec. Where it carries over it decides, as when the re-review sent

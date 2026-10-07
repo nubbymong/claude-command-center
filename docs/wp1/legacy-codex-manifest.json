@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-06T23:50:01.989Z",
-  "head": "599efd322a004846b4bd8ac73ad03f02ca9cc0d8",
-  "tree": "206ff8209d160947497c243cbdde93e7553c88f0",
+  "generatedAt": "2026-10-07T01:56:38.711Z",
+  "head": "3332c3ac9153f7f53d5303d1b1fef6da2312efcf",
+  "tree": "1b64d58229b80d233061584fda50ae2e366cf9ba",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2812,
+  "trackedFileCount": 2813,
   "excludedFileCount": 404,
-  "scannedFileCount": 2408,
+  "scannedFileCount": 2409,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 847,
-  "pathDigest": "b2a64323209b5a771e415cf35211563ba5be654f3437426ef5e278fae861a212",
+  "matchedPathCount": 848,
+  "pathDigest": "f42e51d8ea747b7a1cdd459d41e4379f760d6b277fc5f2dd563c741442b4bc4a",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1249,
+      "lineCount": 1251,
       "truncated": true
     },
     {
@@ -748,7 +748,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 109
+      "lineCount": 114
     },
     {
       "path": "src/main/insights-cross-account.ts",
@@ -763,7 +763,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 172
+      "lineCount": 174
     },
     {
       "path": "src/main/install-secret.ts",
@@ -3761,6 +3761,15 @@
       "lineCount": 147
     },
     {
+      "path": "tests/unit/codex-web-sweep-race.test.ts",
+      "predicates": [
+        "P01",
+        "P02",
+        "P13"
+      ],
+      "lineCount": 35
+    },
+    {
       "path": "tests/unit/codex-web-sweep-store.test.ts",
       "predicates": [
         "P01",
@@ -4467,7 +4476,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 137
+      "lineCount": 141
     },
     {
       "path": "tests/unit/main/insights-codex-rollup.test.ts",
@@ -4485,7 +4494,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 119
+      "lineCount": 127
     },
     {
       "path": "tests/unit/main/insights-run-handler.test.ts",

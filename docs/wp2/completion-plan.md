@@ -200,7 +200,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 65 | GitHub session context | DONE (P3.12, d86fd80f and its fixes; mocked; VM at ff7be273 (WINDOWS_1, real Codex 0.155.1 and 0.153.4), and its re-check with the fixes: a Codex session's commands and edited files, nothing before its first turn, the heading naming Codex, PASS): a Codex session reads the rollout its watcher holds, checked again inside its realm, with Claude's bounded tail, for the unchanged reference scanner and file-signal inspector (`src/main/github/session/codex-rollout-loader.ts`), read only from the realm's real day folder (a path check: see P3.12's limits); both assistants: a recent file shown as plain text, relative to the session's folder when inside it, once per file, under a heading that names the session's assistant; after Switch Account the earlier account's rollout is not read | Parity: read the session's realm rollouts | verification: done, the VM re-checks of P3.12's fixes (P3.12's record); ADR-009: done, PR 3's PR-level pass (P3.16), PASS at 525a00ac, which covers P3.12 (quarantined after its own bounded rounds); owed: the owner's screenshot review; the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused) | 3 |
 | 66 | Packaged smoke | PARTIAL: Windows only, an unsigned candidate on a used VM | OD20 D8; WP1.63 | verification (release level; owner hosts) | 4 |
 | 67 | E2E mode matrix | DONE (P4.9, 7f15e2ec, d31d4940, b26079e9; VERIFIED): every cell of WP1.60's matrix has its e2e spec; on the Windows test VM the 26 specs passed 94 of 94, twice at 69c98042 (runs e2e-69c98042 and e2e-69c98042-run2), at f73f1785 (run e2e-f73f1785) and at bdc0c019 (run e2e-bdc0c019), the real launch of 0.153.4 (`codex.cmd`) and 0.155.1 (`codex.exe`) included | WP1.1, WP1.60 | none: the runs are recorded in `docs/wp1/evidence/mode-matrix.md`; WP1.1 and WP1.60 move to evidenced with row 16's traceability binding (P4.10) | 2; 4 |
-| 68 | Insights | DONE (P4.7, d99a553b to 818d45a7 and its record, with fix passes 1 to 9; fix pass 5, a5b181ea to 5444eeaf, answers #625's attribution findings, recorded in section 6's PR 2 entry; fix pass 6 is 46510944 to 0bd87d87; fix pass 7 is 23176b9c and d1a126a3; fix pass 8 is 699c0214; fix pass 9 is 818d45a7; mocked): a Codex account's report, which the app makes from the account's own sessions with one read-only `codex exec` and shows in the page's own layout, figures and history; Run all over both assistants (C1 = A) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. The mockup was approved on the Agent Canvas on 2026-10-05 (v1, no notes) | verification: the spec and quality reviews of fix pass 9 (done so far: ADR-009 round 1: FINDINGS (14 fixed, 5 on the closeout list), fixed in fix pass 2; round 2: PASS, its minors and the fix pass 3 reviews' minors fixed in fix pass 4; round 3 over fix pass 4: PASS, its findings fixed in fix pass 6; the spec and quality reviews of fix passes 4, 5 and 6: PASS; round 4 over fix pass 6: PASS, its one minor fixed in fix pass 7; round 5 over fix pass 7: PASS at d1a126a3; the VM run at d1a126a3: PASS, 3 refusals and 3 failed commands per account on both Codex versions; the pre-push batch to d1a126a3: green; CI at d1a126a3: one guard failure, fixed in fix pass 8; the spec and quality reviews of fix pass 8: PASS, PASS, the quality review's two nits fixed in fix pass 9), the final VM e2e and packaged pass at the final head (after the dev dependency bumps and the Electron 44 migration), CI at the final head, OR4 (a real report's content) | 4 |
+| 68 | Insights | DONE (P4.7, d99a553b to 818d45a7 and its record, with fix passes 1 to 9; fix pass 5, a5b181ea to 5444eeaf, answers #625's attribution findings, recorded in section 6's PR 2 entry; fix pass 6 is 46510944 to 0bd87d87; fix pass 7 is 23176b9c and d1a126a3; fix pass 8 is 699c0214; fix pass 9 is 818d45a7; mocked): a Codex account's report, which the app makes from the account's own sessions with one read-only `codex exec` and shows in the page's own layout, figures and history; Run all over both assistants (C1 = A) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. The mockup was approved on the Agent Canvas on 2026-10-05 (v1, no notes) | verification: the spec and quality reviews of fix pass 9 (done so far: ADR-009 round 1: FINDINGS (14 fixed, 5 on the closeout list), fixed in fix pass 2; round 2: PASS, its minors and the fix pass 3 reviews' minors fixed in fix pass 4; round 3 over fix pass 4: PASS, its findings fixed in fix pass 6; the spec and quality reviews of fix passes 4, 5 and 6: PASS; round 4 over fix pass 6: PASS, its one minor fixed in fix pass 7; round 5 over fix pass 7: PASS at d1a126a3; the VM run at d1a126a3: PASS, 3 refusals and 3 failed commands per account on both Codex versions; the pre-push batch to d1a126a3: green; CI at d1a126a3: one guard failure, fixed in fix pass 8; the spec and quality reviews of fix pass 8: PASS, PASS, the quality review's two nits fixed in fix pass 9), OR4 (a real report's content); the VM final pass, after the dev dependency bumps and the Electron 44 migration, ran at dc9d6aeb, and CI is green at 91e438fd | 4 |
 | 69 | Plan mode | DONE (P3.8 round 1, caef0d42; round 2, f1783110): a "Plan mode" permissions choice, as Claude's launch option: the session starts READ-ONLY and Codex's own `/plan` is typed into its first ready prompt only (never the folder-trust prompt, the user's typing or after a turn), within a bounded wait; otherwise a note says Plan mode is not on and the session is read-only. The pill reads "plan" only while Codex's footer shows its Plan mode | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM, done: round 3 PASS at c67b1041, and rounds 4 and 5 at 525a00ac (PR 3 gate 6, P3.16): 3 of 3 fresh launches on 0.155.1 and 5 of 5 on 0.153.4, a Restart and a tab switch PASS (no erase was needed in those runs, so the erase after a second read and the start-up row's place are unit-tested only); the attackers' confirmation of the launched answer on `pty:spawn`, done: PASS by ADR-009 lens C in its round 3 on fixer 11 (P3.8); the approval flow with a working model (owner-only) | 3 |
 | 70 | Image paste | DONE (P3.15, bbcb6ef8; the focused key on the VM at c11fb360, both versions): with the terminal focused Alt+V goes to the CLI and Codex attaches the image itself ("[Image #1]"); with focus elsewhere a Codex session's line is ASCII and typed by the Codex typing rule, its notes in the paste hint (mocked: `codex-image-paste.test.ts`, `alt-v-image-route.test.tsx`); the tip and the Tips and Shortcuts card say both | Parity | verification: the wrapped line on the VM (round 1), done: PASS at 525a00ac (PR 3 gate 6, 0.155.1: a line over two composer rows at 91 columns, Enter 302 ms later; P3.16); real Claude Code's own Alt+V, signed in, and the focused key over SSH (owner); macOS, Linux | 3 |
 | 71 | Copy, paste, scrollback, mouse | DONE (P3.15, bbcb6ef8; the VM at c11fb360): copy, paste (Ctrl+V and right-click, bracketed) and mouse (Codex sets no mouse mode) as Claude's; scrollback: a local Codex session on Windows runs under node-pty's bundled ConPTY, which keeps it (122 lines and the wheel scrolling in the VM's in-app trial, against 38 and an inert wheel under the system ConPTY), with the system ConPTY as the fallback (mocked: `bundled-conpty.test.ts`, `pty-conpty-per-provider.test.ts`) | Parity | verification: re-checked packaged at 7c52a432, 98455d52, 855e1484 and f2b1cf65 (the fallbacks, the input guard: 0 app exits in 40 tries, and again at f2b1cf65, where the input failure's cause was confirmed: keys typed after Codex ended); the TUI trace fixture replaced; macOS, Linux. A tab left open by a background command is a known issue | 3 |
@@ -326,9 +326,9 @@ Per PR:
   mutants, 11 killed): a linked legacy record that cannot be stored keeps
   its account; a session's MCP record lasts one launch, so a revived Ask
   tab gets its own assistant's tools; the account memory listing gives
-  only paths the memory channels take. Owed for it: its spec and quality
-  reviews, the ADR-009 delta pass (the Conductor MCP server and the memory
-  channel bound) and the SSH live matrix (it changes `pty-manager.ts`).
+  only paths the memory channels take. Its spec and quality reviews and
+  the ADR-009 delta pass (the Conductor MCP server and the memory channel
+  bound) PASS; the SSH live matrix (it changes `pty-manager.ts`) is owed.
   Fix pass 13c (56a30fc3 to 24ce2e7a and the jsdom range with this
   record): the memory channels and the account listing apply one path
   check in one unit; two tests hold a replaced process's late exit apart
@@ -337,7 +337,22 @@ Per PR:
   waits for the exit it asserts (30 of 30 runs). 9 new tests, 8 mutants,
   8 killed. Fix pass 13's spec and quality reviews and its ADR-009 delta
   pass, and the reviews of the fixes after it, PASS; the SSH live matrix
-  is still owed.
+  is still owed. The reviews and attack passes of fix passes 10 to 15
+  PASS. CI is green at 91e438fd (run 37553704348), the Linux and Codex
+  conformance jobs included, and the Desktop test gate waits on the owner
+  (#309). The VM final pass ran at dc9d6aeb (the package upgrade, e2e 94
+  of 94, native 226 of 226, the quarantine suites, the paste and colour
+  checks), and the commits from there to 91e438fd change no main or
+  preload source. Fix pass 16 (aff08b70, 3332c3ac), for the release
+  review of 2026-10-07: a Codex Insights report counts a session whole or
+  not at all (a session larger than the read limit is left out, counted
+  and named in the prompt, and a run with none left says why), and the
+  start sweep of chatgpt.com sessions with no record chooses and bars its
+  accounts before its first wait, so a sign-in that completes on another
+  account while it runs keeps its session and its record (6 new tests, 7
+  mutants, 7 killed). Owed for it: its spec and quality reviews, the
+  ADR-009 pass (account sign-in storage) and CI at its head. Still owed
+  for PR 4: the SSH live matrix and the owner's checks.
 
 Package completion is not release completion. A complete PR merges to beta
 only on the owner's word, in the order #625, PR 3, PR 4, and nothing is
@@ -363,8 +378,9 @@ released from it until section 7 holds.
 5. **Dependabot PRs:** every Dependabot PR open at the cut (today #620 to
    #624) rolled in (owner decision recorded 2026-09-26); #621, the Electron 44
    major, with its own ADR-009 pass and a VM packaging run.
-   *Electron 44 (#621): built in PR 4; not done while the reviews and the
-   re-attack listed under Owed are outstanding* (b84d9db3, 8c5a2c74,
+   *Electron 44 (#621): built in PR 4; its reviews and re-attack PASS; not
+   done while the checks listed under Owed are outstanding* (b84d9db3,
+   8c5a2c74,
    4a619d66, f9c2eb05; fix pass 10 is a8a1aca0, 999d8113 and d59ac07d; the
    colour-reply fix is 409b455a; fix pass 11 is 64647e22 to 668cc0d8;
    fix pass 12 is c07b95dd and 27de6206).
@@ -404,14 +420,14 @@ released from it until section 7 holds.
    should-fix, 4 nits) and ADR-009 round 2b over the colour reply and paste
    (2 lenses: PASS, 5 minors, one already answered in fix pass 11): 13 new
    tests, 13 mutants, 13 killed; the responder runs for a local Codex
-   session on every OS and was verified live on Windows. Owed: the spec and
-   quality reviews of fix passes 11 and 12; the ADR-009 re-attack over
-   them; the SSH live matrix for the colour-reply fix (it changes
-   `pty-manager.ts`);
-   the macOS checks (the DMG under its new name with LSMinimumSystemVersion
-   13.0, Finder file paste, image paste) and the Linux checks (the CI
-   matrix, the AppImage on a Rocky Linux host); real keyboard focus in the
-   in-app browser and account panes on an interactive desktop.
+   session on every OS and was verified live on Windows. The spec and
+   quality reviews of fix passes 11 and 12 and the ADR-009 re-attack over
+   them PASS; CI is green at 91e438fd (run 37553704348), the Linux jobs
+   included. Owed: the SSH live matrix for the colour-reply fix (it
+   changes `pty-manager.ts`); the macOS checks (the DMG under its new name
+   with LSMinimumSystemVersion 13.0, Finder file paste, image paste) and
+   the AppImage on a Rocky Linux host; real keyboard focus in the in-app
+   browser and account panes on an interactive desktop.
 6. **Known defects settled.** The six C items in the checklist's P2
    acceptance section (the narrow-window overlap of the partner label, the
    renderer-only one-at-a-time rule, Resume replacing the tab list while its
@@ -6840,12 +6856,12 @@ Probe: PB5 (shared with P4.5).
     f9630c5d; fix pass 7's 41 affected files, 1,147 tests, again at
     d1a126a3). CI at d1a126a3 (run 37434087671): one failure, the #360
     dialog palette guard on all three systems, fixed in fix pass 8.
-  - *Owed.* The spec and quality reviews of fix pass 9; the final VM e2e
-    and packaged pass at the final head, after the dev dependency bumps
-    and the Electron 44 migration (with its ADR-009 pass and VM packaging
-    run), since both change files the evidence binds; CI at the final
-    head; OR4, a real report's content; the closeout list's coverage and
-    tidy items.
+  - *Owed.* The spec and quality reviews of fix pass 9; OR4, a real
+    report's content; the closeout list's coverage and tidy items. The VM
+    final pass after the dev dependency bumps and the Electron 44
+    migration ran at dc9d6aeb (the package upgrade, e2e 94 of 94, native
+    226 of 226), and the commits from there to 91e438fd change no main or
+    preload source; CI is green at 91e438fd (run 37553704348).
 
 **P4.8 CI: Linux and real-CLI conformance (rows 59, 60).**
 - *Today: the matrix.* `.github/workflows/ci.yml:102` is

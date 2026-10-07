@@ -6,9 +6,9 @@ present but cannot be stored leaves its account, link and open conflicts as
 they were; the record of which assistant a session's MCP credential went to
 lasts for one launch, so a revived Ask tab is served its own assistant's tools;
 the account memory listing gives only paths the memory channels take (one
-shared bound). Owed: its spec and quality reviews, the ADR-009 delta pass (the
-Conductor MCP server and the memory channel bound) and the SSH live matrix (it
-changes `pty-manager.ts`).
+shared bound). Its spec and quality reviews and the ADR-009 delta pass (the
+Conductor MCP server and the memory channel bound) PASS (below); the SSH live
+matrix (it changes `pty-manager.ts`) is owed.
 
 Fix pass 13c (ad9289dc, b6548f2b): the memory channels and the account listing
 apply one path check in one unit, and the late exit of a replaced process
