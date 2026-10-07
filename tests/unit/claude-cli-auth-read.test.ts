@@ -11,8 +11,9 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, dirname } from 'node:path'
 import { composeProviders } from '../../src/main/providers/compose'
+import { seedMacRealmVerdict } from './helpers/mac-realm-verdict-seed'
 
 let root: string
 
@@ -37,6 +38,7 @@ vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn
 // answers REFUSED. The refusal itself -- withProfileHome throwing, the probe
 // not spawning, the warn line, the file fallback -- is all the real code.
 const gateSeam = vi.hoisted(() => ({ refuse: false }))
+const locSeam = vi.hoisted(() => ({ loc: null as null | ((id: string) => unknown) }))
 vi.mock('../../src/main/managed-launch-diagnostics', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../src/main/managed-launch-diagnostics')>()
   return {
@@ -54,6 +56,9 @@ vi.mock('../../src/main/account-profiles', async () => ({
   ...(await vi.importActual<typeof import('../../src/main/account-profiles')>('../../src/main/account-profiles')),
   getProfilesRoot: () => root,
   getProfileConfigDir: (id: string) => join(root, id),
+  // The credential seam: overridden per test to put a profile on the macOS
+  // Keychain; otherwise the real rule (file everywhere off macOS).
+  profileCredentialLocation: (id: string) => (locSeam.loc ? locSeam.loc(id) : { kind: 'file', path: join(root, id, '.claude', '.credentials.json') }),
 }))
 
 const { readClaudeCliAuth } = await import('../../src/main/account-web/claude-cli-auth')
@@ -84,7 +89,13 @@ function writeCredFile(id: string, relDir: string) {
 beforeAll(() => { composeProviders() })
 
 beforeEach(async () => {
-  root = fs.mkdtempSync(join(os.tmpdir(), 'ccc-cli-auth-'))
+  // A PROFILE-SHAPED root (<resources>/account-profiles/<id>): only a home that
+  // resolves to a profile id is ever on the macOS realm (pass 3, m8), so the
+  // fixture must look like the real layout. The module's own internals (the
+  // profiles list it reads for the primary) see the same temp resources dir.
+  root = join(fs.mkdtempSync(join(os.tmpdir(), 'ccc-cli-auth-')), 'account-profiles')
+  fs.mkdirSync(root, { recursive: true })
+  ;(await import('../../src/main/account-profiles'))._setRootsForTest({ resourcesDir: dirname(root), sharedRoot: join(dirname(root), 'shared') })
   execFileImpl = (_cmd, _args, _opts, cb) => cb(new Error('no cli'))
   gateSeam.refuse = false
   _resetProfileConsumersForTest()
@@ -96,8 +107,9 @@ beforeEach(async () => {
   // probe's own ordering and not a cache that expires after five seconds.
   await gateManagedLaunch(process.cwd())
 })
-afterEach(() => {
-  fs.rmSync(root, { recursive: true, force: true })
+afterEach(async () => {
+  ;(await import('../../src/main/account-profiles'))._setRootsForTest(null)
+  fs.rmSync(dirname(root), { recursive: true, force: true })
 })
 
 describe('readClaudeCliAuth -- a REFUSED project gate never launches the CLI', () => {
@@ -124,6 +136,43 @@ describe('readClaudeCliAuth -- a REFUSED project gate never launches the CLI', (
     expect(said).toContain('settings.local.json: apiKeyHelper')
     expect(said).toContain('isolation fault')
     expect(hasTransientProfileConsumer(ID), 'the hold leaked past the refusal').toBe(false)
+  })
+})
+
+describe('readClaudeCliAuth -- macOS Keychain fallback (experimental multi-account on)', () => {
+  const SVC = 'Claude Code-credentials-0123abcd'
+  const realPlatform = process.platform
+  afterEach(async () => {
+    locSeam.loc = null
+    Object.defineProperty(process, 'platform', { value: realPlatform })
+    const store = await import('../../src/main/claude-credential-store-darwin')
+    store._setSecurityRunnerForTest(null)
+  })
+  async function withKeychain(answer: { code: number | null; stdout?: string; timedOut?: boolean }) {
+    const store = await import('../../src/main/claude-credential-store-darwin')
+    store._setSecurityRunnerForTest(async () => ({ code: answer.code, stdout: answer.stdout ?? '', stderr: '', timedOut: !!answer.timedOut }), () => 'someone')
+    locSeam.loc = (id: string) => ({ kind: 'keychain', service: SVC, fallbackFile: join(root, id, '.claude', '.credentials.json'), primary: false })
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+  }
+  it('the CLI did not answer: the Keychain item answers (signed in, plan, source keychain)', async () => {
+    fs.mkdirSync(join(root, ID), { recursive: true })
+    await withKeychain({ code: 0, stdout: JSON.stringify({ claudeAiOauth: { accessToken: 'a', refreshToken: 'r', subscriptionType: 'pro', expiresAt: NOW } }) + '\n' })
+    const r = await readClaudeCliAuth(ID)
+    expect(r).toMatchObject({ authenticated: true, subscriptionType: 'pro', source: 'keychain' })
+  })
+  it('no item and no file: signed out', async () => {
+    fs.mkdirSync(join(root, ID), { recursive: true })
+    await withKeychain({ code: 44 })
+    const r = await readClaudeCliAuth(ID)
+    expect(r.authenticated).toBe(false)
+    expect(r.error).toBeUndefined()
+  })
+  it('a locked Keychain: UNKNOWN (an error), never a plain signed-out', async () => {
+    fs.mkdirSync(join(root, ID), { recursive: true })
+    await withKeychain({ code: null, timedOut: true })
+    const r = await readClaudeCliAuth(ID)
+    expect(r.authenticated).toBe(false)
+    expect(r.error).toMatch(/could not determine/)
   })
 })
 
@@ -199,6 +248,110 @@ describe('readClaudeCliAuth — CLI probe preferred, and registered as a consume
     expect(seen?.CLAUDE_CONFIG_DIR).toBeUndefined()
     // The realm it was pointed at is unchanged.
     expect(seen?.USERPROFILE).toBe(join(root, ID))
+    expect(seen?.HOME).toBe(join(root, ID))
+  })
+
+  // #117 on the auth probe: macOS finds the login keychain through $HOME, so a
+  // profile HOME here made `claude auth status` read no keychain at all. The
+  // probe set HOME unconditionally; withProfileHome had already stopped doing
+  // so on macOS for sessions. Setting off AND on: HOME is never redirected on
+  // macOS; with the experimental realm on, CLAUDE_CONFIG_DIR is the realm.
+  for (const flagOn of [false, true]) {
+    it(`macOS (experimental multi-account ${flagOn ? 'on' : 'off'}): the probe keeps the real HOME`, async () => {
+      const profiles = await import('../../src/main/account-profiles')
+      fs.mkdirSync(join(root, ID), { recursive: true })
+      const realPlatform = process.platform
+      const realHome = process.env.HOME
+      process.env.HOME = '/Users/someone'
+      let seen: Record<string, string> | undefined
+      try {
+        Object.defineProperty(process, 'platform', { value: 'darwin' })
+        profiles.setMacMultiAccountProbe(() => flagOn)
+        // The #172 guard passed for this realm (its own tests: mac-realm-guard.test.ts).
+        seedMacRealmVerdict(dirname(root), join(root, ID))
+        execFileImpl = (_c, _a, o, cb) => {
+          seen = (o as { env: Record<string, string> }).env
+          cb(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' })
+        }
+        const r = await readClaudeCliAuth(ID)
+        expect(r.source).toBe('cli-status')
+      } finally {
+        Object.defineProperty(process, 'platform', { value: realPlatform })
+        profiles.setMacMultiAccountProbe(() => false)
+        if (realHome === undefined) delete process.env.HOME
+        else process.env.HOME = realHome
+      }
+      expect(seen?.HOME).toBe('/Users/someone')
+      expect(seen?.USERPROFILE).toBe(join(root, ID))
+      if (flagOn) {
+        // A profile home with no primary recorded (an empty profiles list):
+        // not the primary, so isolated on its own config directory.
+        expect(seen?.CLAUDE_CONFIG_DIR).toBe(resolve(join(root, ID), '.claude').normalize('NFC'))
+      } else {
+        expect(seen?.CLAUDE_CONFIG_DIR).toBeUndefined()
+      }
+    })
+  }
+
+  // Adversarial review pass 3, M5: with the setting OFF, the ONE macOS change
+  // is the #117 HOME fix for the probe -- and only the primary (or a profile
+  // when no primary is recorded) ever reaches it. A NON-primary profile is
+  // refused by withProfileHome (M4) and never probed as the primary's sign-in.
+  describe('macOS, setting OFF, a primary recorded', () => {
+    const realPlatform = process.platform
+    async function primaryIs(id: string) {
+      fs.writeFileSync(join(root, 'profiles.json'), JSON.stringify({ profiles: [{ id, name: 'P', accountEmail: 'p@example.com', isPrimary: true }] }))
+      const profiles = await import('../../src/main/account-profiles')
+      profiles.setMacMultiAccountProbe(() => false)
+      Object.defineProperty(process, 'platform', { value: 'darwin' })
+    }
+    afterEach(() => { Object.defineProperty(process, 'platform', { value: realPlatform }) })
+
+    it('M5: a NON-primary profile is never probed (refused) -- it falls back to its own credential file', async () => {
+      fs.mkdirSync(join(root, ID), { recursive: true })
+      await primaryIs('profile-primary-9')
+      let spawned = false
+      execFileImpl = (_c, _a, _o, cb) => { spawned = true; cb(null, { stdout: JSON.stringify({ loggedIn: true, email: 'primary@example.com' }), stderr: '' }) }
+      const logger = await import('../../src/main/debug-logger')
+      const warn = vi.mocked(logger.logWarn)
+      warn.mockClear()
+      const r = await readClaudeCliAuth(ID)
+      Object.defineProperty(process, 'platform', { value: realPlatform })
+      expect(spawned, 'a non-primary macOS profile was probed on the primary sign-in').toBe(false)
+      expect(r.email).toBeUndefined()
+      expect(r.authenticated).toBe(false)
+      expect(warn.mock.calls.map((c) => c.map(String).join(' ')).join('\n')).toContain('turned off')
+    })
+
+    it('M5: the PRIMARY is probed on the real HOME with no realm', async () => {
+      fs.mkdirSync(join(root, ID), { recursive: true })
+      await primaryIs(ID)
+      const realHome = process.env.HOME
+      process.env.HOME = '/Users/someone'
+      let seen: Record<string, string> | undefined
+      try {
+        execFileImpl = (_c, _a, o, cb) => { seen = (o as { env: Record<string, string> }).env; cb(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' }) }
+        const r = await readClaudeCliAuth(ID)
+        expect(r.source).toBe('cli-status')
+      } finally {
+        Object.defineProperty(process, 'platform', { value: realPlatform })
+        if (realHome === undefined) delete process.env.HOME
+        else process.env.HOME = realHome
+      }
+      expect(seen?.HOME).toBe('/Users/someone')
+      expect(seen?.CLAUDE_CONFIG_DIR).toBeUndefined()
+    })
+  })
+
+  it('win32/linux: the probe still re-applies the profile HOME, as before', async () => {
+    if (process.platform === 'darwin') return
+    fs.mkdirSync(join(root, ID), { recursive: true })
+    let seen: Record<string, string> | undefined
+    execFileImpl = (_c, _a, o, cb) => {
+      seen = (o as { env: Record<string, string> }).env
+      cb(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' })
+    }
+    await readClaudeCliAuth(ID)
     expect(seen?.HOME).toBe(join(root, ID))
   })
 

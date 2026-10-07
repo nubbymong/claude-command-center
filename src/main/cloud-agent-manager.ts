@@ -14,6 +14,7 @@ import { isValidLegacyVersion } from '../shared/legacy-version'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
 import { withProfileHome } from './pty-manager'
 import { gateManagedLaunch } from './managed-launch-diagnostics'
+import { ensureMacRealmVerdict, pinnedCliPathFor } from './mac-realm-verdict'
 import type { ProjectGateResult, ProviderLaunchRefused } from '../shared/providers'
 import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
 import { providerLaunchRefusal } from './provider-launch-gate'
@@ -215,6 +216,9 @@ export async function dispatchAgent(params: {
     // counts only when it is below the floor, so a failed install that falls
     // back to the installed CLI can only err loud, never a false "supported").
     const pinnedCli = params.legacyVersion?.enabled ? legacyCliPin(params.legacyVersion) : undefined
+    // Decision aicc_planning#172 item 4: a macOS realm agent needs the verdict
+    // for the CLI it will run (withProfileHome refuses it otherwise).
+    await ensureMacRealmVerdict(params.profileId && isValidProfileId(params.profileId) ? getProfileConfigDir(params.profileId) : null, pinnedCli?.installed ? pinnedCliPathFor(pinnedCli.version) : null)
     ;({ env: spawnEnvVars, resolvedProfileId, accountEmail } = resolveAgentEnv(params.profileId, params.projectPath, projectGate, pinnedCli))
 
     agent = {

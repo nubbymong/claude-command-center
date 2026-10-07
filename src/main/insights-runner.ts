@@ -16,16 +16,17 @@ import { BrowserWindow } from 'electron'
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveClaudeForPty, withProfileHome } from './pty-manager'
 import { gateManagedLaunch } from './managed-launch-diagnostics'
+import { ensureMacRealmVerdict, macRealmVerdictPending } from './mac-realm-verdict'
 import { spawnClaudeHeadless } from './claude-headless'
 import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
 import { providerLaunchRefusal } from './provider-launch-gate'
 import type { ProviderLaunchRefused } from '../shared/providers'
-import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
+import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId, claudeDataHomeFor } from './account-profiles'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import type { AccountProfile } from '../shared/account-types'
 import { isAuthFailure, type ClaudeFailureFacts } from '../shared/claude-auth-errors'
-import { readProfileAuthInfo } from './account-auth-info'
+import { readProfileAuthInfoAsync } from './account-auth-info'
 import { redactSecrets } from './hooks/hook-payload-redactor'
 import { atomicWriteFileSync } from './atomic-write'
 import type { InsightsCatalogue, InsightsData, InsightsRun, InsightsRunMember } from '../shared/types'
@@ -52,7 +53,9 @@ export type { InsightsCatalogue, InsightsRun }
 // running account's HOME (~/.claude/usage-data); with per-account isolation the
 // HOME is the profile's fake home, so these are resolved against the spawn home
 // rather than a fixed ~/.claude.
-export function usageDataDir(home: string | null): string { return join(home ?? homedir(), '.claude', 'usage-data') }
+// macOS with the experimental multi-account setting on: the PRIMARY runs with
+// no redirect, so its CLI writes under the real ~/.claude (claudeDataHomeFor).
+export function usageDataDir(home: string | null): string { return join(home ? claudeDataHomeFor(home) : homedir(), '.claude', 'usage-data') }
 export function claudeReportPath(home: string | null): string { return join(usageDataDir(home), 'report.html') }
 export function claudeFacetsDir(home: string | null): string { return join(usageDataDir(home), 'facets') }
 
@@ -241,6 +244,8 @@ async function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Pro
   // own settings files are gated like any other launch's. A refusal throws
   // from withProfileHome below and rejects this promise.
   const projectGate = home ? await gateManagedLaunch(cwd) : null
+  // Decision aicc_planning#172 item 4: a macOS realm run needs the verdict.
+  if (macRealmVerdictPending(home)) await ensureMacRealmVerdict(home)
   return new Promise((resolve) => {
     const reportPath = claudeReportPath(home)
     logInfo(`[insights] Spawning Claude PTY for /insights: ${cmd} in ${cwd} (home=${home ?? 'default'})`)
@@ -1020,7 +1025,7 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
         // only be retired by a login that issues a LATER one — not by credential
         // reconciliation rewriting the file.
         if (account.profileId) {
-          run.authFailedRefreshExpiry = readProfileAuthInfo(account.profileId).refreshTokenExpiresAt
+          run.authFailedRefreshExpiry = (await readProfileAuthInfoAsync(account.profileId)).refreshTokenExpiresAt
         }
         logError(`[insights] ${account.accountEmail ?? 'this account'} needs to sign in again`)
       }

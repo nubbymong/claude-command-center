@@ -31,8 +31,9 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError, logInfo, logWarn } from '../debug-logger'
 import { gateManagedLaunch, peekGateVerdict } from '../managed-launch-diagnostics'
-import { getProfileConfigDir, getProfilesRoot, withProfileHome, MANAGED_LAUNCH_REFUSAL } from '../account-profiles'
+import { getProfileConfigDir, getProfilesRoot, withProfileHome, MANAGED_LAUNCH_REFUSAL, profileCredentialLocation, readMacCredential, type ProfileCredentialLocation } from '../account-profiles'
 import { acquireProfileConsumer, pendingProfileRefresh } from '../profile-consumers'
+import { ensureMacRealmVerdict, macRealmVerdictPending } from '../mac-realm-verdict'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
 
 const execFileAsync = promisify(execFile)
@@ -48,8 +49,9 @@ export interface ClaudeCliAuthStatus {
   email?: string
   /** Organisation the CLI reports. Display only. */
   orgName?: string
-  /** Which source answered: the CLI's own status command, or the credential file. */
-  source?: 'cli-status' | 'credential-file'
+  /** Which source answered: the CLI's own status command, the credential file,
+   *  or (macOS, experimental multi-account on) the Keychain item. */
+  source?: 'cli-status' | 'credential-file' | 'keychain'
   /** Set when nothing could be determined. */
   error?: string
   /** WP2: the CLI was not asked because Claude Code is switched off (or its
@@ -182,6 +184,11 @@ async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAu
     const probeCwd = process.cwd()
     const projectGate = peekGateVerdict(probeCwd) ?? await gateManagedLaunch(probeCwd)
     const home = join(getProfilesRoot(), profileId)
+    // Decision aicc_planning#172 item 4: on the macOS realm the probe needs
+    // the verdict too; without one withProfileHome refuses it and the answer
+    // comes from the Keychain read below instead.
+    // Awaited only when one is missing: the common path stays synchronous.
+    if (macRealmVerdictPending(home)) await ensureMacRealmVerdict(home)
     if (existsSync(home)) {
       const { stdout } = await execFileAsync('claude', ['auth', 'status'], {
         encoding: 'utf-8',
@@ -195,13 +202,29 @@ async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAu
         // withProfileHome exists to own -- and being the one launch path that
         // built its own env is exactly how it would have kept inheriting an
         // ambient ANTHROPIC_API_KEY and reported the wrong account as signed
-        // in. HOME is set unconditionally here (withProfileHome sets it on
-        // Linux only, for the macOS keychain reason documented there), so it
-        // is re-applied after -- by MUTATING the returned object rather than
+        // in. HOME is re-applied after on win32 and Linux (withProfileHome
+        // sets it on Linux only) -- by MUTATING the returned object rather than
         // spreading it into a literal, which would re-attach Object.prototype
         // to an env the realm patch deliberately built with a null prototype
         // (see src/shared/providers/realm-env.ts).
-        env: Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-status', cwd: probeCwd, probe: true, projectGate }), { HOME: home }),
+        //
+        // NEVER on macOS, whatever the experimental multi-account setting
+        // says: the login keychain is located through $HOME, so a profile
+        // HOME left this probe with no keychain to read -- the #117 defect
+        // withProfileHome fixed for sessions, still live here. It reported a
+        // signed-in account as signed out, or raised the macOS "A keychain
+        // cannot be found" dialog. This is the ONE deliberate macOS change
+        // with the setting off (base set HOME here unconditionally). Who
+        // reaches this line on macOS (adversarial review pass 3, M5):
+        //   - the PRIMARY profile: probes on the real HOME = the normal
+        //     sign-in it IS, setting on or off;
+        //   - a NON-primary profile, setting ON: the real HOME plus its own
+        //     CLAUDE_CONFIG_DIR (macProfileConfigDir) = its own sign-in;
+        //   - a NON-primary profile, setting OFF: never -- withProfileHome
+        //     refuses it (MAC_MULTI_ACCOUNT_OFF_REFUSAL) and the catch below
+        //     falls back to the credential file, so it is never probed as
+        //     the primary's sign-in.
+        env: Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-status', cwd: probeCwd, probe: true, projectGate }), process.platform === 'darwin' ? {} : { HOME: home }),
       })
       const parsed = parseAuthStatus(stdout)
       if (parsed) return parsed
@@ -233,6 +256,25 @@ async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAu
   //    account rendered "not signed in", telling the user to /login. Less
   //    informative than the CLI (no email/org) but needs no subprocess, so a
   //    missing or broken CLI still yields a usable signed-in/out answer.
+  // macOS with the experimental multi-account setting on: the sign-in is a
+  // Keychain item (profileCredentialLocation), read in Claude Code's own order
+  // -- the item, then its fallback file. An item that cannot be read is
+  // UNKNOWN, never "signed out" (that would tell a signed-in user to /login).
+  if (process.platform === 'darwin') {
+    let loc: ProfileCredentialLocation | null = null
+    try { loc = profileCredentialLocation(profileId) } catch { loc = null }
+    if (loc && loc.kind === 'keychain') {
+      const r = await readMacCredential(loc)
+      if (r.status === 'not-found') return { authenticated: false }
+      if (r.status === 'unknown') return { authenticated: false, error: `could not determine CLI auth state (macOS Keychain: ${r.reason})` }
+      return {
+        authenticated: !!r.creds.accessToken,
+        subscriptionType: r.creds.subscriptionType,
+        expiresAt: r.creds.expiresAt > 0 ? r.creds.expiresAt : undefined,
+        source: r.source === 'keychain' ? 'keychain' : 'credential-file',
+      }
+    }
+  }
   try {
     const configDir = getProfileConfigDir(profileId)
     if (!configDir) return { authenticated: false }

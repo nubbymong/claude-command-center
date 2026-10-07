@@ -62,7 +62,7 @@ describe('every gate renders on its own name alone (#609)', () => {
   it('the new-account prompt is suppressed by ANY gate, not just onboarding', () => {
     // Same class as the account picker: it owns no turn, so it must not paint
     // over one. It used to exclude only 'onboarding'.
-    expect(APP).toContain("window.electronPlatform !== 'darwin' && bootGate === null &&")
+    expect(APP).toContain("!claudeMultiAccountBlocked(window.electronPlatform, useSettingsStore.getState().settings) && bootGate === null &&")
   })
 })
 

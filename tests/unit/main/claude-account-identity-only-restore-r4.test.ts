@@ -25,7 +25,7 @@ vi.mock('electron', () => ({
   ipcMain: { handle: (ch: string, fn: (...a: any[]) => any) => handlers.set(ch, fn) },
 }))
 vi.mock('../../../src/main/usage/usage-snapshots', () => ({ loadSnapshots: () => new Map(), saveSnapshots() {} }))
-vi.mock('../../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: vi.fn(() => []) }))
+vi.mock('../../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: vi.fn(() => []), readAllProfileAuthInfoAsync: vi.fn(async () => []) }))
 vi.mock('../../../src/main/account-web/sign-in', () => ({ clearWebSession: vi.fn() }))
 vi.mock('../../../src/main/account-web/session-store', () => ({ removeWebSession: vi.fn() }))
 vi.mock('../../../src/main/account-web/artifacts', () => ({ closeArtifacts: vi.fn() }))
@@ -127,7 +127,7 @@ describe('R4: rotation, then /login before the settled observation (Codex, flipp
   it('Codex: the capture IPC puts A\'s IDENTITY back and nothing token-bearing -- both files sanitised, and A reads Sign in', async () => {
     const id = await rotateThenLoginBeforeSettle('rotation-one')
     registerAccountProfilesHandlers()
-    const np = handlers.get(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED)!({}, { sessionId: 'rotation-one', name: 'Synthetic B' })
+    const np = await handlers.get(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED)!({}, { sessionId: 'rotation-one', name: 'Synthetic B' })
     expect(np?.accountEmail).toBe('b@example.test')
     expect(home(np.id)).toBe('synthetic-b') // B keeps B's token in B's new profile
     expectIdentityOnly(id)
@@ -267,7 +267,7 @@ describe('R4: rotation, then /login before the settled observation (Codex, flipp
     registerAccountProfilesHandlers()
     // 7ef62a2e+R4: getWatchedProfileId alone let this proceed -> captured A into a
     // new profile AND wiped A's credentials. The gate refuses it.
-    const np = handlers.get(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED)!({}, { sessionId: 'no-detection', name: 'X' })
+    const np = await handlers.get(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED)!({}, { sessionId: 'no-detection', name: 'X' })
     expect(np).toBeNull()
     expect(home(id)).toBe('synthetic-a-old') // untouched: still signed in on its own token
     expect(readProfileCredentialStamp(id).signedIn).toBe(true)

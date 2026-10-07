@@ -18,6 +18,11 @@ import { logInfo, logWarn } from './debug-logger'
 import { recordSettingsSanitise, recordAmbientStrip, clearSettingsSanitise } from './managed-launch-state'
 import { recordManagedLaunchPreflight } from './managed-launch-diagnostics'
 import { decodeSettingsText } from './settings-text'
+import { hasMacRealmVerdict, macRealmRefusalReason, pinnedCliPathFor } from './mac-realm-verdict'
+import {
+  CLAUDE_KEYCHAIN_DEFAULT_SERVICE, keychainServiceForConfigDir, readKeychainCreds, parseKeychainSecret,
+  keychainStamp, writeKeychainSecret, deleteKeychainItem, type ClaudeKeychainCreds,
+} from './claude-credential-store-darwin'
 // Via the neutral barrel, never a package entry point: the dependency boundary
 // (tests/wp1/dependency-boundaries.test.ts, R3/R4) keeps provider knowledge
 // behind the registry so a launch path cannot opt out of a provider's policy.
@@ -1616,6 +1621,10 @@ export function migrateProfilesToHomeLayout(): void {
     if (!isValidProfileId(p.id)) continue
     const home = getProfileConfigDir(p.id)
     if (!fs.existsSync(home)) continue
+    // macOS with the experimental setting on: the sign-in is in the Keychain
+    // and the identity under the realm config directory; this legacy layout
+    // migration does not apply (adversarial review pass 3, m3).
+    if (macClaudeStore(home) !== null) continue
     if (fs.existsSync(path.join(home, '.claude'))) continue // already new layout
     // Drop the polluted identity + creds so re-login is clean (profile dir only).
     for (const f of ['.claude.json', '.credentials.json']) {
@@ -1643,6 +1652,22 @@ function safeTeardown(dir: string): void {
   fs.rmdirSync(dir)
 }
 
+/** Listeners told when a profile's credential is removed (its Keychain item
+ *  deleted, or the profile torn down) -- so state kept elsewhere for that
+ *  profile (a pending token write-back, account-usage) does not outlive it
+ *  (re-attack round 2, item 5). Registered, not imported, to keep the import
+ *  graph one-way (account-usage imports this module). */
+const credentialRemovedListeners = new Set<(id: string) => void>()
+
+export function onProfileCredentialRemoved(fn: (id: string) => void): () => void {
+  credentialRemovedListeners.add(fn)
+  return () => { credentialRemovedListeners.delete(fn) }
+}
+
+function notifyProfileCredentialRemoved(id: string): void {
+  for (const fn of credentialRemovedListeners) { try { fn(id) } catch { /* a listener never blocks a removal */ } }
+}
+
 export function safeTeardownProfile(id: string): void {
   if (!isValidProfileId(id)) throw new Error(`refusing teardown: invalid profile id ${JSON.stringify(id)}`)
   const dir = getProfileConfigDir(id)
@@ -1657,6 +1682,7 @@ export function safeTeardownProfile(id: string): void {
     safeTeardown(dir)
   }
   deleteProfileMeta(id)
+  notifyProfileCredentialRemoved(id)
 }
 
 // ---------------------------------------------------------------------------
@@ -1725,6 +1751,12 @@ export function cleanupSessionHomes(): void {
   // Apply only when a session home was fresher than the profile home.
   for (const [profileId, cand] of best) {
     if (!cand.fromSession) continue
+    // macOS with the experimental setting on: a realm profile's
+    // `<home>/.claude/.credentials.json` IS the file Claude Code falls back to
+    // for that profile, and the primary's sign-in is the Keychain. A salvaged
+    // file token would plant a stale fallback credential, so nothing is
+    // written for those profiles (adversarial review pass 3, m3).
+    try { if (macClaudeStore(getProfileConfigDir(profileId)) !== null) continue } catch { continue }
     // Per-item: a reparse-point plant (or any fs error) on ONE profile's dir must
     // not abort salvaging the others, nor the shared-dir repair pass further down.
     try { writeCanonicalIdentity(profileId, { claudeJson: cand.claudeJson, credentials: cand.credentials }) } catch { /* best-effort */ }
@@ -1816,6 +1848,11 @@ export function captureGlobalLogin(name?: string): AccountProfile | null {
   let credentials: string | undefined
   try { credentials = fs.readFileSync(path.join(sharedRoot(), '.credentials.json'), 'utf8') } catch { credentials = undefined }
 
+  // macOS with the experimental setting on: the sign-in lives in the Keychain
+  // and the profile's `<home>/.claude/.credentials.json` would be a realm
+  // fallback file, so no credential file is copied anywhere (adversarial
+  // review pass 3, m3). The identity is still captured.
+  if (process.platform === 'darwin' && macMultiAccountOn()) credentials = undefined
   const profile = createProfile(name)
   try {
     writeCanonicalIdentity(profile.id, { claudeJson, credentials })
@@ -1848,7 +1885,7 @@ export function migrateProfilesToCanonicalLayout(): void {
     if (fs.existsSync(path.join(idDir, '.claude.json'))) continue // already migrated
     const home = getProfileConfigDir(p.id)
     let claudeJson: string | undefined
-    try { claudeJson = fs.readFileSync(path.join(home, '.claude.json'), 'utf8') } catch { /* none */ }
+    try { claudeJson = fs.readFileSync(profileIdentityFile(home), 'utf8') } catch { /* none */ }
     let credentials: string | undefined
     try { credentials = fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8') } catch { /* none */ }
     // Per-item: one profile throwing must not halt migration of the rest.
@@ -1886,7 +1923,7 @@ function normEmail(email: string): string { return email.toLowerCase().trim() }
 /** Reliable per-session identity: each profile has its OWN .claude.json.
  *  (The v1.5.9 alias attempt failed because it read the GLOBAL last-login.) */
 export function readProfileAccountEmail(id: string): string | null {
-  return readEmailFromFile(path.join(getProfileConfigDir(id), '.claude.json'))
+  return readEmailFromFile(profileIdentityFile(getProfileConfigDir(id)))
 }
 
 /** Restore a profile's per-account-home identity AND credentials from its
@@ -1986,6 +2023,15 @@ export function stripIdentityTokens(claudeJson: string): string {
  * no canonical identity to restore from.
  */
 export function restoreProfileIdentityFromCanonical(id: string): boolean {
+  // Experimental macOS realm: the live token is in this profile's Keychain
+  // entry, which this synchronous path cannot clear, so "credentials FIRST"
+  // below cannot be honoured here. The capture IPC uses
+  // restoreProfileIdentityFromCanonicalAsync, which clears the Keychain item;
+  // this path refuses rather than write the identity beside a live token.
+  if (profileOnMacRealm(id)) {
+    logWarn(`[profiles] restore ${id}: refused on the macOS realm (the sign-in is in the Keychain, which this app does not clear)`)
+    return false
+  }
   const idDir = getAccountIdentityDir(id)
   try {
     if (fs.lstatSync(idDir).isSymbolicLink()) throw new Error(`refusing restore: ${idDir} is a reparse point`)
@@ -2039,12 +2085,13 @@ export function restoreProfileIdentityFromCanonical(id: string): boolean {
 export function backupProfileHomeToCanonical(id: string): void {
   if (!isValidProfileId(id)) return
   const home = getProfileConfigDir(id)
+  const identityFile = profileIdentityFile(home)
   let claudeJson: string
-  try { claudeJson = fs.readFileSync(path.join(home, '.claude.json'), 'utf8') } catch { return }
+  try { claudeJson = fs.readFileSync(identityFile, 'utf8') } catch { return }
   // A null homeEmail (a .claude.json with no parseable oauthAccount -- a corrupt /
   // in-progress login) counts as "does not match", so an identity-less home can
   // never overwrite a profile that already has a known account.
-  const homeEmail = readEmailFromFile(path.join(home, '.claude.json'))
+  const homeEmail = readEmailFromFile(identityFile)
   const prof = listProfiles().find((p) => p.id === id)
   if (prof?.accountEmail && canonicaliseEmail(prof.accountEmail) !== canonicaliseEmail(homeEmail ?? '')) return
   let credentials: string | undefined
@@ -2089,16 +2136,7 @@ function readFileMaybe(file: string): string | undefined {
  * not signed in.
  */
 export function readProfileCredentialStamp(id: string): { stamp: string | null; signedIn: boolean } {
-  const file = path.join(getProfileConfigDir(id), '.claude', '.credentials.json')
-  let st: fs.Stats
-  try { st = fs.statSync(file) } catch { return { stamp: null, signedIn: false } }
-  let signedIn = false
-  try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { claudeAiOauth?: { accessToken?: unknown; refreshToken?: unknown } }
-    const o = raw?.claudeAiOauth
-    signedIn = !!(o && ((typeof o.accessToken === 'string' && o.accessToken) || (typeof o.refreshToken === 'string' && o.refreshToken)))
-  } catch { signedIn = false }
-  return { stamp: `${Math.round(st.mtimeMs)}:${st.size}`, signedIn }
+  return credentialFileStamp(path.join(getProfileConfigDir(id), '.claude', '.credentials.json'))
 }
 
 export function syncPrimaryCredentialsWithGlobal(): PrimaryCredentialSyncResult {
@@ -2110,6 +2148,11 @@ export function syncPrimaryCredentialsWithGlobal(): PrimaryCredentialSyncResult 
     const want = canonicaliseEmail(prof.accountEmail)
 
     const home = getProfileConfigDir(primaryId)
+    // macOS with the experimental setting on: the primary runs on the real
+    // home with its sign-in in the Keychain, and `<home>/.claude.json` is no
+    // longer its identity. Syncing files here could only plant a stale
+    // ~/.claude/.credentials.json (adversarial review pass 3, m3).
+    if (macClaudeStore(home) !== null) return 'none'
     // Guard A: the primary profile home must STILL be the primary account. A
     // mid-session /login may have switched it -> let detection handle that, not us.
     if (canonicaliseEmail(readEmailFromFile(path.join(home, '.claude.json')) ?? '') !== want) return 'none'
@@ -2145,6 +2188,15 @@ export function syncPrimaryCredentialsWithGlobal(): PrimaryCredentialSyncResult 
  *  there is nothing to capture / the profile id is invalid. */
 export function captureDetectedAccount(profileId: string, name?: string): AccountProfile | null {
   if (!isValidProfileId(profileId)) return null
+  // Experimental macOS realm: the new account's token is in the Keychain entry
+  // keyed to THIS profile's config directory, which this synchronous file
+  // capture cannot move. The capture IPC uses captureDetectedAccountAsync,
+  // which moves it Keychain to Keychain; this path refuses rather than create
+  // a profile with no sign-in (the caller then restores nothing).
+  if (profileOnMacRealm(profileId)) {
+    logWarn(`[profiles] capture ${profileId}: refused on the macOS realm (a Keychain sign-in cannot be moved to a new profile)`)
+    return null
+  }
   const home = getProfileConfigDir(profileId)
   let claudeJson: string
   try { claudeJson = fs.readFileSync(path.join(home, '.claude.json'), 'utf8') } catch { return null }
@@ -2169,6 +2221,342 @@ export function captureDetectedAccount(profileId: string, name?: string): Accoun
     try { safeTeardownProfile(np.id) } catch { /* best-effort */ }
     return null
   }
+}
+
+/** The outcome of a capture on the macOS realm: the new profile and the exact
+ *  secret it was given (so the source can be checked against it before it is
+ *  cleared), or a refusal. `error: null` is "nothing to capture" (no identity
+ *  or email in the source), which the IPC answers with null as it always has. */
+type RealmCapture =
+  | { ok: true; profile: AccountProfile; secret: string; source: 'keychain' | 'file'; newService: string }
+  | { ok: false; error: string | null }
+
+/** Same tokens? (A file and a Keychain item can hold one credential in two
+ *  serialisations, so they are compared by their tokens, not their bytes.) */
+function sameTokens(a: ClaudeKeychainCreds, b: ClaudeKeychainCreds): boolean {
+  return a.accessToken === b.accessToken && a.refreshToken === b.refreshToken
+}
+
+async function captureOnMacRealm(
+  profileId: string,
+  name: string | undefined,
+  loc: Extract<ProfileCredentialLocation, { kind: 'keychain' }>,
+): Promise<RealmCapture> {
+  if (loc.primary) {
+    logWarn(`[profiles] capture ${profileId}: refused -- on macOS this is the normal sign-in, and a /login there replaced it`)
+    return { ok: false, error: null }
+  }
+  const home = getProfileConfigDir(profileId)
+  const idFile = profileIdentityFile(home)
+  let claudeJson: string
+  try { claudeJson = fs.readFileSync(idFile, 'utf8') } catch { return { ok: false, error: null } }
+  const email = readEmailFromFile(idFile)
+  if (!email) return { ok: false, error: null }
+  const src = await readMacCredential(loc, { fresh: true })
+  if (src.status === 'unknown') {
+    logWarn(`[profiles] capture ${profileId}: refused -- the sign-in could not be read (${src.reason})`)
+    return { ok: false, error: `The new sign-in could not be read from the macOS Keychain (${src.reason}). Unlock the Keychain and try again.` }
+  }
+  // m4: on the realm a /login that left NO credential behind is most likely a
+  // Keychain service this app did not compute the way the CLI did. Creating a
+  // signed-out profile would hide that; refuse instead.
+  if (src.status === 'not-found') {
+    logWarn(`[profiles] capture ${profileId}: refused -- no sign-in was found in the profile's Keychain item or its fallback file`)
+    return { ok: false, error: 'No sign-in was found for this account in the macOS Keychain, so it was not added. Nothing was changed.' }
+  }
+  // M1: the Keychain answered, and the fallback file ALSO holds a credential
+  // -- a DIFFERENT one (or one that does not parse). One of the two is stale
+  // and this app cannot tell which the CLI will use next; refuse rather than
+  // copy one and delete both.
+  if (src.source === 'keychain') {
+    const raw = readFallbackFile(loc.fallbackFile)
+    if (raw !== null) {
+      const fileCreds = parseKeychainSecret(raw)
+      if (!fileCreds || !sameTokens(fileCreds, src.creds)) {
+        logWarn(`[profiles] capture ${profileId}: refused -- the Keychain item and the credential file hold different sign-ins`)
+        return { ok: false, error: 'This account has two different saved sign-ins (the macOS Keychain and a credential file), so it was not added. Nothing was changed.' }
+      }
+    }
+  }
+  const np = createProfile(name)
+  let npService: string | null = null
+  // r10: the renderer gets a FIXED reason (no local paths); the detail is
+  // logged here. The Keychain write's own reasons are fixed strings already.
+  let shownReason = "the new account's files could not be written"
+  try {
+    const npLoc = profileCredentialLocation(np.id)
+    if (npLoc.kind !== 'keychain' || npLoc.primary) throw new Error('the new profile is not on the macOS realm')
+    npService = npLoc.service
+    writeCanonicalIdentity(np.id, { claudeJson })
+    const npIdFile = profileIdentityFile(getProfileConfigDir(np.id))
+    mkdirSecure(path.dirname(npIdFile))
+    hardenCredentialDir(path.dirname(npIdFile))
+    atomicWriteSecure(npIdFile, claudeJson, IS_POSIX ? CRED_FILE_MODE : undefined)
+    const w = await writeKeychainSecret(npLoc.service, src.creds.secret)
+    if (!w.ok) { shownReason = w.reason; throw new Error(w.reason) }
+    const updated: AccountProfile = { ...np, accountEmail: email }
+    upsertProfile(updated)
+    return { ok: true, profile: updated, secret: src.creds.secret, source: src.source, newService: npLoc.service }
+  } catch (e) {
+    logWarn(`[profiles] capture ${profileId}: failed (${(e as Error)?.message ?? e})`)
+    // r6: the new item's delete is CHECKED. If it cannot be confirmed gone,
+    // the profile row stays (a removable account, not an invisible second
+    // holder) and the message says what to do.
+    if (npService) {
+      let gone = false
+      try { const d = await deleteKeychainItem(npService); gone = typeof d !== 'object' } catch { gone = false }
+      if (!gone) {
+        logWarn(`[profiles] capture ${profileId}: the new profile's Keychain item could not be removed; the profile is kept so it can be removed`)
+        return { ok: false, error: `The account could not be added (${shownReason}). A partly-added account is left in Settings > Accounts because its macOS Keychain sign-in could not be removed; remove it there. The original account is unchanged.` }
+      }
+    }
+    try { safeTeardownProfile(np.id) } catch { /* best-effort */ }
+    return { ok: false, error: `The account could not be added (${shownReason}). Nothing was changed.` }
+  }
+}
+
+/**
+ * captureDetectedAccount through the platform seam. win32/linux, and macOS
+ * with the setting off: the file capture above, unchanged. macOS with the
+ * setting on, a REALM profile: the token is moved Keychain to Keychain --
+ * read from the source profile's item (or, ONLY when the item is confirmed
+ * absent, the file Claude Code falls back to), written into the NEW
+ * profile's item, the identity written into the new profile's config
+ * directory. This does NOT clear the source: the capture IPC uses
+ * captureDetectedAccountAndClearSource, which does, and rolls back when it
+ * cannot.
+ *
+ * Refused (null) on macOS when: the source is the PRIMARY (see
+ * profileDetectionCapturable); the source credential cannot be read (unknown
+ * is never "no token"); there is no source credential at all (m4); the
+ * Keychain and the fallback file hold different credentials (M1); or the new
+ * item does not read back as written (the new profile is removed).
+ *
+ * The canonical backup gets the identity ONLY on macOS: nothing in this app
+ * reinstalls a canonical token (rc.15 R4), so copying the secret out of the
+ * Keychain into a file would weaken its storage for no function.
+ */
+export async function captureDetectedAccountAsync(profileId: string, name?: string): Promise<AccountProfile | null> {
+  if (!isValidProfileId(profileId)) return null
+  const loc = profileCredentialLocation(profileId)
+  if (loc.kind === 'file') return captureDetectedAccount(profileId, name)
+  const r = await captureOnMacRealm(profileId, name, loc)
+  return r.ok ? r.profile : null
+}
+
+/** How clearing a realm profile's sign-in went.
+ *
+ *  ok: the source's Keychain item is GONE (deleted, or confirmed absent for a
+ *  file-sourced capture) -- the capture is committed from that moment and is
+ *  never rolled back (re-attack R1). `warning` names a later step that failed
+ *  (the fallback file, the identity restore); it is logged, never undone.
+ *
+ *  not ok: the Keychain item was NOT deleted (or a race deleted it, R2).
+ *  Nothing else was touched -- the fallback file and the identity file are
+ *  only changed after the Keychain delete succeeded (R3). `sourceGone` says
+ *  whether the source still holds the credential: false = it does (a rollback
+ *  is safe), true = it does not (the copy is the only one), null = could not
+ *  tell. */
+type RealmClear =
+  | { ok: true; warning?: string }
+  | { ok: false; reason: string; sourceGone: boolean | null }
+
+/** The reason shown when the identity folder is a link (r10: no local path
+ *  in anything that reaches the renderer; the path is logged). */
+const REPARSE_REFUSAL = "the original account's folder is a link, which this app does not follow"
+
+/**
+ * Clear a realm profile's sign-in, then put the canonical identity back with
+ * its tokens stripped (or remove the identity file when there is none).
+ *
+ * ORDER (R3): the Keychain item first; the fallback file and the identity
+ * only after it is gone. A failure before that point has changed nothing.
+ *
+ * With `expected`, the source is RE-READ first and must still hold exactly
+ * the secret that was copied (M3): if Claude Code rotated it between the
+ * capture's read and now, the copy is a spent token and the source holds the
+ * live one, so nothing is deleted and the caller rolls back. A delete that
+ * answers not-found right after that re-read FOUND the item is a race --
+ * something else (a concurrent capture) took it -- and is a failure (R2).
+ */
+async function clearRealmSource(
+  id: string,
+  loc: Extract<ProfileCredentialLocation, { kind: 'keychain' }>,
+  expected?: { secret: string; source: 'keychain' | 'file' },
+): Promise<RealmClear> {
+  const idDir = getAccountIdentityDir(id)
+  let hasCanonical = false
+  let isLink = false
+  try { isLink = fs.lstatSync(idDir).isSymbolicLink() } catch { isLink = false }
+  if (isLink) {
+    logWarn(`[profiles] restore ${id}: refusing -- ${idDir} is a reparse point`)
+    throw new Error(REPARSE_REFUSAL)
+  }
+  try { hasCanonical = fs.existsSync(path.join(idDir, '.claude.json')) } catch { hasCanonical = false }
+  const idFile = profileIdentityFile(getProfileConfigDir(id))
+  if (expected) {
+    const now = await readMacCredential(loc, { fresh: true })
+    // Round 2, item 1: captures of one source are serialised (and so is its
+    // delete), so a source that is GONE here was not taken by another add --
+    // it was signed out (CLI /logout, an external `security` delete). The
+    // copy is then the only holder: carry on to the committed path (the
+    // delete answers not-found), never roll the copy back.
+    if (now.status === 'not-found') {
+      logWarn(`[profiles] restore ${id}: the source sign-in is already gone; the captured copy is the only one and is kept`)
+    } else if (now.status !== 'found' || now.source !== expected.source || now.creds.secret !== expected.secret) {
+      const why = now.status === 'unknown' ? 'it could not be re-read' : 'it changed while it was being copied'
+      logWarn(`[profiles] restore ${id}: the source sign-in was NOT cleared -- ${why}${now.status === 'unknown' ? ` (${now.reason})` : ''}`)
+      return { ok: false, reason: `the original sign-in was not cleared because ${why}`, sourceGone: false }
+    }
+  }
+  const del = await deleteKeychainItem(loc.service)
+  if (typeof del === 'object') {
+    logWarn(`[profiles] restore ${id}: could not clear the Keychain sign-in (${del.unknown}); nothing else was changed`)
+    // r5: whatever the source kind, ask the Keychain whether the item is gone.
+    const after = await readKeychainCreds(loc.service, { fresh: true })
+    let sourceGone: boolean | null = after.status === 'not-found' ? true : after.status === 'found' ? false : null
+    // A file-sourced capture's token is still in the fallback file (untouched).
+    if (expected?.source === 'file') sourceGone = false
+    return { ok: false, reason: `the original account's Keychain sign-in could not be removed (${del.unknown})`, sourceGone }
+  }
+  if (del === 'not-found' && expected?.source === 'keychain') {
+    // Round 2, item 1: not another add (serialised); signed out in between.
+    logWarn(`[profiles] restore ${id}: the Keychain item vanished before the delete (signed out elsewhere); the captured copy is kept`)
+  }
+  // COMMITTED (R1): the item is gone. Nothing from here on is rolled back.
+  const warnings: string[] = []
+  try { fs.rmSync(loc.fallbackFile, { force: true, recursive: true }) } catch (e) { logWarn(`[profiles] restore ${id}: fallback file: ${(e as Error)?.message ?? e}`) }
+  if (fs.existsSync(loc.fallbackFile)) warnings.push("the original account's credential file could not be removed")
+  try {
+    if (hasCanonical) {
+      mkdirSecure(path.dirname(idFile))
+      atomicWriteSecure(idFile, stripIdentityTokens(fs.readFileSync(path.join(idDir, '.claude.json'), 'utf8')), IS_POSIX ? CRED_FILE_MODE : undefined)
+    } else {
+      fs.rmSync(idFile, { force: true })
+    }
+  } catch (e) {
+    logWarn(`[profiles] restore ${id}: the identity could not be restored (${(e as Error)?.message ?? e})`)
+    try { fs.rmSync(idFile, { force: true }) } catch { /* best-effort */ }
+    warnings.push("the original account's name could not be restored (it shows Sign in)")
+  }
+  return warnings.length ? { ok: true, warning: warnings.join('; ') } : { ok: true }
+}
+
+/**
+ * restoreProfileIdentityFromCanonical through the platform seam. win32/linux
+ * and macOS-off: unchanged. macOS realm: credentials FIRST (the Keychain item
+ * deleted; only then the fallback file removed and the canonical identity put
+ * back with its token keys stripped), so the account reads Sign in. False
+ * when the Keychain item could not be deleted -- nothing else is touched then
+ * -- or when there is no canonical identity to restore (nothing touched). The
+ * macOS primary is refused.
+ */
+export async function restoreProfileIdentityFromCanonicalAsync(id: string): Promise<boolean> {
+  if (!isValidProfileId(id)) return false
+  const loc = profileCredentialLocation(id)
+  if (loc.kind === 'file') return restoreProfileIdentityFromCanonical(id)
+  if (loc.primary) {
+    logWarn(`[profiles] restore ${id}: refused -- on macOS this is the normal sign-in`)
+    return false
+  }
+  const idDir = getAccountIdentityDir(id)
+  try {
+    if (fs.lstatSync(idDir).isSymbolicLink()) throw new Error(REPARSE_REFUSAL)
+  } catch (e) {
+    if (e instanceof Error && e.message === REPARSE_REFUSAL) throw e
+    return false
+  }
+  if (!fs.existsSync(path.join(idDir, '.claude.json'))) return false
+  return (await clearRealmSource(id, loc)).ok
+}
+
+/** One capture per SOURCE profile at a time (re-attack R2): two concurrent
+ *  captures of one source would both copy the token and both "clear" it. */
+const captureChains = new Map<string, Promise<unknown>>()
+
+/**
+ * What the capture IPC runs: capture a /login detected in `profileId` into a
+ * new profile, then clear the source so exactly ONE holder of the single-use
+ * refresh token remains.
+ *
+ * win32/linux and macOS with the setting off: captureDetectedAccount then
+ * restoreProfileIdentityFromCanonical, best-effort, exactly as before.
+ *
+ * macOS realm, serialised per source profile:
+ *  - the source's Keychain item could not be deleted, or no longer holds the
+ *    copied secret (M3), or another add took it (R2): the capture is ROLLED
+ *    BACK (the new item deleted, the new profile torn down) and the error
+ *    says exactly what changed -- nothing on the original account (R3);
+ *  - the item was deleted: COMMITTED, whatever fails after (R1); a later
+ *    failure comes back as a warning on the profile, logged;
+ *  - the delete failed but the item is confirmed gone: committed too.
+ *
+ * Returns the new profile, `{ error }` for the renderer, or null when there was
+ * nothing to capture.
+ */
+export async function captureDetectedAccountAndClearSource(profileId: string, name?: string): Promise<AccountProfile | { error: string } | null> {
+  if (!isValidProfileId(profileId)) return null
+  return runSerialisedForProfile(profileId, () => captureAndClearOnce(profileId, name))
+}
+
+/** Run `fn` after every earlier capture or delete of `profileId` settled, and
+ *  before any later one starts (round 2, item 1: the delete IPC goes through
+ *  this too, so a capture never sees its source vanish to a delete of the
+ *  same profile mid-way). */
+export async function runSerialisedForProfile<T>(profileId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = captureChains.get(profileId) ?? Promise.resolve()
+  const run = prev.catch(() => undefined).then(fn)
+  captureChains.set(profileId, run)
+  try {
+    return await run
+  } finally {
+    if (captureChains.get(profileId) === run) captureChains.delete(profileId)
+  }
+}
+
+async function captureAndClearOnce(profileId: string, name?: string): Promise<AccountProfile | { error: string } | null> {
+  const loc = profileCredentialLocation(profileId)
+  if (loc.kind === 'file') {
+    const np = captureDetectedAccount(profileId, name)
+    if (np) { try { restoreProfileIdentityFromCanonical(profileId) } catch { /* best-effort */ } }
+    return np
+  }
+  const cap = await captureOnMacRealm(profileId, name, loc)
+  if (!cap.ok) return cap.error === null ? null : { error: cap.error }
+  let cleared: RealmClear
+  try {
+    cleared = await clearRealmSource(profileId, loc, { secret: cap.secret, source: cap.source })
+  } catch (e) {
+    // Only reachable BEFORE the Keychain delete (clearRealmSource commits and
+    // catches everything after it), so the source is untouched.
+    const msg = (e as Error)?.message ?? String(e)
+    logWarn(`[profiles] capture ${profileId}: the source could not be cleared (${msg})`)
+    cleared = { ok: false, reason: msg === REPARSE_REFUSAL ? REPARSE_REFUSAL : "the original account's files could not be read", sourceGone: false }
+  }
+  if (cleared.ok) {
+    if (cleared.warning) logWarn(`[profiles] capture ${profileId}: added; after the original sign-in was cleared: ${cleared.warning}`)
+    return cap.profile
+  }
+  if (cleared.sourceGone === true) {
+    logWarn(`[profiles] capture ${profileId}: the source was cleared despite "${cleared.reason}"; the new profile holds the only copy and is kept`)
+    return cap.profile
+  }
+  // Roll back: the source still holds (or may hold) the credential, and
+  // nothing on it was changed.
+  let leftover: string | null = null
+  const del = await deleteKeychainItem(cap.newService)
+  if (typeof del === 'object') leftover = del.unknown
+  if (leftover === null) {
+    try { safeTeardownProfile(cap.profile.id) } catch (e) { leftover = 'its folder could not be removed'; logWarn(`[profiles] capture ${profileId}: teardown: ${(e as Error)?.message ?? e}`) }
+  }
+  logWarn(`[profiles] capture ${profileId}: rolled back (${cleared.reason})${leftover ? `; the rollback was incomplete: ${leftover}` : ''}`)
+  const original = cleared.sourceGone === null
+    ? " The original account's sign-in could not be confirmed; if it shows Sign in, sign it in again."
+    : ' The original account is unchanged.'
+  if (leftover !== null) {
+    return { error: `The account could not be added: ${cleared.reason}. A partly-added account is left in Settings > Accounts (${leftover}); remove it there.${original}` }
+  }
+  return { error: `The account could not be added: ${cleared.reason}. No account was added.${original} Try again.` }
 }
 
 /**
@@ -2255,6 +2643,38 @@ export interface ManagedLaunchContext {
    *  to 2.0.x must not be reported as the installed CLI's 2.1.280 "at or above
    *  the verified version". Absent = the launch runs the installed CLI. */
   pinnedCli?: { version: string; installed: boolean }
+  /** True ONLY for the macOS realm verdict probe itself (mac-realm-guard): the
+   *  `claude auth status` run that produces the verdict every other realm
+   *  launch requires, so it cannot require one. Not `probe`: headless runs and
+   *  the Accounts panel's status probe carry `probe: true` and must not be
+   *  exempt. */
+  realmVerdictProbe?: boolean
+}
+
+/**
+ * Decision aicc_planning#172 item 4 (2026-10-07): a NON-primary macOS realm
+ * launch is refused unless `claude auth status`, run under that realm's own
+ * environment by the installed CLI (or the pinned one the launch runs),
+ * reported the realm folder as its configDirectory -- evidence that the CLI
+ * keeps that account's sign-in separate. The verdict is produced
+ * asynchronously by mac-realm-guard (ensureMacRealmVerdict, awaited by every
+ * launch path before it gets here) and read here SYNCHRONOUSLY from the
+ * cache, so a caller that forgot to ask fails closed. win32/linux, the
+ * primary, the setting off: null (nothing to check).
+ */
+function macRealmVerdictRefusal(home: string, context?: ManagedLaunchContext): string | null {
+  if (process.platform !== 'darwin') return null
+  if (context?.realmVerdictProbe === true) return null
+  const dir = macProfileConfigDir(home)
+  if (!dir) return null
+  let pinned: string | null = null
+  if (context?.pinnedCli) {
+    const notInstalled = 'a pinned Claude Code version that is not installed cannot be checked for a separate sign-in per account folder; install it or turn the pin off for this account'
+    if (!context.pinnedCli.installed) return notInstalled
+    pinned = pinnedCliPathFor(context.pinnedCli.version)
+    if (!pinned) return notInstalled
+  }
+  return hasMacRealmVerdict(dir, pinned) ? null : macRealmRefusalReason(dir)
 }
 
 /**
@@ -2310,11 +2730,278 @@ export interface ManagedLaunchContext {
  *
  * macOS returns null deliberately: HOME is not redirected there either (the
  * keychain reason withProfileHome documents), multi-account is disabled in the
- * UI, and a half-redirected realm is worse than an honest single one.
+ * UI, and a half-redirected realm is worse than an honest single one. The ONE
+ * exception is the experimental macOS realm (macProfileConfigDir): a profile
+ * on it gets its store under the same stable config directory string.
  */
 export function profileRealmConfigRoot(home: string): string | null {
-  if (process.platform === 'darwin') return null
+  if (process.platform === 'darwin') {
+    const dir = macProfileConfigDir(home)
+    return dir ? path.join(dir, 'anthropic') : null
+  }
   return path.join(home, '.claude', 'anthropic')
+}
+
+/**
+ * EXPERIMENTAL macOS realm (src/shared/mac-multi-account.ts): the config
+ * directory a NON-primary profile runs Claude under on macOS, or null.
+ *
+ * Claude Code documents CLAUDE_CONFIG_DIR as moving its config directory AND
+ * keying its macOS Keychain entry to that directory, so two directories are two
+ * sign-ins -- while HOME stays the real home and the login keychain is still
+ * found (#117). The Keychain entry is keyed by a hash of the directory STRING
+ * as given (no tilde expansion, no symlink resolution), so the value must be
+ * byte-identical on every launch of one profile: absolute (path.resolve), NFC,
+ * no trailing separator, built from the profile home only. A different string
+ * for the same folder is a different, empty Keychain entry -- i.e. a signed-out
+ * account, never another account's sign-in.
+ *
+ * Null (today's behaviour, unchanged) when: not macOS; the setting is off or
+ * the settings cannot be read; or the home is the PRIMARY profile's, which is
+ * the user's normal sign-in and keeps running on the real `~/.claude` exactly
+ * as it does without the setting. Fails toward ISOLATION when the primary
+ * cannot be determined: a launch that should have been primary then needs a
+ * sign-in, which is visible; the opposite failure would run another profile on
+ * the user's own sign-in, which is not.
+ */
+/** Whether the experimental macOS multi-account setting is on. Injected by the
+ *  composition root (src/main/index.ts, from src/main/mac-multi-account.ts)
+ *  rather than imported, because config-manager -- which reads the setting --
+ *  imports this module. Until it is injected, and whenever it throws, it is
+ *  OFF: a missing wire leaves macOS exactly as D2 has it. */
+let macMultiAccountProbe: () => boolean = () => false
+
+export function setMacMultiAccountProbe(probe: () => boolean): void {
+  macMultiAccountProbe = probe
+}
+
+function macMultiAccountOn(): boolean {
+  try { return macMultiAccountProbe() === true } catch { return false }
+}
+
+/** Where Claude Code keeps a profile's sign-in on macOS with the experimental
+ *  setting on: its own config directory (a non-primary profile), or the user's
+ *  normal sign-in (the primary, which runs on the real ~/.claude with no
+ *  redirect). Null everywhere else -- not macOS, or the setting off -- which
+ *  means "exactly as before". */
+export type MacClaudeStore = { kind: 'realm'; configDir: string } | { kind: 'primary' }
+
+export function macClaudeStore(home: string): MacClaudeStore | null {
+  if (process.platform !== 'darwin') return null
+  if (!macMultiAccountOn()) return null
+  if (typeof home !== 'string' || !home) return null
+  // Only a PROFILE home is ever a realm: a home that resolves to no profile id
+  // (the real home, an unmanaged launch, a test fixture) is not managed here
+  // and keeps today's behaviour (adversarial review pass 3, m8).
+  const id = profileIdFromHome(home)
+  if (!id) return null
+  const all = readProfilesStrict()
+  const primary = all?.find((p) => p && p.isPrimary)?.id
+  if (primary && primary === id) return { kind: 'primary' }
+  return { kind: 'realm', configDir: path.resolve(home, '.claude').normalize('NFC') }
+}
+
+export function macProfileConfigDir(home: string): string | null {
+  const store = macClaudeStore(home)
+  return store?.kind === 'realm' ? store.configDir : null
+}
+
+/** The `.claude.json` (account identity: `oauthAccount`) the CLI reads for a
+ *  profile home: `<home>/.claude.json` as always; on the experimental macOS
+ *  realm `<configDir>/.claude.json` (verified on a Mac, 2026-10-06: the CLI
+ *  writes it inside CLAUDE_CONFIG_DIR); and for the macOS PRIMARY with the
+ *  setting on, the real `~/.claude.json` -- that profile runs with no redirect,
+ *  so the real home's file is the one its CLI reads and a `/login` rewrites. */
+export function profileIdentityFile(home: string): string {
+  const store = macClaudeStore(home)
+  if (store?.kind === 'realm') return path.join(store.configDir, '.claude.json')
+  if (store?.kind === 'primary') return path.join(realHomeDir(), '.claude.json')
+  return path.join(home, '.claude.json')
+}
+
+/** The home whose `.claude` the CLI actually writes for a launch under
+ *  `home`: `home` itself everywhere (its `.claude` is the profile's on win32
+ *  and Linux, and on the macOS realm CLAUDE_CONFIG_DIR is `<home>/.claude`),
+ *  except the macOS PRIMARY with the experimental setting on, which runs with
+ *  no redirect and so writes under the real home. Never throws. */
+export function claudeDataHomeFor(home: string): string {
+  try { return macClaudeStore(home)?.kind === 'primary' ? realHomeDir() : home } catch { return home }
+}
+
+/** Where a profile's OAuth credential lives, for every reader and writer in
+ *  this app (the platform seam). `file` is what win32 and Linux use, and macOS
+ *  with the experimental setting off: `<home>/.claude/.credentials.json`,
+ *  byte-identical to before. `keychain` is macOS with the setting on: the
+ *  Keychain item Claude Code keys by CLAUDE_CONFIG_DIR (a realm profile) or the
+ *  unsuffixed item (the primary = the normal sign-in), with the file Claude
+ *  Code falls back to when the Keychain has nothing. */
+export type ProfileCredentialLocation =
+  | { kind: 'file'; path: string }
+  | { kind: 'keychain'; service: string; fallbackFile: string; primary: boolean }
+
+export function profileCredentialLocation(id: string): ProfileCredentialLocation {
+  const home = getProfileConfigDir(id)
+  const store = macClaudeStore(home)
+  if (store?.kind === 'realm') {
+    return { kind: 'keychain', service: keychainServiceForConfigDir(store.configDir), fallbackFile: path.join(store.configDir, '.credentials.json'), primary: false }
+  }
+  if (store?.kind === 'primary') {
+    return { kind: 'keychain', service: CLAUDE_KEYCHAIN_DEFAULT_SERVICE, fallbackFile: path.join(sharedRoot(), '.credentials.json'), primary: true }
+  }
+  return { kind: 'file', path: path.join(home, '.claude', '.credentials.json') }
+}
+
+/** A macOS credential read: the Keychain item first; the fallback file ONLY
+ *  when the Keychain CONFIRMED the item does not exist (exit 44). A Keychain
+ *  that could not be asked (locked, a dialog, a timeout, denied) is UNKNOWN
+ *  overall, never "use the file": the file may hold a token the Keychain item
+ *  has since rotated past (single-use), and a capture or a refresh acting on
+ *  it would spend or copy a dead token and then delete the live one
+ *  (adversarial review pass 3, M1). `source` says which answered, so a
+ *  write-back goes to the same place. */
+export type MacCredentialRead =
+  | { status: 'found'; source: 'keychain'; creds: ClaudeKeychainCreds }
+  | { status: 'found'; source: 'file'; file: string; creds: ClaudeKeychainCreds }
+  | { status: 'not-found' }
+  | { status: 'unknown'; reason: string }
+
+export async function readMacCredential(loc: Extract<ProfileCredentialLocation, { kind: 'keychain' }>, opts?: { fresh?: boolean; latest?: boolean }): Promise<MacCredentialRead> {
+  const kc = await readKeychainCreds(loc.service, opts)
+  if (kc.status === 'found') return { status: 'found', source: 'keychain', creds: kc.creds }
+  if (kc.status === 'unknown') return { status: 'unknown', reason: kc.reason }
+  const raw = readFallbackFile(loc.fallbackFile)
+  if (raw === null) return { status: 'not-found' }
+  const creds = parseKeychainSecret(raw)
+  if (creds) return { status: 'found', source: 'file', file: loc.fallbackFile, creds }
+  // A file that exists but does not parse is a mid-write, not a sign-out.
+  return { status: 'unknown', reason: 'the credential file did not parse' }
+}
+
+/** The fallback file's text; null ONLY when it does not exist. Anything else
+ *  it cannot read as a small regular file (a FIFO or device -- a read would
+ *  block --, an oversized file, an I/O error) comes back as '' so the caller's
+ *  parse fails and the answer is UNKNOWN, never "signed out". */
+function readFallbackFile(file: string): string | null {
+  let st: fs.Stats
+  try { st = fs.statSync(file) } catch (e) { return (e as NodeJS.ErrnoException)?.code === 'ENOENT' ? null : '' }
+  if (!st.isFile() || st.size > 1024 * 1024) return ''
+  try { return fs.readFileSync(file, 'utf8') } catch { return '' }
+}
+
+/** The stat stamp of a credential file (see readProfileCredentialStamp). */
+function credentialFileStamp(file: string): { stamp: string | null; signedIn: boolean } {
+  let st: fs.Stats
+  try { st = fs.statSync(file) } catch { return { stamp: null, signedIn: false } }
+  let signedIn = false
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { claudeAiOauth?: { accessToken?: unknown; refreshToken?: unknown } }
+    const o = raw?.claudeAiOauth
+    signedIn = !!(o && ((typeof o.accessToken === 'string' && o.accessToken) || (typeof o.refreshToken === 'string' && o.refreshToken)))
+  } catch { signedIn = false }
+  return { stamp: `${Math.round(st.mtimeMs)}:${st.size}`, signedIn }
+}
+
+/** readProfileCredentialStamp through the platform seam: the file stamp as
+ *  always, or on macOS with the setting on a one-way hash of the Keychain
+ *  secret (keychainStamp) -- a /login or a rotation changes it, and no token
+ *  leaves this function. Unreadable is an explicit `unknown: true` (no stamp,
+ *  not signed in): the re-auth poll must neither take it as a baseline nor
+ *  complete on it -- a locked Keychain read as "no stamp" made the first read
+ *  after an unlock look like a fresh sign-in (adversarial review pass 3, m7). */
+export async function readProfileCredentialStampAsync(id: string, opts?: { fresh?: boolean }): Promise<{ stamp: string | null; signedIn: boolean; unknown?: true }> {
+  const loc = profileCredentialLocation(id)
+  if (loc.kind === 'file') return readProfileCredentialStamp(id)
+  // `fresh` (the re-auth BASELINE, re-attack r9): bypasses the 30 s unknown
+  // cache, so an unlock is seen soon -- as a `latest` read, which still shares
+  // the in-flight read and spawns at most once per 10 s (round 2, item 3).
+  const r = await readMacCredential(loc, opts?.fresh ? { latest: true } : undefined)
+  if (r.status === 'unknown') return { stamp: null, signedIn: false, unknown: true }
+  if (r.status !== 'found') return { stamp: null, signedIn: false }
+  return r.source === 'keychain' ? { stamp: keychainStamp(r.creds), signedIn: true } : credentialFileStamp(r.file)
+}
+
+/** Whether a `/login` detected in a session of this profile may be offered
+ *  for capture. False only for the macOS PRIMARY with the setting on: that
+ *  profile IS the user's normal sign-in (no redirect), so its /login replaced
+ *  the real ~/.claude sign-in itself. Moving it into a new profile would sign
+ *  the user's own terminal `claude` out; copying it would leave two holders of
+ *  one single-use refresh token (the Bug 2 hazard). Neither is done. */
+export function profileDetectionCapturable(profileId: string): boolean {
+  if (!isValidProfileId(profileId)) return true
+  return macClaudeStore(getProfileConfigDir(profileId))?.kind !== 'primary'
+}
+
+/** Remove a profile's Keychain item before its folder is torn down. macOS
+ *  only, and WHATEVER the setting says now: a profile that ran on the realm
+ *  while the setting was on keeps a live item after the setting is turned
+ *  off, and the teardown would orphan it (adversarial review pass 3, m2). The
+ *  service is computed from the profile home exactly as the realm launch
+ *  computes it (the realm config directory string), and deleteKeychainItem
+ *  refuses anything but a SUFFIXED service by shape, so the unsuffixed item
+ *  -- the user's normal sign-in -- can never be the target. The known
+ *  primary is skipped (it runs on the normal sign-in, never a suffixed item).
+ *  Nothing to do on win32/linux. `ok: false` when the Keychain could not be
+ *  asked: the caller keeps the profile rather than orphan a live token. */
+export async function removeProfileKeychainItem(id: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (process.platform !== 'darwin' || !isValidProfileId(id)) return { ok: true }
+  const home = getProfileConfigDir(id)
+  if (macClaudeStore(home)?.kind === 'primary') return { ok: true }
+  const primary = readProfilesStrict()?.find((p) => p && p.isPrimary)?.id
+  if (primary && primary === id) return { ok: true }
+  const service = keychainServiceForConfigDir(path.resolve(home, '.claude').normalize('NFC'))
+  const r = await deleteKeychainItem(service)
+  if (typeof r === 'object') {
+    // r8: with the setting OFF the delete is a best-effort sweep for an item
+    // a past ON period may have left; a locked or slow Keychain must not block
+    // deleting an account for a user who may never have turned it on. With it
+    // ON the item is this profile's live sign-in: fail closed.
+    if (!macMultiAccountOn()) {
+      logWarn(`[profiles] delete ${id}: the setting is off and the Keychain did not answer (${r.unknown}); proceeding without confirming its item is gone`)
+      notifyProfileCredentialRemoved(id)
+      return { ok: true }
+    }
+    return { ok: false, reason: r.unknown }
+  }
+  notifyProfileCredentialRemoved(id)
+  return { ok: true }
+}
+
+/** The reason withProfileHome gives when it refuses a non-primary macOS
+ *  launch with the experimental setting off. */
+export const MAC_MULTI_ACCOUNT_OFF_REFUSAL =
+  'multiple Claude accounts on macOS is turned off; turn it on in Settings > Accounts or use your normal sign-in'
+
+/** Why a managed launch under `home` must be refused on macOS, or null.
+ *  Refused: macOS, the setting off, and `home` a profile home that is
+ *  POSITIVELY not the primary (profiles list readable, primary recorded, a
+ *  different id). Not refused when that cannot be told (the list unreadable or
+ *  no primary recorded): base macOS ran every launch on the normal sign-in in
+ *  that state and this change does not make it worse. win32/linux: never. */
+function macNonPrimaryLaunchRefusal(home: string): string | null {
+  if (process.platform !== 'darwin') return null
+  if (macMultiAccountOn()) return null
+  const id = profileIdFromHome(home)
+  if (!id) return null
+  const all = readProfilesStrict()
+  // r7: the primary cannot be told. With the list unreadable, or more than one
+  // profile and none marked primary, any profile home may be a second account
+  // that would run on the normal sign-in: refused (profileRealmLaunch refuses
+  // the same state). With 0-1 profiles there is no second account: allowed.
+  if (!all) return MAC_MULTI_ACCOUNT_OFF_REFUSAL_UNKNOWN
+  const primary = all.find((p) => p && p.isPrimary)?.id
+  if (!primary) return all.length > 1 ? MAC_MULTI_ACCOUNT_OFF_REFUSAL_UNKNOWN : null
+  if (primary === id) return null
+  return MAC_MULTI_ACCOUNT_OFF_REFUSAL
+}
+
+/** The refusal when the primary cannot be determined (r7). */
+export const MAC_MULTI_ACCOUNT_OFF_REFUSAL_UNKNOWN =
+  `${MAC_MULTI_ACCOUNT_OFF_REFUSAL} (this app could not tell which Claude account is your normal sign-in on this Mac)`
+
+/** True when this profile runs on the experimental macOS realm. */
+export function profileOnMacRealm(id: string): boolean {
+  if (process.platform !== 'darwin' || !isValidProfileId(id)) return false
+  return macProfileConfigDir(getProfileConfigDir(id)) !== null
 }
 
 /**
@@ -2338,7 +3025,7 @@ export function profileRealmConfigRoot(home: string): string | null {
  * Code reads this variable, so D3 fidelity is untouched.
  */
 export function profileSecureStorageRoot(home: string): string | null {
-  if (process.platform === 'darwin') return null
+  if (process.platform === 'darwin') return macProfileConfigDir(home)
   return path.join(home, '.claude')
 }
 
@@ -2370,6 +3057,22 @@ function profileHomeLaunchBase(env: Record<string, string>, home: string): Recor
 /** A profile home's realm selector, applied last through the Claude package's
  *  own policy (see withProfileHome for why each variable is here). */
 function profileRealmSet(home: string): Record<string, string> {
+  if (process.platform === 'darwin') {
+    // The experimental macOS realm: one stable directory string selects the
+    // config directory, the Keychain entry (both through CLAUDE_CONFIG_DIR, and
+    // the credential store again through CLAUDE_SECURESTORAGE_CONFIG_DIR, which
+    // newer CLIs consult first) and the Anthropic profile store. HOME is NOT
+    // here: it stays the real home so the login keychain is found (#117).
+    // Setting off, or the primary profile: exactly the set this had before.
+    const macSet: Record<string, string> = { USERPROFILE: home }
+    const dir = macProfileConfigDir(home)
+    if (dir) {
+      macSet.CLAUDE_CONFIG_DIR = dir
+      macSet.CLAUDE_SECURESTORAGE_CONFIG_DIR = dir
+      macSet.ANTHROPIC_CONFIG_DIR = path.join(dir, 'anthropic')
+    }
+    return macSet
+  }
   const realmSet: Record<string, string> =
     process.platform === 'linux' ? { USERPROFILE: home, HOME: home } : { USERPROFILE: home }
   const realmConfigRoot = profileRealmConfigRoot(home)
@@ -2405,6 +3108,10 @@ export interface ProfileRealmLaunch {
  *  offered on it, and nothing already chosen is cleared because of it. */
 export function profileReviewRefusal(profileId: string, platform: NodeJS.Platform = process.platform): string | null {
   if (platform !== 'darwin') return null
+  // Experimental macOS realm: every profile has a sign-in of its own (the
+  // primary on the real home, the rest on their own config directory), so
+  // none is refused. profileRealmLaunch decides which of the two each gets.
+  if (macMultiAccountOn()) return null
   const all = readProfilesStrict()
   if (all === null) throw new Error('the profile list could not be read')
   const primary = all.find((p) => p && p.isPrimary)?.id
@@ -2440,7 +3147,10 @@ export function profileRealmLaunch(
   if (!isValidProfileId(profileId)) throw new Error('invalid profile id')
   const env: Record<string, string> = {}
   for (const k of Object.keys(source)) { const v = source[k]; if (typeof v === 'string') env[k] = v }
-  if (process.platform === 'darwin') {
+  // The experimental macOS realm sends a non-primary profile down the realm
+  // path below (its own config directory); with the setting off, and for the
+  // primary either way, macOS keeps the single-sign-in path.
+  if (process.platform === 'darwin' && !profileOnMacRealm(profileId)) {
     // A launch must fail with a reason either way, so "could not tell" is a
     // refusal here (it matters only to offering and clearing).
     let refused: string | null
@@ -2453,6 +3163,10 @@ export function profileRealmLaunch(
     const realHome = os.homedir()
     return { home: realHome, baseEnv: env, realmEnv: { set: {} }, sessionsDir: path.join(realHome, '.claude', 'projects') }
   }
+  // Decision #172 item 4: the reviewer's realm launch needs a verdict too
+  // (review-launch awaits ensureLaunchVerdict before calling this).
+  const realmRefusal = macRealmVerdictRefusal(getProfileConfigDir(profileId))
+  if (realmRefusal) return { refused: realmRefusal }
   setupProfileLinks(profileId)
   const home = getProfileConfigDir(profileId)
   const baseEnv = profileHomeLaunchBase(env, home)
@@ -2471,7 +3185,7 @@ export function profileRealmLaunch(
 export function recordProfileReviewPreflight(profileId: string, env: Readonly<Record<string, string>>): void {
   try {
     if (!isValidProfileId(profileId)) return
-    const home = process.platform === 'darwin' ? os.homedir() : getProfileConfigDir(profileId)
+    const home = process.platform === 'darwin' && !profileOnMacRealm(profileId) ? os.homedir() : getProfileConfigDir(profileId)
     recordManagedLaunchPreflight('review', profileId, home, env, null, 'probe')
   } catch { /* diagnostic only */ }
 }
@@ -2482,6 +3196,18 @@ export function withProfileHome(
   context?: ManagedLaunchContext,
 ): Record<string, string> {
   if (!home) return env
+  // macOS, experimental multi-account OFF (or its setting unreadable, which
+  // reads as off): a NON-primary profile has no sign-in of its own -- HOME
+  // stays real (#117) and no CLAUDE_CONFIG_DIR is set -- so it would run on the
+  // PRIMARY's Keychain sign-in while labelled as itself, and a /login in it
+  // would overwrite the normal sign-in. Refused, before anything else
+  // (adversarial review pass 3, M4). Only states this feature can create are
+  // affected: base macOS never offered a second profile.
+  const macRefusal = macNonPrimaryLaunchRefusal(home)
+  if (macRefusal) throw new Error(`${MANAGED_LAUNCH_REFUSAL}: ${macRefusal}`)
+  // Decision #172 item 4: a macOS realm launch needs a positive verdict.
+  const realmRefusal = macRealmVerdictRefusal(home, context)
+  if (realmRefusal) throw new Error(`${MANAGED_LAUNCH_REFUSAL}: ${realmRefusal}`)
   const next = profileHomeLaunchBase({ ...env, USERPROFILE: home }, home)
   // macOS locates the login keychain via $HOME (~/Library/Keychains/login.keychain-db).
   // Pointing HOME at the fake profile home — which mirrors only dot-entries, never
@@ -2491,6 +3217,8 @@ export function withProfileHome(
   // isolation buys nothing there; leaving HOME at the real home restores keychain access
   // and resolves the single global account correctly. Linux keychains (Secret Service /
   // D-Bus) are not HOME-path-based, so keep the redirect there for multi-account isolation.
+  // The experimental macOS multi-account realm does NOT change this: it isolates through
+  // CLAUDE_CONFIG_DIR (profileRealmSet / macProfileConfigDir) and HOME stays real.
   if (process.platform === 'linux') next.HOME = home
 
   // One call does the ambient removal, the realm patch and the host control,

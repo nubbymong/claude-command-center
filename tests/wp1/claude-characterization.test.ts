@@ -314,12 +314,13 @@ describe('C6: settleOnboardingFinish / settleWhatsNewOnly stamped shapes', () =>
 // ---------------------------------------------------------------------------
 describe('C5: accountProfiles handlers sequencing on the base', () => {
   const order: string[] = []
-  const state = { inUse: [] as boolean[], clearThrows: false, teardownThrows: false }
+  const serialised: string[] = []
+  const state = { inUse: [] as boolean[], clearThrows: false, teardownThrows: false, kc: { ok: true } as { ok: true } | { ok: false; reason: string } }
   let store: Array<Record<string, unknown>> = []
   const invoke = (ch: string, ...args: any[]) => ipcHandlers.get(ch)!({} as any, ...args)
 
   beforeEach(async () => {
-    order.length = 0; state.inUse = []; state.clearThrows = false; state.teardownThrows = false
+    order.length = 0; state.inUse = []; state.clearThrows = false; state.teardownThrows = false; state.kc = { ok: true }
     store = [{ id: 'primary', name: '', createdAt: 0, isPrimary: true }, { id: 'work', name: 'Work', createdAt: 0 }]
     vi.doMock('../../src/main/account-profiles', () => ({
       listProfiles: () => store.map((p) => ({ ...p })),
@@ -328,13 +329,16 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
       safeTeardownProfile: (id: string) => { order.push(`teardown:${id}`); if (state.teardownThrows) throw new Error('file locked') },
       readProfileAccountEmail: vi.fn(), getProfileConfigDir: vi.fn(), createProfile: vi.fn(), captureDetectedAccount: vi.fn(),
       backupProfileHomeToCanonical: vi.fn(), restoreProfileIdentityFromCanonical: vi.fn(), readProfileCredentialStamp: vi.fn(),
+      // The platform-seam variants (macOS Keychain); a no-op off macOS.
+      readProfileCredentialStampAsync: vi.fn(), captureDetectedAccountAsync: vi.fn(), restoreProfileIdentityFromCanonicalAsync: vi.fn(), captureDetectedAccountAndClearSource: vi.fn(),
+      removeProfileKeychainItem: async (id: string) => { order.push(`keychain:${id}`); return state.kc }, runSerialisedForProfile: (id: string, fn: () => Promise<unknown>) => { serialised.push(id); return fn() },
     }))
     vi.doMock('../../src/main/claude-account-identity', () => ({
       getAccountIdentity: vi.fn(), getDefaultAccountEmail: vi.fn(), getWatchedProfileId: vi.fn(), detectedNewAccountEmail: vi.fn(),
       isProfileInUseByLiveSession: () => { const v = state.inUse.shift() ?? false; order.push(`inUse:${v}`); return v },
     }))
     vi.doMock('../../src/main/usage/account-usage', () => ({ fetchAllAccountsUsage: vi.fn(), fetchAllAccountsUsageStreaming: vi.fn(), fetchAccountUsage: vi.fn() }))
-    vi.doMock('../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: () => [] }))
+    vi.doMock('../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: () => [], readAllProfileAuthInfoAsync: async () => [] }))
     vi.doMock('../../src/main/account-web/sign-in', () => ({ clearWebSession: async (id: string) => { order.push(`clear:${id}`); if (state.clearThrows) throw new Error('partition busy') } }))
     vi.doMock('../../src/main/account-web/session-store', () => ({ removeWebSession: (id: string) => { order.push(`removeWeb:${id}`) } }))
     vi.doMock('../../src/main/account-web/artifacts', () => ({ closeArtifacts: (id: string) => { order.push(`closeArtifacts:${id}`) } }))
@@ -366,10 +370,40 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
   })
 
   it('delete clears web state first, re-checks in-use after the await, and only then tears down', async () => {
-    state.inUse = [false, false]
+    state.inUse = [false, false, false]
     const r = await invoke(IPC.ACCOUNT_PROFILES_DELETE, { id: 'work' })
     expect(r).toEqual({ ok: true })
-    expect(order).toEqual(['inUse:false', 'closeArtifacts:work', 'closePanes:work', 'clear:work', 'inUse:false', 'removeWeb:work', 'teardown:work'])
+    expect(order).toEqual(['inUse:false', 'closeArtifacts:work', 'closePanes:work', 'clear:work', 'inUse:false', 'removeWeb:work', 'keychain:work', 'inUse:false', 'teardown:work'])
+  })
+
+  // Adversarial review pass 3, m1: the Keychain delete is awaited (up to the
+  // security timeout); a session that starts in that window stops the teardown.
+  it('m1: a session that started during the Keychain delete stops the teardown, and the error says the sign-in was already cleared', async () => {
+    state.inUse = [false, false, true]
+    const r = await invoke(IPC.ACCOUNT_PROFILES_DELETE, { id: 'work' })
+    expect(r.ok).toBe(false)
+    expect(String(r.error)).toMatch(/in use by an open session/)
+    expect(String(r.error)).toMatch(/Keychain sign-in were already cleared/)
+    expect(order).toEqual(['inUse:false', 'closeArtifacts:work', 'closePanes:work', 'clear:work', 'inUse:false', 'removeWeb:work', 'keychain:work', 'inUse:true'])
+  })
+
+  // Re-attack round 2, item 1: a delete runs in the profile's capture chain.
+  it('item1: delete runs through the per-profile chain shared with detected-account capture', async () => {
+    serialised.length = 0
+    state.inUse = [false, false, false]
+    const r = await invoke(IPC.ACCOUNT_PROFILES_DELETE, { id: 'work' })
+    expect(r).toEqual({ ok: true })
+    expect(serialised).toEqual(['work'])
+  })
+
+  // m12: the Keychain could not be asked -- the account is kept (fail closed).
+  it('m12: removeProfileKeychainItem -> ok:false refuses the delete with the reason; no teardown', async () => {
+    state.inUse = [false, false]; state.kc = { ok: false, reason: 'the Keychain did not answer in time' }
+    const r = await invoke(IPC.ACCOUNT_PROFILES_DELETE, { id: 'work' })
+    expect(r.ok).toBe(false)
+    expect(String(r.error)).toMatch(/Keychain sign-in could not be removed, so the account was not removed: the Keychain did not answer in time/)
+    expect(order).not.toContain('teardown:work')
+    expect(order[order.length - 1]).toBe('keychain:work')
   })
 
   it('a session that started during the clear stops the delete: web record dropped, no teardown', async () => {

@@ -131,7 +131,12 @@ export const claudeCapabilities: ProviderCapabilities = {
   'auth.apiKey': { state: 'unsupported', note: 'managed accounts use the CLI sign-in; an API key is never collected' },
   'auth.status': { state: 'unknown', note: 'wired in the Claude adapter slice' },
   'auth.logout': { state: 'unknown', note: 'wired in the Claude adapter slice' },
-  'realm.isolated': { state: 'unknown', platformOverrides: { darwin: 'unsupported' }, note: 'profile homes; not on macOS in WP1 (D2); wired in the Claude adapter slice' },
+  // macOS stays `unsupported` even with the experimental setting on: the key
+  // could only move to `experimental` (or `supported`) once this package
+  // exposes the `realms` operation that backs it, and registration refuses
+  // that claim without one. Nothing reads this key to gate a feature; the
+  // macOS opt-in is gated by src/shared/mac-multi-account.ts.
+  'realm.isolated': { state: 'unknown', platformOverrides: { darwin: 'unsupported' }, note: 'profile homes; not on macOS in WP1 (D2) unless the experimental macOS multi-account setting is on; wired in the Claude adapter slice' },
   'account.labelFields': { state: 'unknown', note: 'email read from the profile identity file; wired in the Claude adapter slice' },
   'account.usage': { state: 'unknown', note: 'the per-account usage fetch lives in src/main/usage, not on this package; wired in a later slice' },
   'session.launch': { state: 'supported' },
@@ -183,9 +188,22 @@ export function claudeAmbientAuthVariables(): readonly string[] {
  *    (core.pager, core.sshCommand, alias.*, filter.*), so owning them would be
  *    the PATH hijack one indirection later.
  *  All three stay in the launch path, where withProfileHome already composes
- *  them. Registration refuses them (NEVER_OWNED_LAUNCH_VARIABLES). */
+ *  them. Registration refuses them (NEVER_OWNED_LAUNCH_VARIABLES).
+ *
+ *  CLAUDE_CONFIG_DIR is owned for ONE realm only: the experimental macOS
+ *  multi-account realm (src/shared/mac-multi-account.ts), where HOME cannot be
+ *  redirected (#117) and CLAUDE_CONFIG_DIR is what Claude Code documents as
+ *  keying its config directory and macOS Keychain entry. It keeps the shape of
+ *  ANTHROPIC_CONFIG_DIR and CLAUDE_SECURESTORAGE_CONFIG_DIR: ruled `strip` in
+ *  the authority manifest, so an inherited value is removed on EVERY platform
+ *  and every launch, and re-set by the patch only where this app has a value --
+ *  which is a non-primary profile on macOS with the setting on, and nowhere
+ *  else (account-profiles.ts, profileRealmSet). Owner decision D1 says
+ *  CLAUDE_CONFIG_DIR "is not an implementation mechanism"; this macOS-only,
+ *  opt-in use needs an owner decision superseding D1/D2 before it ships. */
 export const claudeOwnedLaunchVariables: readonly string[] = [
   'USERPROFILE', 'HOME', 'ANTHROPIC_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+  'CLAUDE_CONFIG_DIR',
 ]
 
 /** Created by the composition root; importing this entry point has no side

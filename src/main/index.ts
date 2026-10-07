@@ -53,6 +53,10 @@ import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
 import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, getProfilesRoot, getProfileConfigDir, isValidProfileId } from './account-profiles'
+import { setMacMultiAccountProbe } from './account-profiles'
+import { isMacMultiAccountEnabled } from './mac-multi-account'
+import { installMacRealmGuard } from './mac-realm-guard'
+import { setMacRealmStatuslineProbe, claudeStatuslineNeedsMacRealmRedeploy } from './statusline-watcher'
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
@@ -507,6 +511,14 @@ if (!gotTheLock) {
       app.exit(1)
       return
     }
+    // Experimental macOS multi-account (src/shared/mac-multi-account.ts):
+    // account-profiles asks this on every managed launch; it reads the saved
+    // settings and is off without reading anything on Windows and Linux.
+    // Injected, not imported there: config-manager imports account-profiles.
+    setMacMultiAccountProbe(() => isMacMultiAccountEnabled())
+    setMacRealmStatuslineProbe(() => isMacMultiAccountEnabled())
+    // Decision aicc_planning#172 item 4: the macOS realm launch guard.
+    installMacRealmGuard()
 
     // WP2: the provider account registry. Best-effort and after providers are
     // composed: a registry problem leaves it in recovery mode and never blocks
@@ -687,6 +699,11 @@ if (!gotTheLock) {
         // switch, onboarding, Settings): the accounts snapshot says so now, and
         // a provider the save turned on is looked for.
         try { getAccountsService()?.settingsChanged() } catch (err) { logError('[main] accounts settings change failed:', err) }
+        // Experimental macOS multi-account turned ON mid-run: the deployed
+        // statusline bridge predates it and lacks the realm snippet.
+        try {
+          if (claudeStatuslineNeedsMacRealmRedeploy()) void getProvider('claude').deployStatuslineScript?.(getResourcesDirectory())?.catch((err: unknown) => logError('[main] statusline redeploy failed:', err))
+        } catch (err) { logError('[main] statusline redeploy failed:', err) }
       },
     })
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->

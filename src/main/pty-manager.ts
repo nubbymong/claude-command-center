@@ -68,6 +68,7 @@ import { forgetSessionForCanvas } from './canvas/canvas-session-link'
 import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
+import { ensureMacRealmVerdict, pinnedCliPathFor } from './mac-realm-verdict'
 export { withProfileHome } from './account-profiles'
 import { gateManagedLaunchDirs, recordManagedLaunchPreflight, displayPath } from './managed-launch-diagnostics'
 import { stripSpoofableText } from '../shared/safe-text'
@@ -4365,7 +4366,15 @@ function spawnPtyResolved(
       const pending = (managedPickerLaunch(options) ? pickerCandidateDirs(resolvedCwd) : Promise.resolve<string[]>([]))
         .then(async (candidates) => {
           const dirs = [...new Set([...gateDirs, ...candidates])]
-          return { verdict: await gateManagedLaunchDirs(dirs), dirs }
+          const verdict = await gateManagedLaunchDirs(dirs)
+          // Decision aicc_planning#172 item 4: on the macOS realm, the check
+          // that the CLI this session runs (the pinned one, when a pin is
+          // installed) keeps this account's sign-in separate. Its outcome is
+          // cached; withProfileHome refuses the launch below without a
+          // positive one, and that refusal prints like any other.
+          const realmPin = !options?.shellOnly && options?.legacyVersion?.enabled ? legacyCliPin(options.legacyVersion) : undefined
+          if (resolvedProfileId) await ensureMacRealmVerdict(getProfileConfigDir(resolvedProfileId), realmPin?.installed ? pinnedCliPathFor(realmPin.version) : null)
+          return { verdict, dirs }
         })
       deferSpawnUntil(win, sessionId, resolvedProfileId, inheritedTeardown, pending,
         `checking the project settings in ${gateDirs.map(describePathForLog).join(' and ')}${managedPickerLaunch(options) ? ' and every worktree the resume picker may open' : ''} before the managed launch`,

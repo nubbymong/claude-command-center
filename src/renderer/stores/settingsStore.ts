@@ -229,6 +229,11 @@ export interface AppSettings {
   /** Claude Code on/off, saved (main reads it as the Claude package's
    *  enablement key). Absent = on: Claude-only users change nothing. */
   claudeEnabled?: boolean
+  /** EXPERIMENTAL, macOS only (src/shared/mac-multi-account.ts): more than one
+   *  Claude account, each non-primary profile on its own CLAUDE_CONFIG_DIR.
+   *  Main reads the same saved key at every launch. Absent/false = off (D2,
+   *  one Claude account on macOS); ignored on Windows and Linux. */
+  experimentalMacMultiAccount?: boolean
   localMachineName: string
   /** Usage buckets the user has HIDDEN from the status line, by label (e.g.
    *  "Fable"). Denylist model so the set stays dynamic: a new bucket shows by

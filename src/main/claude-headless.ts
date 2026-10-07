@@ -7,6 +7,7 @@ import { gateManagedLaunch, peekGateVerdict } from './managed-launch-diagnostics
 import type { ProjectGateResult } from '../shared/providers'
 import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
 import { profileIdFromHome } from './profile-id'
+import { ensureMacRealmVerdict, macRealmVerdictPending } from './mac-realm-verdict'
 
 /** Grace added to a run's kill timeout for its consumer ref's leak bound: the
  *  spawner kills at `timeoutMs` and settles right after, so a ref that outlives
@@ -129,8 +130,11 @@ export function spawnClaudeHeadless(
   const release = profileId ? acquireProfileConsumer(profileId, { maxAgeMs: timeoutMs + HEADLESS_CONSUMER_GRACE_MS }) : null
   const pending = profileId ? pendingProfileRefresh(profileId) : null
   const cachedGate = profileId ? peekGateVerdict(cwd) : null
-  const p = pending || (profileId && cachedGate === undefined)
-    ? Promise.resolve(pending).then(() => cachedGate ?? gateManagedLaunch(cwd)).then((gate) => spawnNow(args, timeoutMs, stdinData, home, signal, cwd, gate))
+  // Decision aicc_planning#172 item 4: a macOS realm run with no verdict yet
+  // defers behind the check (withProfileHome refuses it otherwise).
+  const realmPending = macRealmVerdictPending(home)
+  const p = pending || (profileId && cachedGate === undefined) || realmPending
+    ? (realmPending ? Promise.resolve(pending).then(() => ensureMacRealmVerdict(home)) : Promise.resolve(pending)).then(() => cachedGate ?? gateManagedLaunch(cwd)).then((gate) => spawnNow(args, timeoutMs, stdinData, home, signal, cwd, gate))
     : spawnNow(args, timeoutMs, stdinData, home, signal, cwd, cachedGate ?? null)
   if (release) p.then(release, release)
   return p

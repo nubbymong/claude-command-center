@@ -7,6 +7,8 @@ import type { ProviderId } from '../../../../shared/providers'
 import { useProviderAccountsStore, reviewerLine, reviewerNotice, providerView, type StatusTone } from '../../../stores/providerAccountsStore'
 import { DialogCallout, DialogOverlay, DialogPanel } from '../../ui/Dialog'
 import { useFocusTrap } from '../../../hooks/useFocusTrap'
+import { useSettingsStore } from '../../../stores/settingsStore'
+import { claudeMultiAccountBlocked } from '../../../../shared/mac-multi-account'
 
 export type PillTone = 'default' | 'reviewer' | 'warn' | 'beta' | 'muted'
 
@@ -86,11 +88,15 @@ export function RowButton({ children, onClick, disabled, testId, title }: { chil
  */
 export function ReviewerLineBlock({ providerId }: { providerId: ProviderId }) {
   const snapshot = useProviderAccountsStore((s) => s.snapshot)
+  // macOS keeps Claude reviews on the normal sign-in only while it keeps Claude
+  // to one account (the experimental multi-account setting off). Read before
+  // the early return: a hook must run on every render.
+  const settings = useSettingsStore((s) => s.settings)
   const line = reviewerLine(snapshot, providerId)
   if (!line || providerView(snapshot, providerId)?.enabled === false) return null
   const platform = typeof window !== 'undefined' ? window.electronPlatform : ''
   const notice = reviewerNotice(snapshot, providerId, platform)
-  const macClaude = providerId === 'claude' && platform === 'darwin' && !!providerView(snapshot, 'claude')?.review
+  const macClaude = providerId === 'claude' && claudeMultiAccountBlocked(platform, settings) && !!providerView(snapshot, 'claude')?.review
   return (
     <div className="text-[12.5px] leading-snug space-y-1" data-testid={`reviewer-line-${providerId}`}>
       {line.kind === 'no-account' ? (

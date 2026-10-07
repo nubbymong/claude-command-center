@@ -131,11 +131,11 @@ export interface ElectronAPI {
     delete: (id: string) => Promise<{ ok: boolean; error?: string }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     /** Credential generation (stat stamp + signed-in), never token contents. */
-    credentialStamp: (id: string) => Promise<{ ok: boolean; stamp: string | null; signedIn: boolean }>
+    credentialStamp: (id: string, opts?: { fresh?: boolean }) => Promise<{ ok: boolean; stamp: string | null; signedIn: boolean; unknown?: boolean }>
     /** Per-profile credential state: forced-login countdown + identity cross-check. */
     authInfo: () => Promise<import('../shared/account-auth').ProfileAuthInfo[]>
     globalEmail: () => Promise<string | null>
-    captureDetected: (sessionId: string, name?: string) => Promise<import('../shared/account-types').AccountProfile | null>
+    captureDetected: (sessionId: string, name?: string) => Promise<import('../shared/account-types').AccountProfile | { error: string } | null>
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
     /** Managed-launch preflight reports, newest first. Names the variables and
      *  settings keys the isolation hardening removed, and never a credential
@@ -903,7 +903,7 @@ const electronAPI: ElectronAPI = {
     setActive: (id, active) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_SET_ACTIVE, { id, active }),
     delete: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_DELETE, { id }),
     refreshIdentity: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, { id }),
-    credentialStamp: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CREDENTIAL_STAMP, { id }),
+    credentialStamp: (id, opts) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CREDENTIAL_STAMP, { id, fresh: opts?.fresh === true }),
     authInfo: () => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_AUTH_INFO),
     globalEmail: () => ipcRenderer.invoke(IPC.ACCOUNT_GLOBAL_EMAIL_GET),
     captureDetected: (sessionId: string, name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, { sessionId, name }),

@@ -46,6 +46,9 @@ import type { StatuslineData } from '../shared/types'
 // Backwards-compatible re-exports of the lifted Claude-specific helpers.
 // New callers should use getProvider('claude').deployStatuslineScript?.(...).
 export { deployClaudeStatuslineScript as deployStatuslineScript, healGlobalStatusline } from './providers/claude/statusline'
+// Experimental macOS multi-account: the local bridge's realm snippet is
+// deployed only while the setting is on (statusline.ts, MAC_REALM_GATHER_JS).
+export { setMacRealmStatuslineProbe, claudeStatuslineNeedsMacRealmRedeploy } from './providers/claude/statusline'
 
 // Lazy-initialized: can't call getResourcesDirectory() at module load time
 let STATUS_DIR: string | null = null

@@ -38,7 +38,7 @@ import { provider, snapshot } from './accounts-snapshot-harness'
     refreshIdentity: vi.fn(async () => null),
     managedLaunchReports: vi.fn(async () => []),
   },
-  config: { save: vi.fn(async () => undefined) },
+  config: { save: vi.fn(async () => true) },
   // Rendered per account; not under test here.
   accountWeb: {
     status: vi.fn().mockResolvedValue({ ok: false, error: 'not under test' }),
@@ -134,6 +134,115 @@ describe('the Claude card\'s notes are readable', () => {
     } finally {
       ;(globalThis as any).window.electronPlatform = 'win32'
     }
+  })
+})
+
+describe('the experimental macOS multi-account setting', () => {
+  afterEach(() => { ;(globalThis as any).window.electronPlatform = 'win32' })
+
+  it('macOS, setting off: the D2 note, no add button, and the toggle off', async () => {
+    ;(globalThis as any).window.electronPlatform = 'darwin'
+    useAccountProfilesStore.setState({ profiles: [primary] })
+    await render()
+    expect(byTest('accounts-mac-note')).not.toBeNull()
+    expect(byTest('add-account-btn')).toBeNull()
+    const sw = byTest('mac-multi-account-toggle')!.querySelector('[role="switch"]')!
+    expect(sw.getAttribute('aria-checked')).toBe('false')
+    expect(byTest('mac-multi-account-toggle')!.textContent).toMatch(/Experimental/)
+    // Honest about what was checked: the CLI mechanism by hand on a Mac; not
+    // this app on a Mac, and not the version floor.
+    const copy = byTest('mac-multi-account-toggle')!.textContent!
+    expect(copy).toMatch(/Checked by hand with the Claude Code CLI on a Mac/)
+    expect(copy).toMatch(/Not yet tested inside this app on a Mac/)
+    expect(copy).toMatch(/not confirmed/)
+  })
+
+  it('macOS, setting on: the Claude reviewer copy no longer says only the normal sign-in can review', async () => {
+    ;(globalThis as any).window.electronPlatform = 'darwin'
+    const { reviewerNotice } = await import('../../../src/renderer/stores/providerAccountsStore')
+    const snap = { reviewerNotices: [{ providerId: 'claude', message: 'cleared' }] } as any
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, isLoaded: true })
+    expect(reviewerNotice(snap, 'claude', 'darwin')).toMatch(/only the normal Claude sign-in/)
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, experimentalMacMultiAccount: true }, isLoaded: true })
+    expect(reviewerNotice(snap, 'claude', 'darwin')).not.toMatch(/only the normal Claude sign-in/)
+    expect(reviewerNotice(snap, 'claude', 'win32')).toBe(reviewerNotice(snap, 'claude', 'darwin'))
+  })
+
+  it('macOS, setting on: the add button replaces the note', async () => {
+    ;(globalThis as any).window.electronPlatform = 'darwin'
+    useAccountProfilesStore.setState({ profiles: [primary] })
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, experimentalMacMultiAccount: true }, isLoaded: true })
+    await render()
+    expect(byTest('accounts-mac-note')).toBeNull()
+    expect(byTest('add-account-btn')!.textContent!.trim()).toBe('Add another account')
+    expect(byTest('mac-multi-account-toggle')!.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('flipping the toggle saves the one key main reads', async () => {
+    ;(globalThis as any).window.electronPlatform = 'darwin'
+    await render()
+    const sw = byTest('mac-multi-account-toggle')!.querySelector('[role="switch"]') as HTMLButtonElement
+    await act(async () => { sw.click() })
+    expect(useSettingsStore.getState().settings.experimentalMacMultiAccount).toBe(true)
+    expect(byTest('accounts-mac-note')).toBeNull()
+  })
+
+  // Adversarial review pass 3, M4: main reads the SAVED file. A toggle whose
+  // save failed must not look on (renderer ON / main OFF would offer accounts
+  // main then refuses to launch).
+  it('M4: a toggle whose save FAILED is put back, and says so', async () => {
+    ;(globalThis as any).window.electronPlatform = 'darwin'
+    const realUpdate = useSettingsStore.getState().updateSettings
+    useSettingsStore.setState({
+      updateSettings: async (u: Record<string, unknown>) => {
+        useSettingsStore.setState((s) => ({ settings: { ...s.settings, ...u } }))
+        return false
+      },
+    } as never)
+    try {
+      await render()
+      const sw = byTest('mac-multi-account-toggle')!.querySelector('[role="switch"]') as HTMLButtonElement
+      await act(async () => { sw.click(); for (let i = 0; i < 6; i++) await Promise.resolve() })
+      expect(useSettingsStore.getState().settings.experimentalMacMultiAccount).not.toBe(true)
+      expect(byTest('mac-multi-account-toggle')!.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('false')
+      expect(byTest('mac-multi-account-save-error')!.textContent).toMatch(/could not be saved/)
+      expect(byTest('accounts-mac-note')).not.toBeNull()
+    } finally {
+      useSettingsStore.setState({ updateSettings: realUpdate } as never)
+    }
+  })
+
+  // Re-attack R4: the failed payload (toggle ON) was kept for the BottomBar
+  // Retry, which later wrote it -- main ON while the UI showed OFF.
+  it('R4: after a failed toggle save, Retry writes the REVERTED setting, never the failed one', async () => {
+    ;(globalThis as any).window.electronPlatform = 'darwin'
+    const { retryFailedConfigSaves } = await import('../../../src/renderer/utils/config-saver')
+    const save = (globalThis as any).window.electronAPI.config.save as ReturnType<typeof vi.fn>
+    save.mockReset()
+    save.mockResolvedValue(false)
+    try {
+      await render()
+      const sw = byTest('mac-multi-account-toggle')!.querySelector('[role="switch"]') as HTMLButtonElement
+      await act(async () => { sw.click(); for (let i = 0; i < 10; i++) await Promise.resolve() })
+      expect(useSettingsStore.getState().settings.experimentalMacMultiAccount).not.toBe(true)
+      save.mockReset()
+      save.mockResolvedValue(true)
+      await act(async () => { await retryFailedConfigSaves() })
+      const settingsWrites = save.mock.calls.filter((c: unknown[]) => c[0] === 'settings')
+      expect(settingsWrites.length).toBeGreaterThan(0)
+      for (const c of settingsWrites) expect((c[1] as Record<string, unknown>).experimentalMacMultiAccount).not.toBe(true)
+    } finally {
+      save.mockReset()
+      save.mockResolvedValue(true)
+    }
+  })
+
+  it('Windows: no toggle, and the setting changes nothing', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, experimentalMacMultiAccount: true }, isLoaded: true })
+    await render()
+    expect(byTest('mac-multi-account-toggle')).toBeNull()
+    expect(byTest('accounts-mac-note')).toBeNull()
+    expect(byTest('add-account-btn')).not.toBeNull()
   })
 })
 

@@ -61,12 +61,16 @@ vi.mock('../../../src/main/account-profiles', () => ({
   safeTeardownProfile: h.safeTeardownProfile, readProfileAccountEmail: vi.fn(), getProfileConfigDir: vi.fn(),
   createProfile: vi.fn(), captureDetectedAccount: vi.fn(), backupProfileHomeToCanonical: vi.fn(),
   restoreProfileHomeFromCanonical: vi.fn(), readProfileCredentialStamp: h.readProfileCredentialStamp,
+  // The platform-seam variants the handlers call; off macOS they are the sync reads.
+  readProfileCredentialStampAsync: async (id: string) => h.readProfileCredentialStamp(id),
+  captureDetectedAccountAsync: vi.fn(), restoreProfileIdentityFromCanonicalAsync: vi.fn(), captureDetectedAccountAndClearSource: vi.fn(),
+  removeProfileKeychainItem: async () => ({ ok: true }), runSerialisedForProfile: (_id: string, fn: () => Promise<unknown>) => fn(),
 }))
 vi.mock('../../../src/main/claude-account-identity', () => ({
   getAccountIdentity: vi.fn(), getDefaultAccountEmail: vi.fn(),
   getWatchedProfileId: vi.fn(), isProfileInUseByLiveSession: (id: string) => h.inUse(id),
 }))
-vi.mock('../../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: () => h.readAllProfileAuthInfo() }))
+vi.mock('../../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: () => h.readAllProfileAuthInfo(), readAllProfileAuthInfoAsync: async () => h.readAllProfileAuthInfo() }))
 vi.mock('../../../src/main/debug-logger', () => ({ logError: vi.fn(), logInfo: vi.fn() }))
 vi.mock('../../../src/main/account-web/sign-in', () => ({ clearWebSession: (id: string) => h.clearWebSession(id) }))
 vi.mock('../../../src/main/account-web/session-store', () => ({ removeWebSession: h.removeWebSession }))
@@ -266,19 +270,21 @@ describe('accountProfiles:authInfo handler, Claude Code off (D5)', () => {
 describe('accountProfiles:credentialStamp handler', () => {
   const stamp = (arg: unknown) => handlers.get(IPC.ACCOUNT_PROFILES_CREDENTIAL_STAMP)!({}, arg)
 
-  it('REGRESSION: an invalid id is refused before the credential file is touched', () => {
+  // The handler is async (the macOS Keychain read is a subprocess); invoke
+  // awaits it either way.
+  it('REGRESSION: an invalid id is refused before the credential file is touched', async () => {
     const hostile: unknown[] = [
       '..', '../x', 'a/../..', '..\\..\\.claude', 'C:\\Users\\nicho', '/etc/passwd', '', '.', 'P1',
       'x'.repeat(129), 'p1\0', { toString: () => 'p1' }, ['p1'], 42, null, undefined,
     ]
-    for (const id of hostile) expect(stamp({ id }), JSON.stringify(id)).toEqual({ ok: false, stamp: null, signedIn: false })
-    expect(stamp(undefined)).toEqual({ ok: false, stamp: null, signedIn: false })
-    expect(stamp({})).toEqual({ ok: false, stamp: null, signedIn: false })
+    for (const id of hostile) expect(await stamp({ id }), JSON.stringify(id)).toEqual({ ok: false, stamp: null, signedIn: false })
+    expect(await stamp(undefined)).toEqual({ ok: false, stamp: null, signedIn: false })
+    expect(await stamp({})).toEqual({ ok: false, stamp: null, signedIn: false })
     expect(h.readProfileCredentialStamp).not.toHaveBeenCalled()
   })
 
-  it('a valid id reads the stamp and returns exactly { ok, stamp, signedIn }', () => {
-    expect(stamp({ id: 'profile-a1b2' })).toEqual({ ok: true, stamp: '1:2', signedIn: true })
+  it('a valid id reads the stamp and returns exactly { ok, stamp, signedIn }', async () => {
+    expect(await stamp({ id: 'profile-a1b2' })).toEqual({ ok: true, stamp: '1:2', signedIn: true })
     expect(h.readProfileCredentialStamp).toHaveBeenCalledWith('profile-a1b2')
   })
 })
