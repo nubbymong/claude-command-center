@@ -1,8 +1,9 @@
 // README staging: the anonymisation scan behind shoot.js's "scan" step. Plain
 // CommonJS with no dependencies, so it can be tested on its own.
 //
-// The repo holds only generic patterns: a user-folder path on a drive, a
-// /home path, an IPv4 address, a host on a private-looking suffix, and any
+// The repo holds only generic patterns: a user-folder path on a drive (either
+// slash), a /home or macOS /Users path, an IPv4 address (not a version
+// number), a host on a private-looking suffix, and any
 // e-mail address outside the fictional example.dev / example.io / example.co
 // the staging uses (content.js). Names that are private to the operator
 // (people, companies, machines) are never written here: they come from a
@@ -15,9 +16,13 @@ const fs = require('fs')
 const path = require('path')
 
 const GENERIC = [
-  { name: 'user-folder path', re: /\b[A-Za-z]:\\Users\\[^\s"'<>|]+/g },
+  { name: 'user-folder path', re: /\b[A-Za-z]:[\\/]Users[\\/][^\s"'<>|]+/g },
   { name: 'home path', re: /\/home\/[^\s"'<>|]+/g },
-  { name: 'IPv4 address', re: /\b(?:\d{1,3}\.){3}\d{1,3}\b/g },
+  // A path's own root only: not src/Users/..., a web path, or C:/Users (above).
+  { name: 'macOS user folder', re: /(?<![\w.:-])\/Users\/[^\s"'<>|]+/g },
+  // Four octets of 0-255, not one run of a longer dotted number, and not a
+  // version (v2.1.1.4, "version 2.1.1.4").
+  { name: 'IPv4 address', re: /(?<![\w.])(?<!\b[Vv]ersion[\s:=]*)(?:(?:25[0-5]|2[0-4]\d|[01]?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d?\d)(?!\.?\w)/g },
   { name: 'private host', re: /\b[a-z0-9-]+\.(?:internal|local|lan|corp)\b/gi },
   { name: 'e-mail outside the example domains', re: /[A-Za-z0-9._%+-]+@(?!example\.(?:dev|io|co)\b)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g },
 ]
@@ -30,8 +35,11 @@ function loadDenyList(env = process.env, repoDir = null) {
   if (!env.CCC_SHOTS_DENYLIST) throw new Error('CCC_SHOTS_DENYLIST is not set: a capture that scans needs it to name the deny list, a file outside the repo with one private term per line')
   const file = path.resolve(env.CCC_SHOTS_DENYLIST)
   if (repoDir) {
+    // Inside = the checkout itself or below it. A name that merely starts with
+    // two dots (<repo>/..foo) is inside; only '..' as a whole step leaves it.
     const rel = path.relative(path.resolve(repoDir), file)
-    if (!rel.startsWith('..') && !path.isAbsolute(rel)) throw new Error(`the deny list ${file} is inside the checkout ${repoDir}: keep it outside the repo`)
+    const inside = !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + path.sep)
+    if (inside) throw new Error(`the deny list ${file} is inside the checkout ${repoDir}: keep it outside the repo`)
   }
   let text
   try { text = fs.readFileSync(file, 'utf8') } catch {
