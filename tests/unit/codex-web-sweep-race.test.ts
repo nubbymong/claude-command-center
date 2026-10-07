@@ -18,7 +18,8 @@
 //  - the bars are up when the call returns, before anything else runs, and
 //    each account's bar lifts as soon as its own wipe ends;
 //  - a pane already open on a chosen account closes as it is barred, so no
-//    sign-in in it is recorded under the bar.
+//    sign-in in it is recorded under the bar, while one open on an account
+//    it did not choose stays open, and that account is never barred.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const S = vi.hoisted(() => {
@@ -215,6 +216,28 @@ describe('[host] a sign-in that completes while the start sweep runs is never wi
     expect(STORE.codexWebViewFor(B)).toMatchObject({ accountId: B, status: 'active' })
     expect(S.views[0].webContents.destroyed).toBe(false)
     expect(PANE.getAccountPaneState('sess-b')).toMatchObject({ accountId: B, authed: true })
+    PANE.closeAccountPane('sess-b')
+  })
+
+  it('an account it did not choose is left alone: a pane already open on it stays open, and it is never barred', async () => {
+    S.folders.add(PART_A)
+    // B is signed in through its pane before the sweep: it has a record, so the sweep does not choose it.
+    expect(await S.handlers[IPC.CODEX_WEB_PANE_OPEN](TRUSTED, { sessionId: 'sess-b', accountId: B, bounds: BOUNDS })).toEqual({ ok: true })
+    S.jars[PART_B] = [TOKEN]
+    for (const fn of S.listeners[PART_B] ?? []) fn(null, { name: TOKEN.name })
+    await vi.waitFor(() => expect(STORE.getCodexWebSession(B)).toMatchObject({ accountId: B, origin: 'in-pane' }))
+    const releaseA = hold(PART_A)
+    const sweep = startSweep()
+    expect(CWS.isCodexWebClearing(A)).toBe(true)
+    expect(CWS.isCodexWebClearing(B)).toBe(false)
+    expect(S.views[0].webContents.destroyed).toBe(false)
+    expect(PANE.getAccountPaneState('sess-b')).toMatchObject({ accountId: B, authed: true })
+    releaseA()
+    expect(await sweep).toEqual([A])
+    expect(CWS.isCodexWebClearing(B)).toBe(false)
+    expect(S.views[0].webContents.destroyed).toBe(false)
+    expect(S.jars[PART_B]).toEqual([TOKEN])
+    expect(STORE.codexWebViewFor(B)).toMatchObject({ accountId: B, status: 'active' })
     PANE.closeAccountPane('sess-b')
   })
 })

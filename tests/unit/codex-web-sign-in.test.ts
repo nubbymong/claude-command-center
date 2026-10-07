@@ -236,7 +236,9 @@ describe('[host] the completion predicate (pure)', () => {
 
   it('the named session cookie is the signal, its expiry the session lifetime (seconds to ms)', () => {
     expect(webServiceSessionFromCookies(CODEX_WEB_SERVICE, SIGNED_IN_JAR)).toEqual({ hasSessionCookie: true, expiresAt: 1_900_000_000_000 })
-    expect(webServiceSessionFromCookies(CODEX_WEB_SERVICE, [{ name: SESSION_TOKEN, session: true }])).toEqual({ hasSessionCookie: true, expiresAt: null })
+    // A session cookie (Electron marks it `session: true`) has no expirationDate, so no expiry.
+    const sessionCookie = { name: SESSION_TOKEN, session: true }
+    expect(webServiceSessionFromCookies(CODEX_WEB_SERVICE, [sessionCookie])).toEqual({ hasSessionCookie: true, expiresAt: null })
     // A large token is split into numbered chunks.
     expect(webServiceSessionFromCookies(CODEX_WEB_SERVICE, [{ name: `${SESSION_TOKEN}.0` }]).hasSessionCookie).toBe(true)
   })
@@ -871,7 +873,7 @@ describe('[host] clearing a Codex web session', () => {
   it('cancels a run first, wipes storage then cache, then forgets the record and panes', async () => {
     jars[PART] = SIGNED_OUT_JAR
     const order: string[] = []
-    onCodexWebSessionCleared((id) => order.push(`cleared ${id}`))
+    onCodexWebSessionCleared((id) => { order.push(`cleared ${id}`) })
     const run = runCodexWebSignIn({ accountId: ACCT, timeoutMs: 400, pollMs: 5 })
     await tick(5)
     await clearCodexWebSession(ACCT)

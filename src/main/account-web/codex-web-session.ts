@@ -256,7 +256,7 @@ async function wipeAfterIncompleteRun(accountId: string, partition: string): Pro
  *   - Each wipe holds the clearing bar and closes the account's panes first, is
  *     bounded, and never throws; the account of a sign-in in flight is skipped.
  *   - The accounts to wipe are chosen, and each one barred, before the first
- *     wait: nothing runs between the record read and the bars, and from then
+ *     wait: no wait comes between the record read and the bars, and from then
  *     on a sign-in or a pane on a chosen account is refused until its own wipe
  *     ends, as during any clear. A pane already open on a chosen account is
  *     closed as it is barred (and again before its wipe), so no sign-in can
