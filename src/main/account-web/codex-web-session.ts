@@ -255,6 +255,12 @@ async function wipeAfterIncompleteRun(accountId: string, partition: string): Pro
  *     folder check that throws skips it.
  *   - Each wipe holds the clearing bar and closes the account's panes first, is
  *     bounded, and never throws; the account of a sign-in in flight is skipped.
+ *   - The accounts to wipe are chosen, and each one barred, before the first
+ *     wait: nothing runs between the record read and the bars, and from then
+ *     on a sign-in or a pane on a chosen account is refused until its own wipe
+ *     ends, as during any clear. An account not chosen is never touched, so a
+ *     sign-in that completes on it while the sweep runs (in the sign-in
+ *     window or in the pane) keeps its session and its record.
  * Returns the accounts wiped.
  */
 export async function sweepUnrecordedCodexWebSessions(
@@ -266,7 +272,8 @@ export async function sweepUnrecordedCodexWebSessions(
     logInfo(`[codex-web] start sweep skipped: the chatgpt.com record store did not read cleanly (${records.why}${records.file ? `: ${records.file}` : ''})`)
     return []
   }
-  const wiped: string[] = []
+  // Chosen and barred with no wait in between (see above).
+  const chosen: Array<{ accountId: string; unbar: () => void }> = []
   for (const accountId of accountIds) {
     if (!isWebSessionAccountId(accountId)) continue
     if (records.accounts.has(accountId)) continue
@@ -274,7 +281,10 @@ export async function sweepUnrecordedCodexWebSessions(
     let exists = false
     try { exists = partitionExists(accountId) === true } catch { exists = false }
     if (!exists) continue
-    const unbar = barWhileClearing(accountId)
+    chosen.push({ accountId, unbar: barWhileClearing(accountId) })
+  }
+  const wiped: string[] = []
+  for (const { accountId, unbar } of chosen) {
     try {
       notifyClosing(accountId)
       await wipeCodexPartition(webPartitionForCodexAccount(accountId), accountId)
