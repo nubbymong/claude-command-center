@@ -68,17 +68,41 @@ const archiving = new Set<string>()
  *  bar up until the last one ends. */
 const clearing = new Map<string, number>()
 
-/** Bar the account for one wipe; the returned release lifts this wipe's share. */
-function barWhileClearing(accountId: string): () => void {
+/** One wipe's share of an account's clearing bar: calling it releases the
+ *  share, and `holdUntil` names the storage clear the wipe started. */
+type ClearingShare = (() => void) & { holdUntil(cleared: Promise<unknown>): void }
+
+/** Bar the account for one wipe; the returned release lifts this wipe's
+ *  share once, but never before a storage clear it holds has itself ended
+ *  (resolved or rejected). A bounded wait that gives up does not end the
+ *  clear, so the account stays barred until the clear itself ends; one that
+ *  never ends keeps it barred for the rest of the run. */
+function barWhileClearing(accountId: string): ClearingShare {
   clearing.set(accountId, (clearing.get(accountId) ?? 0) + 1)
   let done = false
-  return () => {
+  let released = false
+  let pending = false
+  const lift = (): void => {
     if (done) return
     done = true
     const n = (clearing.get(accountId) ?? 1) - 1
     if (n > 0) clearing.set(accountId, n)
     else clearing.delete(accountId)
   }
+  const release = (): void => {
+    released = true
+    if (!pending) lift()
+  }
+  return Object.assign(release, {
+    holdUntil(cleared: Promise<unknown>): void {
+      pending = true
+      const settled = (): void => {
+        pending = false
+        if (released) lift()
+      }
+      void cleared.then(settled, settled)
+    },
+  })
 }
 /** Told BEFORE a wipe: close everything that holds the session (the panes). */
 const closingHandlers = new Set<(accountId: string) => void>()
@@ -205,11 +229,15 @@ export async function runCodexWebSignIn(opts: { accountId: string; timeoutMs?: n
  * local and session storage, IndexedDB and the rest), then its HTTP cache,
  * then its code caches, each bounded. The stored data holds the session, so a
  * failure there throws and the caller keeps the record (fail closed); a cache
- * that cannot be cleared is logged, the session being gone already.
+ * that cannot be cleared is logged, the session being gone already. The
+ * account's bar (`unbar`) is held until the storage clear itself ends, even
+ * when its bounded wait gives up first.
  */
-async function wipeCodexPartition(partition: string, accountId: string): Promise<void> {
+async function wipeCodexPartition(partition: string, accountId: string, unbar: ClearingShare): Promise<void> {
   const store = electronSession.fromPartition(partition)
-  await bounded(Promise.resolve(store.clearStorageData()), 'clearStorageData')
+  const cleared = Promise.resolve(store.clearStorageData())
+  unbar.holdUntil(cleared)
+  await bounded(cleared, 'clearStorageData')
   try {
     await bounded(Promise.resolve(store.clearCache()), 'clearCache')
   } catch (err) {
@@ -230,7 +258,7 @@ async function wipeAfterIncompleteRun(accountId: string, partition: string): Pro
   try {
     notifyClosing(accountId)
     try {
-      await wipeCodexPartition(partition, accountId)
+      await wipeCodexPartition(partition, accountId, unbar)
     } catch (err) {
       logError(`[codex-web] could not clear an incomplete sign-in for ${accountId}: ${(err as Error)?.message ?? err}`)
       return
@@ -253,8 +281,9 @@ async function wipeAfterIncompleteRun(accountId: string, partition: string): Pro
  *   - Only an account whose own partition folder already exists is touched, so
  *     no partition is made at start for a never-used or archived account; a
  *     folder check that throws skips it.
- *   - Each wipe holds the clearing bar and closes the account's panes first, is
- *     bounded, and never throws; the account of a sign-in in flight is skipped.
+ *   - Each wipe holds the clearing bar (until its storage clear actually ends)
+ *     and closes the account's panes first, is bounded, and never throws; the
+ *     account of a sign-in in flight is skipped.
  *   - The accounts to wipe are chosen, and each one barred, before the first
  *     wait: no wait comes between the record read and the bars, and from then
  *     on a sign-in or a pane on a chosen account is refused until its own wipe
@@ -276,7 +305,7 @@ export async function sweepUnrecordedCodexWebSessions(
   }
   // Chosen and barred with no wait in between (see above), and any pane
   // already open on a chosen account closed at once.
-  const chosen: Array<{ accountId: string; unbar: () => void }> = []
+  const chosen: Array<{ accountId: string; unbar: ClearingShare }> = []
   for (const accountId of accountIds) {
     if (!isWebSessionAccountId(accountId)) continue
     if (records.accounts.has(accountId)) continue
@@ -291,7 +320,7 @@ export async function sweepUnrecordedCodexWebSessions(
   for (const { accountId, unbar } of chosen) {
     try {
       notifyClosing(accountId)
-      await wipeCodexPartition(webPartitionForCodexAccount(accountId), accountId)
+      await wipeCodexPartition(webPartitionForCodexAccount(accountId), accountId, unbar)
       wiped.push(accountId)
     } catch (err) {
       logError(`[codex-web] could not clear an unrecorded chatgpt.com session for ${accountId} at start: ${(err as Error)?.message ?? err}`)
@@ -355,7 +384,7 @@ export async function clearCodexWebSession(accountId: string): Promise<void> {
     // THEN CLOSE what holds the session: a pane left open could write a
     // response's cookies back after the wipe.
     notifyClosing(accountId)
-    await wipeCodexPartition(partition, accountId)
+    await wipeCodexPartition(partition, accountId, unbar)
     if (!notifyCleared(accountId)) throw new Error('The chatgpt.com sign-in was cleared, but its record could not be removed. Try again.')
     logInfo(`[codex-web] cleared the chatgpt.com web session for ${accountId}`)
   } finally {

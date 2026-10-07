@@ -171,6 +171,13 @@ function hold(partition: string): () => void {
   return release
 }
 
+/** Hold a partition's storage clear open; the returned function makes it fail. */
+function holdToFail(partition: string): () => void {
+  let fail!: () => void
+  S.gates[partition] = new Promise<void>((_, reject) => { fail = () => reject(new Error('storage clear failed')) })
+  return fail
+}
+
 /** The start sweep as the wiring runs it: the store read once, and a
  *  partition's folder checked as Electron's session data folder holds it. */
 function startSweep(): Promise<string[]> {
@@ -329,5 +336,125 @@ describe('[host] the start sweep is in place in the same tick as its call', () =
     expect(S.signInRuns).toEqual([])
     releaseA()
     expect(await sweep).toEqual([A, B])
+  })
+})
+
+describe('[host] an account stays barred until its storage clear actually ends', () => {
+  // The wait for a storage clear is bounded, but the clear itself goes on
+  // when that wait gives up; with fake timers, running the pending timers
+  // ends the wait.
+  const timers = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+  it('a clear still running when its wait gives up keeps the account barred: a sign-in is refused until the clear ends, then runs and is kept', async () => {
+    S.folders.add(PART_A)
+    const releaseA = hold(PART_A)
+    timers()
+    try {
+      const sweep = startSweep()
+      await vi.runOnlyPendingTimersAsync()
+      // The sweep moves on (A not wiped, logged), but A's clear is still running.
+      expect(await sweep).toEqual([])
+      expect(CWS.isCodexWebClearing(A)).toBe(true)
+      expect(await S.handlers[IPC.CODEX_WEB_SIGN_IN](TRUSTED, A)).toEqual({ ok: false, error: BEING_CLEARED })
+      expect(S.signInRuns).toEqual([])
+      releaseA()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(CWS.isCodexWebClearing(A)).toBe(false)
+      expect(S.storageClears).toEqual([PART_A])
+      // A sign-in after the clear has ended keeps its session and its record.
+      expect(await S.handlers[IPC.CODEX_WEB_SIGN_IN](TRUSTED, A)).toMatchObject({ ok: true, state: { phase: 'done' } })
+      expect(S.jars[PART_A]).toEqual([TOKEN])
+      expect(STORE.codexWebViewFor(A)).toMatchObject({ accountId: A, status: 'active' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a clear still running when its wait gives up, which then fails, lifts the bar when it fails', async () => {
+    S.folders.add(PART_A)
+    const failA = holdToFail(PART_A)
+    timers()
+    try {
+      const sweep = startSweep()
+      await vi.runOnlyPendingTimersAsync()
+      expect(await sweep).toEqual([])
+      expect(CWS.isCodexWebClearing(A)).toBe(true)
+      failA()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(CWS.isCodexWebClearing(A)).toBe(false)
+      expect(await S.handlers[IPC.CODEX_WEB_SIGN_IN](TRUSTED, A)).toMatchObject({ ok: true, state: { phase: 'done' } })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('overlapping clears: each lifts only its own share, once, so the account stays barred until the last clear actually ends', async () => {
+    const releaseFirst = hold(PART_A)
+    timers()
+    try {
+      // A sign-out whose wait gives up: it fails, but its clear goes on.
+      const first = CWS.clearCodexWebSession(A).then(() => 'cleared', (err: Error) => err.message)
+      await vi.runOnlyPendingTimersAsync()
+      expect(await first).toMatch(/timed out/)
+      expect(CWS.isCodexWebClearing(A)).toBe(true)
+      // A second sign-out, on its own clear, that ends normally.
+      const releaseSecond = hold(PART_A)
+      const second = CWS.clearCodexWebSession(A)
+      releaseSecond()
+      await second
+      // The first clear is still running: still barred.
+      expect(CWS.isCodexWebClearing(A)).toBe(true)
+      expect(await S.handlers[IPC.CODEX_WEB_SIGN_IN](TRUSTED, A)).toEqual({ ok: false, error: BEING_CLEARED })
+      releaseFirst()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(CWS.isCodexWebClearing(A)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /** A signed-in account whose cache clear is held open once its storage
+   *  clear has ended; the returned function lets the cache clear end. */
+  function signedInWithCacheHeld(): () => void {
+    expect(STORE.saveCodexWebSession({ accountId: A, accountEmail: 'b@example.com', acquiredAt: Date.now(), expiresAt: null, origin: 'in-app' })).toBe(true)
+    S.jars[PART_A] = [TOKEN]
+    const ses = S.session(PART_A) as { clearCache: () => unknown }
+    let releaseCache!: () => void
+    ses.clearCache = () => new Promise<void>((r) => { releaseCache = r })
+    return () => releaseCache()
+  }
+
+  it('the bar stays up after the storage clear ends until the whole wipe is done: a sign-in is refused while the cache clear and the record removal are still to come', async () => {
+    const releaseCache = signedInWithCacheHeld()
+    const clear = CWS.clearCodexWebSession(A)
+    await flush()
+    expect(S.storageClears).toEqual([PART_A])
+    expect(CWS.isCodexWebClearing(A)).toBe(true)
+    expect(await S.handlers[IPC.CODEX_WEB_SIGN_IN](TRUSTED, A)).toEqual({ ok: false, error: BEING_CLEARED })
+    releaseCache()
+    await clear
+    expect(CWS.isCodexWebClearing(A)).toBe(false)
+    expect(STORE.getCodexWebSession(A)).toBeUndefined()
+    expect(await S.handlers[IPC.CODEX_WEB_SIGN_IN](TRUSTED, A)).toMatchObject({ ok: true, state: { phase: 'done' } })
+    expect(STORE.codexWebViewFor(A)).toMatchObject({ accountId: A, status: 'active' })
+  })
+
+  it('a sign-in tried between the storage clear and the end of the wipe is refused: at the end there is no session and no record, so the two agree', async () => {
+    const releaseCache = signedInWithCacheHeld()
+    const clear = CWS.clearCodexWebSession(A)
+    await flush()
+    const signIn = (await S.handlers[IPC.CODEX_WEB_SIGN_IN](TRUSTED, A)) as { ok: boolean }
+    releaseCache()
+    await clear
+    const live = (S.jars[PART_A] ?? []).some((c) => c.name === TOKEN.name)
+    const recorded = STORE.getCodexWebSession(A) !== undefined
+    expect({ signInRan: signIn.ok, live, recorded }).toEqual({ signInRan: false, live: false, recorded: false })
+  })
+
+  it('the record is forgotten while the account is still barred', async () => {
+    const barred: boolean[] = []
+    CWS.onCodexWebSessionCleared((id) => { barred.push(CWS.isCodexWebClearing(id)) })
+    await CWS.clearCodexWebSession(A)
+    expect(barred).toEqual([true])
   })
 })
