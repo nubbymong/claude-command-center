@@ -52,7 +52,7 @@
     "react-dom": "^19.2.0",
     "ws": "^8.21.3",
     "zod": "^4.5.4",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.7",
