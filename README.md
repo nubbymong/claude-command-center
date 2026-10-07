@@ -22,7 +22,7 @@ Claude Code is a remarkable CLI. But the moment you have more than one project, 
 ## Sessions, accounts, and a sidebar that knows what is going on
 
 <p align="center">
-  <img src="docs/screenshots/shot-sessions.png" alt="The session sidebar — live sessions across three accounts" width="88%">
+  <img src="docs/screenshots/shot-sessions.png" alt="The session sidebar — live sessions across three Claude accounts and a Codex account" width="88%">
 </p>
 
 Every workspace starts as a **saved config**: a label, a colour, a working directory, a starting model and effort, its own permission preset and any extra CLI arguments, and any agent templates you want pre-loaded. Configs live in **sections and groups** you arrange yourself, and the sidebar has two modes — **Saved** for launching and **Running** for tending what is live — with a **Quick Start** row for the configs you pin. A config runs one session at a time unless you tick **Allow Multi Spawn**, which trades the play button for a copy count and lets you start several at once; **Select** on either tab turns the rows into tick boxes and launches a whole set in one press. Each session card carries the whole picture on one line: status, the model and effort actually in use (read live from Claude, never guessed) and whether **Fast Mode** is on, context consumed, the account it is signed in as, and its type — Claude Code, Codex or a plain terminal, over SSH or not.
