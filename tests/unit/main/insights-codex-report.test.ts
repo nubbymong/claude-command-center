@@ -502,6 +502,24 @@ describe('reading the sessions folder', () => {
     }
   })
 
+  it("one of the report's own earlier runs whose first record ends after its first chunk spends its full size: a session behind it that fits only the whole limit is not read [host]", async () => {
+    const now = Date.parse('2026-10-05T12:00:00Z')
+    const runs = join(root, 'insights', CODEX_INSIGHTS_RUNS_DIRNAME)
+    const at = '2026-10-04T10:00:00.000Z'
+    // Its session_meta is one line of about 300 KB, so it ends in the file's
+    // second 256 KB chunk.
+    const meta = JSON.stringify({ timestamp: at, type: 'session_meta', payload: { id: 'p', cwd: join(runs, `${CODEX_INSIGHTS_RUN_PREFIX}prev`), instructions: 'x'.repeat(300_000) } })
+    expect(meta.length).toBeGreaterThan(256 * 1024)
+    const own = put('2026/10/04/rollout-own.jsonl', [meta, JSON.stringify({ timestamp: at, type: 'event_msg', payload: { type: 'task_started' } })], new Date(at))
+    const user = put('2026/10/03/rollout-user.jsonl', rollout({ at: '2026-10-03T10:00:00.000Z' }), new Date('2026-10-03T10:00:00Z'))
+    // The own run fits the limit; the session behind it fits only the whole limit.
+    const limit = statSync(own).size + 10
+    expect(statSync(user).size).toBeGreaterThan(10)
+    const r = await readCodexSessions(join(root, 'sessions'), { runsParent: runs, now, maxTotalBytes: limit })
+    expect(r).toMatchObject({ filesFound: 2, filesTooLarge: 0, filesNotRead: 1 })
+    expect(r.sessions).toEqual([])
+  })
+
   it('a line longer than the line limit is skipped and counted, and every record after it is still read (review F1) [host]', async () => {
     const lines = rollout({ tools: [SHELL('ls')] })
     // A huge tool output in the middle, then a second turn after it.
