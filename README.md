@@ -75,7 +75,7 @@ A dashboard over Claude's auto-memory across every project. A KPI strip — memo
 ## Insights — what actually happened, across every account
 
 <p align="center">
-  <img src="docs/screenshots/shot-insights.png" alt="Insights — a cross-account report" width="88%">
+  <img src="docs/screenshots/shot-insights.png" alt="Insights — one account's Claude Code report" width="88%">
 </p>
 
 On-demand reports over your own usage, Claude Code's and Codex's, runnable across **all of your accounts at once** rather than one at a time. A Claude Code account's report is Claude Code's own `/insights`; for a Codex account the app counts that account's sessions itself and asks Codex, read-only and with no tools, to write the cards. Where Tokenomics answers what things cost, Insights answers what you did with them.
