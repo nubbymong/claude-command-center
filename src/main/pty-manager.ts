@@ -69,7 +69,7 @@ import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
 import { ensureMacRealmVerdict, pinnedCliPathFor, macRealmLaunchBinary } from './mac-realm-verdict'
-import { realmShellClaudePrefix, realmShellCannotPin } from './mac-realm-shell'
+import { realmShellPinLines, realmShellCannotPin, shellOnlyOpeningLines } from './mac-realm-shell'
 export { withProfileHome } from './account-profiles'
 import { gateManagedLaunchDirs, recordManagedLaunchPreflight, displayPath } from './managed-launch-diagnostics'
 import { stripSpoofableText } from '../shared/safe-text'
@@ -4498,7 +4498,7 @@ function spawnPtyResolved(
       if (realmShellCannotPin(realmLaunchBin, spawnCmd, spawnArgs)) logWarn(`[pty] ${sessionId}: macOS realm shell ${spawnCmd}: cannot pin claude to the verified binary; a hand-typed claude uses this shell's PATH`)
       const cdCmd = isWin
         ? `Set-Location -LiteralPath ${quoteArgForShell(resolvedCwd, true)}`
-        : `${realmShellClaudePrefix(realmLaunchBin, spawnCmd, spawnArgs)}cd ${quoteArgForShell(resolvedCwd, false)} 2>/dev/null; clear`
+        : `cd ${quoteArgForShell(resolvedCwd, false)} 2>/dev/null; clear`
 
       // Terminal-only first-run command. `{secret}` becomes a REFERENCE to the
       // CCC_ARG_SECRET env var (set from the keychain in buildClaudeLocalSpawn),
@@ -4514,13 +4514,12 @@ function spawnPtyResolved(
         // the registered one.
         if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) { abandonLaunchHold(); return }
         try {
-          ptyProcess.write(cdCmd + '\r')
-          // Queued straight after the cd: the shell runs them in order, so the
-          // command always starts in the configured directory.
-          if (launchLine) {
-            logInfo(`[pty-manager] shell-only first-run command for ${sessionId}: ${launchLine}`)
-            ptyProcess.write(launchLine + '\r')
-          }
+          // The opening cd line exactly as on base, then (macOS realm only)
+          // the `claude` pin as separate lines, then the first-run command:
+          // the shell runs them in order, so the command starts in the
+          // configured directory with `claude` pinned (mac-realm-shell.ts).
+          if (launchLine) logInfo(`[pty-manager] shell-only first-run command for ${sessionId}: ${launchLine}`)
+          for (const line of shellOnlyOpeningLines(cdCmd, isWin ? [] : realmShellPinLines(realmLaunchBin, spawnCmd, spawnArgs), launchLine)) ptyProcess.write(line + '\r')
           releaseLaunchHold()
         } catch { abandonLaunchHold() /* session died mid-launch */ }
       }, 300)

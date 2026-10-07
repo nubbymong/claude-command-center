@@ -108,7 +108,20 @@ decisions; it does not claim the owner's ratification beyond that record.
   executable is the same file). A realm shell-only session -- the add-account
   and re-auth shells, or a plain shell on that account -- gets a `claude`
   shell function pinned to that binary (zsh, bash, sh, ksh, dash; another
-  shell is logged and keeps its PATH). A pinned legacy CLI keeps its own
+  shell is logged and keeps its PATH). The pin is typed AFTER the session's
+  opening `cd ...; clear` line, which is unchanged from base, as separate
+  lines: `unalias claude` on its own line first (an alias is expanded when a
+  line is read, so a one-line `unalias; claude() {...}` is a syntax error in
+  bash and dash when the user's rc aliases `claude`), then the function, then
+  `clear`; a pin line that fails cannot lose the `cd`. Checked against real
+  bash and dash with such an alias. A binary path containing a control
+  character is refused, never typed into a terminal. On a realm launch the
+  verified binary's folder also goes first on PATH (composed in the launch
+  base, not the realm patch), so a bare `claude` that a child such as Claude
+  Code's Bash tool resolves finds it -- unless a login shell's startup files
+  reorder PATH again (macOS path_helper in /etc/zprofile can), an accepted
+  limitation: the session itself and the shell's typed `claude` still run
+  the verified binary by absolute path. A pinned legacy CLI keeps its own
   path. After the 10-minute TTL an unchanged CLI keeps serving while a fresh
   lookup runs in the background; a launch within 30 seconds of the TTL
   counts as pending. Output with no JSON object (or over 1 MB) is refused as

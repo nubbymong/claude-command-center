@@ -19,6 +19,11 @@
 // verdict. The installed CLI's path is re-resolved at most every
 // CLI_RESOLVE_TTL_MS, so a PATH that now finds another `claude` is noticed.
 import fs from 'node:fs'
+import { CONTROL_CHAR_RE } from './mac-realm-shell'
+
+/** The refusal for a CLI path carrying a control character (re-attack r4). */
+export const MAC_REALM_UNSAFE_PATH =
+  "the Claude Code binary's path contains a control character, which this app will not run; reinstall Claude Code in an ordinary folder"
 
 export const CLI_RESOLVE_TTL_MS = 10 * 60_000
 
@@ -106,12 +111,15 @@ export function noteMacRealmRefusal(dir: string, reason: string): void {
  *  pinned binary when one is named, else the installed CLI (current, within
  *  its TTL, file unchanged). Synchronous; reads one stat per check. */
 export function hasMacRealmVerdict(dir: string, pinnedCliPath?: string | null): boolean {
+  // Re-attack r4, MINOR 2: a binary path with a control character is never
+  // run (it would be typed into a terminal); no verdict can cover it.
+  if (pinnedCliPath && CONTROL_CHAR_RE.test(pinnedCliPath)) return false
   if (pinnedCliPath) {
     const stamp = cliStampSync(pinnedCliPath)
     return stamp !== null && verdicts.get(key(dir, pinnedCliPath)) === stamp
   }
   const cli = currentInstalledCli()
-  return !!cli && verdicts.get(key(dir, cli.path)) === cli.stamp
+  return !!cli && !CONTROL_CHAR_RE.test(cli.path) && verdicts.get(key(dir, cli.path)) === cli.stamp
 }
 
 /** Why a realm launch for `dir` is refused right now (no verdict): the last

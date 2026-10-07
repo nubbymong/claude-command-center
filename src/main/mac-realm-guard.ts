@@ -25,10 +25,11 @@ import { resolveVersionBinary } from './legacy-version-manager'
 import { gateManagedLaunch, peekGateVerdict } from './managed-launch-diagnostics'
 import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
 import { logInfo, logWarn } from './debug-logger'
+import { CONTROL_CHAR_RE } from './mac-realm-shell'
 import {
   setMacRealmVerdictHooks, currentInstalledCli, setCurrentInstalledCli, cliStampSync,
   recordMacRealmVerdict, noteMacRealmRefusal, hasMacRealmVerdict, MAC_REALM_NOT_ISOLATED,
-  previousInstalledCli, CLI_RESOLVE_TTL_MARGIN_MS, setNextInstalledCli, takeNextInstalledCli,
+  previousInstalledCli, CLI_RESOLVE_TTL_MARGIN_MS, setNextInstalledCli, takeNextInstalledCli, MAC_REALM_UNSAFE_PATH,
 } from './mac-realm-verdict'
 
 export const MAC_REALM_CHECK_TIMEOUT_MS = 15_000
@@ -163,6 +164,7 @@ export async function _settleBackgroundResolveForTest(): Promise<void> { if (bac
 
 async function check(home: string, dir: string, pinned: string | null): Promise<void> {
   let cli: { path: string; stamp: string } | null
+  if (pinned && CONTROL_CHAR_RE.test(pinned)) { noteMacRealmRefusal(dir, MAC_REALM_UNSAFE_PATH); return }
   if (pinned) {
     const stamp = cliStampSync(pinned)
     if (!stamp) { noteMacRealmRefusal(dir, MAC_REALM_CLI_NOT_FOUND); return }
@@ -184,13 +186,16 @@ async function check(home: string, dir: string, pinned: string | null): Promise<
       } else {
         let p: string | null = null
         try { p = await resolveCli() } catch { p = null }
+        if (p && CONTROL_CHAR_RE.test(p)) { setCurrentInstalledCli(null); noteMacRealmRefusal(dir, MAC_REALM_UNSAFE_PATH); return }
         const stamp = p ? cliStampSync(p) : null
         if (!p || !stamp) { setCurrentInstalledCli(null); noteMacRealmRefusal(dir, MAC_REALM_CLI_NOT_FOUND); return }
         cli = { path: p, stamp }
         setCurrentInstalledCli(cli)
       }
     }
-  }  if (hasMacRealmVerdict(dir, pinned)) return
+  }  // Re-attack r4, MINOR 2: never typed into a terminal, never run.
+  if (CONTROL_CHAR_RE.test(cli.path)) { noteMacRealmRefusal(dir, MAC_REALM_UNSAFE_PATH); logWarn(`[mac-realm] ${dir}: refusing a CLI path with a control character`); return }
+  if (hasMacRealmVerdict(dir, pinned)) return
 
   // The probe is a credential consumer like the auth-status probe
   // (claude-cli-auth): held for its life, and started only after an in-flight

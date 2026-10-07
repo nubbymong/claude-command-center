@@ -18,7 +18,8 @@ import { logInfo, logWarn } from './debug-logger'
 import { recordSettingsSanitise, recordAmbientStrip, clearSettingsSanitise } from './managed-launch-state'
 import { recordManagedLaunchPreflight } from './managed-launch-diagnostics'
 import { decodeSettingsText } from './settings-text'
-import { hasMacRealmVerdict, macRealmRefusalReason, pinnedCliPathFor } from './mac-realm-verdict'
+import { hasMacRealmVerdict, macRealmRefusalReason, pinnedCliPathFor, currentInstalledCli, previousInstalledCli } from './mac-realm-verdict'
+import { CONTROL_CHAR_RE } from './mac-realm-shell'
 import {
   CLAUDE_KEYCHAIN_DEFAULT_SERVICE, keychainServiceForConfigDir, readKeychainCreds, parseKeychainSecret,
   keychainStamp, writeKeychainSecret, deleteKeychainItem, type ClaudeKeychainCreds,
@@ -3054,6 +3055,28 @@ function profileHomeLaunchBase(env: Record<string, string>, home: string): Recor
   return next
 }
 
+/**
+ * Re-attack r4, MINOR 3 (ADR-023): on a macOS realm launch, the folder of the
+ * binary the #172 verdict was taken for goes FIRST on PATH, so a bare
+ * `claude` a child resolves -- Claude Code's own Bash tool, a script -- finds
+ * the verified binary. Composed here in the launch BASE, not the realm patch:
+ * a realm patch may not own a variable that decides what the child executes.
+ * Off the realm (win32/linux, the primary, the setting off): unchanged. A
+ * login shell's own startup files may reorder PATH again (macOS path_helper
+ * in /etc/zprofile does) -- a recorded limitation; the session itself and the
+ * shell's hand-typed `claude` run the verified binary by absolute path.
+ */
+export function prependRealmBinaryDir(env: Record<string, string>, home: string, pinnedCliVersion?: string): Record<string, string> {
+  if (process.platform !== 'darwin' || !macProfileConfigDir(home)) return env
+  const bin = pinnedCliVersion ? pinnedCliPathFor(pinnedCliVersion) : (currentInstalledCli()?.path ?? previousInstalledCli()?.path ?? null)
+  if (!bin || !path.isAbsolute(bin) || CONTROL_CHAR_RE.test(bin)) return env
+  const dir = path.dirname(bin)
+  const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? 'PATH'
+  const rest = (env[pathKey] ?? '').split(path.delimiter).filter((p) => p !== '' && p !== dir)
+  env[pathKey] = [dir, ...rest].join(path.delimiter)
+  return env
+}
+
 /** A profile home's realm selector, applied last through the Claude package's
  *  own policy (see withProfileHome for why each variable is here). */
 function profileRealmSet(home: string): Record<string, string> {
@@ -3169,7 +3192,7 @@ export function profileRealmLaunch(
   if (realmRefusal) return { refused: realmRefusal }
   setupProfileLinks(profileId)
   const home = getProfileConfigDir(profileId)
-  const baseEnv = profileHomeLaunchBase(env, home)
+  const baseEnv = prependRealmBinaryDir(profileHomeLaunchBase(env, home), home)
   // Diagnostic, as withProfileHome records it: the ambient variables the
   // accounts service's hardening will remove, for the launch's preflight.
   try {
@@ -3208,7 +3231,7 @@ export function withProfileHome(
   // Decision #172 item 4: a macOS realm launch needs a positive verdict.
   const realmRefusal = macRealmVerdictRefusal(home, context)
   if (realmRefusal) throw new Error(`${MANAGED_LAUNCH_REFUSAL}: ${realmRefusal}`)
-  const next = profileHomeLaunchBase({ ...env, USERPROFILE: home }, home)
+  const next = prependRealmBinaryDir(profileHomeLaunchBase({ ...env, USERPROFILE: home }, home), home, context?.pinnedCli?.installed ? context.pinnedCli.version : undefined)
   // macOS locates the login keychain via $HOME (~/Library/Keychains/login.keychain-db).
   // Pointing HOME at the fake profile home — which mirrors only dot-entries, never
   // ~/Library (see mirrorRealHome) — leaves the spawned `claude` with no keychain to

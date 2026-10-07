@@ -20,11 +20,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { composeProviders } from '../../src/main/providers/compose'
 import { buildClaudeLaunchCommand } from '../../src/main/spawn-claude-command'
-import { realmShellClaudePrefix } from '../../src/main/mac-realm-shell'
+import { realmShellPinLines, shellOnlyOpeningLines } from '../../src/main/mac-realm-shell'
 import {
   _resetMacRealmVerdictsForTest, ensureMacRealmVerdict, macRealmVerdictPending, hasMacRealmVerdict,
   MAC_REALM_UNVERIFIED, MAC_REALM_NOT_ISOLATED, CLI_RESOLVE_TTL_MS, setMacRealmVerdictHooks,
-  macRealmLaunchBinary, macRealmExecutableRefusal,
+  macRealmLaunchBinary, macRealmExecutableRefusal, MAC_REALM_UNSAFE_PATH,
 } from '../../src/main/mac-realm-verdict'
 import {
   installMacRealmGuard, _setMacRealmGuardSeamsForTest, realmVerdictFromAuthStatus, macRealmCheckRetryable,
@@ -345,15 +345,68 @@ describe('the macOS realm launch guard', () => {
     const weird = "/Users/a b/it's/claude"
     const line = buildClaudeLaunchCommand({ platform: 'posix', cwd: '/w', claudeBin: weird, extraFlags: '', agentsFlag: '', useResumePicker: false, pickerScript: null })
     expect(line).toContain(`'/Users/a b/it'\\''s/claude'`)
-    expect(realmShellClaudePrefix(weird, '/bin/zsh', ['-l'])).toBe(`unalias claude 2>/dev/null; claude() { '/Users/a b/it'\\''s/claude' "$@"; }; `)
+    expect(realmShellPinLines(weird, '/bin/zsh', ['-l'])[1]).toBe(`claude() { '/Users/a b/it'\\''s/claude' "$@"; }`)
   })
 
   it('MAJOR 1: a realm shell pins its hand-typed `claude` to the verified binary (zsh, bash, an elevated shell); nothing off the realm or for an unknown shell', () => {
-    expect(realmShellClaudePrefix('/v/claude', '/bin/zsh', ['-l'])).toMatch(/^unalias claude 2>\/dev\/null; claude\(\) \{ '\/v\/claude' "\$@"; \}; $/)
-    expect(realmShellClaudePrefix('/v/claude', '/bin/bash', ['-l'])).not.toBe('')
-    expect(realmShellClaudePrefix('/v/claude', 'sudo', ['/bin/zsh', '-l'])).not.toBe('')
-    expect(realmShellClaudePrefix(null, '/bin/zsh', ['-l'])).toBe('')
-    expect(realmShellClaudePrefix('/v/claude', '/usr/local/bin/fish', ['-l'])).toBe('')
+    // Re-attack r4, MAJOR 1: SEPARATE lines -- the unalias must be read before
+    // the function definition, or an rc alias makes the definition a syntax error.
+    expect(realmShellPinLines('/v/claude', '/bin/zsh', ['-l'])).toEqual(['unalias claude 2>/dev/null', `claude() { '/v/claude' "$@"; }`, 'clear'])
+    expect(realmShellPinLines('/v/claude', '/bin/bash', ['-l'])).toHaveLength(3)
+    expect(realmShellPinLines('/v/claude', 'sudo', ['/bin/zsh', '-l'])).toHaveLength(3)
+    expect(realmShellPinLines(null, '/bin/zsh', ['-l'])).toEqual([])
+    expect(realmShellPinLines('/v/claude', '/usr/local/bin/fish', ['-l'])).toEqual([])
+  })
+
+  // Re-attack r4, MAJOR 1 + MINOR 4: the base cd line is sent FIRST and
+  // UNCHANGED; the pin lines are separate writes after it, then the command.
+  it('r4: the opening writes are the base cd line, then each pin line, then the first-run command', () => {
+    const cd = `cd '/w' 2>/dev/null; clear`
+    const pins = realmShellPinLines('/v/claude', '/bin/zsh', ['-l'])
+    expect(shellOnlyOpeningLines(cd, pins, 'claude /login')).toEqual([cd, 'unalias claude 2>/dev/null', `claude() { '/v/claude' "$@"; }`, 'clear', 'claude /login'])
+    expect(shellOnlyOpeningLines(cd, [], null)).toEqual([cd])
+  })
+
+  // Re-attack r4, MINOR 2: a control character in the path never reaches a terminal.
+  it('r4 MINOR 2: a binary path with a control character is not pinned, has no verdict, and the check refuses it', async () => {
+    for (const bad of ['/v/cl\x15aude', '/v/cl\x03aude', '/v/cl\naude', '/v/cl\x7faude']) expect(realmShellPinLines(bad, '/bin/zsh', ['-l']), JSON.stringify(bad)).toEqual([])
+    const { otherHome, dir } = setup()
+    asPlatform('darwin')
+    expect(hasMacRealmVerdict(dir, '/v/cl\x15aude')).toBe(false)
+    _setMacRealmGuardSeamsForTest({ resolveCli: async () => '/v/cl\x15aude' })
+    await ensureMacRealmVerdict(otherHome)
+    expect(probes).toEqual([])
+    const m = refusal(() => P.withProfileHome({ PATH: '/x' }, otherHome))
+    expect(m).toContain(P.MANAGED_LAUNCH_REFUSAL)
+    expect(m).toContain(MAC_REALM_UNSAFE_PATH)
+    await ensureMacRealmVerdict(otherHome, '/v/legacy\x03/claude')
+    expect(probes).toEqual([])
+  })
+
+  // Re-attack r4, MINOR 3: a bare `claude` a child resolves (Claude's own Bash
+  // tool) finds the verified binary: its folder goes first on PATH, composed in
+  // the launch base -- realm launches only.
+  it('r4 MINOR 3: a realm launch puts the verified binary folder FIRST on PATH; others keep PATH unchanged', async () => {
+    const { otherHome, primaryHome } = setup()
+    asPlatform('darwin')
+    await ensureMacRealmVerdict(otherHome)
+    const sep = path.delimiter
+    const base = ['/usr/bin', path.dirname(cliPath), '/bin'].join(sep)
+    const env = P.withProfileHome({ PATH: base }, otherHome)
+    const parts = env.PATH.split(sep)
+    expect(parts[0]).toBe(path.dirname(cliPath))
+    expect(parts.filter((p) => p === path.dirname(cliPath))).toHaveLength(1) // deduped
+    expect(parts).toContain('/usr/bin')
+    // The reviewer's launch base too.
+    const l = P.profileRealmLaunch(P.listProfiles().find((p) => P.getProfileConfigDir(p.id) === otherHome)!.id, { PATH: base })
+    if ('refused' in l) throw new Error(l.refused)
+    expect(l.baseEnv.PATH.split(sep)[0]).toBe(path.dirname(cliPath))
+    // Off the realm: the base's own composition only (its .local/bin append), never a prepend.
+    expect(P.withProfileHome({ PATH: base }, primaryHome).PATH.split(sep)[0]).toBe('/usr/bin')
+    for (const p of ['win32', 'linux'] as const) {
+      asPlatform(p)
+      expect(P.withProfileHome({ PATH: base }, otherHome).PATH.split(sep)[0]).toBe('/usr/bin')
+    }
   })
 
   it('MAJOR 1: the resume picker runs CCC_CLAUDE_BIN when the app hands it one (absolute only)', () => {
@@ -401,7 +454,9 @@ describe('every launch path asks for the verdict before its choke point (source 
     expect(read('pty-manager.ts')).toMatch(/const realmLaunchBin = macRealmLaunchBinary\(home/)
     expect(read('pty-manager.ts')).toMatch(/const cmd = realmLaunchBin \?\? resolveClaudeForPty\(/)
     expect(read('pty-manager.ts')).toMatch(/finalSpawnEnv\.CCC_CLAUDE_BIN = realmLaunchBin/)
-    expect(read('pty-manager.ts')).toMatch(/realmShellClaudePrefix\(realmLaunchBin, spawnCmd, spawnArgs\)/)
+    expect(read('pty-manager.ts')).toMatch(/shellOnlyOpeningLines\(cdCmd, isWin \? \[\] : realmShellPinLines\(realmLaunchBin, spawnCmd, spawnArgs\), launchLine\)/)
+    // The base cd line carries no realm prefix (re-attack r4).
+    expect(read('pty-manager.ts')).toMatch(/: `cd \$\{quoteArgForShell\(resolvedCwd, false\)\} 2>\/dev\/null; clear`/)
     expect(read('insights-runner.ts')).toMatch(/const cmd = macRealmLaunchBinary\(home\) \?\? resolveClaudeForPty\(\)\.cmd/)
     expect(read('claude-headless.ts')).toMatch(/spawn\(realmBin, args, \{ shell: false/)
     expect(read('account-web/claude-cli-auth.ts')).toMatch(/execFileAsync\(realmBin \?\? 'claude'[\s\S]*shell: !realmBin/)

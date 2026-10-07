@@ -136,7 +136,12 @@ RUNS the binary its verdict was taken for -- sessions and the resume picker
 shell), cloud agents (quoted), the reviewer (must be the same file) -- and a
 realm shell-only session (add-account, re-auth, plain) gets its hand-typed
 `claude` pinned to that binary by a shell function (zsh/bash/sh/ksh/dash;
-other shells logged); after the 10-min TTL an unchanged CLI keeps serving
+other shells logged) -- since re-attack r4 typed as separate lines AFTER the
+unchanged base `cd ...; clear` line (`unalias claude` alone first: an rc
+alias made the one-line form a bash/dash syntax error that ran the alias and
+lost the cd; checked in real bash and dash), control characters in the path
+refused, and the verified folder first on PATH for children (a login shell's
+path_helper may reorder it: accepted limitation); after the 10-min TTL an unchanged CLI keeps serving
 while a background lookup runs (a slow login shell no longer refuses);
 launches within 30 s of the TTL count as pending; the probe's output is
 scanned for the last JSON object with configDirectory, and output with no
@@ -160,7 +165,12 @@ card, toggle "Experimental: multiple Claude accounts on macOS" ON).**
 0. DONE 2026-10-07 (CLI 2.1.292): signed-out `CLAUDE_CONFIG_DIR=/tmp/ccc-x`
    `claude auth status` prints `configDirectory` = `/tmp/ccc-x`. Re-run it on
    any other CLI version tested.
-0b. In the add-account tab, run `type claude`. Expect: `claude is a shell`
+0b. With `alias claude=...` in ~/.zshrc, open the add-account tab and run
+    `pwd` and `type claude`. Expect: the configured folder (the cd ran), and
+    `claude is a shell function`. Also run `echo $PATH` in a B session's Bash
+    tool: the verified binary's folder should come first (if not, record it:
+    path_helper reordered it).
+    In the add-account tab, run `type claude`. Expect: `claude is a shell`
    `function`; it runs the absolute path the app checked. Put an older
    `claude` first on PATH in ~/.zshrc and start a B session: the session runs
    the checked binary (`ps -o args` shows the absolute path), not the older.
