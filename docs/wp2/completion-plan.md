@@ -361,10 +361,17 @@ Per PR:
   bar, with tests pinning the bars in the call's own tick, each bar
   lifting when its own wipe ends, and a failed wipe lifting its bar (7
   new tests, 8 changed; 19 mutants, 18 killed, 1 an equivalent survivor).
-  Owed for fix passes 16 and 17: the confirmations by the same reviewers
-  and attackers, and CI at their head. Still owed for PR 4: the PR-level
-  ADR-009 pass at its final head (9.7 gate 4), the SSH live matrix and
-  the owner's checks.
+  Fix pass 17 reviewed PASS (spec, quality); fix pass 17b answers their
+  nits and the ADR-009 re-attack's two minors: the report's own earlier
+  run spends none of the read limit, so a session behind it that fits
+  the limit is read and the run completes rather than saying the account
+  has no sessions, with tests pinning the per-file cap at the walk's
+  size, the stop at the first session that does not fit, and an account
+  the sweep did not choose left alone (4 new tests; 6 mutants, 6
+  killed). Owed for fix passes 16 to 17b: the confirmations by the same
+  reviewers and attackers, and CI at their head. Still owed for PR 4: the
+  PR-level ADR-009 pass at its final head (9.7 gate 4), the SSH live
+  matrix and the owner's checks.
 
 Package completion is not release completion. A complete PR merges to beta
 only on the owner's word, in the order #625, PR 3, PR 4, and nothing is
