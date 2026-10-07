@@ -50,7 +50,7 @@
     "node-pty": "1.2.0-beta.15",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "ws": "^8.21.3",
+    "ws": "^8.22.0",
     "zod": "^4.5.4",
     "zustand": "^5.0.14"
   },
@@ -64,7 +64,7 @@
     "@types/better-sqlite3": "^9.6.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "@types/ws": "^8.18.1",
+    "@types/ws": "^8.18.2",
     "axe-core": "^4.13.0",
     "dom-accessibility-api": "^0.7.1",
     "electron": "44.5.1",
