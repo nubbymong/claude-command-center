@@ -125,7 +125,9 @@ checks of the dev dependency bumps; what the Electron 44 migration still owes
 investigation, the colour reply, was fixed in 409b455a); the owner's checks
 (OR1, OR2, OR4, OR5a and the screenshot review). Done since: the VM final
 pass ran at dc9d6aeb, and the commits from there to 91e438fd change no main
-or preload source; CI is green at 91e438fd (run 37553704348).
+or preload source; CI's required jobs are green at 91e438fd (run
+37553704348), and its Desktop test gate is red by design until the owner
+attests (#309).
 
 **Why this way.** The parity rule (OD26 P1): Claude's behaviour in the code
 is the spec. Where it carries over it decides, as when the re-review sent
