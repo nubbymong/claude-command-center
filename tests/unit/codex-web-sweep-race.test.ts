@@ -14,7 +14,11 @@
 //    is held keeps its session and its record, through the sign-in window and
 //    through the account pane alike, and the earlier account is still cleared;
 //  - an account the sweep chose refuses a sign-in and a pane until its own
-//    wipe has ended (the bar every clear holds), and both work after it.
+//    wipe has ended (the bar every clear holds), and both work after it;
+//  - the bars are up when the call returns, before anything else runs, and
+//    each account's bar lifts as soon as its own wipe ends;
+//  - a pane already open on a chosen account closes as it is barred, so no
+//    sign-in in it is recorded under the bar.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const S = vi.hoisted(() => {
@@ -221,6 +225,9 @@ describe('[host] an account the start sweep chose is barred until its own wipe e
     S.folders.add(PART_B)
     const releaseA = hold(PART_A)
     const sweep = startSweep()
+    // Both barred before the call's first wait: nothing has run yet.
+    expect(CWS.isCodexWebClearing(A)).toBe(true)
+    expect(CWS.isCodexWebClearing(B)).toBe(true)
     await flush()
     expect(CWS.isCodexWebClearing(B)).toBe(true)
     expect(await S.handlers[IPC.CODEX_WEB_SIGN_IN](TRUSTED, B)).toEqual({ ok: false, error: BEING_CLEARED })
@@ -236,5 +243,68 @@ describe('[host] an account the start sweep chose is barred until its own wipe e
     expect(STORE.codexWebViewFor(B)).toMatchObject({ accountId: B, status: 'active' })
     expect(await S.handlers[IPC.CODEX_WEB_PANE_OPEN](TRUSTED, { sessionId: 'sess-b', accountId: B, bounds: BOUNDS })).toEqual({ ok: true })
     PANE.closeAccountPane('sess-b')
+  })
+
+  it('each chosen account is let go as soon as its own wipe ends, not when the whole sweep does', async () => {
+    S.folders.add(PART_A)
+    S.folders.add(PART_B)
+    const releaseA = hold(PART_A)
+    const releaseB = hold(PART_B)
+    const sweep = startSweep()
+    releaseA()
+    await vi.waitFor(() => expect(S.storageClears).toEqual([PART_A]))
+    await flush()
+    expect(CWS.isCodexWebClearing(A)).toBe(false)
+    expect(CWS.isCodexWebClearing(B)).toBe(true)
+    releaseB()
+    expect(await sweep).toEqual([A, B])
+    expect(CWS.isCodexWebClearing(B)).toBe(false)
+  })
+
+  it('a pane already open on a chosen account closes as it is barred: a sign-in in it is not recorded, and the wipe leaves no record over an emptied session', async () => {
+    S.folders.add(PART_A)
+    S.folders.add(PART_B)
+    expect(await S.handlers[IPC.CODEX_WEB_PANE_OPEN](TRUSTED, { sessionId: 'sess-b', accountId: B, bounds: BOUNDS })).toEqual({ ok: true })
+    await flush()
+    const releaseA = hold(PART_A)
+    const sweep = startSweep()
+    // Closed when the call returns, with its sign-in watch gone.
+    expect(S.views[0].webContents.destroyed).toBe(true)
+    expect(PANE.getAccountPaneState('sess-b')).toBeNull()
+    expect(S.listeners[PART_B] ?? []).toEqual([])
+    // A sign-in landing in B's partition while it is barred is not recorded.
+    S.jars[PART_B] = [TOKEN]
+    for (const fn of S.listeners[PART_B] ?? []) fn(null, { name: TOKEN.name })
+    await flush()
+    expect(STORE.getCodexWebSession(B)).toBeUndefined()
+    releaseA()
+    expect(await sweep).toEqual([A, B])
+    // The session is gone and so is any record of it: they agree.
+    expect(S.jars[PART_B]).toBeUndefined()
+    expect(STORE.codexWebViewFor(B)).toMatchObject({ accountId: B, status: 'none' })
+  })
+})
+
+describe('[host] the start sweep is in place in the same tick as its call', () => {
+  it('a sign-in on an account with no partition folder yet, started in the same tick, keeps its session and its record', async () => {
+    S.folders.add(PART_A)
+    const releaseA = hold(PART_A)
+    const sweep = startSweep()
+    expect(await S.handlers[IPC.CODEX_WEB_SIGN_IN](TRUSTED, B)).toMatchObject({ ok: true, state: { phase: 'done' } })
+    releaseA()
+    expect(await sweep).toEqual([A])
+    expect(S.jars[PART_B]).toEqual([TOKEN])
+    expect(STORE.codexWebViewFor(B)).toMatchObject({ accountId: B, status: 'active' })
+  })
+
+  it('a sign-in on a chosen account, started in the same tick, is refused and starts nothing', async () => {
+    S.folders.add(PART_A)
+    S.folders.add(PART_B)
+    const releaseA = hold(PART_A)
+    const sweep = startSweep()
+    expect(await S.handlers[IPC.CODEX_WEB_SIGN_IN](TRUSTED, B)).toEqual({ ok: false, error: BEING_CLEARED })
+    expect(S.signInRuns).toEqual([])
+    releaseA()
+    expect(await sweep).toEqual([A, B])
   })
 })

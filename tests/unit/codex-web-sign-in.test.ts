@@ -1132,9 +1132,10 @@ describe('[host] the start sweep of Codex web sessions with no record', () => {
     clears.length = 0
     expect(await sweepUnrecordedCodexWebSessions([ACCT], { ok: false, why: 'malformed' }, ALL_FOLDERS)).toEqual([])
     expect(clears).toEqual([])
-    // A wipe that fails is logged, not thrown.
+    // A wipe that fails is logged, not thrown, and its bar is lifted all the same.
     failClear = PART
     expect(await sweepUnrecordedCodexWebSessions([ACCT], RECORDS(), ALL_FOLDERS)).toEqual([])
+    expect(isCodexWebClearing(ACCT)).toBe(false)
     failClear = null
   })
 
