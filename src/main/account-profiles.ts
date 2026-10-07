@@ -3011,7 +3011,12 @@ export const MAC_MULTI_ACCOUNT_OFF_REFUSAL =
 function macNonPrimaryLaunchRefusal(home: string): string | null {
   if (process.platform !== 'darwin') return null
   if (macMultiAccountOn()) return null
-  const id = profileIdFromHome(home)
+  // A derivation that throws is a home this rule cannot place: base macOS
+  // behaviour (no refusal), never an unmarked exception out of the choke point
+  // (macOS CI, PR #629: managed-launch "a diagnostic that throws can never
+  // refuse a launch that is already hardened").
+  let id: string | null
+  try { id = profileIdFromHome(home) } catch { id = null }
   if (!id) return null
   const all = readProfilesStrict()
   // r7: the primary cannot be told. With the list unreadable, or more than one

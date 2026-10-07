@@ -28,11 +28,14 @@ function readJson(file: string): any | null {
   }
 }
 
-/** <home>/.claude.json, or on macOS the file the experimental realm keeps
- *  inside its config directory (profileIdentityFile). Off macOS the account
- *  module is not asked at all, so nothing changes there. */
-function identityFileFor(home: string): string {
-  return process.platform === 'darwin' ? profileIdentityFile(home) : join(home, '.claude.json')
+/** The identity file of a profile whose sign-in is in the macOS Keychain
+ *  (experimental multi-account ON): the realm's `<configDir>/.claude.json`, or
+ *  for the primary the real `~/.claude.json` (profileIdentityFile). Only the
+ *  Keychain path below asks; the file path is base behaviour, unchanged, on
+ *  every platform (macOS CI, PR #629: base macOS read `<home>/.claude.json`
+ *  and so must macOS with the setting off). */
+function keychainIdentityFileFor(home: string): string {
+  return profileIdentityFile(home)
 }
 
 function positiveNumber(value: unknown): number | undefined {
@@ -44,7 +47,7 @@ export function readProfileAuthInfo(profileId: string, accountEmail?: string): P
   const home = getProfileConfigDir(profileId)
   const credentialsFile = join(home, '.claude', '.credentials.json')
   const creds = readJson(credentialsFile)?.claudeAiOauth
-  const oauthEmail: string | undefined = readJson(identityFileFor(home))?.oauthAccount?.emailAddress
+  const oauthEmail: string | undefined = readJson(join(home, '.claude.json'))?.oauthAccount?.emailAddress
 
   if (!creds) {
     return { profileId, accountEmail, oauthEmail, credentialsMissing: true }
@@ -109,7 +112,7 @@ export async function readProfileAuthInfoAsync(profileId: string, accountEmail?:
   let loc: ProfileCredentialLocation
   try { loc = profileCredentialLocation(profileId) } catch { return readProfileAuthInfo(profileId, accountEmail) }
   if (loc.kind === 'file') return readProfileAuthInfo(profileId, accountEmail)
-  const oauthEmail: string | undefined = readJson(identityFileFor(getProfileConfigDir(profileId)))?.oauthAccount?.emailAddress
+  const oauthEmail: string | undefined = readJson(keychainIdentityFileFor(getProfileConfigDir(profileId)))?.oauthAccount?.emailAddress
   const base = { profileId, accountEmail, oauthEmail }
   const r = await readMacCredential(loc)
   if (r.status === 'not-found') return { ...base, credentialsMissing: true }

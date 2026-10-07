@@ -156,7 +156,16 @@ owns ADR-023); beta's sign-in status / sign-out runner gets the verified
 binary on the realm (compose.ts claudeAuthExecutable, after the check); a
 realm profile's sign-out needs no computer-sign-in acknowledgement; with the
 setting off a non-primary macOS sign-out is refused like its sessions. A macOS
-run of the SSH live matrix (statusline.ts) is not yet run.
+run of the SSH live matrix (statusline.ts) is not yet run. CI on PR #629
+(3fa8fade): two code fixes on darwin, setting off -- the SYNC profile auth
+read is base again (reads home/.claude.json; only the Keychain path asks for
+the identity file), and a home whose profile id cannot be derived is not
+refused (base behaviour) instead of throwing out of the launch choke point.
+Test-only: the refused-gate test counts only an `auth` run (the preflight's
+read-only `command -v claude` version lookup also runs on POSIX); the C1
+characterization asserts the non-primary refusal on macOS and characterizes
+the primary there; pty-spawn-waits-for-refresh runs as linux on a macOS host
+(its profiles are non-primary by design).
 
 **Mac check (2026-10-06, operator's Mac, manual CLI, not the app).** With
 `CLAUDE_CONFIG_DIR=<dir>` and `/login`: Keychain item

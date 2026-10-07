@@ -90,6 +90,12 @@ const launch = async (sid: string, opts: Record<string, unknown>) => {
   return spawned[spawned.length - 1]
 }
 const lastEnv = () => spawned[spawned.length - 1].env
+// macOS, experimentalMacMultiAccount OFF (the default): a NON-primary profile
+// launch is refused (aicc_planning#172 decision 3, ADR-024) -- nothing spawns.
+// The env characterization then runs on the PRIMARY profile, which is the only
+// one macOS can launch in that state and which keeps the base behaviour. On
+// win32/linux the non-primary profile is characterized exactly as before.
+const IS_DARWIN = process.platform === 'darwin'
 
 // ---------------------------------------------------------------------------
 // C1: local Claude spawn -> profile resolution -> child env. Real pty-manager
@@ -132,15 +138,22 @@ describe('C1: local Claude spawn resolves a profile and isolates it through USER
   })
 
   it('a requested valid profile becomes the child USERPROFILE; CLAUDE_CONFIG_DIR is never set; git/npm stay on the real home', async () => {
-    await launch('wp1-c1-requested', { shellOnly: false, profileId: workId })
+    let target = workId
+    if (IS_DARWIN) {
+      const before = spawned.length
+      await launch('wp1-c1-requested-refused', { shellOnly: false, profileId: workId })
+      expect(spawned.length, 'macOS: a non-primary launch with the setting off must not spawn').toBe(before)
+      target = primaryId
+    }
+    await launch('wp1-c1-requested', { shellOnly: false, profileId: target })
     const env = lastEnv()
-    expect(env.USERPROFILE).toBe(profiles.getProfileConfigDir(workId))
+    expect(env.USERPROFILE).toBe(profiles.getProfileConfigDir(target))
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
     expect(env.FROM_PROVIDER).toBe('1') // the provider env is extended, not replaced
     expect(env.CCC_CONFIG_DIR).toBe(getConfigDir())
     expect(env.GIT_CONFIG_GLOBAL).toBe(path.join(os.homedir(), '.gitconfig'))
     expect(env.npm_config_userconfig).toBe(path.join(os.homedir(), '.npmrc'))
-    if (process.platform === 'linux') expect(env.HOME).toBe(profiles.getProfileConfigDir(workId))
+    if (process.platform === 'linux') expect(env.HOME).toBe(profiles.getProfileConfigDir(target))
     else expect(env.HOME).toBeUndefined()
   })
 
@@ -167,19 +180,21 @@ describe('C1: local Claude spawn resolves a profile and isolates it through USER
   it('an inherited CCC_SESSION_WORKTREE is deleted for a session that does not designate its own worktree (ADR-016)', async () => {
     await launch('wp1-c1-wt-shell', { shellOnly: true })
     expect(lastEnv().CCC_SESSION_WORKTREE).toBeUndefined()
-    await launch('wp1-c1-wt-interactive', { shellOnly: false, profileId: workId }) // sandbox cwd is not a git checkout
+    // sandbox cwd is not a git checkout; macOS launches the primary (see IS_DARWIN)
+    await launch('wp1-c1-wt-interactive', { shellOnly: false, profileId: IS_DARWIN ? primaryId : workId })
     expect(lastEnv().CCC_SESSION_WORKTREE).toBeUndefined()
   })
 
   it('the redirected profile .local/bin is appended to PATH exactly once (case-insensitive) and the real entry stays first', async () => {
-    await launch('wp1-c1-path', { shellOnly: false, profileId: workId })
-    const localBin = path.join(profiles.getProfileConfigDir(workId), '.local', 'bin')
+    const target = IS_DARWIN ? primaryId : workId // macOS: see IS_DARWIN
+    await launch('wp1-c1-path', { shellOnly: false, profileId: target })
+    const localBin = path.join(profiles.getProfileConfigDir(target), '.local', 'bin')
     const parts = lastEnv().PATH.split(path.delimiter)
     expect(parts[0]).toBe('/usr/bin')
     expect(parts.filter((p) => p.toLowerCase() === localBin.toLowerCase())).toHaveLength(1)
     // Already present in a different case: not appended again.
     providerEnv = { ...providerEnv, PATH: `/usr/bin${path.delimiter}${localBin.toUpperCase()}` }
-    await launch('wp1-c1-path-dedupe', { shellOnly: false, profileId: workId })
+    await launch('wp1-c1-path-dedupe', { shellOnly: false, profileId: target })
     const parts2 = lastEnv().PATH.split(path.delimiter)
     expect(parts2.filter((p) => p.toLowerCase() === localBin.toLowerCase())).toHaveLength(1)
     expect(parts2).toHaveLength(2)

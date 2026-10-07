@@ -136,7 +136,13 @@ describe('readClaudeCliAuth -- a REFUSED project gate never launches the CLI', (
     writeCredFile(ID, '.claude')
     gateSeam.refuse = true
     let spawned = false
-    execFileImpl = (_c, _a, _o, cb) => { spawned = true; cb(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' }) }
+    // The AUTH probe is what the gate must stop. Since the fixture became
+    // profile-shaped (pass 3, m8) withProfileHome also records a preflight,
+    // which may start the CLI VERSION probe -- on POSIX through `sh -lc
+    // 'command -v claude'` (Ubuntu CI, PR #629); that read-only lookup is base
+    // behaviour of the preflight (managed-launch-diagnostics) and not the launch
+    // this test is about, so only an `auth` run counts as the CLI launched.
+    execFileImpl = (_c, a, _o, cb) => { if (Array.isArray(a) && a.includes('auth')) spawned = true; cb(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' }) }
     const logger = await import('../../src/main/debug-logger')
     const warn = vi.mocked(logger.logWarn)
     warn.mockClear()
