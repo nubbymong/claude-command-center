@@ -93,13 +93,15 @@ but the bar now lifts only when the clear itself ends. A clear that ends
 with an error has ended too, so a failed wipe still lifts its bar at once;
 one that never ends keeps the account barred for the rest of the run, with
 the existing "being cleared" message. Overlapping wipes each lift only
-their own share, once. 3 new tests; 7 mutants, 6 red, and 1 equivalent
-survivor (removing only the once-only guard, which no path needs while each
-share is released once).
+their own share, once, and a wipe's bar lasts until the whole wipe is done,
+its record removal included. Fix passes 18 and 18b (the second for 18's
+reviews and ADR-009 re-attack): 6 new tests; 8 mutants, 7 red, and 1
+equivalent survivor (removing only the once-only guard, which no path needs
+while each share is released once).
 
 The owner approved the README and Feature Guide images on 2026-10-07; they
 are committed separately.
 
-Owed now: the reviews and the ADR-009 confirmation of fix pass 18, and CI at
-the new head; the PR-level ADR-009 pass at PR 4's final head; the SSH live
-matrix and the owner's other checks.
+Owed now: the confirmation of fix pass 18b by the same reviewers and
+attackers, and CI at the new head; the PR-level ADR-009 pass at PR 4's final
+head; the SSH live matrix and the owner's other checks.

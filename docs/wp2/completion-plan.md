@@ -379,12 +379,14 @@ Per PR:
   Fix pass 18: a Codex account stays barred until its storage clear
   actually ends; the wait for it stays bounded, a clear that ends with an
   error lifts the bar at once, one that never ends keeps the account
-  barred for the run, and overlapping wipes each lift only their own share
-  (3 new tests; 7 mutants, 6 killed, 1 an equivalent survivor). The owner
-  approved the README and Feature Guide images on 2026-10-07. Owed: the
-  reviews and the ADR-009 confirmation of fix pass 18, and CI at the new
-  head. Still owed for PR 4: the PR-level ADR-009 pass at its final head
-  (9.7 gate 4), the SSH live matrix and the owner's other checks.
+  barred for the run, overlapping wipes each lift only their own share,
+  and a wipe's bar lasts until the whole wipe is done (fix passes 18 and
+  18b, the second for 18's reviews and ADR-009 re-attack: 6 new tests; 8
+  mutants, 7 killed, 1 an equivalent survivor). The owner approved the
+  README and Feature Guide images on 2026-10-07. Owed: the confirmation of
+  fix pass 18b by the same reviewers and attackers, and CI at the new head.
+  Still owed for PR 4: the PR-level ADR-009 pass at its final head (9.7
+  gate 4), the SSH live matrix and the owner's other checks.
 
 Package completion is not release completion. A complete PR merges to beta
 only on the owner's word, in the order #625, PR 3, PR 4, and nothing is
