@@ -269,7 +269,9 @@ export function registerAccountProfilesHandlers(getWindow: () => BrowserWindow |
     // teardown (adversarial review pass 3, m1). The Keychain item is already
     // gone at this point, so the error says so rather than "nothing changed".
     if (isProfileInUseByLiveSession(p.id)) {
-      return { ok: false, error: 'This account is in use by an open session, so it was not removed. Its claude.ai sign-in and its macOS Keychain sign-in were already cleared; close its sessions, then remove it again (or sign it in again to keep it).' }
+      // Beta's shape for a cleared-then-in-use delete: the code and the sessions
+      // holding the profile, so the Accounts panel names them.
+      return { ok: false, code: 'in-use-cleared', error: 'This account is in use by an open session, so it was not removed. Its claude.ai sign-in and its macOS Keychain sign-in were already cleared; close its sessions, then remove it again (or sign it in again to keep it).', ...holdersOf(p.id) }
     }
     // safeTeardownProfile can throw on a Windows file lock (e.g. an actively-rewritten
     // .claude.json) mid-recursion -- return a structured failure instead of rejecting

@@ -276,6 +276,41 @@ describe('logoutClaudeCli: the CLI\'s own sign-out in exactly this profile\'s ho
     }
   })
 
+  // Merge review MINOR 1 (ADR-024): a runner's binary is chosen before the
+  // waits; if it is not (or no longer) the file the realm's #172 verdict was
+  // taken for, the run is refused in the same tick as its start.
+  it('macOS realm: a sign-out or status read whose runner is not the verified binary is refused; the verified one runs', async () => {
+    const { seedMacRealmVerdict } = await import('./helpers/mac-realm-verdict-seed')
+    const verdict = await import('../../src/main/mac-realm-verdict')
+    const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    profiles.setMacMultiAccountProbe(() => true)
+    verdict.setMacRealmVerdictHooks({ realmDir: (h) => profiles.macProfileConfigDir(h), ensure: async () => {}, pinnedPath: () => null })
+    try {
+      seedMacRealmVerdict(sandbox, home(ID))
+      const verified = join(sandbox, 'fake-claude-cli')
+      const other = join(sandbox, 'other-claude')
+      fs.writeFileSync(other, 'another binary')
+      const wrong = { ...fakeRunner(), executable: other }
+      expect(await logoutClaudeCli(ID, { runner: wrong })).toEqual({ ran: false, after: null, refused: 'host-control' })
+      expect(wrong.calls).toEqual([])
+      await readClaudeCliAuth(ID, wrong)
+      expect(wrong.calls).toEqual([])
+      const unnamed = fakeRunner()
+      await readClaudeCliAuth(ID, unnamed)
+      expect(unnamed.calls).toEqual([])
+      const right = fakeRunner()
+      const rightRunner = { cwd: right.cwd, run: right.run, executable: verified }
+      expect(await logoutClaudeCli(ID, { runner: rightRunner })).toMatchObject({ ran: true })
+      expect(right.calls.map((c) => c.args[1])).toEqual(['logout', 'status'])
+    } finally {
+      verdict.setMacRealmVerdictHooks(null)
+      verdict._resetMacRealmVerdictsForTest()
+      profiles.setMacMultiAccountProbe(() => false)
+      Object.defineProperty(process, 'platform', realPlatform)
+    }
+  })
+
   it('holds the profile for the whole run (past the 30 s default bound), waits for a token rotation in flight, and lets go after', async () => {
     let resolveRotation: () => void = () => {}
     consumers.noteProfileRefreshInFlight(ID, new Promise<void>((res) => { resolveRotation = res }))

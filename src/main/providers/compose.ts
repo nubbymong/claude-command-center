@@ -113,6 +113,7 @@ export function claudeCliAuthRunner(
   const cwd = typeof executable === 'string' && executable ? pathApi.dirname(executable) : ''
   return {
     cwd,
+    executable,
     run: async (args, env, timeoutMs) => {
       const cmd = cliCommandLine(executable, args, platform, codexShellEnv(env, platform), 'Claude Code')
       if ('refused' in cmd) return { refused: cmd.refused, exitCode: null, stdout: '', timedOut: false }

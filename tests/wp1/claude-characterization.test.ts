@@ -316,7 +316,7 @@ describe('C6: settleOnboardingFinish / settleWhatsNewOnly stamped shapes', () =>
 describe('C5: accountProfiles handlers sequencing on the base', () => {
   const order: string[] = []
   const serialised: string[] = []
-  const state = { inUse: [] as boolean[], clearThrows: false, teardownThrows: false, kc: { ok: true } as { ok: true } | { ok: false; reason: string } }
+  const state = { inUse: [] as boolean[], clearThrows: false, teardownThrows: false, kc: { ok: true } as { ok: true } | { ok: false; reason: string }, sessions: [] as string[] }
   let store: Array<Record<string, unknown>> = []
 
   // The app's own window, and an event from its top frame: the account-profile
@@ -334,7 +334,7 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
   const invoke = (ch: string, ...args: any[]) => ipcHandlers.get(ch)!(fromApp({} as any), ...args)
 
   beforeEach(async () => {
-    order.length = 0; state.inUse = []; state.clearThrows = false; state.teardownThrows = false; state.kc = { ok: true }
+    order.length = 0; state.inUse = []; state.clearThrows = false; state.teardownThrows = false; state.kc = { ok: true }; state.sessions = []
     store = [{ id: 'primary', name: '', createdAt: 0, isPrimary: true }, { id: 'work', name: 'Work', createdAt: 0 }]
     vi.doMock('../../src/main/account-profiles', () => ({
       listProfiles: () => store.map((p) => ({ ...p })),
@@ -350,7 +350,7 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
     vi.doMock('../../src/main/claude-account-identity', () => ({
       getAccountIdentity: vi.fn(), getDefaultAccountEmail: vi.fn(), getWatchedProfileId: vi.fn(), detectedNewAccountEmail: vi.fn(),
       isProfileInUseByLiveSession: () => { const v = state.inUse.shift() ?? false; order.push(`inUse:${v}`); return v },
-      sessionsOnProfile: () => [],
+      sessionsOnProfile: () => [...state.sessions],
     }))
     vi.doMock('../../src/main/usage/account-usage', () => ({ fetchAllAccountsUsage: vi.fn(), fetchAllAccountsUsageStreaming: vi.fn(), fetchAccountUsage: vi.fn() }))
     vi.doMock('../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: () => [], readAllProfileAuthInfoAsync: async () => [] }))
@@ -395,10 +395,15 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
   // security timeout); a session that starts in that window stops the teardown.
   it('m1: a session that started during the Keychain delete stops the teardown, and the error says the sign-in was already cleared', async () => {
     state.inUse = [false, false, true]
+    state.sessions = ['sess-late']
     const r = await invoke(IPC.ACCOUNT_PROFILES_DELETE, { id: 'work' })
     expect(r.ok).toBe(false)
     expect(String(r.error)).toMatch(/in use by an open session/)
     expect(String(r.error)).toMatch(/Keychain sign-in were already cleared/)
+    // Merge review MINOR 2: beta's shape -- the code and the sessions holding
+    // the profile, which the Accounts row turns into Go to buttons.
+    expect(r.code).toBe('in-use-cleared')
+    expect(r.sessions).toEqual(['sess-late'])
     expect(order).toEqual(['inUse:false', 'closeArtifacts:work', 'closePanes:work', 'clear:work', 'inUse:false', 'removeWeb:work', 'keychain:work', 'inUse:true'])
   })
 
