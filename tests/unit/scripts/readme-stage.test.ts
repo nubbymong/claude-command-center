@@ -288,12 +288,12 @@ describe('launch.js starts the installed app only isolated (C-4)', () => {
 })
 
 describe('the staging root is compared by its real path, and UNC and device roots are refused (V-1)', () => {
-  const HOME = 'C:\\Users\\nicholas'
+  const HOME = 'C:\\Users\\examplename'
   // Stand-ins for spellings the file system resolves to another folder: a subst
   // drive, an 8.3 short name and a drive mapped to a share, as realpath sees them.
   const realMap: Array<[string, string]> = [
     ['S:\\', `${HOME}\\`],
-    ['C:\\Users\\NICHOL~1', HOME],
+    ['C:\\Users\\EXAMPL~1', HOME],
     [`${HOME}\\AppData\\Roaming\\ANTHRO~1`, `${HOME}\\AppData\\Roaming\\Anthropic`],
     ['K:\\', '\\\\localhost\\C$\\'],
   ]
@@ -312,12 +312,12 @@ describe('the staging root is compared by its real path, and UNC and device root
   const env = (root: string, more: Record<string, string> = {}) => ({ CCC_STAGE_ROOT: root, CCC_STAGE_DEV: `${root}\\dev`, USERPROFILE: HOME, HOME, ...more })
   const cases: Array<[string, string, RegExp]> = [
     ['a subst drive onto ~/.codex', 'S:\\.codex\\stage', /overlaps .*\.codex/],
-    ['an 8.3 spelling of ~/.claude', 'C:\\Users\\NICHOL~1\\.claude\\stage', /overlaps .*\.claude/],
+    ['an 8.3 spelling of ~/.claude', 'C:\\Users\\EXAMPL~1\\.claude\\stage', /overlaps .*\.claude/],
     ["an 8.3 spelling of Anthropic's app data folder", `${HOME}\\AppData\\Roaming\\ANTHRO~1\\stage`, /overlaps .*Anthropic/],
     ['a drive mapped to a share', 'K:\\stage', /UNC or device path/],
     ['a device path (\\\\?\\)', `\\\\?\\${HOME}\\.codex\\stage`, /UNC or device path/],
     ['a device path (\\\\.\\)', '\\\\.\\C:\\stage', /UNC or device path/],
-    ['a UNC root', '\\\\localhost\\C$\\Users\\nicholas\\.codex\\stage', /UNC or device path/],
+    ['a UNC root', '\\\\localhost\\C$\\Users\\examplename\\.codex\\stage', /UNC or device path/],
   ]
   for (const [name, root, why] of cases) {
     it.runIf(process.platform === 'win32')(`[host] refuses ${name}`, () => {
@@ -328,7 +328,7 @@ describe('the staging root is compared by its real path, and UNC and device root
   it.runIf(process.platform === 'win32')('[host] a protected folder named by another spelling is compared by its real path too', () => {
     // The home given only through USERPROFILE, in its short spelling; the root under the long one.
     const d = deps({ userHome: () => 'D:\\elsewhere', osHome: () => 'D:\\elsewhere' })
-    expect(() => S.resolveStage(env(`${HOME}\\.codex\\stage`, { USERPROFILE: 'C:\\Users\\NICHOL~1', HOME: 'C:\\Users\\NICHOL~1' }), 'win32', d)).toThrow(/overlaps .*\.codex/)
+    expect(() => S.resolveStage(env(`${HOME}\\.codex\\stage`, { USERPROFILE: 'C:\\Users\\EXAMPL~1', HOME: 'C:\\Users\\EXAMPL~1' }), 'win32', d)).toThrow(/overlaps .*\.codex/)
   })
 
   it.runIf(process.platform === 'win32')('[host] a plain staging root elsewhere still passes', () => {

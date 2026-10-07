@@ -136,7 +136,7 @@ const uncOrDevice = (p, platform) => isWin(platform) && /^[\\/]{2}/.test(String(
  *  deepest existing ancestor (fs.realpathSync.native resolves 8.3 short
  *  names, subst drives and drives mapped to a share), with the parts that do
  *  not exist yet joined on. A spelling the overlap checks would otherwise
- *  miss (C:\Users\NICHOL~1\.codex, S:\.codex for a subst onto the home)
+ *  miss (C:\Users\EXAMPL~1\.codex, S:\.codex for a subst onto the home)
  *  becomes the folder it is. */
 function canonicalPath(p, platform = process.platform, deps = {}) {
   const P = pathApi(platform)
