@@ -67,7 +67,8 @@ export const CODEX_INSIGHTS_MAX_LINE_BYTES = 4 * 1024 * 1024
  *  A session larger than this on its own is never read in part, wherever it
  *  sits in the newest-first order: it is left out, and counted, and the read
  *  goes on past it, so no figure stands for a session it covers only the
- *  start of. */
+ *  start of. The report's own earlier runs spend none of it: each is left
+ *  out at its first record, with no more of it read than one 256 KB chunk. */
 export const CODEX_INSIGHTS_MAX_TOTAL_BYTES = 256 * 1024 * 1024
 /** That limit in words ("256 MB"), as the prompt, a run's reason and the
  *  report's subtitle say it. */
@@ -409,7 +410,8 @@ interface SessionsReadState { stopped: boolean; current: { destroy(): void } | n
  * no second name (a hard link may be another account's session) and the
  * same one (device and inode) the walk's lstat found; anything else is not
  * read and comes back `notTheFile`. A read stopped at the time limit lets
- * go of its stream and its file once each.
+ * go of its stream and its file once each. `ownRun`: `excluded` named the
+ * folder the session ran in, so the read left it out at its first record.
  */
 async function readSessionFile(
   f: CodexRolloutFile,
@@ -417,24 +419,25 @@ async function readSessionFile(
   maxLineBytes: number,
   excluded: (cwd: string) => boolean,
   state: SessionsReadState,
-): Promise<{ session: CodexSessionFacts | null; skippedLines: number; notTheFile: boolean }> {
+): Promise<{ session: CodexSessionFacts | null; skippedLines: number; notTheFile: boolean; ownRun: boolean }> {
   let handle: FileHandle
   try {
     handle = await fs.promises.open(f.file, SESSION_OPEN_FLAGS)
   } catch (e) {
     // A link at the end of the path (O_NOFOLLOW) is a file the walk did not see.
-    return { session: null, skippedLines: 0, notTheFile: (e as NodeJS.ErrnoException)?.code === 'ELOOP' }
+    return { session: null, skippedLines: 0, notTheFile: (e as NodeJS.ErrnoException)?.code === 'ELOOP', ownRun: false }
   }
-  const reader = codexSessionReader(excluded)
+  let ownRun = false
+  const reader = codexSessionReader((cwd) => (ownRun = excluded(cwd)))
   let stream: fs.ReadStream | null = null
   let partial = ''
   let skipping = false
   let skippedLines = 0
   let going = true
   try {
-    if (state.stopped) return { session: null, skippedLines: 0, notTheFile: false }
+    if (state.stopped) return { session: null, skippedLines: 0, notTheFile: false, ownRun: false }
     const st = await handle.stat({ bigint: true })
-    if (!st.isFile() || st.nlink > 1n || st.dev !== f.dev || st.ino !== f.ino) return { session: null, skippedLines: 0, notTheFile: true }
+    if (!st.isFile() || st.nlink > 1n || st.dev !== f.dev || st.ino !== f.ino) return { session: null, skippedLines: 0, notTheFile: true, ownRun: false }
     stream = handle.createReadStream({ encoding: 'utf8', start: 0, end: Math.max(0, maxBytes - 1), highWaterMark: 256 * 1024, autoClose: false })
     state.current = stream
     for await (const chunk of stream as AsyncIterable<string>) {
@@ -458,15 +461,15 @@ async function readSessionFile(
     }
     if (going && !skipping && partial) reader.push(partial)
   } catch {
-    return { session: null, skippedLines, notTheFile: false }
+    return { session: null, skippedLines, notTheFile: false, ownRun }
   } finally {
     if (state.current === stream) state.current = null
     // Destroyed once: the time limit may have done it already.
     try { if (stream && !stream.destroyed) stream.destroy() } catch { /* already ended */ }
     await handle.close().catch(() => { /* closed with the stream */ })
   }
-  if (state.stopped) return { session: null, skippedLines, notTheFile: false }
-  return { session: reader.end(), skippedLines, notTheFile: false }
+  if (state.stopped) return { session: null, skippedLines, notTheFile: false, ownRun }
+  return { session: reader.end(), skippedLines, notTheFile: false, ownRun }
 }
 
 /** A rollout file found in the sessions folder; `dev` and `ino` are the
@@ -553,9 +556,11 @@ type SessionsReadOpts = { runsParent: string | null; now?: number; windowDays?: 
  *  limit; one larger than the whole limit, wherever it sits (after the
  *  report's own earlier runs or the user's newer sessions too), is left out
  *  and counted, and the read goes on to the next (never a part of a
- *  session). The whole read, the walk included, ends at `timeLimitMs`
- *  (CODEX_INSIGHTS_READ_TIME_LIMIT_MS): a read still going then is stopped,
- *  and the answer is `timedOut` with nothing read. Never throws. */
+ *  session); the report's own earlier runs, left out at their first record,
+ *  spend none of the limit. The whole read, the walk included, ends at
+ *  `timeLimitMs` (CODEX_INSIGHTS_READ_TIME_LIMIT_MS): a read still going
+ *  then is stopped, and the answer is `timedOut` with nothing read. Never
+ *  throws. */
 export async function readCodexSessions(sessionsDir: string, opts: SessionsReadOpts): Promise<CodexSessionsRead> {
   const state: SessionsReadState = { stopped: false, current: null }
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -600,6 +605,9 @@ async function readSessionsWithin(sessionsDir: string, opts: SessionsReadOpts, s
     budget -= size
     read++
     const r = await readSessionFile(f, size, maxLine, excluded, state)
+    // The report's own earlier run is left out at its first record, so it
+    // spends none of the limit: the sessions after it get all of it.
+    if (r.ownRun) budget += size
     skippedLines += r.skippedLines
     if (r.notTheFile) links.linksSkipped++
     if (r.session) sessions.push(r.session)

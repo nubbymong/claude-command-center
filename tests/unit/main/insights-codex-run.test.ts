@@ -423,6 +423,34 @@ describe('a Codex report that does not complete', () => {
     expect(parseCodexStoredReport(getInsightsReport(second))?.subtitle).toBe(parseCodexStoredReport(getInsightsReport(first))?.subtitle)
   })
 
+  it("the report's own earlier run spends none of the read limit: a session behind it that fits the whole limit is read, and the run completes (release review) [host]", async () => {
+    rmSync(h.sessionsDir, { recursive: true, force: true })
+    const day = join(h.sessionsDir, '2026', '01', '01')
+    mkdirSync(day, { recursive: true })
+    const at = new Date().toISOString()
+    const stamp = (name: string, ageMs: number) => { const t = new Date(Date.now() - ageMs); utimesSync(join(day, name), t, t) }
+    const limit = 6000
+    // Newest, the report's own earlier run; then a session that is not larger
+    // than the whole limit but is larger than what the own run would leave.
+    const own = rolloutLines(join(runsParent(), 'ccc-insights-codex-prev'), at, 'OWN-RUN-MARK')
+    let near = rolloutLines(join(tmpRoot, 'projects', 'near'), at, 'NEAR-MARK')
+    const filler = (n: number) => JSON.stringify({ timestamp: at, type: 'event_msg', payload: { type: 'agent_message', message: 'x'.repeat(n) } }) + '\n'
+    near += filler(Math.max(0, limit - own.length + 1 - near.length - filler(0).length))
+    writeFileSync(join(day, 'rollout-own.jsonl'), own)
+    stamp('rollout-own.jsonl', 30_000)
+    writeFileSync(join(day, 'rollout-near.jsonl'), near)
+    stamp('rollout-near.jsonl', 60_000)
+    expect(near.length).toBeLessThanOrEqual(limit)
+    expect(own.length + near.length).toBeGreaterThan(limit)
+    h.maxTotalBytes = limit
+    const id = await runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(id).status).toBe('complete')
+    const prompt = h.execCalls[0].prompt
+    expect(prompt).toContain('NEAR-MARK')
+    expect(prompt).not.toContain('OWN-RUN-MARK')
+    expect(prompt).toContain('over the 1 most recent sessions):')
+  })
+
   it('a sign-in that has lapsed: failed, flagged for the sign-in banner (D10) [host]', async () => {
     h.prepareAnswer = { ok: false, code: 'not-signed-in', message: 'This account is not signed in.' }
     const id = await runCodexInsights(win, { accountId: ACCT }) as string

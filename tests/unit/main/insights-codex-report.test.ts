@@ -3,8 +3,8 @@
 // digest and the prompt, and the check every reply must pass (mockup D1 to
 // D5, D13, D14; approved on the Agent Canvas 2026-10-05). Pure, apart from
 // one temp folder of rollouts for the reader; no process starts.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import fs, { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -395,6 +395,58 @@ describe('reading the sessions folder', () => {
       expect(read.sessions.map((x) => x.lastAt)).toEqual([Date.parse('2026-10-04T10:00:00.000Z'), Date.parse('2026-10-02T10:00:00.000Z'), Date.parse('2026-10-01T10:00:00.000Z')])
       expect(JSON.stringify(read.sessions)).not.toContain('BIG-SESSION-MARK')
     })
+  })
+
+  it('the read stops at the first session that does not fit what is left: an older one that would fit is not read [host]', async () => {
+    const now = Date.parse('2026-10-05T12:00:00Z')
+    const newest = put('2026/10/04/rollout-n.jsonl', rollout({ at: '2026-10-04T10:00:00.000Z' }), new Date('2026-10-04T10:00:00Z'))
+    const mid = put('2026/10/03/rollout-m.jsonl', rollout({ at: '2026-10-03T10:00:00.000Z', reply: 'x'.repeat(5000) }), new Date('2026-10-03T10:00:00Z'))
+    const oldest = put('2026/10/02/rollout-o.jsonl', rollout({ at: '2026-10-02T10:00:00.000Z' }), new Date('2026-10-02T10:00:00Z'))
+    const limit = statSync(mid).size + 10
+    expect(statSync(newest).size + statSync(mid).size).toBeGreaterThan(limit)
+    expect(statSync(newest).size + statSync(oldest).size).toBeLessThanOrEqual(limit)
+    const r = await readCodexSessions(join(root, 'sessions'), { runsParent: null, now, maxTotalBytes: limit })
+    expect(r).toMatchObject({ filesFound: 3, filesTooLarge: 0, filesNotRead: 2 })
+    expect(r.sessions.map((x) => x.lastAt)).toEqual([Date.parse('2026-10-04T10:00:00.000Z')])
+  })
+
+  it('a session that grows between the walk and its read is read only to its size at the walk, so the sessions read stay within the limit [host]', async () => {
+    const now = Date.parse('2026-10-05T12:00:00Z')
+    const runs = join(root, 'insights', CODEX_INSIGHTS_RUNS_DIRNAME)
+    const limit = 20_000
+    // Newest first: the report's own earlier run, one larger than the limit,
+    // then four that each fit but not all together.
+    const walk = new Map<string, number>()
+    const specs = [{ size: 3000, own: true }, { size: 25_000 }, { size: 4000 }, { size: 6000 }, { size: 5000 }, { size: 9000 }]
+    specs.forEach((sp, i) => {
+      const at = new Date(now - (i + 1) * 3_600_000)
+      const cwd = sp.own ? join(runs, `${CODEX_INSIGHTS_RUN_PREFIX}p${i}`) : undefined
+      const base = rollout({ at: at.toISOString(), cwd, reply: '' }).join('\n').length + 1
+      const f = put(`2026/10/04/rollout-${i}.jsonl`, rollout({ at: at.toISOString(), cwd, reply: 'x'.repeat(Math.max(0, sp.size - base)) }), at)
+      walk.set(f, statSync(f).size)
+    })
+    // Each file grows to three times its size between the walk and its open;
+    // every stream's bytes are counted.
+    const streams: Array<{ file: string; s: fs.ReadStream }> = []
+    const realOpen = fs.promises.open.bind(fs.promises)
+    const spy = vi.spyOn(fs.promises, 'open').mockImplementation(async (p: any, flags?: any, mode?: any) => {
+      appendFileSync(String(p), 'y'.repeat(2 * (walk.get(String(p)) ?? 0)) + '\n')
+      const handle = await realOpen(p, flags, mode)
+      const make = handle.createReadStream.bind(handle)
+      ;(handle as any).createReadStream = (o: any) => { const s = make(o); streams.push({ file: String(p), s }); return s }
+      return handle
+    })
+    try {
+      const read = await readCodexSessions(join(root, 'sessions'), { runsParent: runs, now, maxTotalBytes: limit })
+      expect(read).toMatchObject({ filesFound: 6, filesTooLarge: 1, filesNotRead: 1 })
+      expect(read.sessions).toHaveLength(3)
+      expect(streams.length).toBe(4)
+      for (const { file, s } of streams) expect(s.bytesRead).toBeLessThanOrEqual(walk.get(file)!)
+      const own = [...walk.keys()][0]
+      expect(streams.filter((x) => x.file !== own).reduce((n, x) => n + x.s.bytesRead, 0)).toBeLessThanOrEqual(limit)
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('a line longer than the line limit is skipped and counted, and every record after it is still read (review F1) [host]', async () => {
