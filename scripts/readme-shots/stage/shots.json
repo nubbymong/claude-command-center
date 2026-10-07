@@ -4,23 +4,19 @@
       "name": "boot",
       "steps": [
         { "wait": 1500 },
-        { "click": "button:has-text(\"Resume\")", "wait": 9000 }
+        { "click": "button:text-is(\"Resume\")", "wait": 9000 },
+        { "click": "[data-testid=\"panel-tab-running\"]", "wait": 900 }
       ],
       "settle": 1500,
-      "frames": 2,
+      "frames": 1,
       "interval": 200
     },
     {
-      "name": "hero-banner",
-      "steps": [{ "wait": 1500 }],
-      "settle": 800,
-      "frames": 60,
-      "interval": 130,
-      "clip": { "x": 0, "y": 0, "width": 1600, "height": 440 }
-    },
-    {
       "name": "shot-sessions",
-      "steps": [{ "wait": 600 }],
+      "steps": [
+        { "move": [1450, 1092], "wait": 600 },
+        { "scan": "shot-sessions" }
+      ],
       "settle": 700,
       "frames": 64,
       "interval": 130
@@ -28,7 +24,8 @@
     {
       "name": "shot-canvas",
       "steps": [
-        { "click": "button[title*=\"Agent Canvas\"]", "wait": 2400 }
+        { "click": "button[title*=\"Agent Canvas\"]", "wait": 2600 },
+        { "scan": "shot-canvas" }
       ],
       "settle": 1000,
       "frames": 64,
@@ -37,7 +34,9 @@
     {
       "name": "shot-tokenomics",
       "steps": [
-        { "click": "[data-tour=\"nav-tokenomics\"]", "wait": 2600 }
+        { "click": "[data-tour=\"nav-tokenomics\"]", "wait": 4000 },
+        { "move": [1450, 1092] },
+        { "scan": "shot-tokenomics" }
       ],
       "settle": 900,
       "frames": 60,
@@ -46,29 +45,48 @@
     {
       "name": "shot-logs",
       "steps": [
-        { "click": "[data-tour=\"nav-logs\"]", "wait": 1400 },
-        { "click": "button:has-text(\"runs\")", "wait": 1800 }
+        { "click": "[data-tour=\"nav-logs\"]", "wait": 1600 },
+        { "click": "button:has-text(\"promo codes\"):has-text(\"runs\")", "wait": 2000 },
+        { "move": [1450, 1092] },
+        { "scan": "shot-logs" }
       ],
       "settle": 900,
       "frames": 64,
       "interval": 130
     },
     {
-      "name": "shot-memory",
+      "name": "shot-logs-website",
       "steps": [
-        { "click": "[data-tour=\"nav-memory\"]", "wait": 1800 }
+        { "click": "button:has-text(\"docs-site\"):has-text(\"runs\")", "wait": 2000 },
+        { "move": [1450, 1092] },
+        { "scan": "shot-logs-website" }
+      ],
+      "settle": 900,
+      "frames": 30,
+      "interval": 140
+    },
+    {
+      "name": "shot-insights",
+      "steps": [
+        { "click": "[data-tour=\"nav-insights\"]", "wait": 2600 },
+        { "move": [1450, 1092] },
+        { "select": { "testid": "insights-account-picker", "match": "profile-alex-7f3a1c" }, "wait": 1200 },
+        { "select": { "testid": "insights-run-picker", "match": "2026-10-05-071233-014411" }, "wait": 2200 },
+        { "scan": "shot-insights" }
       ],
       "settle": 900,
       "frames": 60,
       "interval": 140
     },
     {
-      "name": "shot-insights",
+      "name": "shot-insights-website",
       "steps": [
-        { "click": "[data-tour=\"nav-insights\"]", "wait": 2200 }
+        { "select": { "testid": "insights-account-picker", "match": "Website" }, "wait": 1200 },
+        { "select": { "testid": "insights-run-picker", "match": "2026-10-04-064015-012230" }, "wait": 2200 },
+        { "scan": "shot-insights-website" }
       ],
       "settle": 900,
-      "frames": 60,
+      "frames": 30,
       "interval": 140
     }
   ]

@@ -429,14 +429,23 @@ function seedMemory() {
 }
 
 // ── codex rollouts ─────────────────────────────────────────────────────────
+function realmSessionsDir(accountKey) {
+  const a = codexAcct(accountKey)
+  if (!a) throw new Error('[seed] no Codex account ' + accountKey)
+  return `${RES}/codex-realms/${a.realmId}/sessions`
+}
+function rolloutDir(base, start) {
+  const d = new Date(start)
+  return `${base}/${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`
+}
 function seedCodex() {
   rmrf(CODEX_SESSIONS)
+  for (const a of C.CODEX_ACCOUNTS) rmrf(realmSessionsDir(a.key))
   for (const r of C.CODEX_HISTORY) {
     const start = NOW - r.daysAgo * C.DAY
-    const d = new Date(start)
-    const dir = `${CODEX_SESSIONS}/${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`
+    const dir = rolloutDir(r.account ? realmSessionsDir(r.account) : CODEX_SESSIONS, start)
     const id = uuid()
-    const lines = [JSON.stringify({ timestamp: new Date(start).toISOString(), type: 'session_meta', payload: { id, timestamp: new Date(start).toISOString(), cwd: r.cwd, originator: 'codex_cli_rs', cli_version: '0.60.0', model: r.model } })]
+    const lines = [JSON.stringify({ timestamp: new Date(start).toISOString(), type: 'session_meta', payload: { id, timestamp: new Date(start).toISOString(), cwd: r.cwd, originator: 'codex_cli_rs', cli_version: '0.155.1', model: r.model } })]
     let ts = start
     let total = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 }
     for (let i = 0; i < r.turns; i++) {
@@ -452,6 +461,46 @@ function seedCodex() {
     touch(file, ts)
   }
   log(`codex rollouts written: ${C.CODEX_HISTORY.length}`)
+  seedCodexLogs()
+}
+
+// Codex conversations for the Logs page: provider 'codex' runs on the docs-site config (Website account), each
+// with its rollout in that account's realm, appended to the runs the Logs DB is built from.
+function seedCodexLogs() {
+  const seedFile = `${RUNNER}/transcripts-seed.json`
+  const seedDoc = readJson(seedFile, { runs: [] })
+  const c = cfg('cfg-docs')
+  const a = codexAcct('website')
+  let added = 0
+  for (const r of C.CODEX_LOG_RUNS) {
+    const startMs = NOW - r.daysAgo * C.DAY - 2 * C.HOUR
+    const id = uuid()
+    const rows = []
+    const lines = [JSON.stringify({ timestamp: new Date(startMs).toISOString(), type: 'session_meta', payload: { id, timestamp: new Date(startMs).toISOString(), cwd: c.workingDirectory, originator: 'codex_cli_rs', cli_version: '0.155.1', model: r.model } })]
+    let ts = startMs
+    for (const t of r.turns) {
+      ts += (t.user ? rint(20, 90) : rint(3, 14)) * 1000
+      if (t.user) {
+        rows.push({ ts, role: 'user', kind: 'message', content: t.user })
+        lines.push(JSON.stringify({ timestamp: new Date(ts).toISOString(), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: t.user }] } }))
+      } else if (t.text) {
+        rows.push({ ts, role: 'assistant', kind: 'message', content: t.text })
+        lines.push(JSON.stringify({ timestamp: new Date(ts).toISOString(), type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: t.text }] } }))
+      } else if (t.tool) {
+        const meta = {}
+        for (const k of ['file_path', 'command']) if (t.input[k] !== undefined) meta[k] = String(t.input[k]).slice(0, 200)
+        rows.push({ ts, role: 'assistant', kind: 'tool_call', content: '', toolName: t.tool, toolMeta: JSON.stringify(meta) })
+        lines.push(JSON.stringify({ timestamp: new Date(ts).toISOString(), type: 'response_item', payload: { type: 'function_call', name: t.tool, arguments: JSON.stringify(t.input), call_id: 'call_' + hex(24) } }))
+      }
+    }
+    const file = `${rolloutDir(realmSessionsDir('website'), startMs)}/rollout-${new Date(startMs).toISOString().replace(/[:.]/g, '-')}-${id}.jsonl`
+    writeText(file, lines.join('\n') + '\n')
+    touch(file, ts)
+    seedDoc.runs.push({ sessionId: hex(24), configId: c.id, configLabel: c.label, projectCwd: c.workingDirectory, accountEmail: a.label, profileId: a.accountId, provider: 'codex', startedAt: startMs, endedAt: ts + 4000, path: file.replace(/\//g, '\\'), sourceFormat: 'codex-rollout', sourceVersion: '0.155.1', rows })
+    added++
+  }
+  writeJson(seedFile, seedDoc)
+  log(`codex log runs written: ${added}`)
 }
 
 // ── insights ───────────────────────────────────────────────────────────────
@@ -462,17 +511,24 @@ function seedInsights() {
   const sam = acct('sam')
   const jordan = acct('jordan')
   const runs = [
-    { id: '2026-07-21-064102-011900', timestamp: Date.parse('2026-07-21T06:41:02Z'), status: 'complete', accountEmail: a.email, profileId: a.id, kind: 'account' },
-    { id: '2026-08-04-070812-013207', timestamp: Date.parse('2026-08-04T07:08:12Z'), status: 'complete', accountEmail: sam.email, profileId: sam.id, kind: 'account' },
-    { id: '2026-08-11-071940-013802', timestamp: Date.parse('2026-08-11T07:19:40Z'), status: 'complete', accountEmail: jordan.email, profileId: jordan.id, kind: 'account' },
+    { id: '2026-09-14-064102-011900', timestamp: Date.parse('2026-09-14T06:41:02Z'), status: 'complete', accountEmail: a.email, profileId: a.id, kind: 'account' },
+    { id: '2026-09-21-070812-013207', timestamp: Date.parse('2026-09-21T07:08:12Z'), status: 'complete', accountEmail: sam.email, profileId: sam.id, kind: 'account' },
+    { id: '2026-09-28-071940-013802', timestamp: Date.parse('2026-09-28T07:19:40Z'), status: 'complete', accountEmail: jordan.email, profileId: jordan.id, kind: 'account' },
     { id: C.INSIGHTS.runId, timestamp: C.INSIGHTS.timestamp, status: 'complete', accountEmail: a.email, profileId: a.id, kind: 'account' },
   ]
-  writeJson(`${dir}/catalogue.json`, { runs })
+  // 2.1.1 (P4.7): a Codex account's report, provider 'codex', its account id as profileId.
+  const cx = codexAcct(C.CODEX_INSIGHTS.accountKey)
+  if (!cx) throw new Error('[seed] no account ' + C.CODEX_INSIGHTS.accountKey + ' for the Insights run')
+  const codexRun = { id: C.CODEX_INSIGHTS.runId, timestamp: C.CODEX_INSIGHTS.timestamp, status: 'complete', provider: 'codex', profileId: cx.accountId }
+  // The page opens on the catalogue's last run: keep the primary account's newest Claude report last.
+  writeJson(`${dir}/catalogue.json`, { runs: [...runs.slice(0, -1), codexRun, runs[runs.length - 1]] })
   // Older runs reuse the same report so a stray click never lands on an empty page.
   for (const r of runs) {
     writeText(`${dir}/${r.id}/report.html`, C.INSIGHTS.html)
     writeJson(`${dir}/${r.id}/kpis.json`, C.INSIGHTS.kpis)
   }
+  writeJson(`${dir}/${codexRun.id}/report.json`, C.CODEX_INSIGHTS.report)
+  writeJson(`${dir}/${codexRun.id}/kpis.json`, C.CODEX_INSIGHTS.kpis)
   log('insights written')
 }
 

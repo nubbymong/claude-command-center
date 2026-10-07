@@ -98,8 +98,8 @@ def main(seed_path: str, db_path: str) -> None:
         size = os.path.getsize(run["path"]) if os.path.exists(run["path"]) else 0
         db.execute(
             "INSERT INTO transcripts(runId, path, ord, sourceFormat, sourceVersion, parserVersion, ingestCursor, status, confidence)"
-            " VALUES (?,?,0,'claude-jsonl','2.1.198',1,?,'complete','exact')",
-            (run_id, run["path"], size),
+            " VALUES (?,?,0,?,?,1,?,'complete','exact')",
+            (run_id, run["path"], run.get("sourceFormat", "claude-jsonl"), run.get("sourceVersion", "2.1.198"), size),
         )
         for idx, row in enumerate(run["rows"]):
             db.execute(

@@ -1,0 +1,87 @@
+{
+  "shots": [
+    {
+      "name": "gboot",
+      "steps": [
+        { "wait": 1500 },
+        { "click": "button:text-is(\"Resume\")", "wait": 9000 },
+        { "click": "[data-testid=\"panel-tab-running\"]", "wait": 900 }
+      ],
+      "settle": 1500,
+      "frames": 1,
+      "interval": 200
+    },
+    {
+      "name": "v2-shell-hero",
+      "format": "jpeg",
+      "quality": 85,
+      "steps": [
+        { "move": [1230, 793], "wait": 800 },
+        { "scan": "v2-shell-hero" }
+      ],
+      "settle": 1200
+    },
+    {
+      "name": "hero-banner",
+      "steps": [{ "scan": "hero-banner" }],
+      "settle": 300,
+      "frames": 1,
+      "clip": { "x": 0, "y": 0, "width": 1280, "height": 400 }
+    },
+    {
+      "name": "step-session-options",
+      "format": "jpeg",
+      "quality": 85,
+      "steps": [
+        { "click": "[data-testid=\"panel-tab-saved\"]", "wait": 800 },
+        { "editConfig": "auth-service", "wait": 1400 },
+        { "scan": "step-session-options" }
+      ],
+      "settle": 800
+    },
+    {
+      "name": "step-session-options-startup",
+      "format": "jpeg",
+      "quality": 85,
+      "steps": [
+        { "scrollTo": "Starting model", "wait": 600 },
+        { "scan": "step-session-options-startup" }
+      ],
+      "settle": 600
+    },
+    {
+      "name": "gclose",
+      "steps": [
+        { "key": "Escape", "wait": 500 },
+        { "closeDialog": true },
+        { "click": "[data-testid=\"panel-tab-running\"]", "wait": 700 }
+      ],
+      "settle": 300,
+      "frames": 1,
+      "interval": 100
+    },
+    {
+      "name": "step-vision",
+      "format": "jpeg",
+      "quality": 85,
+      "steps": [
+        { "click": "[data-tour=\"nav-vision\"]", "wait": 1500 },
+        { "move": [1230, 793] },
+        { "waitVisionConnected": 45000, "wait": 900 },
+        { "scan": "step-vision" }
+      ],
+      "settle": 800
+    },
+    {
+      "name": "step-tokenomics",
+      "format": "jpeg",
+      "quality": 85,
+      "steps": [
+        { "click": "[data-tour=\"nav-tokenomics\"]", "wait": 4000 },
+        { "move": [1230, 793] },
+        { "scan": "step-tokenomics" }
+      ],
+      "settle": 900
+    }
+  ]
+}
