@@ -1,4 +1,4 @@
-## 2026-10-07 -- WP2 PR 4: fix passes 16 to 17b, the release review and its reviews
+## 2026-10-07 -- WP2 PR 4: fix passes 16 to 17c, the release review and its reviews
 
 Fix pass 16 (aff08b70, 3332c3ac), for the release review of 2026-10-07,
 each fix with tests red before it (6 new tests; 7 mutants, 7 red). A Codex
@@ -57,21 +57,32 @@ lane's host is deliberately without one, so it moved to the linuxKey lane
 with the same assertions; that lane passed 4 of 4.
 
 Fix pass 17b, for fix pass 17's spec and quality reviews (PASS, with nits)
-and its ADR-009 re-attack (two minors), each new test red before its change
-(4 new tests, 2 changed for typing only; 6 mutants, 6 red). The report's own
-earlier run no longer spends any of the read limit. The read leaves such a
-run out at its first record but used to charge its whole size, so a session
-behind it that fit the whole limit, but not what was left, stopped the read
-with nothing counted, and the run said the account had no sessions; that
-session is now read, and the run completes. An own run is read no further
-than its first chunk, so the limit still bounds what is read. New tests pin
-that a session grown since the walk is read only to its size at the walk,
-that the read stops at the first session that does not fit what is left,
-and that the start sweep leaves an account it did not choose alone (a pane
-open on it stays open, and it is never barred). Two older test lines
-typecheck now with no change in what they test, and the sweep's comment
-says no wait comes between the record read and the bars.
+and its ADR-009 re-attack (two minors), and fix pass 17c, for 17b's spec and
+quality reviews, each new test red before its change (17b: 4 new tests, 2
+changed for typing only, 6 mutants, 6 red; 17c: 2 new tests, 1 changed,
+9 mutants, 9 red). How the report's own earlier runs meet the read limit:
+- A file the read can tell, within its first chunk, is one of the report's
+  own earlier runs is left out there, is not counted as a session, and spends
+  none of the limit.
+- A file that names a run folder only after its first chunk is left out
+  too, but spends its full size like any other file.
+- When the next file does not fit what is left but fits the whole limit, the
+  read looks at its first chunk before stopping: an own run told there is
+  passed over at no cost and the read goes on; anything else stops the read
+  as before, with what that chunk held set aside and the file counted as not
+  read.
+- So the sessions read stay within the limit, and on top of it each such own
+  run costs at most its first chunk (of at most 200 files), as does the one
+  file the read stops at.
+A session behind an own run that fits the limit is read, and the run
+completes on it. New tests also pin that a session grown since the walk is
+read only to its size at the walk, that the read stops at the first session
+that does not fit what is left, and that the start sweep leaves an account
+it did not choose alone (a pane open on it stays open, and it is never
+barred). Two older test lines typecheck now with no change in what they
+test, and the sweep's comment says no wait comes between the record read
+and the bars.
 
-Owed now: the confirmations of fix passes 16 to 17b by the same reviewers and
+Owed now: the confirmations of fix passes 16 to 17c by the same reviewers and
 attackers, and CI at their head; the PR-level ADR-009 pass at PR 4's final
 head; the SSH live matrix and the owner's checks.

@@ -362,16 +362,21 @@ Per PR:
   lifting when its own wipe ends, and a failed wipe lifting its bar (7
   new tests, 8 changed; 19 mutants, 18 killed, 1 an equivalent survivor).
   Fix pass 17 reviewed PASS (spec, quality); fix pass 17b answers their
-  nits and the ADR-009 re-attack's two minors: the report's own earlier
-  run spends none of the read limit, so a session behind it that fits
-  the limit is read and the run completes rather than saying the account
-  has no sessions, with tests pinning the per-file cap at the walk's
-  size, the stop at the first session that does not fit, and an account
-  the sweep did not choose left alone (4 new tests; 6 mutants, 6
-  killed). Owed for fix passes 16 to 17b: the confirmations by the same
-  reviewers and attackers, and CI at their head. Still owed for PR 4: the
-  PR-level ADR-009 pass at its final head (9.7 gate 4), the SSH live
-  matrix and the owner's checks.
+  nits and the ADR-009 re-attack's two minors, and fix pass 17c answers
+  17b's spec and quality reviews. A file the read can tell, within its
+  first chunk, is one of the report's own earlier runs is left out there,
+  is not counted, and spends none of the read limit; one that does not fit
+  what is left is looked at (its first chunk) before the read stops, and
+  passed over. A file that names a run folder only later is left out too,
+  but spends its full size. So the sessions read stay within the limit,
+  and on top of it each such own run costs at most its first chunk, as
+  does the one file the read stops at. Tests also pin the per-file cap at
+  the walk's size, the stop at the first session that does not fit, and
+  an account the sweep did not choose left alone (17b: 4 new tests, 6
+  mutants, 6 killed; 17c: 2 new tests, 9 mutants, 9 killed). Owed for fix
+  passes 16 to 17c: the confirmations by the same reviewers and attackers,
+  and CI at their head. Still owed for PR 4: the PR-level ADR-009 pass at
+  its final head (9.7 gate 4), the SSH live matrix and the owner's checks.
 
 Package completion is not release completion. A complete PR merges to beta
 only on the owner's word, in the order #625, PR 3, PR 4, and nothing is
