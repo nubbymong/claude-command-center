@@ -453,10 +453,10 @@ describe('tip card -- Got it advances the rotation (owner bug, 2026-08-24)', () 
   })
 })
 
-describe('Ask Conductor from the card, with Claude Code switched off (WP2 commit 6e review fix)', () => {
-  const OFF = 'Ask Conductor runs on Claude Code, which is off. Turn it on in Settings, Accounts.'
+describe('Ask Conductor from the card, with Claude Code switched off and Codex not on (WP2 commit 6e review fix; P4.3)', () => {
+  const OFF = 'Ask Conductor runs on Claude Code or Codex, and both are off. Turn one on in Settings, Accounts.'
 
-  it('Discuss is disabled and says why; with Claude Code on it is live', async () => {
+  it('Discuss is disabled and says why; with Claude Code on, or Codex alone (P4.3), it is live', async () => {
     const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false } })
     try {
@@ -467,6 +467,8 @@ describe('Ask Conductor from the card, with Claude Code switched off (WP2 commit
       act(() => { useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: true } }) })
       expect((q('tip-card-discuss') as HTMLButtonElement).disabled).toBe(false)
       expect((q('tip-card-discuss') as HTMLButtonElement).title).toBe('Ask Conductor about this tip')
+      act(() => { useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false, codexEnabled: true, codexAnswered: true } }) })
+      expect((q('tip-card-discuss') as HTMLButtonElement).disabled).toBe(false)
     } finally {
       useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
     }

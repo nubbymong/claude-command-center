@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useGitHubStore } from '../stores/githubStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useSessionStore, type Session } from '../stores/sessionStore'
+import { useClaudeOff, CLAUDE_OFF_ACCOUNTS_LINE } from '../lib/claudeOff'
+import { usesCodex } from '../onboarding/provider-choice'
 import { formatCredits, formatBilledUsd, selectUsagePool } from '../lib/ai-usage-format'
 import { formatResetTime } from '../utils/terminalFormatting'
 import { DialogButton } from './ui/Dialog'
@@ -85,13 +87,17 @@ function SectionHeader({ title, note }: { title: string; note?: string }) {
 }
 
 /**
- * Unified, READ-only usage popover anchored under the repo-strip AI chip.
+ * Unified, READ-only usage popover anchored above the status strip's AI chip
+ * (P3.16 final-head VM finding D2: fixed at the chip, portalled by it).
  * Three provider sections:
  *   - GitHub  : per-model rows from aiUsage (gross credits / covered / billed),
  *               a totals row, and a cap bar when copilotIncludedCredits is set.
  *   - Codex   : the active/most-recent Codex session's statusline rate-limit
  *               windows (5h / 7d), already captured per session.
  *   - Claude  : the active Claude session's statusline rate-limit windows.
+ * OD27 M1 D5 (row 14), as the Account usage page reads it: an assistant that
+ * is off has no section. Codex off or not set up shows nothing; Claude Code
+ * off shows the one muted D5 line where its section would be.
  * A Refresh button re-pulls GitHub usage. No settings live here; a quiet link
  * points at Settings for the cap.
  */
@@ -102,8 +108,12 @@ function SectionHeader({ title, note }: { title: string; note?: string }) {
 // the previous inline `if (!open) return null` already skipped it.
 export default function AiUsagePopover(props: {
   open: boolean
-  onClose: () => void
+  /** `refocus`: Escape closed it, so focus goes back to its opener. */
+  onClose: (refocus?: boolean) => void
   onOpenSettings?: (tab?: 'github' | 'statusline') => void
+  /** P3.16 final-head VM finding D2: where it is fixed, from the chip's
+   *  on-screen rect (the chip portals it onto document.body). */
+  anchor?: { right: number; bottom: number } | null
 }) {
   if (!props.open) return null
   return <AiUsagePopoverBody {...props} />
@@ -113,10 +123,12 @@ function AiUsagePopoverBody({
   open,
   onClose,
   onOpenSettings,
+  anchor,
 }: {
   open: boolean
-  onClose: () => void
+  onClose: (refocus?: boolean) => void
   onOpenSettings?: (tab?: 'github' | 'statusline') => void
+  anchor?: { right: number; bottom: number } | null
 }) {
   const aiUsage = useGitHubStore((s) => s.aiUsage)
   const aiUsageStatus = useGitHubStore((s) => s.aiUsageStatus)
@@ -126,6 +138,10 @@ function AiUsagePopoverBody({
   const planName = useSettingsStore((s) => s.settings.copilotPlanName)
   const sessions = useSessionStore((s) => s.sessions)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
+  // D5: the same on/off the Account usage page reads, subscribed so a switch
+  // flipped in Settings re-renders an open popover.
+  const claudeOff = useClaudeOff()
+  const codexOn = useSettingsStore((s) => usesCodex(s.settings))
 
   const [entered, setEntered] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -150,9 +166,30 @@ function AiUsagePopoverBody({
       if (target.closest?.('[data-ai-usage-chip]')) return
       if (ref.current && !ref.current.contains(target)) onClose()
     }
+    // D2: Escape closes it too, handing focus back (IdentityOverflow's handler).
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose(true)
+    }
+    // Fixer 8b: it is placed once, from the chip's rect when it opened, so a
+    // resize closes it rather than leaving it away from the chip (RowMenu's rule).
+    const onResize = () => onClose()
     document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('resize', onResize)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', onResize)
+    }
   }, [open, onClose])
+
+  // Fixer 8b (IdentityOverflow's keyboard handling): focus moves into the
+  // popover when it opens, so its buttons are reachable from the keyboard (it
+  // is portalled to the end of the document, away from the chip). Once, on
+  // open: the body mounts only while it is open.
+  useEffect(() => {
+    ref.current?.focus()
+  }, [])
 
   // Provider session sourcing. Claude = the active session when it is a Claude
   // session, else the most-recent Claude session. Codex = the active session
@@ -199,10 +236,16 @@ function AiUsagePopoverBody({
       ref={ref}
       role="dialog"
       aria-label="AI usage"
-      className={`absolute right-0 top-full mt-1.5 z-50 w-80 rounded-lg border shadow-xl p-3 flex flex-col gap-3 transition-all duration-200 ease-out ${
-        entered ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1'
+      tabIndex={-1}
+      // D2: fixed at the chip and rising from it (the chip sits at the
+      // window's bottom edge), so it enters from below. (Its width, w-80,
+      // is the chip's POPOVER_WIDTH_REM.)
+      className={`fixed z-50 w-80 rounded-lg border shadow-xl p-3 flex flex-col gap-3 transition-all duration-200 ease-out focus-ring ${
+        entered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1'
       }`}
       style={{
+        right: anchor?.right,
+        bottom: anchor?.bottom,
         background: 'var(--surface-raised)',
         borderColor: 'var(--border-subtle)',
         color: 'var(--text-primary)',
@@ -376,17 +419,25 @@ function AiUsagePopoverBody({
         )}
       </div>
 
-      {/* Codex section */}
-      <div className={CARD_CLASS} style={CARD_STYLE}>
-        <SectionHeader title="Codex" note={codexSession ? undefined : 'no Codex session this run'} />
-        <RateWindows session={codexSession} />
-      </div>
+      {/* Codex section: only once Codex is answered on (D5: nothing otherwise). */}
+      {codexOn && (
+        <div className={CARD_CLASS} style={CARD_STYLE}>
+          <SectionHeader title="Codex" note={codexSession ? undefined : 'no Codex session this run'} />
+          <RateWindows session={codexSession} />
+        </div>
+      )}
 
-      {/* Claude section */}
-      <div className={CARD_CLASS} style={CARD_STYLE}>
-        <SectionHeader title="Claude" note={claudeSession ? undefined : 'no Claude session this run'} />
-        <RateWindows session={claudeSession} />
-      </div>
+      {/* Claude section, or the one muted D5 line while Claude Code is off. */}
+      {claudeOff ? (
+        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          {CLAUDE_OFF_ACCOUNTS_LINE}
+        </div>
+      ) : (
+        <div className={CARD_CLASS} style={CARD_STYLE}>
+          <SectionHeader title="Claude" note={claudeSession ? undefined : 'no Claude session this run'} />
+          <RateWindows session={claudeSession} />
+        </div>
+      )}
 
       <div className="flex items-center justify-between pt-0.5">
         <button

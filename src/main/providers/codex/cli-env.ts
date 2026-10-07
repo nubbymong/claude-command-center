@@ -13,10 +13,10 @@
 // secrets), BROWSER (an arbitrary command), and everything else.
 //
 // Always SET, whatever the parent had: CODEX_HOME (the realm, last) and, on
-// Windows, NoDefaultCurrentDirectoryInExePath=1 -- npm's codex.cmd runs a
-// bare `node`, and without it cmd.exe looks for node in the current folder
-// before PATH (the same hardening claude-cli-version.ts applies to the
-// Claude shim). The runner must also start the shim from its own folder.
+// Windows, NoDefaultCurrentDirectoryInExePath=1, so the bare `node` npm's
+// codex.cmd runs is resolved from PATH (the same setting claude-cli-version.ts
+// gives the Claude shim). The runner must also start the shim from its own
+// folder.
 //
 // Windows variable names are case-insensitive, so there matching and
 // de-duplication are case-insensitive and the first spelling seen is kept;
@@ -55,6 +55,16 @@ function valueAllowed(key: string, value: string): boolean {
   return true
 }
 
+/** Only absolute PATH entries: a relative or empty entry names a folder
+ *  relative to wherever the process runs. Windows entries are a drive or a
+ *  share (optionally quoted); POSIX entries start with `/`. Null when none
+ *  is left. (The reviewer's environment keeps the same rule.) */
+export function absolutePathValue(value: string, win: boolean): string | null {
+  const sep = win ? ';' : ':'
+  const kept = value.split(sep).filter((p) => (win ? /^"?([A-Za-z]:[\\/]|[\\/]{2}[^\\/])/.test(p) : p.startsWith('/')))
+  return kept.length ? kept.join(sep) : null
+}
+
 /** A clean environment for one Codex CLI operation in one realm. */
 export function codexCliEnv(
   inherited: Readonly<Record<string, string | undefined>>,
@@ -71,6 +81,11 @@ export function codexCliEnv(
     const key = win ? name.toUpperCase() : name
     if (!ALLOWED.has(key) || seen.has(key) || !valueAllowed(key, value)) continue
     seen.add(key)
+    if (key === 'PATH') {
+      const abs = absolutePathValue(value, win)
+      if (abs !== null) out[name] = abs
+      continue
+    }
     out[name] = value
   }
   if (win) out.NoDefaultCurrentDirectoryInExePath = '1'

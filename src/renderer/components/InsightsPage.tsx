@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useInsightsStore } from '../stores/insightsStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useProviderAccountsStore, accountDisplayName, providerAccountActions } from '../stores/providerAccountsStore'
 import { useReauthAccount } from '../hooks/useReauthAccount'
 import { authFailureStillApplies, describeAuthWindow, type ProfileAuthInfo } from '../../shared/account-auth'
 import { isAccountActive } from '../../shared/account-types'
@@ -9,10 +10,23 @@ import { resolveAccountNameByEmail, resolveAccountName } from '../../shared/acco
 import KpiSidebar from './KpiSidebar'
 import type { CrossAccountInsights, InsightsData } from '../types/electron'
 import PageFrame from './PageFrame'
-import { parseInsightsReport, type ParsedInsights } from './insights/parseInsightsReport'
+import { parseInsightsReport, parseCodexInsightsReport, type ParsedInsights } from './insights/parseInsightsReport'
 import { InsightsSections } from './insights/InsightsSections'
 import CrossAccountReport from './insights/CrossAccountReport'
+import CodexRunConfirm from './insights/CodexRunConfirm'
 import { CLAUDE_OFF, useClaudeOff } from '../lib/claudeOff'
+import { providerOffForLaunch } from '../utils/launchAccount'
+import { ProviderMark } from './sidebar/Badges'
+import {
+  claudeAccountChoices,
+  codexAccountChoices,
+  codexAccountLabel,
+  codexRunAccountName,
+  defaultInsightsChoice,
+  insightsAccountKey,
+  runAllCount,
+  type InsightsAccountChoice,
+} from './insights/insightsAccounts'
 
 interface InsightsPageProps {
   /** Switch to the sessions view. Re-auth opens a login shell session, so the
@@ -20,12 +34,27 @@ interface InsightsPageProps {
   onNavigateToSessions?: () => void
 }
 
+/** One account the sign-in banner names. */
+interface ReauthEntry {
+  provider: 'claude' | 'codex'
+  id: string
+  name: string
+  error?: string
+}
+
+/** P4.7 (mockup D3): what the "?" beside a Codex report's title says. */
+const CODEX_HOW_MADE = "Codex has no Insights command of its own, so the app makes this report. It counts this account's Codex sessions itself, then asks Codex to write the cards, read-only and with no tools, on this account's own allowance."
+
 /**
  * Accounts whose sign-in has expired, according to Insights' own runs.
  *
  * Only each account's MOST RECENT run counts. A historical auth failure that has
  * since been fixed must not keep nagging — same calibration as the nav status dot:
  * a warning means "needs attention now", not "once failed".
+ *
+ * P4.7 (mockup D10): a Codex account is listed too, and its button opens
+ * Settings, Accounts, where its Sign in again is (the Usage page's way); its
+ * own line says a Codex report cannot run at all without a sign-in.
  */
 function AuthBanner({
   accounts,
@@ -33,14 +62,16 @@ function AuthBanner({
   onReauth,
   onRecheck,
 }: {
-  accounts: Array<{ profileId: string; name: string; error?: string }>
+  accounts: ReauthEntry[]
   checking: boolean
-  onReauth: (profileId: string, name: string) => void
+  onReauth: (entry: ReauthEntry) => void
   onRecheck: () => void
 }) {
   if (accounts.length === 0) return null
+  const anyClaude = accounts.some((a) => a.provider === 'claude')
+  const anyCodex = accounts.some((a) => a.provider === 'codex')
   return (
-    <div className="px-4 py-2.5 bg-red/10 border-b border-red/25 shrink-0">
+    <div className="px-4 py-2.5 bg-red/10 border-b border-red/25 shrink-0" data-testid="insights-auth-banner">
       <div className="flex items-start gap-2">
         <span className="text-red text-xs mt-0.5 shrink-0">{String.fromCodePoint(0x26a0)}</span>
         <div className="min-w-0 flex-1">
@@ -49,16 +80,24 @@ function AuthBanner({
               ? 'One account needs to sign in again before Insights can analyse it.'
               : `${accounts.length} accounts need to sign in again before Insights can analyse them.`}
           </p>
-          <p className="text-[11px] text-overlay1 mt-0.5">
-            The report still generates, but the metrics and the written analysis need a working
-            sign-in. Signing in opens a terminal session for that account.
-          </p>
+          {anyClaude && (
+            <p className="text-[11px] text-overlay1 mt-0.5">
+              The report still generates, but the metrics and the written analysis need a working
+              sign-in. Signing in opens a terminal session for that account.
+            </p>
+          )}
+          {anyCodex && (
+            <p className="text-[11px] text-overlay1 mt-0.5" data-testid="insights-auth-codex-line">
+              A Codex report cannot run without a working sign-in.
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-1.5 mt-2">
             {accounts.map((a) => (
               <button
-                key={a.profileId}
-                onClick={() => onReauth(a.profileId, a.name)}
+                key={`${a.provider}:${a.id}`}
+                onClick={() => onReauth(a)}
                 title={a.error || 'Sign-in expired'}
+                data-testid={`insights-reauth-${a.provider}`}
                 className="text-[11px] px-2 py-0.5 rounded border border-red/40 text-red hover:bg-red/15 transition-colors"
               >
                 Sign in: {a.name}
@@ -89,47 +128,59 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
   const status = useInsightsStore((s) => s.status)
   const statusMessage = useInsightsStore((s) => s.statusMessage)
   const startInsights = useInsightsStore((s) => s.startInsights)
+  const startCodexInsights = useInsightsStore((s) => s.startCodexInsights)
   const startCrossAccount = useInsightsStore((s) => s.startCrossAccount)
   const batchActive = useInsightsStore((s) => s.batchActive)
   const loadCatalogue = useInsightsStore((s) => s.loadCatalogue)
-  // An insights run is a headless Claude Code run: with Claude Code switched
-  // off every Run button is disabled and says why (the store refuses as well).
+  // A run on a Claude Code account is a headless Claude Code run: with Claude
+  // Code switched off, a Claude account's run is disabled and says why (the
+  // store refuses as well). A Codex account's run is not (mockup D8).
   const claudeOff = useClaudeOff()
 
   const [parsed, setParsed] = useState<ParsedInsights | null>(null)
   const [currentKpis, setCurrentKpis] = useState<InsightsData | null>(null)
   const [previousKpis, setPreviousKpis] = useState<InsightsData | null>(null)
   const [loading, setLoading] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  /** The Run button the confirmation opens under (one is drawn at a time:
+   *  Run Insights Now on the empty page, New run over a report); Escape and
+   *  Cancel give it focus back. */
+  const runButtonRef = useRef<HTMLButtonElement>(null)
 
-  // Provider presence: fetched once on mount from the new worker-backed tokenomics
-  // summary. Used to detect Codex-only users and show a tailored empty state.
-  const [providerPresence, setProviderPresence] = useState<{ claude: boolean; codex: boolean }>({ claude: false, codex: false })
-  useEffect(() => {
-    let alive = true
-    window.electronAPI.tokenomics.summary({}).then((s) => {
-      if (!alive || !s) return
-      const claude = s.modelSplit.some((m) => m.model.startsWith('claude'))
-      const codex = s.modelSplit.some((m) => m.model.startsWith('gpt'))
-      setProviderPresence({ claude, codex })
-    }).catch(() => {})
-    return () => { alive = false }
-  }, [])
-
-  // Account selection: which account a new run executes under. Defaults to the
-  // captured primary; only surfaced when more than one account profile exists.
+  // Account selection: which account a new run executes under (mockup D7).
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
-  const multiAccount = profiles.length >= 2
+  const snapshot = useProviderAccountsStore((s) => s.snapshot)
+  const codexEnabled = useSettingsStore((s) => s.settings.codexEnabled)
+  // Codex off or not set up: its accounts leave the picker (their reports stay).
+  const codexUsable = !providerOffForLaunch('codex', snapshot)
   const defaultProfileId = (profiles.find((p) => p.isPrimary) ?? profiles[0])?.id ?? ''
-  const [runProfileId, setRunProfileId] = useState<string>('')
-  const effectiveRunProfileId = runProfileId || defaultProfileId
   const nameForAccount = (email?: string) => (email ? resolveAccountNameByEmail(email, profiles, accountAliases) : null)
   const labelForProfile = (p: { accountEmail: string; name?: string; isPrimary?: boolean }) =>
     (resolveAccountName(p.accountEmail, p.name, accountAliases) || 'Account') + (p.isPrimary ? ' (primary)' : '')
+  const claudeChoices = claudeAccountChoices(profiles, labelForProfile, !claudeOff)
+  // codexEnabled is read so a switch in Settings re-draws the list at once.
+  const codexChoices = useMemo(() => codexAccountChoices(snapshot, codexUsable), [snapshot, codexUsable, codexEnabled])
+  const allChoices = [...claudeChoices, ...codexChoices]
+  const showPicker = allChoices.length >= 2
+  const [runChoice, setRunChoice] = useState<string>('')
+  const fallbackChoice: InsightsAccountChoice = { value: insightsAccountKey('claude', ''), provider: 'claude', id: '', label: 'Claude Code', disabled: false, needsAck: false, external: false }
+  const selected: InsightsAccountChoice =
+    allChoices.find((c) => c.value === runChoice && !c.disabled) ??
+    defaultInsightsChoice(claudeChoices, codexChoices, !claudeOff, defaultProfileId) ??
+    fallbackChoice
+  const selectedClaudeOff = selected.provider === 'claude' && claudeOff
+  const allCount = runAllCount(claudeChoices, codexChoices, !claudeOff)
 
   useEffect(() => {
     loadCatalogue()
   }, [])
+
+  // A changed account choice closes an open confirmation: it named the other
+  // one. So does a run starting, from this page or a roll-up.
+  useEffect(() => { setConfirming(false) }, [selected.value])
+  useEffect(() => { if (status === 'running' || status === 'extracting_kpis' || batchActive) setConfirming(false) }, [status, batchActive])
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -140,13 +191,23 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
     }
 
     setLoading(true)
+    setHelpOpen(false)
+    const sel = catalogue?.runs.find((r) => r.id === selectedRunId)
+    // P4.7: a Codex report is data (report.json), checked and drawn as text;
+    // Claude's is its report.html, parsed into the same cards.
+    const codexRun = sel?.provider === 'codex'
 
     Promise.all([
       window.electronAPI.insights.getReport(selectedRunId),
       window.electronAPI.insights.getKpis(selectedRunId),
-    ]).then(([html, kpis]) => {
-      setParsed(html ? parseInsightsReport(html) : null)
+    ]).then(([text, kpis]) => {
+      setParsed(text ? (codexRun ? parseCodexInsightsReport(text) : parseInsightsReport(text)) : null)
       setCurrentKpis(kpis)
+      setLoading(false)
+    }).catch(() => {
+      // A read main could not make is no report, never a page left waiting.
+      setParsed(null)
+      setCurrentKpis(null)
       setLoading(false)
     })
 
@@ -156,7 +217,7 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
       // Aggregates are excluded on both sides: they carry no profileId, so they
       // would otherwise pair up with every default-account run, and a
       // cross-account roll-up is rendered without the trend sidebar anyway.
-      const sel = catalogue.runs.find((r) => r.id === selectedRunId)
+      // P4.7: and of the same assistant (absent reads as Claude Code's).
       if (sel?.kind === 'aggregate') {
         setPreviousKpis(null)
         return
@@ -165,7 +226,8 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
         (r) =>
           r.status === 'complete' &&
           r.kind !== 'aggregate' &&
-          (r.profileId ?? null) === (sel?.profileId ?? null)
+          (r.profileId ?? null) === (sel?.profileId ?? null) &&
+          (r.provider ?? 'claude') === (sel?.provider ?? 'claude')
       )
       const idx = runs.findIndex((r) => r.id === selectedRunId)
       if (idx > 0) {
@@ -184,6 +246,7 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
   // are discoverable instead of being silently filtered out.
   const pickerRuns = [...completedRuns, ...failedRuns].sort((a, b) => b.timestamp - a.timestamp)
   const isRunning = status === 'running' || status === 'extracting_kpis'
+  const selectedIsCodex = selectedRun?.provider === 'codex'
 
   // A cross-account roll-up renders from its own JSON (it has no report.html).
   // The shape is validated before use so a truncated or hand-edited kpis.json
@@ -196,7 +259,10 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
     Array.isArray((currentKpis as CrossAccountInsights).comparison)
       ? (currentKpis as CrossAccountInsights)
       : null
-  const runAllLabel = `Run all (${profiles.length})`
+  const runAllLabel = allCount >= 2 ? `Run all (${allCount})` : 'Run all'
+  const runAllBlockedTitle =
+    claudeOff && claudeChoices.length > 0 ? CLAUDE_OFF : 'A cross-account report needs at least two accounts that can run without their own confirmation.'
+  const runAllTitle = allCount >= 2 ? 'Generate a report for every account, then one combined cross-account report' : runAllBlockedTitle
 
   // LIVE credential state, read from disk. The first cut derived this purely from
   // run history ("this account's latest run failed authentication"), which cannot
@@ -218,16 +284,16 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
   useEffect(() => { void recheckAuth() }, [recheckAuth])
 
   const accountsNeedingReauth = useMemo(() => {
-    if (!authInfo) return []
-    const latestRunByProfile = new Map<string, { timestamp: number; authFailed?: boolean; authFailedRefreshExpiry?: number; error?: string; accountEmail?: string }>()
+    const out: ReauthEntry[] = []
+    const latestRunByAccount = new Map<string, { timestamp: number; authFailed?: boolean; authFailedRefreshExpiry?: number; error?: string; accountEmail?: string }>()
     for (const run of catalogue?.runs ?? []) {
       if (!run.profileId || run.kind === 'aggregate') continue
-      const current = latestRunByProfile.get(run.profileId)
-      if (!current || run.timestamp > current.timestamp) latestRunByProfile.set(run.profileId, run)
+      const key = insightsAccountKey(run.provider ?? 'claude', run.profileId)
+      const current = latestRunByAccount.get(key)
+      if (!current || run.timestamp > current.timestamp) latestRunByAccount.set(key, run)
     }
 
-    const out: Array<{ profileId: string; name: string; error?: string }> = []
-    for (const info of authInfo) {
+    for (const info of authInfo ?? []) {
       const profile = profiles.find((p) => p.id === info.profileId)
       // A parked (inactive) account is intentionally never token-refreshed (#280),
       // so its credentials lapse BY DESIGN — never nag the user to re-authenticate
@@ -241,25 +307,47 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
       // 1. Live state is authoritative and self-clearing.
       const window_ = describeAuthWindow(info, Date.now())
       if (window_.tone === 'expired') {
-        out.push({ profileId: info.profileId, name, error: window_.label })
+        out.push({ provider: 'claude', id: info.profileId, name, error: window_.label })
         continue
       }
       // 2. A past auth failure counts only while the credentials have NOT been
       //    rewritten since it happened.
-      const run = latestRunByProfile.get(info.profileId)
+      const run = latestRunByAccount.get(insightsAccountKey('claude', info.profileId))
       if (run?.authFailed && authFailureStillApplies(run.timestamp, info, run.authFailedRefreshExpiry)) {
-        out.push({ profileId: info.profileId, name, error: run.error })
+        out.push({ provider: 'claude', id: info.profileId, name, error: run.error })
+      }
+    }
+
+    // P4.7 (D10): a Codex account whose sign-in reads signed out or expired,
+    // or whose latest run failed to sign in and has not signed in since.
+    if (codexUsable) {
+      for (const a of snapshot?.accounts ?? []) {
+        if (a.providerId !== 'codex' || a.lifecycle !== 'active') continue
+        const name = codexAccountLabel(accountDisplayName(snapshot, a))
+        if (a.lastKnownAuthState === 'signed-out' || a.lastKnownAuthState === 'expired') {
+          out.push({ provider: 'codex', id: a.id, name, error: a.lastKnownAuthState === 'expired' ? 'Sign-in expired' : 'Signed out' })
+          continue
+        }
+        const run = latestRunByAccount.get(insightsAccountKey('codex', a.id))
+        if (run?.authFailed && !(typeof a.lastAuthenticatedAt === 'number' && a.lastAuthenticatedAt > run.timestamp)) {
+          out.push({ provider: 'codex', id: a.id, name, error: run.error })
+        }
       }
     }
     return out
-  }, [authInfo, catalogue, profiles, accountAliases])
+  }, [authInfo, catalogue, profiles, accountAliases, snapshot, codexUsable])
 
   const reauthAccount = useReauthAccount()
-  const handleReauth = (profileId: string, name: string): void => {
-    const profile = profiles.find((p) => p.id === profileId)
+  const handleReauth = (entry: ReauthEntry): void => {
+    if (entry.provider === 'codex') {
+      // A Codex account signs in again from Settings, Accounts.
+      window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'accounts' } }))
+      return
+    }
+    const profile = profiles.find((p) => p.id === entry.id)
     // Re-read the credentials when the login lands, so the banner clears itself
     // without the user having to press anything.
-    reauthAccount({ id: profileId, name: profile?.name || name }, () => {
+    reauthAccount({ id: entry.id, name: profile?.name || entry.name }, () => {
       void loadCatalogue()
       void recheckAuth()
     })
@@ -270,32 +358,59 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
       accounts={accountsNeedingReauth}
       checking={checkingAuth}
       onReauth={handleReauth}
-      onRecheck={() => void recheckAuth()}
+      onRecheck={() => {
+        void recheckAuth()
+        // A Codex account's sign-in is asked of Codex (Check sign-in); the
+        // pushed snapshot then updates the banner.
+        for (const a of accountsNeedingReauth) if (a.provider === 'codex') void providerAccountActions.checkSignIn(a.id)
+      }}
     />
   )
 
-  // Codex-only empty state: user has Codex sessions but no Claude sessions.
-  // Insights are Claude-only -- show an explanatory message rather than the
-  // generic first-run UI, which would be confusing for Codex-only users.
-  // Sourced from the new worker-backed tokenomics summary (modelSplit).
-  const hasAnyClaude = providerPresence.claude
-  const hasAnyCodex = providerPresence.codex
-  if (!hasAnyClaude && hasAnyCodex) {
+  /** New run, or Run Insights Now, on the account picked. */
+  const runSelected = (): void => {
+    if (selected.provider === 'codex') {
+      if (selected.needsAck) { setConfirming(true); return }
+      void startCodexInsights(selected.id)
+      return
+    }
+    void startInsights(selected.id || undefined)
+  }
+  const runDisabled = isRunning || selectedClaudeOff || selected.disabled
+  const confirmPopover = confirming && selected.provider === 'codex' && selected.needsAck ? (
+    <CodexRunConfirm
+      choice={selected}
+      onRun={() => { setConfirming(false); void startCodexInsights(selected.id, true) }}
+      onCancel={() => setConfirming(false)}
+      trigger={runButtonRef}
+    />
+  ) : null
+
+  const accountPicker = (extraClass: string) => {
+    const grouped = claudeChoices.length > 0 && codexChoices.length > 0
+    const opt = (c: InsightsAccountChoice) => <option key={c.value} value={c.value} disabled={c.disabled}>{c.label}</option>
     return (
-      <PageFrame title="Insights">
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <p className="text-base text-text mb-2">
-            Insights aggregate from your Claude sessions.
-          </p>
-          <p className="text-sm text-overlay1">
-            Start a Claude session to see your patterns.
-          </p>
-        </div>
-      </PageFrame>
+      <select
+        value={selected.value}
+        onChange={(e) => setRunChoice(e.target.value)}
+        className={extraClass}
+        title="Account for the next run"
+        data-testid="insights-account-picker"
+      >
+        {grouped ? (
+          <>
+            <optgroup label="Claude Code">{claudeChoices.map(opt)}</optgroup>
+            <optgroup label="Codex">{codexChoices.map(opt)}</optgroup>
+          </>
+        ) : (
+          allChoices.map(opt)
+        )}
+      </select>
     )
   }
 
-  // Empty state
+  // Empty state (P4.7, mockup D9: a Codex-only user sees it too, with Run
+  // Insights Now; the Claude-only message is gone).
   if (!catalogue || completedRuns.length === 0) {
     return (
       <div className="flex-1 flex flex-col bg-base overflow-hidden">
@@ -346,41 +461,34 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
                   </p>
                 )}
                 <p className="text-xs text-overlay0 mb-4 max-w-[240px]">Generate an AI-powered analysis of your session history and workflow patterns</p>
-                {multiAccount && (
-                  <select
-                    value={effectiveRunProfileId}
-                    onChange={(e) => setRunProfileId(e.target.value)}
-                    className="block mx-auto mb-3 bg-surface0 text-text text-xs rounded border border-surface1 px-2 py-1 focus:outline-none focus:border-teal/40"
-                    title="Account to analyze"
-                  >
-                    {profiles.map((p) => (
-                      <option key={p.id} value={p.id}>{labelForProfile(p)}</option>
-                    ))}
-                  </select>
-                )}
+                {showPicker && accountPicker('block mx-auto mb-3 bg-surface0 text-text text-xs rounded border border-surface1 px-2 py-1 focus:outline-none focus:border-teal/40')}
                 <div className="flex items-center justify-center gap-2">
-                  <button
-                    onClick={() => startInsights(effectiveRunProfileId || undefined)}
-                    disabled={claudeOff}
-                    title={claudeOff ? CLAUDE_OFF : undefined}
-                    data-testid="insights-run-now"
-                    className="px-4 py-2 bg-teal/10 border border-teal/25 text-teal rounded-lg hover:bg-teal/20 transition-colors text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Run Insights Now
-                  </button>
-                  {multiAccount && (
+                  <span className="relative">
+                    <button
+                      ref={runButtonRef}
+                      onClick={runSelected}
+                      disabled={runDisabled}
+                      title={selectedClaudeOff ? CLAUDE_OFF : undefined}
+                      data-testid="insights-run-now"
+                      className="px-4 py-2 bg-teal/10 border border-teal/25 text-teal rounded-lg hover:bg-teal/20 transition-colors text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Run Insights Now
+                    </button>
+                    {confirmPopover}
+                  </span>
+                  {showPicker && (
                     <button
                       onClick={() => startCrossAccount()}
-                      disabled={claudeOff}
+                      disabled={allCount < 2}
                       className="px-4 py-2 bg-surface0 border border-surface1 text-subtext1 rounded-lg hover:border-teal/40 hover:text-teal transition-colors text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                      title={claudeOff ? CLAUDE_OFF : 'Generate a report for every account, then one combined cross-account report'}
+                      title={runAllTitle}
                       data-testid="insights-run-all-empty"
                     >
                       {runAllLabel}
                     </button>
                   )}
                 </div>
-                {claudeOff && (
+                {selectedClaudeOff && (
                   <p className="text-xs text-overlay0 mt-3 max-w-[260px] mx-auto" data-testid="insights-claude-off">{CLAUDE_OFF}</p>
                 )}
               </>
@@ -404,6 +512,7 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
         value={selectedRunId || ''}
         onChange={(e) => selectRun(e.target.value)}
         className="bg-surface0 text-text text-xs rounded border border-surface1 px-2 py-0.5 focus:outline-none focus:border-blue/40 transition-colors"
+        data-testid="insights-run-picker"
       >
         {pickerRuns.map((run) => {
           const date = new Date(run.timestamp)
@@ -412,55 +521,52 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
             hour: '2-digit', minute: '2-digit'
           })
           // An aggregate belongs to every account, so it is labelled by how many
-          // it actually compared rather than by one account name.
+          // it actually compared rather than by one account name. P4.7 (D6): a
+          // Codex run always says Codex, with its account's name when the page
+          // shows more than one account.
           const acct =
             run.kind === 'aggregate'
               ? `All accounts (${run.memberRunIds?.length ?? run.members?.length ?? 0})`
-              : multiAccount
-                ? nameForAccount(run.accountEmail)
-                : null
+              : run.provider === 'codex'
+                ? showPicker ? codexRunAccountName(snapshot, run.profileId, run.accountEmail) : 'Codex'
+                : showPicker
+                  ? nameForAccount(run.accountEmail)
+                  : null
           const base = acct ? `${label} · ${acct}` : label
           const suffix = run.status === 'failed' ? ' · failed' : run.kpisUnavailable ? ' · no KPIs' : ''
           return <option key={run.id} value={run.id}>{base}{suffix}</option>
         })}
       </select>
-      {multiAccount && (
-        <select
-          value={effectiveRunProfileId}
-          onChange={(e) => setRunProfileId(e.target.value)}
-          className="bg-surface0 text-text text-xs rounded border border-surface1 px-2 py-0.5 focus:outline-none focus:border-teal/40 transition-colors"
-          title="Account for the next run"
-        >
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>{labelForProfile(p)}</option>
-          ))}
-        </select>
-      )}
-      {claudeOff && (
+      {showPicker && accountPicker('bg-surface0 text-text text-xs rounded border border-surface1 px-2 py-0.5 focus:outline-none focus:border-teal/40 transition-colors')}
+      {selectedClaudeOff && (
         <span className="text-[11px] text-overlay0" data-testid="insights-claude-off">{CLAUDE_OFF}</span>
       )}
-      <button
-        onClick={() => startInsights(effectiveRunProfileId || undefined)}
-        disabled={isRunning || claudeOff}
-        title={claudeOff ? CLAUDE_OFF : undefined}
-        data-testid="insights-new-run"
-        className={`text-xs px-2.5 py-0.5 rounded border font-medium transition-all flex items-center gap-1.5 ${
-          isRunning
-            ? 'bg-surface0 border-surface1 text-teal cursor-wait'
-            : claudeOff
-              ? 'bg-surface0 border-surface1 text-overlay0 cursor-not-allowed'
-              : 'bg-teal/10 border-teal/30 text-teal hover:bg-teal/20'
-        }`}
-      >
-        {isRunning ? (
-          <>
-            <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
-            </svg>
-            {statusMessage || 'Running…'}
-          </>
-        ) : 'New run'}
-      </button>
+      <span className="relative">
+        <button
+          ref={runButtonRef}
+          onClick={runSelected}
+          disabled={runDisabled}
+          title={selectedClaudeOff ? CLAUDE_OFF : undefined}
+          data-testid="insights-new-run"
+          className={`text-xs px-2.5 py-0.5 rounded border font-medium transition-all flex items-center gap-1.5 ${
+            isRunning
+              ? 'bg-surface0 border-surface1 text-teal cursor-wait'
+              : selectedClaudeOff || selected.disabled
+                ? 'bg-surface0 border-surface1 text-overlay0 cursor-not-allowed'
+                : 'bg-teal/10 border-teal/30 text-teal hover:bg-teal/20'
+          }`}
+        >
+          {isRunning ? (
+            <>
+              <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
+              </svg>
+              {statusMessage || 'Running…'}
+            </>
+          ) : 'New run'}
+        </button>
+        {confirmPopover}
+      </span>
       {/* Reloads the run catalogue AND re-reads every account's credentials. Both
           change outside this view — a run finishing elsewhere, a sign-in completing
           in a terminal session — and neither pushes an event here. */}
@@ -472,16 +578,16 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
       >
         {checkingAuth ? 'Checking…' : 'Refresh'}
       </button>
-      {multiAccount && (
+      {showPicker && (
         <button
           onClick={() => startCrossAccount()}
-          disabled={isRunning || batchActive || claudeOff}
+          disabled={isRunning || batchActive || allCount < 2}
           className={`text-xs px-2.5 py-0.5 rounded border font-medium transition-all ${
-            isRunning || batchActive || claudeOff
+            isRunning || batchActive || allCount < 2
               ? 'bg-surface0 border-surface1 text-overlay0 cursor-not-allowed'
               : 'bg-surface0 border-surface1 text-subtext1 hover:border-teal/40 hover:text-teal'
           }`}
-          title={claudeOff ? CLAUDE_OFF : 'Generate a report for every account, then one combined cross-account report'}
+          title={runAllTitle}
           data-testid="insights-run-all"
         >
           {runAllLabel}
@@ -493,6 +599,10 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
   const insightsContext = (
     <>{completedRuns.length} report{completedRuns.length !== 1 ? 's' : ''} generated</>
   )
+
+  // P4.7: a roll-up's columns carry their assistant's mark (D7), read from
+  // each member run's own record.
+  const providerOfRun = (runId: string) => (catalogue?.runs.find((r) => r.id === runId)?.provider === 'codex' ? 'codex' as const : 'claude' as const)
 
   return (
     <PageFrame
@@ -525,12 +635,46 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
               </div>
             </div>
           ) : crossAccount && selectedRun ? (
-            <CrossAccountReport data={crossAccount} run={selectedRun} nameForAccount={nameForAccount} />
+            <CrossAccountReport data={crossAccount} run={selectedRun} nameForAccount={nameForAccount} providerOfRun={providerOfRun} />
           ) : parsed ? (
             <div className="w-full h-full overflow-auto">
               {parsed.title && (
                 <div style={{ padding: '16px 16px 0' }}>
-                  <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>{parsed.title}</h2>
+                  {selectedIsCodex ? (
+                    // P4.7 (D3): Codex's mark, the title, and the one new piece
+                    // of help behind a "?"; the subtitle is the app's counts.
+                    <>
+                      <h2 className="flex items-center gap-2" style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        <ProviderMark providerId="codex" size={20} />
+                        {parsed.title}
+                        <button
+                          type="button"
+                          aria-label="How this report is made"
+                          aria-expanded={helpOpen}
+                          onClick={() => setHelpOpen((v) => !v)}
+                          data-testid="insights-codex-help"
+                          className={`inline-flex items-center justify-center w-4 h-4 rounded-full border text-[10px] font-semibold leading-none shrink-0 transition-colors ${
+                            helpOpen ? 'border-teal text-teal' : 'border-surface2 text-overlay1 hover:text-text'
+                          }`}
+                        >
+                          ?
+                        </button>
+                      </h2>
+                      {helpOpen && (
+                        <div
+                          className="mt-2 mb-1 max-w-[360px] rounded-lg border px-3 py-2 text-xs"
+                          style={{ background: 'var(--surface-overlay)', borderColor: 'var(--border-strong)', color: 'var(--text-secondary)' }}
+                          data-testid="insights-codex-help-text"
+                        >
+                          <b style={{ color: 'var(--text-primary)' }}>How this report is made</b>
+                          <br />
+                          {CODEX_HOW_MADE}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>{parsed.title}</h2>
+                  )}
                   {parsed.subtitle && <p style={{ color: 'var(--text-muted)' }}>{parsed.subtitle}</p>}
                 </div>
               )}

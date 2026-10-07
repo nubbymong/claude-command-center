@@ -11,13 +11,12 @@ interface Card {
   choice: AssistantsChoice
   title: string
   sub?: string
-  beta?: boolean
   marks: Array<'claude' | 'codex'>
 }
 
 const CARDS: Card[] = [
   { choice: 'claude', title: 'Claude Code', sub: "Anthropic's coding agent", marks: ['claude'] },
-  { choice: 'codex', title: 'Codex', sub: "OpenAI's coding agent", beta: true, marks: ['codex'] },
+  { choice: 'codex', title: 'Codex', sub: "OpenAI's coding agent", marks: ['codex'] },
   { choice: 'both', title: 'Both', marks: ['claude', 'codex'] },
 ]
 
@@ -115,7 +114,6 @@ export function AssistantsStep({ onNext, onBack }: { onNext: () => void; onBack:
                   </span>
                   <span className="as-t">
                     {c.title}
-                    {c.beta && <span className="as-beta">Beta</span>}
                   </span>
                   {c.sub && <span className="as-sub">{c.sub}</span>}
                   {off && <span className="as-why" data-testid={`assistants-why-${c.choice}`}>{NOT_INSTALLED}</span>}

@@ -1,5 +1,5 @@
 // src/main/channel-storage.ts
-import { existsSync, readFileSync, appendFileSync, mkdirSync, renameSync, unlinkSync, readdirSync } from 'fs'
+import { existsSync, readFileSync, appendFileSync, mkdirSync, renameSync, unlinkSync, readdirSync, statSync } from 'fs'
 import { join } from 'path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
@@ -48,6 +48,42 @@ export function readJsonFile<T>(name: string, seedDefaults: () => T): T {
     try { renameSync(fp, corruptPath); logError(`[channels] ${name} unreadable, moved to ${corruptPath}`) }
     catch (e) { logError(`[channels] could not quarantine ${name}: ${String(e)}`) }
     return seedDefaults()
+  }
+}
+
+/** What a side-effect-free read found: no file, the parsed JSON, or a file
+ *  that could not be read or parsed (left exactly where and as it is). */
+export type JsonPeek = { kind: 'absent' } | { kind: 'ok'; value: unknown } | { kind: 'unreadable' } | { kind: 'malformed' }
+
+/** Read a channel file WITHOUT side effects: unlike readJsonFile, a file that
+ *  cannot be read or parsed is NOT renamed or replaced, and no defaults are
+ *  seeded. For a caller that must tell "absent" from "unreadable" before it
+ *  acts on what the file says. Never throws. */
+export function peekJsonFile(name: string): JsonPeek {
+  let fp: string
+  try { fp = filePath(name) } catch { return { kind: 'unreadable' } }
+  // "Absent" only when the stat says there is no entry: existsSync would also
+  // answer false for a file it cannot stat (EACCES, say), and that is not
+  // absent. A stat that throws, or a folder in the file's place, is unreadable.
+  let st: ReturnType<typeof statSync> | undefined
+  try { st = statSync(fp, { throwIfNoEntry: false }) } catch { return { kind: 'unreadable' } }
+  if (!st) return { kind: 'absent' }
+  if (st.isDirectory()) return { kind: 'unreadable' }
+  let text: string
+  try { text = readFileSync(fp, 'utf-8') } catch { return { kind: 'unreadable' } }
+  try { return { kind: 'ok', value: JSON.parse(text) as unknown } } catch { return { kind: 'malformed' } }
+}
+
+/** The file name of a quarantined copy of a channel file (`<name>.corrupt-*`,
+ *  left by readJsonFile when it could not read the file) beside it, or null:
+ *  its records may be in that copy. 'unknown' when the folder cannot be
+ *  listed. A base name only, never a path. Never throws. */
+export function quarantinedCopyOf(name: string): string | null | 'unknown' {
+  try {
+    const prefix = `${name}.corrupt-`
+    return readdirSync(channelsDir()).map(String).find((n) => n.startsWith(prefix)) ?? null
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code === 'ENOENT' ? null : 'unknown'
   }
 }
 

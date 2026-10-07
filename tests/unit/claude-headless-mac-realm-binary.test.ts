@@ -1,4 +1,4 @@
-// Re-attack r3, MAJOR 1 (ADR-023): a headless run on the macOS realm spawns
+// Re-attack r3, MAJOR 1 (ADR-024): a headless run on the macOS realm spawns
 // EXACTLY the binary its #172 verdict was taken for, with no shell; every
 // other run keeps `claude` through the shell, as before.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'

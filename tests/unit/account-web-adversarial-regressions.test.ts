@@ -191,6 +191,15 @@ describe('MAJOR — the startup sweep only deletes things shaped like profile di
     expect(rmSyncMock).not.toHaveBeenCalled()
   })
 
+  // [host] WP2 PR 4 P4.6 (row 58): a registry account id names no sign-in
+  // profile dir (an account of that class never signs in through a launched
+  // browser), so an entry shaped like one is not the sweep's to delete.
+  it('refuses an entry shaped like a registry account id', () => {
+    readdirSyncMock.mockReturnValue(['acct-0123456789abcdef', 'acct-' + 'f'.repeat(64)] as never)
+    sweepAbandonedProfiles('C:/data')
+    expect(rmSyncMock).not.toHaveBeenCalled()
+  })
+
   it('still sweeps a genuine abandoned profile', () => {
     readdirSyncMock.mockReturnValue(['profile-mrbhy8is-b85405'] as never)
     sweepAbandonedProfiles('C:/data')

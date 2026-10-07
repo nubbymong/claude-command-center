@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'fs'
-import { resolve } from 'path'
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join, resolve } from 'path'
 
 // release-gate.mjs is plain ESM and guards main() behind an argv[1] check, so
 // importing it here pulls in the pure verdict logic without touching GitHub.
@@ -8,6 +9,7 @@ import { resolve } from 'path'
 import {
   evaluateMilestone,
   evaluateModels,
+  evaluateCodexModels,
   formatReport,
   registryIdCovers,
   repoFromUrl,
@@ -21,6 +23,12 @@ import {
   EXCLUDED_LABEL,
   DEFAULT_REGISTRY_PATH,
   DEFAULT_EXPECTED_PATH,
+  DEFAULT_CODEX_EXPECTED_PATH,
+  DEFAULT_MACOS_FLOORS_PATH,
+  evaluateMacosFloor,
+  electronVersionOf,
+  readElectronVersion,
+  DEFAULT_LOCK_PATH,
 } from '../../../scripts/release-gate.mjs'
 
 type Issue = { number: number; title: string; labels?: Array<{ name: string } | string>; pull_request?: object; state?: string }
@@ -41,8 +49,17 @@ const REGISTRY_OK = {
     { id: 'claude-opus-4-8', family: 'opus', label: 'Opus 4.8' },
     { id: 'claude-sonnet-4-6', family: 'sonnet', label: 'Sonnet 4.6' },
     { id: 'claude-haiku-4-5', family: 'haiku', label: 'Haiku 4.5' },
-    { id: 'codex-family', family: 'codex', label: 'Codex' },
+    { id: 'codex-family', family: 'codex', label: 'Codex', pickable: false },
+    { id: 'gpt-5.5', family: 'codex', label: 'GPT-5.5' },
   ],
+}
+
+// The Codex half's list (P3.8 round 1, G1): resources/codex-model-catalogue.json's shape.
+const CODEX_EXPECTED = {
+  source: 'the model catalogue bundled with the Codex CLI',
+  cliVersions: ['0.155.1'],
+  fetchedAt: '2026-09-29',
+  models: [{ label: 'GPT-5.5', id: 'gpt-5.5' }],
 }
 
 /** A fake GitHub: one milestone list, issues keyed by milestone number. */
@@ -59,6 +76,11 @@ function fakeGitHub(milestones: Milestone[], issuesByMilestone: Record<number, I
 }
 
 const silent = () => {}
+
+// The macOS floor half (check 4): resources/macos-release-floors.json's shape.
+const FLOORS = { floors: [{ fromTag: 'v2.1.1-beta.2', electronMajor: 44, macosMajor: 13 }] }
+/** An Electron that needs no macOS floor, so the other checks decide (their cases' versions predate any floor). */
+const MAC_OK = { electronVersion: '43.7.1', macosFloors: FLOORS }
 
 // ── evaluateMilestone ──────────────────────────────────────────────
 describe('release-gate evaluateMilestone', () => {
@@ -227,7 +249,7 @@ describe('release-gate evaluateModels', () => {
 describe('release-gate runGate', () => {
   it('clean milestone + covered registry → exit 0 with a PASS line', async () => {
     const gh = fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] })
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, ...MAC_OK, log: silent })
     expect(r.exitCode).toBe(EXIT_OK)
     expect(r.lines.at(-1)).toMatch(/^PASS/)
     expect(gh.calls).toEqual(['/repos/o/r/milestones?state=all', '/repos/o/r/issues?milestone=7&state=open'])
@@ -235,7 +257,7 @@ describe('release-gate runGate', () => {
 
   it('open issue → exit 1 and the issue is printed by number and title', async () => {
     const gh = fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [{ number: 377, title: 'Tips re-review', labels: [{ name: 'ux' }] }] })
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, ...MAC_OK, log: silent })
     expect(r.exitCode).toBe(EXIT_REFUSED)
     expect(r.lines.join('\n')).toMatch(/#377\s+Tips re-review\s+\[ux\]/)
     expect(r.lines.at(-1)).toMatch(/^REFUSED/)
@@ -243,14 +265,14 @@ describe('release-gate runGate', () => {
 
   it('excluded label ignored → exit 0, and the excluded issue is named in the OK line', async () => {
     const gh = fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [{ number: 374, title: 'GPU', labels: [{ name: 'excluded' }] }] })
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, ...MAC_OK, log: silent })
     expect(r.exitCode).toBe(EXIT_OK)
     expect(r.lines.join('\n')).toMatch(/excluded by the owner: #374/)
   })
 
   it('missing milestone → exit 1 (fails closed) and never queries issues', async () => {
     const gh = fakeGitHub([{ number: 8, title: '2.2' }], {})
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, ...MAC_OK, log: silent })
     expect(r.exitCode).toBe(EXIT_REFUSED)
     expect(r.lines.join('\n')).toMatch(/no GitHub milestone titled "2.1.0-beta.17"/)
     expect(gh.calls).toEqual(['/repos/o/r/milestones?state=all'])
@@ -259,7 +281,7 @@ describe('release-gate runGate', () => {
   it('model check fails → exit 1 even when the milestone is clean, with a diff of the missing ids', async () => {
     const gh = fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] })
     const registry = { models: REGISTRY_OK.models.filter((m) => m.id !== 'claude-opus-4-8') }
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry, expected: EXPECTED, codexExpected: CODEX_EXPECTED, ...MAC_OK, log: silent })
     expect(r.exitCode).toBe(EXIT_REFUSED)
     const text = r.lines.join('\n')
     expect(text).toMatch(/OK\s+milestone/)
@@ -269,21 +291,235 @@ describe('release-gate runGate', () => {
 
   it('model check passes → the OK line says how many models are covered', async () => {
     const gh = fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] })
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, ...MAC_OK, log: silent })
     expect(r.lines.join('\n')).toMatch(/OK\s+model registry covers all 3 supported Claude Code models/)
   })
 
   it('GitHub unreachable → exit 2 (cannot evaluate), not a pass', async () => {
     const listAll = async () => { throw new Error('GitHub API 503 for /repos/o/r/milestones?state=all') }
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, ...MAC_OK, log: silent })
     expect(r.exitCode).toBe(EXIT_CANNOT_EVALUATE)
     expect(r.lines[0]).toMatch(/CANNOT EVALUATE/)
   })
 
   it('no version / no repo → exit 2', async () => {
     const gh = fakeGitHub([], {})
-    expect((await runGate({ version: '', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })).exitCode).toBe(EXIT_CANNOT_EVALUATE)
-    expect((await runGate({ version: '1.0.0', repo: null, listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })).exitCode).toBe(EXIT_CANNOT_EVALUATE)
+    expect((await runGate({ version: '', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, ...MAC_OK, log: silent })).exitCode).toBe(EXIT_CANNOT_EVALUATE)
+    expect((await runGate({ version: '1.0.0', repo: null, listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, ...MAC_OK, log: silent })).exitCode).toBe(EXIT_CANNOT_EVALUATE)
+  })
+})
+
+// -- the Codex half (P3.8 round 1, G1) --
+describe('release-gate Codex models', () => {
+  const clean = () => fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] })
+
+  it('a Codex model the list names but the registry lacks -> exit 1, with a diff, even when everything else is clean', async () => {
+    const codexExpected = { ...CODEX_EXPECTED, models: [...CODEX_EXPECTED.models, { label: 'GPT-6-Astra', id: 'gpt-6-astra' }] }
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: clean().listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected, ...MAC_OK, log: silent })
+    expect(r.exitCode).toBe(EXIT_REFUSED)
+    const text = r.lines.join('\n')
+    expect(text).toMatch(/OK\s+milestone/)
+    expect(text).toMatch(/OK\s+model registry covers all 3/)
+    expect(text).toMatch(/FAIL\s+Codex models: 1 model\(s\) the Codex CLI lists are not in the registry/)
+    expect(text).toMatch(/- gpt-6-astra\s+\(GPT-6-Astra\)/)
+    expect(r.codexResult?.missing.map((m: { id: string }) => m.id)).toEqual(['gpt-6-astra'])
+  })
+
+  it('a Codex model the list no longer names is a WARNING, not a refusal', async () => {
+    const registry = { models: [...REGISTRY_OK.models, { id: 'gpt-5.2', family: 'codex', label: 'GPT-5.2' }] }
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: clean().listAll, registry, expected: EXPECTED, codexExpected: CODEX_EXPECTED, ...MAC_OK, log: silent })
+    expect(r.exitCode).toBe(EXIT_OK)
+    expect(r.lines.join('\n')).toMatch(/WARN\s+gpt-5\.2 \(GPT-5\.2\) is a Codex model in the registry but the Codex list no longer names it/)
+  })
+
+  it('the OK line says how many Codex models are covered and from which CLI versions', async () => {
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: clean().listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, ...MAC_OK, log: silent })
+    expect(r.exitCode).toBe(EXIT_OK)
+    expect(r.lines.join('\n')).toMatch(/OK\s+Codex models: the registry covers all 1 models Codex 0\.155\.1 lists \(list read 2026-09-29\)/)
+  })
+
+  it('FAILS CLOSED when the Codex list is missing or empty: a caller that forgets it cannot pass', async () => {
+    for (const codexExpected of [undefined, null, { models: [] }, { models: [{ id: '' }] }]) {
+      const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: clean().listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected, ...MAC_OK, log: silent })
+      expect(r.exitCode).toBe(EXIT_REFUSED)
+      expect(r.lines.join('\n')).toMatch(/FAIL\s+Codex models: the expected Codex models list is empty or missing/)
+    }
+  })
+
+  it('a Codex id the registry lists twice refuses, and the report names it (round 2, GS)', async () => {
+    const registry = { models: [{ id: 'gpt-5.5', family: 'opus', label: 'x' }, ...REGISTRY_OK.models] }
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] }).listAll, registry, expected: EXPECTED, codexExpected: CODEX_EXPECTED, ...MAC_OK, log: silent })
+    expect(r.exitCode).toBe(EXIT_REFUSED)
+    expect(r.lines.join('\n')).toMatch(/gpt-5\.5 is listed more than once in resources\/model-registry\.json/)
+  })
+
+  it('a malformed Codex list refuses rather than throwing (round 2, GS)', async () => {
+    for (const codexExpected of [{ models: {} }, { models: 'gpt-5.5' }, { models: [{ id: 42 }] }]) {
+      const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] }).listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected, ...MAC_OK, log: silent })
+      expect(r.exitCode, JSON.stringify(codexExpected)).toBe(EXIT_REFUSED)
+    }
+  })
+
+  it('only the codex family counts: a Claude-family entry with a Codex id does not cover it', () => {
+    const registry = { models: [{ id: 'gpt-5.5', family: 'opus', label: 'x' }] }
+    const r = evaluateCodexModels({ registry, expected: CODEX_EXPECTED })
+    expect(r.ok).toBe(false)
+    expect(r.missing.map((m: { id: string }) => m.id)).toEqual(['gpt-5.5'])
+  })
+
+  it('main reads the Codex list from the shipped catalogue by default', () => {
+    expect(resolve(DEFAULT_CODEX_EXPECTED_PATH)).toMatch(/resources[\\/]codex-model-catalogue\.json$/)
+    const list = JSON.parse(readFileSync(DEFAULT_CODEX_EXPECTED_PATH, 'utf-8'))
+    const registry = JSON.parse(readFileSync(DEFAULT_REGISTRY_PATH, 'utf-8'))
+    expect(evaluateCodexModels({ registry, expected: list }).ok).toBe(true)
+  })
+})
+
+// -- the macOS floor (check 4, Electron 44 needs macOS 13) --
+describe('release-gate macOS floor', () => {
+  const clean = () => fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] })
+  const gate = (version: string, electronVersion: string | undefined, macosFloors: unknown = FLOORS) =>
+    evaluateMacosFloor({ version, electronVersion, floors: macosFloors })
+
+  it('an Electron 44 build is refused under a tag whose floor is below macOS 13: the updater would offer it to Macs that cannot open it', () => {
+    const r = gate('2.1.1-beta.1', '44.5.1')
+    expect(r.ok).toBe(false)
+    expect(r.needed).toBe(13)
+    expect(r.floor).toBe(0)
+    expect(r.reason).toMatch(/Electron 44 needs macOS 13, but v2\.1\.1-beta\.1 has no macOS floor/)
+  })
+
+  it('an Electron 44 build passes under a tag at or after the floor, the bare -beta tag release.yml cuts from a final version included', () => {
+    for (const v of ['2.1.1-beta.2', '2.1.1-beta.3', '2.1.1-rc.1', '2.1.1', '2.1.1-beta', '2.2.0-beta.1']) {
+      const r = gate(v, '44.5.1')
+      expect(r.ok, v).toBe(true)
+      expect(r.floor, v).toBe(13)
+    }
+  })
+
+  it('an Electron with no floor of its own passes under any tag', () => {
+    for (const v of ['2.1.0-beta.17', '2.1.1-beta.1', '2.1.1']) expect(gate(v, '43.7.1').ok, v).toBe(true)
+  })
+
+  it('a tag no updater offers (a dev cut) is not held to a floor', () => {
+    const r = gate('2.1.1-dev', '44.5.1')
+    expect(r.ok).toBe(true)
+    expect(r.offered).toBe(false)
+  })
+
+  it('a later Electron is held to its own entry', () => {
+    const floors = { floors: [...FLOORS.floors, { fromTag: 'v3.0.0-beta.1', electronMajor: 45, macosMajor: 14 }] }
+    expect(gate('3.0.0-beta.1', '45.0.0', floors).ok).toBe(true)
+    const r = gate('2.9.0', '45.0.0', floors)
+    expect(r.ok).toBe(false)
+    expect(r.needed).toBe(14)
+    expect(r.floor).toBe(13)
+  })
+
+  it('FAILS CLOSED when the floors file or the Electron version cannot be read', () => {
+    for (const floors of [undefined, null, {}, { floors: [] }, { floors: 'x' }]) {
+      const r = evaluateMacosFloor({ version: '2.1.1-beta.2', electronVersion: '44.5.1', floors })
+      expect(r.ok, JSON.stringify(floors)).toBe(false)
+      expect(r.reason).toMatch(/resources\/macos-release-floors\.json lists no floors/)
+    }
+    for (const electron of [undefined, '', 'latest']) {
+      const r = gate('2.1.1-beta.2', electron)
+      expect(r.ok, String(electron)).toBe(false)
+      expect(r.reason).toMatch(/cannot read the Electron version/)
+    }
+  })
+
+  it('a floors entry it cannot read is refused with a FAIL line, never left out', async () => {
+    const good = FLOORS.floors[0]
+    const unreadable: unknown[] = [
+      { fromTag: 'v1.0.0' },
+      { fromTag: 'garbage', electronMajor: 44, macosMajor: 13 },
+      { fromTag: 'v2.1.1-beta.2', electronMajor: '44', macosMajor: 13 },
+      { fromTag: 'v2.1.1-beta.2', electronMajor: 44, macosMajor: 13.5 },
+      { fromTag: 'v2.1.1-beta.2', electronMajor: 44, macosMajor: 0 },
+      null,
+      'v2.1.1-beta.2',
+    ]
+    for (const entry of unreadable) {
+      for (const floors of [{ floors: [entry] }, { floors: [good, entry] }]) {
+        const r = gate('2.1.1-beta.2', '44.5.1', floors)
+        expect(r.ok, JSON.stringify(floors)).toBe(false)
+        expect(r.reason, JSON.stringify(floors)).toMatch(/resources\/macos-release-floors\.json entry \d+ cannot be read/)
+      }
+    }
+    const gh = fakeGitHub([{ number: 7, title: '2.1.1-beta.2' }], { 7: [] })
+    const run = await runGate({ version: '2.1.1-beta.2', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, electronVersion: '44.5.1', macosFloors: { floors: [good, { fromTag: 'v3.0.0' }] }, log: silent })
+    expect(run.exitCode).toBe(EXIT_REFUSED)
+    expect(run.lines.join('\n')).toMatch(/FAIL\s+macOS floor: resources\/macos-release-floors\.json entry 2 cannot be read/)
+  })
+
+  it('the Electron version must be exact: a range (what package.json may hold) is refused, never read as its lower bound', () => {
+    for (const range of ['>=43.0.0', '43.x || 44.x', '^43.7.1', '~43.7.1', '43', '43.x', '43.7', 'v43.7.1', '43.7.1 || 44.5.1']) {
+      const r = gate('2.1.0', range)
+      expect(r.ok, range).toBe(false)
+      expect(r.reason, range).toMatch(/cannot read the Electron version package-lock\.json resolves/)
+    }
+    for (const exact of ['43.7.1', '44.5.1', '45.0.0-beta.3', '44.5.1+build.7']) expect(gate('2.1.1-beta.2', exact).ok, exact).toBe(true)
+  })
+
+
+  it('runGate refuses the cut, with a FAIL line, even when everything else is clean', async () => {
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: clean().listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, electronVersion: '44.5.1', macosFloors: FLOORS, log: silent })
+    expect(r.exitCode).toBe(EXIT_REFUSED)
+    const text = r.lines.join('\n')
+    expect(text).toMatch(/OK\s+milestone/)
+    expect(text).toMatch(/FAIL\s+macOS floor: Electron 44 needs macOS 13, but v2\.1\.0-beta\.17 has no macOS floor/)
+    expect(r.lines.at(-1)).toMatch(/^REFUSED/)
+  })
+
+  it('runGate says what the floor is when it passes, and refuses a caller that leaves the floor inputs out', async () => {
+    const gh = fakeGitHub([{ number: 7, title: '2.1.1-beta.2' }], { 7: [] })
+    const ok = await runGate({ version: '2.1.1-beta.2', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, electronVersion: '44.5.1', macosFloors: FLOORS, log: silent })
+    expect(ok.exitCode).toBe(EXIT_OK)
+    expect(ok.lines.join('\n')).toMatch(/OK\s+macOS floor: v2\.1\.1-beta\.2 needs macOS 13 or later, as Electron 44 does/)
+    const left = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: clean().listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })
+    expect(left.exitCode).toBe(EXIT_REFUSED)
+  })
+
+  it('main reads the Electron version package-lock.json resolves, and the floors from the shipped file', () => {
+    expect(resolve(DEFAULT_MACOS_FLOORS_PATH)).toMatch(/resources[\\/]macos-release-floors\.json$/)
+    expect(resolve(DEFAULT_LOCK_PATH)).toBe(resolve(__dirname, '../../../package-lock.json'))
+    expect(electronVersionOf({ packages: { '': { devDependencies: { electron: '>=43.0.0' } }, 'node_modules/electron': { version: '44.5.1' } } })).toBe('44.5.1')
+    for (const lock of [{}, null, undefined, { packages: {} }, { packages: { 'node_modules/electron': {} } }, { packages: { 'node_modules/electron': { version: 44 } } }]) {
+      expect(electronVersionOf(lock as never), JSON.stringify(lock)).toBeUndefined()
+    }
+    // package.json's own shape is never read for it
+    expect(electronVersionOf({ devDependencies: { electron: '44.5.1' } } as never)).toBeUndefined()
+  })
+
+  it('a package.json range with a lock that resolves Electron 44: the lock decides, so an earlier tag is refused', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gate-lock-'))
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ devDependencies: { electron: '>=43.0.0' } }))
+      writeFileSync(join(dir, 'package-lock.json'), JSON.stringify({ packages: { '': { devDependencies: { electron: '>=43.0.0' } }, 'node_modules/electron': { version: '44.5.1' } } }))
+      const electronVersion = readElectronVersion(join(dir, 'package-lock.json'))
+      expect(electronVersion).toBe('44.5.1')
+      const r = gate('2.1.0', electronVersion)
+      expect(r.ok).toBe(false)
+      expect(r.reason).toMatch(/Electron 44 needs macOS 13, but v2\.1\.0 has no macOS floor/)
+      writeFileSync(join(dir, 'broken-lock.json'), '{ "packages": ')
+      for (const p of [join(dir, 'no-such-lock.json'), join(dir, 'broken-lock.json')]) {
+        expect(readElectronVersion(p), p).toBeUndefined()
+        expect(gate('2.1.1-beta.2', readElectronVersion(p)).ok, p).toBe(false)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('with the real lock and floors file: this Electron cannot be cut as 2.1.1-beta.1, and can as 2.1.1-beta.2, 2.1.1-beta and 2.1.1', () => {
+    const floors = JSON.parse(readFileSync(DEFAULT_MACOS_FLOORS_PATH, 'utf-8'))
+    const electronVersion = readElectronVersion()
+    const installed = JSON.parse(readFileSync(resolve(__dirname, '../../../node_modules/electron/package.json'), 'utf-8')).version
+    expect(electronVersion).toBe(installed)
+    expect(parseInt(String(electronVersion), 10)).toBeGreaterThanOrEqual(44)
+    expect(evaluateMacosFloor({ version: '2.1.1-beta.1', electronVersion, floors }).ok).toBe(false)
+    for (const v of ['2.1.1-beta.2', '2.1.1-beta', '2.1.1']) expect(evaluateMacosFloor({ version: v, electronVersion, floors }).ok, v).toBe(true)
   })
 })
 

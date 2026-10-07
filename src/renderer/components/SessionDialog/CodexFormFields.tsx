@@ -1,6 +1,7 @@
 import type { CodexOptions } from '../../stores/configStore'
 import { useProviderAccountsStore, providerUnanswered } from '../../stores/providerAccountsStore'
-import { CODEX_MODELS } from '../../codex-models'
+import { useRegistryStore } from '../../stores/registryStore'
+import { codexModelOptions, codexEffortOptions, codexEffortSupported } from '../../codex-models'
 import { NO_ACCOUNT, NOT_SET_UP, providerCliMissingText, type AccountNotice, type AccountOption } from '../../utils/launchAccount'
 
 /** The "Codex account" field (WP2 commit 6, canvas F6/F9). The dialog works
@@ -39,11 +40,13 @@ interface Props {
   tooOld?: string | null
 }
 
-const MODELS = CODEX_MODELS
-const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 const PRESETS = [
   { id: 'read-only' as const,    label: 'Read-only',    desc: 'Safe browsing -- no file writes' },
   { id: 'standard' as const,     label: 'Standard',     desc: 'Recommended -- workspace writes, prompts on tool use' },
+  // P3.8 (L2; round 2, PM1): Claude's Plan mode launch option. Codex has no
+  // launch flag for it: the session starts read-only and Codex's own /plan is
+  // typed into its first ready prompt; /permissions widens it later.
+  { id: 'plan' as const,         label: 'Plan mode',    desc: 'Starts read-only in Codex Plan mode -- plans first; /permissions lets it write' },
   { id: 'auto' as const,         label: 'Auto',         desc: 'Workspace writes, no prompts' },
   { id: 'unrestricted' as const, label: 'Unrestricted', desc: 'Full machine access -- rare' },
 ]
@@ -62,6 +65,18 @@ export function CodexFormFields({ value, onChange, onOpenAccounts, account, tooO
   // missing account, with the way to Accounts, where it is set up.
   const notSetUp = useProviderAccountsStore((s) => providerUnanswered(s.snapshot, 'codex'))
   const noAccount = !!account?.available && account.noAccount && !notSetUp
+  // P3.8 (rows 39, 40): the model and effort lists are the registry's, as
+  // Claude's are ('' = Default: no flag, Codex's own choice).
+  const registry = useRegistryStore((s) => s.registry)
+  const model = value.model ?? ''
+  const effort = value.reasoningEffort ?? ''
+  // A model change never leaves an effort the new model cannot run selected:
+  // it drops to Default, as Claude's does (SessionDialog handleModelChange).
+  const onModel = (next: string) => onChange({
+    ...value,
+    model: next,
+    reasoningEffort: codexEffortSupported(registry, next, value.reasoningEffort) ? value.reasoningEffort : undefined,
+  })
   /** A notice as one sentence whose own words are the link, so "Open
    *  Accounts" never reads twice. */
   const notice = (n: AccountNotice) => (
@@ -139,22 +154,26 @@ export function CodexFormFields({ value, onChange, onOpenAccounts, account, tooO
       <div>
         <label className="block text-xs text-[var(--text-secondary)] mb-1">Model</label>
         <select
-          value={value.model ?? 'gpt-5.5'}
-          onChange={(e) => onChange({ ...value, model: e.target.value })}
+          value={model}
+          onChange={(e) => onModel(e.target.value)}
           className={selectCls}
+          data-testid="codex-model-select"
         >
-          {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+          {codexModelOptions(registry, model).map((m) => <option key={m.value || 'default'} value={m.value}>{m.label}</option>)}
         </select>
       </div>
 
       <div>
         <label className="block text-xs text-[var(--text-secondary)] mb-1">Reasoning effort</label>
         <select
-          value={value.reasoningEffort ?? 'medium'}
-          onChange={(e) => onChange({ ...value, reasoningEffort: e.target.value as CodexOptions['reasoningEffort'] })}
+          value={effort}
+          onChange={(e) => onChange({ ...value, reasoningEffort: (e.target.value || undefined) as CodexOptions['reasoningEffort'] })}
           className={selectCls}
+          data-testid="codex-effort-select"
         >
-          {EFFORTS.map((eff) => <option key={eff} value={eff}>{eff}</option>)}
+          {codexEffortOptions(registry, model).map((eff) => (
+            <option key={eff.value || 'default'} value={eff.value} disabled={eff.disabled} title={eff.disabled ? `Not offered on ${model}` : undefined}>{eff.label}</option>
+          ))}
         </select>
       </div>
 

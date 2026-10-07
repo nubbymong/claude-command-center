@@ -104,6 +104,12 @@ export interface PtyIntegrityReport {
   cols: number
   rows: number
   resizeCount: number
+  /** The TerminalView mount the counts are from: a new opaque id each time the
+   *  view's terminal effect starts (its counts start from 0 there). Main
+   *  restarts its byte count for the session when it changes (a re-key that
+   *  does not respawn the PTY). At most 64 of [A-Za-z0-9_-]; main ignores any
+   *  other value, and a report without one counts against the mount main has. */
+  generation?: string
 }
 
 export function createInitialHealth(id: string, label: string): ServiceHealth {

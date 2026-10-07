@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { readFileSync, writeFileSync, appendFileSync, mkdtempSync } from 'fs'
-import { join } from 'path'
+import { readFileSync, writeFileSync, appendFileSync, mkdtempSync, rmSync } from 'fs'
+import { basename, dirname, join } from 'path'
 import { tmpdir } from 'os'
 import { mkdirSync } from 'fs'
 
 import { parseCodexRollout, mapTokenCountToStatusline, contextTokensInWindow, watchAndClaimRollout, withAllowance } from '../../../../src/main/providers/codex/telemetry'
 import type { TokenCountEvent } from '../../../../src/main/providers/codex/telemetry'
 import { CODEX_DEFAULT_LIMIT_ID as DEFAULT_ID, normaliseCodexRateLimits } from '../../../../src/main/providers/codex/rate-limits'
-import { createCodexLiveUsage } from '../../../../src/main/providers/codex/usage'
+import { createCodexLiveUsage, createCodexCarryMarks } from '../../../../src/main/providers/codex/usage'
 import { CodexProvider } from '../../../../src/main/providers/codex'
 
 const FIXTURE = readFileSync(join(__dirname, '../../../fixtures/codex/rollout-sample.jsonl'), 'utf-8')
@@ -945,6 +945,230 @@ describe('allowance from the rollout (usage track MP2)', () => {
     // Review M8: the realm's last session stopping forgets its live figure.
     src.stop()
     expect(live.get(sessions)).toBeNull()
+  })
+
+  // P3.14 (ADR-023; round 1, C1): the credits count a session reports is
+  // recorded with its allowance. They are the newest default-limit report's,
+  // the one the bars come from: a report whose credits are null (what an
+  // account without credits writes) clears an older figure; one with no
+  // credits key, or a sub-limit's, leaves it.
+  it('parseCodexRollout carries the credits of the newest default-limit token_count, and null clears them', () => {
+    const t = (s: number) => new Date(Date.parse('2026-09-27T09:00:00.000Z') + s * 1000).toISOString()
+    const rl = (pct: number, credits: unknown, id = DEFAULT_ID) => ({ limit_id: id, primary: { used_percent: pct, window_minutes: 300 }, plan_type: 'plus', ...(credits === undefined ? {} : { credits }) })
+    const figure = { has_credits: true, unlimited: false, balance: '1250.0000000000' }
+    const parse = (...lines: string[]) => parseCodexRollout([meta(t(0), '/p314/cwd'), ...lines].join('\n') + '\n').allowance!
+    // No key, then a sub-limit's null: the figure stays.
+    const kept = parse(tokenCount(t(5), null, rl(5, figure)), tokenCount(t(9), usage(9), rl(6, undefined)), tokenCount(t(10), null, rl(2, null, 'codex_spark')))
+    expect(kept.limits.find((l) => l.limitId === DEFAULT_ID)!.primary!.usedPercent).toBe(6)
+    expect(kept.credits).toEqual({ hasCredits: true, unlimited: false, balance: 1250 })
+    // The default limit's own null: none now.
+    const cleared = parse(tokenCount(t(5), null, rl(5, figure)), tokenCount(t(9), usage(9), rl(6, null)))
+    expect(cleared.limits[0].primary!.usedPercent).toBe(6)
+    expect(Object.prototype.hasOwnProperty.call(cleared, 'credits')).toBe(false)
+    // And a figure after that is the new one.
+    const again = parse(tokenCount(t(5), null, rl(5, figure)), tokenCount(t(9), usage(9), rl(6, null)), tokenCount(t(12), usage(10), rl(7, { has_credits: true, unlimited: false, balance: '1200' })))
+    expect(again.credits).toEqual({ hasCredits: true, unlimited: false, balance: 1200 })
+  })
+
+  /** A sessions folder under its own mkdtemp parent, and its removal: only a
+   *  folder named like this test's own prefix, made directly in the OS temp
+   *  folder (round 1, N3). */
+  const p314Sessions = (lines: string[], fileName = 'rollout-p314.jsonl'): { sessions: string; remove: () => void } => {
+    const parent = mkdtempSync(join(tmpdir(), 'ccc-test-codex-p314-'))
+    const sessions = join(parent, 'sessions')
+    mkdirSync(join(sessions, ...ymdOf(new Date())), { recursive: true })
+    writeFileSync(join(sessions, ...ymdOf(new Date()), fileName), lines.join('\n') + '\n', 'utf-8')
+    return {
+      sessions,
+      remove: () => {
+        if (dirname(parent) !== tmpdir() || !basename(parent).startsWith('ccc-test-codex-p314-')) return
+        try { rmSync(parent, { recursive: true, force: true }) } catch { /* a watcher still holds it: left to the OS temp sweep */ }
+      },
+    }
+  }
+
+  it('the Codex session records its credits with its allowance for the usage page, and its status line never carries them', async () => {
+    const spawn = startClock()
+    const ts = new Date(spawn + 100).toISOString()
+    const ts2 = new Date(spawn + 200).toISOString()
+    const { sessions, remove } = p314Sessions([
+      meta(ts, '/p314/cwd'),
+      tokenCount(ts, null, { limit_id: DEFAULT_ID, primary: { used_percent: 26, window_minutes: 300 }, plan_type: 'pro', credits: { has_credits: true, unlimited: false, balance: '1250.0000000000' } }),
+      // A sub-limit's report after it changes nothing about the credits.
+      tokenCount(ts2, null, { limit_id: 'codex_spark', limit_name: 'Spark', primary: { used_percent: 3, window_minutes: 300 }, credits: null }),
+    ])
+    const live = createCodexLiveUsage(process.platform)
+    const updates: unknown[] = []
+    const src = new CodexProvider(live).ingestSessionTelemetry('sess-p314', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: sessions }, (d) => updates.push(d))
+    try {
+      await vi.advanceTimersByTimeAsync(800)
+      expect(live.get(sessions)).toMatchObject({ planType: 'pro', credits: { hasCredits: true, unlimited: false, balance: 1250 } })
+      // Round 1, C4: the status line the session emits has no credits key or text.
+      expect(updates.length).toBeGreaterThan(0)
+      for (const u of updates) expect(Object.keys(u as object).join(' ')).not.toMatch(/credit/i)
+      expect(JSON.stringify(updates)).not.toMatch(/credits|1250/i)
+    } finally {
+      src.stop()
+      remove()
+    }
+  })
+
+  it('a session whose newest default-limit report has null credits records none (an account without credits)', async () => {
+    const spawn = startClock()
+    const ts = new Date(spawn + 100).toISOString()
+    const ts2 = new Date(spawn + 200).toISOString()
+    const { sessions, remove } = p314Sessions([
+      meta(ts, '/p314/cwd'),
+      tokenCount(ts, null, { limit_id: DEFAULT_ID, primary: { used_percent: 26, window_minutes: 300 }, plan_type: 'pro', credits: { has_credits: true, unlimited: false, balance: '1250.0000000000' } }),
+      tokenCount(ts2, null, { limit_id: DEFAULT_ID, primary: { used_percent: 4, window_minutes: 300 }, plan_type: 'plus', credits: null }),
+    ])
+    const live = createCodexLiveUsage(process.platform)
+    const src = new CodexProvider(live).ingestSessionTelemetry('sess-p314-none', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: sessions }, () => {})
+    try {
+      await vi.advanceTimersByTimeAsync(800)
+      const got = live.get(sessions)!
+      expect(got.planType).toBe('plus')
+      expect(got.limits[0].primary!.usedPercent).toBe(4)
+      expect(Object.prototype.hasOwnProperty.call(got, 'credits')).toBe(false)
+    } finally {
+      src.stop()
+      remove()
+    }
+  })
+
+  // Round 1, C2 (ADR-023): a conversation Switch Account carried into this
+  // realm holds the earlier account's events. This session's live allowance,
+  // plan and credits count only from the carry on.
+  describe('a carried conversation (ADR-023)', () => {
+    const CID = '0198a0b0-1c2d-7e3f-8a4b-5c6d7e8f9a0b'
+    const NAME = `rollout-2026-09-27T08-00-00-${CID}.jsonl`
+    const A_PRO = { has_credits: true, unlimited: false, balance: '1250.0000000000' }
+    const aEvent = (at: string) => tokenCount(at, null, { limit_id: DEFAULT_ID, primary: { used_percent: 40, window_minutes: 300 }, plan_type: 'pro', credits: A_PRO })
+    const bEvent = (at: string) => tokenCount(at, null, { limit_id: DEFAULT_ID, primary: { used_percent: 5, window_minutes: 300 }, plan_type: 'plus', credits: null })
+    const append = (sessions: string, line: string) => appendFileSync(join(sessions, ...ymdOf(new Date()), NAME), line + '\n', 'utf-8')
+
+    async function carried(opts: { marked: boolean }) {
+      const spawn = startClock()
+      const at = (ms: number) => new Date(spawn + ms).toISOString()
+      const folder = p314Sessions([meta(at(50), '/p314/cwd'), aEvent(at(100))], NAME)
+      const marks = createCodexCarryMarks()
+      // The carry happened at +200 ms, between the earlier account's last event and this session.
+      if (opts.marked) marks.record('realm-b', folder.sessions, CID, spawn + 200)
+      const live = createCodexLiveUsage(process.platform)
+      const src = new CodexProvider(live, marks).ingestSessionTelemetry('sess-carried', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: folder.sessions }, () => {})
+      return { spawn, at, folder, live, src, marks }
+    }
+
+    it('before this account reports its own event the live figure is none, not the earlier account\'s; then its own shows, with its own plan, bars and no credits', async () => {
+      const c = await carried({ marked: true })
+      try {
+        await vi.advanceTimersByTimeAsync(1000)
+        expect(c.live.get(c.folder.sessions)).toBeNull()
+        append(c.folder.sessions, bEvent(c.at(300)))
+        await vi.advanceTimersByTimeAsync(2000)
+        const got = c.live.get(c.folder.sessions)!
+        expect(got.planType).toBe('plus')
+        expect(got.limits[0].primary!.usedPercent).toBe(5)
+        expect(got.readingAt).toBe(Date.parse(c.at(300)))
+        expect(Object.prototype.hasOwnProperty.call(got, 'credits')).toBe(false)
+      } finally {
+        c.src.stop()
+        c.folder.remove()
+      }
+    })
+
+    it('the same rollout with no mark reads as the account\'s own (the control)', async () => {
+      const c = await carried({ marked: false })
+      try {
+        await vi.advanceTimersByTimeAsync(1000)
+        expect(c.live.get(c.folder.sessions)).toMatchObject({ planType: 'pro', credits: { hasCredits: true, unlimited: false, balance: 1250 } })
+      } finally {
+        c.src.stop()
+        c.folder.remove()
+      }
+    })
+
+    it('an event with no zoned time, or at the carry\'s own moment, is not this account\'s', async () => {
+      const c = await carried({ marked: true })
+      try {
+        // A zoneless stamp a day and more after the carry: after it in every time zone, so ignoring it is the rule's doing, not the host zone's.
+        append(c.folder.sessions, bEvent(c.at(86_400_000 + 300).replace('Z', '')))
+        append(c.folder.sessions, bEvent('later'))
+        append(c.folder.sessions, bEvent(c.at(200)))
+        await vi.advanceTimersByTimeAsync(2000)
+        expect(c.live.get(c.folder.sessions)).toBeNull()
+        append(c.folder.sessions, bEvent(c.at(201)))
+        await vi.advanceTimersByTimeAsync(2000)
+        expect(c.live.get(c.folder.sessions)).toMatchObject({ planType: 'plus' })
+      } finally {
+        c.src.stop()
+        c.folder.remove()
+      }
+    })
+
+    // Round 3 (H1): an unreadable marks file never blanks a card. Nothing was
+    // carried into the folder in this run, so the rollout reads as the account's
+    // own; a carry made meanwhile is held in memory and counts from its mark.
+    const unreadable = (spawn: number) => createCodexCarryMarks({
+      platform: process.platform,
+      port: { read: () => ({ kind: 'unavailable' }), write: () => {}, setAside: () => false },
+      now: () => spawn,
+    })
+
+    it('while the marks cannot be read the watcher is not blanked: a folder nothing was carried into reads as the account\'s own (round 3)', async () => {
+      const spawn = startClock()
+      const at = (ms: number) => new Date(spawn + ms).toISOString()
+      const folder = p314Sessions([meta(at(50), '/p314/cwd'), aEvent(at(100))], NAME)
+      const live = createCodexLiveUsage(process.platform)
+      const src = new CodexProvider(live, unreadable(spawn)).ingestSessionTelemetry('sess-carried-unreadable', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: folder.sessions }, () => {})
+      try {
+        await vi.advanceTimersByTimeAsync(1000)
+        expect(live.get(folder.sessions)).toMatchObject({ planType: 'pro' })
+      } finally {
+        src.stop()
+        folder.remove()
+      }
+    })
+
+    it('a carry made while the marks cannot be read is held in memory: the watcher counts only what is written after it, and this account\'s own event shows (round 3)', async () => {
+      const spawn = startClock()
+      const at = (ms: number) => new Date(spawn + ms).toISOString()
+      const folder = p314Sessions([meta(at(50), '/p314/cwd'), aEvent(at(100))], NAME)
+      const marks = unreadable(spawn)
+      expect(marks.record('realm-b', folder.sessions, CID, spawn + 200)).toBe(true)
+      const live = createCodexLiveUsage(process.platform)
+      const src = new CodexProvider(live, marks).ingestSessionTelemetry('sess-carried-held', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: folder.sessions }, () => {})
+      try {
+        await vi.advanceTimersByTimeAsync(1000)
+        expect(live.get(folder.sessions)).toBeNull()
+        append(folder.sessions, bEvent(at(300)))
+        await vi.advanceTimersByTimeAsync(3000)
+        expect(live.get(folder.sessions)).toMatchObject({ planType: 'plus' })
+      } finally {
+        src.stop()
+        folder.remove()
+      }
+    })
+
+    it('a mark that cannot be asked for (it throws) closes that rollout: none of its allowance events count, the status line goes on (round 3, H4)', async () => {
+      const spawn = startClock()
+      const ts = new Date(spawn + 100).toISOString()
+      const folder = p314Sessions([meta(ts, '/p314/cwd'), aEvent(ts)], NAME)
+      const live = createCodexLiveUsage(process.platform)
+      const throwing = { record: () => false, markOf: () => null, remove: () => {}, adopt: () => false, cutoff: (): number | null => { throw new Error('marks') }, dropRealm: () => {}, markIfNone: () => {} }
+      const src = new CodexProvider(live, throwing).ingestSessionTelemetry('sess-carried-throws', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: folder.sessions }, () => {})
+      try {
+        await vi.advanceTimersByTimeAsync(1000)
+        expect(live.get(folder.sessions)).toBeNull()
+        // A later event is no more counted than the earlier one: the mark is asked afresh at each read and throws again.
+        append(folder.sessions, bEvent(new Date(spawn + 300).toISOString()))
+        await vi.advanceTimersByTimeAsync(3000)
+        expect(live.get(folder.sessions)).toBeNull()
+      } finally {
+        src.stop()
+        folder.remove()
+      }
+    })
   })
 
   it('a recorder that throws never stops the status line updates', async () => {

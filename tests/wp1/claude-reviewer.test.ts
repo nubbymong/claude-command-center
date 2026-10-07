@@ -394,7 +394,15 @@ describe('the review-only Claude launch (WP1.38, WP1.46)', () => {
     expect(packageRegistrationProblem(pkg)).toBeNull()
     expect(pkg.launch?.kinds).toEqual(['review'])
     expect(typeof pkg.review?.run).toBe('function')
-    expect(pkg.capabilities['cli.discovery'].state).toBe('unknown')
+    // WP2 PR 4: setup.discover exists with these ports, so the declaration
+    // says so (it was left unknown while the operation was already wired);
+    // no sign-in ports were handed over, so no auth operations and no claim.
+    expect(typeof pkg.setup?.discover).toBe('function')
+    expect(pkg.capabilities['cli.discovery'].state).toBe('supported')
+    expect(pkg.auth).toBeUndefined()
+    expect(pkg.capabilities['auth.status'].state).toBe('unknown')
+    expect(pkg.capabilities['auth.logout'].state).toBe('unknown')
+    expect(bare.capabilities['cli.discovery'].state).toBe('unknown')
   })
 })
 
@@ -562,5 +570,20 @@ describe('the composition root wires the reviewer\'s account hold', () => {
     expect(await claudeReviewPorts.lookupRealm({ authRealmId: 'realm-' + '3'.repeat(32) })).toEqual({ ok: false })
     reg.doc = null
     expect(await claudeReviewPorts.lookupRealm({ authRealmId: live.id })).toEqual({ ok: false })
+  })
+})
+
+// P3.9 round 1: Sentinel's analysis of an update is a text-only run. The
+// Claude reviewer has no such form (it reads the project), so it refuses one
+// before it holds or runs anything; Sentinel runs Claude's analysis itself.
+describe('a text-only analysis is not a Claude review (P3.9 round 1)', () => {
+  it('refuses purpose analysis before holding the account or running anything; review, or none, runs', async () => {
+    const h = reviewDeps()
+    expect(await createClaudeReviewOperations(h.deps).run(input({ purpose: 'analysis' }))).toMatchObject({ ok: false, code: 'not-started' })
+    expect(h.deps.holdProfile).not.toHaveBeenCalled()
+    expect(h.run).not.toHaveBeenCalled()
+    const r = reviewDeps()
+    expect(await createClaudeReviewOperations(r.deps).run(input({ purpose: 'review' }))).toMatchObject({ ok: true })
+    expect(r.calls[0].cmd.args).toEqual([...CLAUDE_REVIEW_ARGS])
   })
 })

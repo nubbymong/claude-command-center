@@ -90,7 +90,9 @@ const { fetchAccountUsage, _resetLiveUsageForTest, _resetSnapshotsForTest } = aw
 const { isPtySessionLive } = await import('../../../src/main/session-registry')
 const canvasLink = await import('../../../src/main/canvas/canvas-session-link')
 const fakeProvider = {
-  id: 'claude', displayName: 'Claude', resolveBinary: () => null,
+  // No resolveBinary here: the local launch resolves Claude through the
+  // provider (WP2 PR 4), so the real package's (layered below) answers.
+  id: 'claude', displayName: 'Claude',
   buildSpawnCommand: () => ({ cmd: '', args: [], env: {} }), detectUiRunning: () => false,
   ingestSessionTelemetry: () => ({ stop() {} }), listHistorySessions: async () => [],
   resumeCommand: () => ({ cmd: '', args: [] }), configureMcpServer: async () => {},

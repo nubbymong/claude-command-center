@@ -5,8 +5,9 @@
  * dialogs portal to document.body, so every query here is on the document.
  *
  * Verifies:
- *   - the Providers card: real marks, Beta on Codex only, the status line,
- *     the last-provider refusal and the in-use count under the switch;
+ *   - the Providers card: real marks, the Beta pill only for a beta descriptor, the status line,
+ *     the last-provider refusal and the in-use count under the switch, which
+ *     follows the count each snapshot carries;
  *   - Codex rows: labels (the external home named by its label, never by an
  *     identity name), badges, and the "..." menu for each account state,
  *     hiding what the registry always refuses; the menu is portalled and
@@ -31,9 +32,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import type { AccountsSnapshot, AccountView, ProviderInstallationView, SignInOutputEvent } from '../../../src/shared/providers'
 import type { AccountProfile } from '../../../src/shared/account-types'
-import { useProviderAccountsStore, canOfferSignInAgain } from '../../../src/renderer/stores/providerAccountsStore'
+import { useProviderAccountsStore, canOfferSignInAgain, signInPhaseText, notCarriedOverText } from '../../../src/renderer/stores/providerAccountsStore'
 import { useAccountProfilesStore } from '../../../src/renderer/stores/accountProfilesStore'
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../../src/renderer/stores/settingsStore'
+import { registerRendererProvider, _resetRendererProviderRegistryForTest } from '../../../src/renderer/providers/core'
+import { composeRendererProviders } from '../../../src/renderer/providers'
+import { claudeDescriptor } from '../../../src/renderer/providers/claude'
+import { codexDescriptor } from '../../../src/renderer/providers/codex'
 
 // The saved on/off the Providers switch writes after main agrees.
 const updateSettings = vi.fn(() => Promise.resolve())
@@ -109,7 +114,7 @@ function provider(over: Partial<ProviderInstallationView> & Pick<ProviderInstall
   const cap = { enabled: true, labelExperimental: false }
   return {
     enabled: true, preference: 'on', discoveryState: 'found', version: '1.0.0', compatibility: 'supported', managedAccounts: over.providerId === 'codex',
-    signInMethods: { browser: cap, device: cap, apiKey: cap }, status: cap, logout: cap,
+    signInMethods: { browser: cap, device: cap, apiKey: cap }, status: cap, logout: cap, inUse: 0,
     ...over,
   }
 }
@@ -261,17 +266,36 @@ afterEach(() => { unmountNow() })
 // Providers card
 
 describe('Providers card', () => {
-  it('shows each provider with its real mark, Beta on Codex only, and its status', () => {
+  it('shows each provider with its real mark, no Beta label, and its status', () => {
+    // [host] P4.11 (row 54): the Codex "Beta" labels come off in the release
+    // where parity lands; both registered descriptors are stable.
+    _resetRendererProviderRegistryForTest()
+    composeRendererProviders()
     render(snapshot())
     expect(q('provider-row-claude')!.querySelector('[data-testid="provider-mark-claude"]')).toBeTruthy()
     expect(q('provider-row-codex')!.querySelector('[data-testid="provider-mark-codex"]')).toBeTruthy()
-    expect(q('provider-beta-codex')?.textContent).toBe('Beta')
+    expect(q('provider-beta-codex')).toBeNull()
     expect(q('provider-beta-claude')).toBeNull()
     expect(q('provider-status-claude')?.textContent).toBe('Claude Code 2.1.281 - ready')
   })
 
+  it('[host] the Beta pill still follows the descriptor\'s maturity (WP1.21: labelled with provider maturity)', () => {
+    _resetRendererProviderRegistryForTest()
+    registerRendererProvider(claudeDescriptor)
+    registerRendererProvider({ ...codexDescriptor, maturity: 'beta' })
+    try {
+      render(snapshot())
+      expect(q('provider-beta-codex')?.textContent).toBe('Beta')
+      expect(q('provider-beta-claude')).toBeNull()
+    } finally {
+      // The composed registry again, so a failure here costs no other case.
+      _resetRendererProviderRegistryForTest()
+      composeRendererProviders()
+    }
+  })
+
   it('says "At least one provider stays on." under the switch when the last one is turned off', async () => {
-    pa.setEnabled.mockResolvedValue({ ok: false, code: 'last-provider', message: 'At least one provider must stay on.' })
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'last-provider', message: 'At least one provider must stay on.' } as never)
     render(snapshot())
     await act(async () => { (q('provider-row-codex')!.querySelector('[role="switch"]') as HTMLElement).click() })
     await flush()
@@ -327,11 +351,67 @@ describe('Providers card', () => {
   })
 
   it('says the provider is in use, with the count, when something holds it', async () => {
-    pa.setEnabled.mockResolvedValue({ ok: false, code: 'consumers', consumers: 3, message: 'Sessions or operations are using this account.' })
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'consumers', consumers: 3, message: 'Sessions or operations are using this account.' } as never)
     render(snapshot())
     await act(async () => { (q('provider-row-codex')!.querySelector('[role="switch"]') as HTMLElement).click() })
     await flush()
     expect(q('provider-error-codex')?.textContent).toBe('Codex is in use (3).')
+  })
+
+  // [host] P4.7 fix pass 3: the line follows the count main publishes with
+  // each snapshot, on Claude Code's row and Codex's alike.
+  const inUseSnapshot = (revision: number, claude: number, codex: number) => snapshot({
+    revision,
+    providers: [
+      provider({ providerId: 'claude', displayName: 'Claude Code', version: '2.1.281', inUse: claude }),
+      provider({ providerId: 'codex', displayName: 'Codex', version: '0.155.1', inUse: codex }),
+    ],
+  })
+  async function refuseBothSwitches(): Promise<void> {
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'consumers', consumers: 1, message: 'Sessions or operations are using this account.' } as never)
+    for (const id of ['codex', 'claude']) {
+      await act(async () => { (q(`provider-row-${id}`)!.querySelector('[role="switch"]') as HTMLElement).click() })
+      await flush()
+    }
+    expect(q('provider-error-codex')?.textContent).toBe('Codex is in use (1).')
+    expect(q('provider-error-claude')?.textContent).toBe('Claude Code is in use (1).')
+  }
+
+  it('the in-use line follows the count each new snapshot carries, and goes once nothing holds the provider [host]', async () => {
+    // The snapshot from before the refusal carries no count yet.
+    render(snapshot())
+    await refuseBothSwitches()
+    act(() => { useProviderAccountsStore.getState().receive(inUseSnapshot(2, 1, 2)) })
+    expect(q('provider-error-codex')?.textContent).toBe('Codex is in use (2).')
+    expect(q('provider-error-claude')?.textContent).toBe('Claude Code is in use (1).')
+    act(() => { useProviderAccountsStore.getState().receive(inUseSnapshot(3, 1, 0)) })
+    expect(q('provider-error-codex')).toBeNull()
+    expect(q('provider-switch-text-codex')?.textContent).toBe('On')
+    expect(q('provider-error-claude')?.textContent).toBe('Claude Code is in use (1).')
+    act(() => { useProviderAccountsStore.getState().receive(inUseSnapshot(4, 0, 0)) })
+    expect(q('provider-error-claude')).toBeNull()
+  })
+
+  // [host] P4.7 fix pass 4: main pushes a new snapshot each time the count
+  // moves after a refusal (provider-in-use.test.ts); the row reads none of
+  // its own, however long the line shows.
+  it('while the line shows, the row reads no snapshot of its own; the next snapshot main pushes ends it [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      // The last snapshot already said 0; main's push after the refusal says it again.
+      render(inUseSnapshot(1, 0, 0))
+      await refuseBothSwitches()
+      pa.snapshot.mockClear()
+      await act(async () => { vi.advanceTimersByTime(10 * 60_000) })
+      expect(pa.snapshot).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+      expect(q('provider-error-codex')?.textContent).toBe('Codex is in use (1).')
+      act(() => { useProviderAccountsStore.getState().receive(inUseSnapshot(2, 0, 0)) })
+      expect(q('provider-error-codex')).toBeNull()
+      expect(q('provider-error-claude')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('says the change was not saved when the settings save does not land (it resolves false; it does not throw)', async () => {
@@ -344,7 +424,7 @@ describe('Providers card', () => {
   })
 
   it("shows another refusal's own message", async () => {
-    pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' })
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' } as never)
     render(snapshot())
     await act(async () => { (q('provider-row-claude')!.querySelector('[role="switch"]') as HTMLElement).click() })
     await flush()
@@ -398,11 +478,12 @@ describe('Codex rows', () => {
   it('offers each account only the actions its state allows', async () => {
     render(snapshot())
     // The default, with other active accounts, is not offered Make inactive (the registry wants another default first).
-    expect(await menuKeys('acc-work')).toEqual(['make-reviewer', 'check-sign-in', 'sign-out'])
-    expect(await menuKeys('acc-personal')).toEqual(['make-default', 'check-sign-in', 'sign-out', 'make-inactive'])
+    // Signed in, Sign in again is offered too (P3.3: main stages it).
+    expect(await menuKeys('acc-work')).toEqual(['make-reviewer', 'sign-in-again', 'check-sign-in', 'sign-out'])
+    expect(await menuKeys('acc-personal')).toEqual(['make-default', 'sign-in-again', 'check-sign-in', 'sign-out', 'make-inactive'])
     // Blocked: "This is still my account" is its check (it vouches); no plain check.
     expect(await menuKeys('acc-old')).toEqual(['sign-out', 'make-inactive'])
-    expect(await menuKeys('acc-parked')).toEqual(['check-sign-in', 'sign-out', 'make-active', 'archive'])
+    expect(await menuKeys('acc-parked')).toEqual(['sign-in-again', 'check-sign-in', 'sign-out', 'make-active', 'archive'])
   })
 
   // WP2 commit 6g: the retired Codex settings tab's "Test connection", per
@@ -536,6 +617,18 @@ describe('Codex rows', () => {
       render(off)
       expect(q('account-external-hint-acc-local')).toBeNull()
     })
+
+    it('while the app signs it in again in place, it says so, as any row with a sign-in running, never the terminal hint (P3.3 VM round, V3)', async () => {
+      render(snapshot({ accounts: [{ ...work, signingIn: true }, { ...local, lastKnownAuthState: 'signed-out', operationalState: 'attention', signingIn: true }] }))
+      expect(q('account-signing-in-acc-local')?.textContent).toBe('Signing in now')
+      expect(q('account-external-hint-acc-local')).toBeNull()
+      expect(q('account-signing-in-acc-work')?.textContent).toBe('Signing in now')
+      unmountNow()
+      render(snapshot({ accounts: [work, { ...local, lastKnownAuthState: 'signed-out' }] }))
+      expect(q('account-signing-in-acc-local')).toBeNull()
+      expect(q('account-signing-in-acc-work')).toBeNull()
+      expect(q('account-external-hint-acc-local')).toBeTruthy()
+    })
   })
 
   it('offers Make inactive on the default when it is the only active account, and never Make active on a blocked one', async () => {
@@ -589,7 +682,7 @@ describe('Codex rows', () => {
 
   it('says the account is in use, with the count and what is running, when an action is refused for that', async () => {
     const busyPersonal = { ...personal, runningSessions: 1, runningReviews: 1, consumers: 2 }
-    pa.setDefault.mockResolvedValue({ ok: false, code: 'consumers', consumers: 2, message: 'Sessions or operations are using this account.' })
+    pa.setDefault.mockResolvedValue({ ok: false, code: 'consumers', consumers: 2, message: 'Sessions or operations are using this account.' } as never)
     render(snapshot({ accounts: [work, busyPersonal] }))
     await click('account-menu-btn-acc-personal')
     await click('account-menu-make-default-acc-personal')
@@ -740,14 +833,18 @@ describe('Claude section', () => {
     expect(q('reviewer-mac-callout')).toBeNull()
   })
 
-  it('on macOS marks the account that cannot review, never as the reviewer, and offers Make reviewer only on the other', () => {
+  // P3.2: Make reviewer is in the Claude row's menu, like every provider's.
+  it('on macOS marks the account that cannot review, never as the reviewer, and offers Make reviewer only on the other', async () => {
     ;(window as any).electronPlatform = 'darwin'
     const homeRefused = { ...claudeHome, isReviewerDefault: true, reviewRefusal: { reason: 'platform' as const, message: 'On macOS only the normal sign-in can review.' } }
     render(snapshot({ accounts: [claudeMain, homeRefused] }))
     expect(q('claude-review-refusal-profile-home')?.textContent).toBe("Can't run Claude reviews on macOS")
     expect(q('claude-reviewer-badge-profile-home')).toBeNull()
-    expect(q('claude-make-reviewer-profile-home')).toBeNull()
-    expect(q('claude-make-reviewer-profile-primary')).toBeTruthy()
+    await click('profile-menu-btn-profile-home')
+    expect(q('profile-menu-make-reviewer-profile-home')).toBeNull()
+    await click('profile-menu-btn-profile-home')
+    await click('profile-menu-btn-profile-primary')
+    expect(q('profile-menu-make-reviewer-profile-primary')).toBeTruthy()
     expect(q('claude-review-refusal-profile-primary')).toBeNull()
   })
 
@@ -757,27 +854,32 @@ describe('Claude section', () => {
     expect(q('claude-review-refusal-profile-home')?.textContent).toBe('Only the normal sign-in can review here.')
   })
 
-  it('says when the app could not tell whether an account can review', () => {
+  it('says when the app could not tell whether an account can review', async () => {
     const homeUnknown = { ...claudeHome, reviewRefusal: { reason: 'unknown' as const, message: 'x' } }
     render(snapshot({ accounts: [claudeMain, homeUnknown] }))
     expect(q('claude-review-refusal-profile-home')?.textContent).toBe("Can't check whether this account can run reviews right now")
-    expect(q('claude-make-reviewer-profile-home')).toBeNull()
+    await click('profile-menu-btn-profile-home')
+    expect(q('profile-menu-make-reviewer-profile-home')).toBeNull()
   })
 
   it('shows the Reviewer badge on the chosen Claude reviewer and makes another one the reviewer', async () => {
     const homeReviewer = { ...claudeHome, isReviewerDefault: true }
     render(snapshot({ accounts: [claudeMain, homeReviewer] }))
     expect(q('claude-reviewer-badge-profile-home')?.textContent).toBe('Reviewer')
-    expect(q('claude-make-reviewer-profile-home')).toBeNull()
-    await click('claude-make-reviewer-profile-primary')
+    await click('profile-menu-btn-profile-home')
+    expect(q('profile-menu-make-reviewer-profile-home')).toBeNull()
+    await click('profile-menu-btn-profile-home')
+    await click('profile-menu-btn-profile-primary')
+    await click('profile-menu-make-reviewer-profile-primary')
     expect(pa.setReviewerDefault).toHaveBeenCalledWith({ providerId: 'claude', accountId: 'acc-claude-main' })
   })
 
   it('shows why a Claude account could not be made the reviewer', async () => {
-    pa.setReviewerDefault.mockResolvedValue({ ok: false, code: 'review-unavailable', message: 'This account cannot run reviews on this computer.' })
+    pa.setReviewerDefault.mockResolvedValue({ ok: false, code: 'review-unavailable', message: 'This account cannot run reviews on this computer.' } as never)
     render(snapshot({ accounts: [claudeMain, claudeHome] }))
-    await click('claude-make-reviewer-profile-primary')
-    expect(q('claude-reviewer-error-profile-primary')?.textContent).toBe('This account cannot run reviews on this computer.')
+    await click('profile-menu-btn-profile-primary')
+    await click('profile-menu-make-reviewer-profile-primary')
+    expect(q('profile-error-profile-primary')?.textContent).toBe('This account cannot run reviews on this computer.')
   })
 
   it('shows the cleared-reviewer notice once, in the macOS wording', () => {
@@ -938,37 +1040,162 @@ describe('Sign in again', () => {
     if (confirmSame) await click('sign-in-again-confirm')
   }
 
-  it('is offered only on a managed, unblocked, non-archived account that is not signed in', async () => {
+  it('is offered on an unblocked, non-archived account, signed in or not, this computer\'s own included (P3.3)', async () => {
     render(snapshot({ accounts: [work, expired, signedOut, errored, unknown, externalOut, blockedOut] }))
-    for (const id of ['acc-exp', 'acc-out', 'acc-err', 'acc-unk']) expect(await menuKeys(id), id).toContain('sign-in-again')
-    for (const id of ['acc-work', 'acc-local', 'acc-old']) expect(await menuKeys(id), id).not.toContain('sign-in-again')
+    for (const id of ['acc-work', 'acc-exp', 'acc-out', 'acc-err', 'acc-unk', 'acc-local']) expect(await menuKeys(id), id).toContain('sign-in-again')
+    for (const id of ['acc-old']) expect(await menuKeys(id), id).not.toContain('sign-in-again')
+    expect(canOfferSignInAgain(work)).toBe(true)
     expect(canOfferSignInAgain(signedOut)).toBe(true)
     expect(canOfferSignInAgain({ ...signedOut, lifecycle: 'archived' })).toBe(false)
   })
 
-  it('runs nothing and takes no key until "same account as before" is ticked', async () => {
+  it('ticked, it signs the same account in again and takes the key; not ticked, it adds a new account instead (P3.3)', async () => {
     pa.issueSecretHandle.mockResolvedValue({ ok: true, handle: HANDLE })
     pa.signInAgain.mockResolvedValue({ ok: true, state: 'signed-in' })
+    pa.beginSetup.mockResolvedValue({ ok: true, accountId: 'acc-new' })
     render(snapshot({ accounts: [work, keyAccount] }))
     await openFor('acc-key', false)
 
     expect(q('sign-in-again-who')?.textContent).toContain('Personal')
     expect(q('sign-in-again-who')?.textContent).toContain('alex@home.example')
     expect(q('sign-in-again-confirm-label')?.textContent).toBe('Sign in to the same account as before (alex@home.example).')
-    expect(q('sign-in-again-who')?.textContent).toContain('If it is signed in a different way than before, the account waits until you confirm it in Accounts.')
-
-    expect((q('sign-in-again-continue') as HTMLButtonElement).disabled).toBe(true)
-    await click('sign-in-again-continue')
-    expect(q('sign-in-again-key')).toBeNull()
-    expect(pa.signInAgain).not.toHaveBeenCalled()
-    expect(pa.issueSecretHandle).not.toHaveBeenCalled()
-
+    expect(q('sign-in-again-confirm-hint')?.textContent).toBe('Not ticked, the sign-in is added as a new account, and this one stays as it is.')
     await click('sign-in-again-confirm')
+    expect(q('sign-in-again-confirm-hint')?.textContent).toBe('If it is signed in a different way than before, the account waits until you confirm it in Accounts.')
     await click('sign-in-again-continue')
     typeKey(q('sign-in-again-key') as HTMLInputElement, KEY)
     await click('sign-in-again-key-continue')
     expect(pa.issueSecretHandle).toHaveBeenCalledTimes(1)
     expect(pa.signInAgain).toHaveBeenCalledTimes(1)
+    expect(pa.beginSetup).not.toHaveBeenCalled()
+    expect(q('sign-in-again-dialog')).toBeNull()
+
+    // Not ticked: nothing runs here and no key is taken here; Add account
+    // takes over with the method chosen here.
+    pa.issueSecretHandle.mockClear()
+    pa.signInAgain.mockClear()
+    await openFor('acc-key', false)
+    expect((q('sign-in-again-continue') as HTMLButtonElement).disabled).toBe(false)
+    await click('sign-in-again-continue')
+    expect(q('sign-in-again-dialog')).toBeNull()
+    expect(q('add-account-dialog')).toBeTruthy()
+    expect(pa.beginSetup).toHaveBeenCalledWith({ providerId: 'codex', method: 'apiKey' })
+    expect(q('add-account-key')).toBeTruthy()
+    expect(pa.signInAgain).not.toHaveBeenCalled()
+    expect(pa.issueSecretHandle).not.toHaveBeenCalled()
+  })
+
+  it('on a signed-in account it runs Sign in again (main stages it) and closes on success (P3.3)', async () => {
+    pa.signInAgain.mockResolvedValue({ ok: true, state: 'signed-in' })
+    render(snapshot({ accounts: [work] }))
+    await openFor('acc-work')
+    await click('sign-in-again-continue')
+    expect(pa.signInAgain).toHaveBeenCalledWith({ accountId: 'acc-work', method: 'browser', sameAccount: true })
+    expect(pa.beginSetup).not.toHaveBeenCalled()
+    expect(q('sign-in-again-dialog')).toBeNull()
+    expect(q('add-account-dialog')).toBeNull()
+  })
+
+  it('says in its status line that it is carrying the earlier conversations over, and what it left behind before it closes (P3.3 final review round, F2, F3)', async () => {
+    let answer: (v: unknown) => void = () => {}
+    pa.signInAgain.mockImplementation(() => new Promise((r) => { answer = r }))
+    render(snapshot({ accounts: [work] }))
+    await openFor('acc-work')
+    await click('sign-in-again-continue')
+    expect(q('sign-in-again-status')?.textContent).toBe('Waiting for the sign-in to finish...')
+    const log = q('sign-in-again-log')?.textContent
+    // The step main names, in the same status line; no output line of its own.
+    act(() => { signInOutput?.({ accountId: 'acc-work', text: '', phase: 'carrying-history' }) })
+    expect(q('sign-in-again-status')?.textContent).toBe(signInPhaseText('carrying-history'))
+    expect(q('sign-in-again-status')?.textContent).toContain('earlier conversations')
+    expect(q('sign-in-again-log')?.textContent).toBe(log)
+    // Another account's step is not this dialog's.
+    act(() => { signInOutput?.({ accountId: 'acc-other', text: '', phase: 'carrying-history' }) })
+    await act(async () => { answer({ ok: true, state: 'signed-in', notCarriedOver: 2 }) })
+    await flush()
+    // Files left behind are said before it closes.
+    expect(q('sign-in-again-dialog')).toBeTruthy()
+    expect(q('sign-in-again-left')?.textContent).toBe(notCarriedOverText(2))
+    expect(q('sign-in-again-cancel')).toBeNull()
+    await click('sign-in-again-done')
+    expect(q('sign-in-again-dialog')).toBeNull()
+    expect(notCarriedOverText(1)).toContain('1 earlier conversation file was not carried over')
+    expect(notCarriedOverText(1)).toContain("It stays in the account's old folder while that folder is kept.")
+    expect(notCarriedOverText(2)).toContain("2 earlier conversation files were not carried over")
+    expect(notCarriedOverText(2)).toContain("They stay in the account's old folder while that folder is kept.")
+  })
+
+  it('when main finds someone else signed in, it hands over to naming that new account (P3.3)', async () => {
+    pa.signInAgain.mockResolvedValue({ ok: true, state: 'signed-in', separateAccountId: 'acc-sep' })
+    pa.completeSetup.mockResolvedValue({ ok: true, accountId: 'acc-sep' })
+    const sep = { accountId: 'acc-sep', providerId: 'codex' as const, method: 'browser' as const, state: 'credentials-written' as const, external: false, createdAt: 1, signingIn: false }
+    const s = snapshot({ accounts: [work] })
+    render(s)
+    await openFor('acc-work')
+    // Main's next snapshot lists that sign-in as an unfinished setup.
+    act(() => { useProviderAccountsStore.setState({ snapshot: { ...s, revision: 2, pendingSetups: [sep] } }) })
+    await click('sign-in-again-continue')
+    expect(q('sign-in-again-dialog')).toBeNull()
+    expect(q('add-account-step-name')).toBeTruthy()
+    // Not also listed as unfinished while its naming dialog is open (review round 1, Q4).
+    expect(q('pending-setup-acc-sep')).toBeNull()
+    expect(pa.signIn).not.toHaveBeenCalled()
+    expect(pa.beginSetup).not.toHaveBeenCalled()
+    await click('add-account-finish')
+    expect(pa.completeSetup).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acc-sep' }))
+    expect(pa.abandonSetup).not.toHaveBeenCalled()
+  })
+
+  it('an old sign-in a sign in again left is said on the row, with why and what removes it (P3.3; review round 1, S1, Q3)', async () => {
+    const rows: Array<[NonNullable<AccountView['oldSignInLeft']>, string, string]> = [
+      ['kept', 'Needs attention: the old sign-in is kept', 'It stays until the app can remove it without signing out the new one. Archiving the account removes it.'],
+      ['unavailable', 'Needs attention: the old sign-in was not removed', 'It is removed once Codex can sign it out here.'],
+      ['failed', 'Needs attention: the old sign-in was not removed', 'Removing it did not finish. Check sign-in tries again.'],
+    ]
+    for (const [reason, state, line] of rows) {
+      render(snapshot({ accounts: [{ ...work, oldSignInLeft: reason, operationalState: 'attention' }] }))
+      expect(q('account-state-acc-work')?.textContent, reason).toBe(state)
+      expect(q('account-old-sign-in-acc-work')?.textContent, reason).toBe(line)
+      unmountNow()
+    }
+  })
+
+  it('this computer\'s own sign-in: its warning first; Cancel runs nothing; Continue signs it in again in place (review round 1, S2)', async () => {
+    pa.signInAgain.mockResolvedValue({ ok: true, state: 'signed-in' })
+    render(snapshot({ accounts: [work, local] }))
+    await click('account-menu-btn-acc-local')
+    await click('account-menu-sign-in-again-acc-local')
+    expect(q('sign-in-again-dialog')).toBeNull()
+    expect(q('external-ack-dialog')).toBeTruthy()
+    expect(q('external-ack-text')?.textContent).toContain('Signing in again signs them out first, and if the new sign-in does not finish, it stays signed out.')
+    // This computer's own sign-in, inside a sentence, in lower case (P3.3 VM round, V2).
+    expect(document.getElementById('external-ack-title')?.textContent).toBe("Sign in to this computer's Codex (~/.codex) again?")
+    await click('external-ack-cancel')
+    expect(q('external-ack-dialog')).toBeNull()
+    expect(q('sign-in-again-dialog')).toBeNull()
+    await click('account-menu-btn-acc-local')
+    await click('account-menu-sign-in-again-acc-local')
+    await click('external-ack-confirm')
+    expect(q('sign-in-again-dialog')).toBeTruthy()
+    expect(document.getElementById('sign-in-again-title')?.textContent).toBe("Sign in to this computer's Codex (~/.codex) again")
+    // The account card under the title is a heading of its own: the name as
+    // its row shows it, capitalised (gate 3, S1 F1).
+    expect(q('sign-in-again-who')?.firstElementChild?.textContent).toBe("This computer's Codex (~/.codex)")
+    expect(q('sign-in-again-who')?.textContent).toContain("This computer's Codex (~/.codex)")
+    // Its row's actions name it the same way; a managed account keeps its own name.
+    expect(q('account-menu-btn-acc-local')?.getAttribute('aria-label')).toBe("Actions for this computer's Codex (~/.codex)")
+    expect(q('account-menu-btn-acc-work')?.getAttribute('aria-label')).toBe('Actions for Work')
+    await click('sign-in-again-confirm')
+    await click('sign-in-again-continue')
+    expect(pa.signInAgain).toHaveBeenCalledWith({ accountId: 'acc-local', method: 'browser', sameAccount: true, acknowledgeExternal: true })
+  })
+
+  it('a managed account never sends the acknowledgement meant for this computer\'s own sign-in (review round 1, S2)', async () => {
+    pa.signInAgain.mockResolvedValue({ ok: true, state: 'signed-in' })
+    render(snapshot({ accounts: [work] }))
+    await openFor('acc-work')
+    await click('sign-in-again-continue')
+    expect(pa.signInAgain).toHaveBeenCalledWith({ accountId: 'acc-work', method: 'browser', sameAccount: true })
   })
 
   it('asks without an address when the account has no label', async () => {
@@ -1005,7 +1232,7 @@ describe('Sign in again', () => {
     expect(pa.issueSecretHandle).toHaveBeenCalledWith('acc-key')
     expect(pa.sendSecret).toHaveBeenCalledTimes(1)
     expect(pa.sendSecret).toHaveBeenCalledWith({ handle: HANDLE, secret: KEY })
-    expect(pa.signInAgain).toHaveBeenCalledWith({ accountId: 'acc-key', method: 'apiKey', secretHandle: HANDLE })
+    expect(pa.signInAgain).toHaveBeenCalledWith({ accountId: 'acc-key', method: 'apiKey', secretHandle: HANDLE, sameAccount: true })
     expect(pa.signIn).not.toHaveBeenCalled()
     expect(pa.beginSetup).not.toHaveBeenCalled()
     assertKeyNowhere(KEY)
@@ -1047,8 +1274,11 @@ describe('Sign in again', () => {
   })
 
   it('keeps focus inside: Tab from the last enabled control wraps while the final button is disabled', async () => {
-    render(snapshot({ accounts: [work, signedOut] }))
-    await openFor('acc-out', false)
+    // No method of the account's family is available here: nothing to continue with.
+    const s = snapshot({ accounts: [work, keyAccount] })
+    s.providers[1] = { ...s.providers[1], signInMethods: { ...s.providers[1].signInMethods, apiKey: { enabled: false, labelExperimental: false } } }
+    render(s)
+    await openFor('acc-key', false)
     expect((q('sign-in-again-continue') as HTMLButtonElement).disabled).toBe(true)
     act(() => { q('sign-in-again-cancel')!.focus() })
     const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
@@ -1071,7 +1301,7 @@ describe('Sign in again', () => {
     render(snapshot({ accounts: [work, expired] }))
     await openFor('acc-exp')
     await click('sign-in-again-continue')
-    expect(pa.signInAgain).toHaveBeenCalledWith({ accountId: 'acc-exp', method: 'device' })
+    expect(pa.signInAgain).toHaveBeenCalledWith({ accountId: 'acc-exp', method: 'device', sameAccount: true })
   })
 
   it('runs the browser sign-in with that method, and Cancel stops it', async () => {
@@ -1082,7 +1312,7 @@ describe('Sign in again', () => {
     await openFor('acc-exp')
     await click('sign-in-again-method-browser')
     await click('sign-in-again-continue')
-    expect(pa.signInAgain).toHaveBeenCalledWith({ accountId: 'acc-exp', method: 'browser' })
+    expect(pa.signInAgain).toHaveBeenCalledWith({ accountId: 'acc-exp', method: 'browser', sameAccount: true })
     act(() => { signInOutput!({ accountId: 'acc-exp', text: 'Opening https://auth.example.com/login' }) })
     expect(q('sign-in-again-url')?.textContent).toBe('https://auth.example.com/login')
     await click('sign-in-again-cancel')
@@ -1120,6 +1350,16 @@ describe('registry, conflicts, adoption and pending setups', () => {
     expect(q('provider-accounts-codex')).toBeNull()
     expect(q('provider-accounts-claude')).toBeTruthy()
     expect(q('providers-card')).toBeTruthy()
+  })
+
+  it('P3.4 (row 14): with Claude Code off the callout does not say the Claude accounts still work', () => {
+    const recovery = snapshot({ registry: { mode: 'recovery', reason: 'unreadable' }, accounts: [] })
+    render(recovery)
+    expect(q('accounts-registry-callout')?.textContent).toBe('The account list is not available right now. Your Claude accounts below still work.')
+    unmountNow()
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false, codexEnabled: true } } as never)
+    render(recovery)
+    expect(q('accounts-registry-callout')?.textContent).toBe('The account list is not available right now.')
   })
 
   it('shows no callout when the registry is ready', () => {
@@ -1184,7 +1424,7 @@ describe('registry, conflicts, adoption and pending setups', () => {
   })
 
   it('says what went wrong when turning the provider on is refused, and checks nothing', async () => {
-    pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' })
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' } as never)
     const unanswered = snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex' }] })
     unanswered.providers[1] = { ...unanswered.providers[1], preference: 'undecided' }
     render(unanswered)
@@ -1245,6 +1485,43 @@ describe('registry, conflicts, adoption and pending setups', () => {
     await click('add-account-finish')
     expect(pa.completeSetup).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acc-half' }))
     expect(pa.abandonSetup).not.toHaveBeenCalled()
+  })
+
+  it('a Discard that did not finish is listed as such, with Discard only (P3.3 review round 2)', async () => {
+    const cut = { accountId: 'acc-cut', providerId: 'codex' as const, method: 'browser' as const, state: 'discarding' as const, external: false, createdAt: 1, signingIn: false }
+    render(snapshot({ pendingSetups: [cut] }))
+    expect(q('pending-setup-acc-cut')?.textContent).toContain('Discarding did not finish; Discard finishes it')
+    expect(q('pending-setup-resume-acc-cut')).toBeNull()
+    await click('pending-setup-discard-acc-cut')
+    expect(pa.abandonSetup).toHaveBeenCalledWith('acc-cut')
+  })
+
+  it('a Discard running now is shown as running, with no Discard, until it ends (P3.3 VM round, V1)', async () => {
+    const running = { accountId: 'acc-cut', providerId: 'codex' as const, method: 'browser' as const, state: 'discarding' as const, external: false, createdAt: 1, signingIn: false, discardRunning: true as const, replacesAccountId: 'acc-work' }
+    const s = snapshot({ pendingSetups: [running] })
+    render(s)
+    expect(q('pending-setup-acc-cut')?.textContent).toContain('Discarding now')
+    expect(q('pending-setup-acc-cut')?.textContent).not.toContain('Discard finishes it')
+    expect(q('pending-setup-discard-acc-cut')).toBeNull()
+    expect(q('pending-setup-resume-acc-cut')).toBeNull()
+    // It ended without finishing: Discard is offered again.
+    const { discardRunning: _r, ...ended } = running
+    act(() => { useProviderAccountsStore.setState({ snapshot: { ...s, revision: 2, pendingSetups: [ended] } }) })
+    expect(q('pending-setup-acc-cut')?.textContent).toContain('Discarding did not finish; Discard finishes it')
+    expect(q('pending-setup-discard-acc-cut')).toBeTruthy()
+  })
+
+  it('a sign in again the app did not finish is named for its account, with Discard only, and not listed while its dialog runs it (P3.3)', async () => {
+    const again = { accountId: 'acc-stg', providerId: 'codex' as const, method: 'browser' as const, state: 'credentials-written' as const, external: false, createdAt: 1, signingIn: false, replacesAccountId: 'acc-work' }
+    render(snapshot({ pendingSetups: [again] }))
+    expect(q('pending-setup-acc-stg')?.textContent).toContain('Sign in again for Work, not finished')
+    expect(q('pending-setup-acc-stg')?.textContent).toContain('Discard it, then sign in again')
+    expect(q('pending-setup-resume-acc-stg')).toBeNull()
+    await click('pending-setup-discard-acc-stg')
+    expect(pa.abandonSetup).toHaveBeenCalledWith('acc-stg')
+    unmountNow()
+    render(snapshot({ pendingSetups: [{ ...again, signingIn: true }] }))
+    expect(q('pending-setup-acc-stg')).toBeNull()
   })
 
   // Main refuses a sign-in of a Codex the user has not answered for (as not
@@ -1314,7 +1591,7 @@ describe('registry, conflicts, adoption and pending setups', () => {
 
   it('a yes that could not be saved stops there: no key is handed over and no sign-in runs', async () => {
     const setup = { accountId: 'acc-key', providerId: 'codex' as const, method: 'apiKey' as const, state: 'pending' as const, external: false, createdAt: 1, signingIn: false }
-    pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' })
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' } as never)
     render(unansweredWith(setup))
     await click('pending-setup-resume-acc-key')
     typeKey(q('add-account-key') as HTMLInputElement, 'sk-test-DO-NOT-KEEP-88bb')

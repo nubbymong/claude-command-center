@@ -1,10 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useConfigStore } from '../stores/configStore'
-import { useCloudAgentStore } from '../stores/cloudAgentStore'
+import { useCloudAgentStore, agentLaunchBlockedReason, CODEX_AUTO_LABEL, CODEX_AGENT_WINDOWS_NOTE, CONFIRM_SIGN_IN } from '../stores/cloudAgentStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { resolveAccountName } from '../../shared/account-chip-color'
-import { CLAUDE_OFF, useClaudeOff } from '../lib/claudeOff'
+import { useLaunchGateSettings } from '../hooks/useLaunchConfig'
+import { codexPreference, usesClaude } from '../onboarding/provider-choice'
+import { accountEmail, accountFieldState, defaultAccountId, noticeText, providerTooOldText, NO_ACCOUNT } from '../utils/launchAccount'
+import type { CloudAgentCodexOptions, ProviderId } from '../../shared/types'
 import {
   DialogOverlay,
   DialogPanel,
@@ -17,6 +21,8 @@ import {
   DIALOG_TEXTAREA_CLASS,
   DIALOG_LABEL_CLASS,
   DIALOG_LABEL_STYLE,
+  DIALOG_SEG_CHIP,
+  dialogSegStyle,
 } from './ui/Dialog'
 
 interface Props {
@@ -25,6 +31,8 @@ interface Props {
   initialName?: string
   initialDescription?: string
 }
+
+const PROVIDER_NAMES: Readonly<Record<ProviderId, string>> = { claude: 'Claude Code', codex: 'Codex' }
 
 export default function NewAgentDialog({ onClose, initialName, initialDescription }: Props) {
   const [name, setName] = useState(initialName ?? '')
@@ -36,10 +44,19 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
   const [skipPermissions, setSkipPermissions] = useState(false)
   const configs = useConfigStore(s => s.configs)
   const dispatch = useCloudAgentStore(s => s.dispatch)
-  // A cloud agent is a headless Claude Code run: with Claude Code switched
-  // off, Dispatch is disabled and says why (the store refuses as well).
-  const claudeOff = useClaudeOff()
   const nameRef = useRef<HTMLInputElement>(null)
+
+  // WP2 PR 4, P4.5: the assistant the agent runs on. Offered as a choice only
+  // while both are on (Claude Code first); with one on, that one; with
+  // neither, Claude Code, which then says why it cannot run.
+  const gate = useLaunchGateSettings()
+  const claudeOn = usesClaude(gate)
+  const codexOn = codexPreference(gate) === 'on'
+  const [providerPick, setProviderPick] = useState<ProviderId | null>(null)
+  const provider: ProviderId = claudeOn && codexOn ? (providerPick ?? 'claude') : codexOn ? 'codex' : 'claude'
+  // Every agent is refused while its own provider is off (the store refuses
+  // as well, and main on its own).
+  const providerBlocked = agentLaunchBlockedReason(provider, gate)
 
   // Account selection (multi-account): default to the captured primary so an
   // agent never silently runs on whatever the global login happens to be. Only
@@ -49,6 +66,30 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
   const defaultProfileId = (profiles.find(p => p.isPrimary) ?? profiles[0])?.id ?? ''
   const [selectedProfileId, setSelectedProfileId] = useState<string>('')
   const effectiveProfileId = selectedProfileId || defaultProfileId
+
+  // A Codex agent's account, listed as the New session dialog lists them:
+  // the provider default first. `null` = not touched (follows the default).
+  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
+  const [codexAccountPick, setCodexAccountPick] = useState<string | null>(null)
+  // The per-run confirmation of an unverified sign-in, held as the id of the
+  // account it was ticked FOR, so a default that moves while the dialog is
+  // open never carries the tick to another account. Never saved.
+  const [realmAckFor, setRealmAckFor] = useState<string | null>(null)
+  const codexAccountId = codexAccountPick ?? defaultAccountId(accountsSnapshot, 'codex') ?? ''
+  const codexAccount = accountFieldState(accountsSnapshot, 'codex', codexAccountId || undefined)
+  const codexNoAccount = !!accountsSnapshot && codexAccount.options.length === 0 && !codexAccount.unlisted
+  const codexTooOld = providerTooOldText(accountsSnapshot, 'codex')
+  const askRealmAck = codexAccount.needsAck && !codexAccount.notice
+  const realmAck = !!codexAccountId && realmAckFor === codexAccountId
+  const codexEmail = accountEmail(codexAccount.selected)
+
+  // Why Dispatch is held back, if it is: the provider first, then (Codex)
+  // the account.
+  const blockedReason: string | null = providerBlocked ?? (provider === 'codex'
+    ? codexNoAccount ? noticeText(NO_ACCOUNT)
+      : codexAccount.notice ? noticeText(codexAccount.notice)
+      : codexTooOld ?? (askRealmAck && !realmAck ? CONFIRM_SIGN_IN : null)
+    : null)
 
   // Filter to local configs only
   const localConfigs = configs.filter(c => c.sessionType === 'local')
@@ -74,19 +115,41 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
     }
   }
 
+  const canDispatch = !!name.trim() && !!description.trim() && !!projectPath.trim() && !dispatching && !blockedReason
+
   const handleDispatch = async () => {
-    if (!name.trim() || !description.trim() || !projectPath.trim() || dispatching || claudeOff) return
+    if (!canDispatch) return
     setDispatching(true)
     const selectedConfig = selectedConfigId ? localConfigs.find(c => c.id === selectedConfigId) : undefined
-    await dispatch({
+    const base = {
       name: name.trim(),
       description: description.trim(),
       projectPath: projectPath.trim(),
       configId: selectedConfigId || undefined,
-      profileId: effectiveProfileId || undefined,
-      legacyVersion: selectedConfig?.legacyVersion,
       skipPermissions,
-    })
+    }
+    if (provider === 'codex') {
+      // The config's model and effort, as an interactive launch of it passes
+      // them: only a Codex config's (a Claude config's model is Claude's).
+      const co = selectedConfig?.provider === 'codex' ? selectedConfig.codexOptions : undefined
+      const codexOptions: CloudAgentCodexOptions | undefined = co && (co.model || co.reasoningEffort)
+        ? { ...(co.model ? { model: co.model } : {}), ...(co.reasoningEffort ? { reasoningEffort: co.reasoningEffort } : {}) }
+        : undefined
+      await dispatch({
+        ...base,
+        provider: 'codex',
+        ...(codexAccountId ? { providerAccountId: codexAccountId } : {}),
+        ...(askRealmAck && realmAck ? { acknowledgeRealmOnly: true as const } : {}),
+        ...(codexOptions ? { codexOptions } : {}),
+      })
+    } else {
+      await dispatch({
+        ...base,
+        provider: 'claude',
+        profileId: effectiveProfileId || undefined,
+        legacyVersion: selectedConfig?.legacyVersion,
+      })
+    }
     onClose()
   }
 
@@ -97,7 +160,12 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
     if (e.key === 'Enter' && e.ctrlKey) handleDispatch()
   }
 
+  const openAccounts = () => {
+    window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'accounts' } }))
+  }
 
+  const codexPermissions = provider === 'codex'
+  const warnTone = codexPermissions ? 'var(--status-warning)' : 'var(--status-danger)'
 
   return (
     <DialogOverlay position="absolute" onKeyDown={handleKeyDown}>
@@ -105,6 +173,29 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
         <DialogHeader titleId="new-agent-title" title="New agent" />
 
         <DialogBody>
+          {/* The assistant (both on only) */}
+          {claudeOn && codexOn && (
+            <div className="mb-3">
+              <span className={DIALOG_LABEL_CLASS} style={DIALOG_LABEL_STYLE} id="new-agent-provider-label">Assistant</span>
+              <div role="radiogroup" aria-labelledby="new-agent-provider-label" className="flex gap-1.5" data-testid="new-agent-provider">
+                {(['claude', 'codex'] as const).map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="radio"
+                    aria-checked={provider === id}
+                    data-provider={id}
+                    onClick={() => { setProviderPick(id); setSkipPermissions(false) }}
+                    className={DIALOG_SEG_CHIP}
+                    style={dialogSegStyle(provider === id)}
+                  >
+                    {PROVIDER_NAMES[id]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Task name */}
           <div className="mb-3">
             <label className={DIALOG_LABEL_CLASS} style={DIALOG_LABEL_STYLE}>Task Name</label>
@@ -161,7 +252,7 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
           </div>
 
           {/* Account picker (multi-account only) */}
-          {profiles.length >= 2 && (
+          {provider === 'claude' && profiles.length >= 2 && (
             <div className="mb-4">
               <label className={DIALOG_LABEL_CLASS} style={DIALOG_LABEL_STYLE}>Account</label>
               <select
@@ -179,12 +270,65 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
             </div>
           )}
 
+          {/* A Codex agent's account: the picker when there is a choice, and
+              what needs doing first when something does. */}
+          {provider === 'codex' && !providerBlocked && (
+            <div className="mb-4" data-testid="new-agent-codex-account">
+              {(codexAccount.options.length >= 2 || codexAccount.unlisted) && (
+                <>
+                  <label className={DIALOG_LABEL_CLASS} style={DIALOG_LABEL_STYLE} htmlFor="new-agent-codex-account-select">Codex account</label>
+                  <select
+                    id="new-agent-codex-account-select"
+                    value={codexAccountId}
+                    onChange={e => setCodexAccountPick(e.target.value)}
+                    className={DIALOG_INPUT_CLASS}
+                    style={DIALOG_INPUT_STYLE}
+                  >
+                    {codexAccount.unlisted && <option value={codexAccount.unlisted.id} disabled>{codexAccount.unlisted.label}</option>}
+                    {codexAccount.options.map(o => (
+                      <option key={o.id} value={o.id} disabled={o.disabled}>{o.label}</option>
+                    ))}
+                  </select>
+                </>
+              )}
+              {(codexNoAccount || codexAccount.notice) && (
+                <div className="mt-1.5 text-[11px] leading-snug" style={{ color: 'var(--status-warning)' }} data-testid="new-agent-codex-notice">
+                  {(codexNoAccount ? NO_ACCOUNT : codexAccount.notice!).lead}{' '}
+                  <button type="button" onClick={openAccounts} className="underline" style={{ color: 'var(--brand)' }}>{(codexNoAccount ? NO_ACCOUNT : codexAccount.notice!).link}</button>
+                  {(codexNoAccount ? NO_ACCOUNT : codexAccount.notice!).tail}
+                </div>
+              )}
+              {codexTooOld && !codexNoAccount && !codexAccount.notice && (
+                <div className="mt-1.5 text-[11px] leading-snug" style={{ color: 'var(--status-warning)' }}>{codexTooOld}</div>
+              )}
+              {askRealmAck && (
+                <label className="mt-1.5 flex items-start gap-2 text-[11.5px] leading-snug cursor-pointer" style={{ color: 'var(--text-primary)' }}>
+                  <input
+                    type="checkbox"
+                    checked={realmAck}
+                    onChange={e => setRealmAckFor(e.target.checked ? codexAccountId : null)}
+                    className="mt-0.5 shrink-0 rounded"
+                    data-testid="new-agent-codex-ack"
+                  />
+                  <span>
+                    {codexAccount.selected?.external
+                      ? `Run this agent with the Codex sign-in already on this computer${codexEmail ? ` (${codexEmail})` : ''}`
+                      : 'Run this agent with this account although its sign-in is not verified'}
+                  </span>
+                </label>
+              )}
+            </div>
+          )}
+
           {/* Per-run permission opt-in (P1.3 default OFF + FEAT-1, ephemeral and
-              never persisted). The note adapts so neither state is a footgun. */}
+              never persisted). The note adapts so neither state is a footgun.
+              A Codex agent's choice runs as Codex's Auto preset (section 10,
+              question 7, default A): confined to its project. */}
           <label
             className="flex items-start gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
+            data-testid="new-agent-permissions"
             style={skipPermissions
-              ? { background: 'color-mix(in srgb, var(--status-danger) 9%, transparent)', border: '1px solid color-mix(in srgb, var(--status-danger) 32%, transparent)' }
+              ? { background: `color-mix(in srgb, ${warnTone} 9%, transparent)`, border: `1px solid color-mix(in srgb, ${warnTone} 32%, transparent)` }
               : { background: 'color-mix(in srgb, var(--status-warning) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--status-warning) 22%, transparent)' }}
           >
             <input
@@ -194,7 +338,24 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
               className="mt-0.5 shrink-0 rounded"
             />
             <span className="min-w-0">
-              {skipPermissions ? (
+              {codexPermissions ? (
+                <>
+                  <span className="flex items-center gap-1.5 text-xs font-medium" style={{ color: skipPermissions ? warnTone : 'var(--text-primary)' }}>
+                    {CODEX_AUTO_LABEL}
+                    <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>-s workspace-write</span>
+                  </span>
+                  <span className="block mt-1 text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                    {skipPermissions
+                      ? 'The agent edits files inside this project and runs commands with no confirmation. It cannot change files outside the project.'
+                      : 'Unticked, the agent runs read-only: it reads the project and changes nothing.'}
+                  </span>
+                  {skipPermissions && window.electronPlatform === 'win32' && (
+                    <span className="block mt-1 text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }} data-testid="new-agent-codex-windows">
+                      {CODEX_AGENT_WINDOWS_NOTE}
+                    </span>
+                  )}
+                </>
+              ) : skipPermissions ? (
                 <>
                   <span className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: 'var(--status-danger)' }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -225,8 +386,8 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
 
         {/* Actions */}
         <DialogFooter
-          left={claudeOff
-            ? <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }} data-testid="new-agent-claude-off">{CLAUDE_OFF}</span>
+          left={blockedReason
+            ? <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }} data-testid={provider === 'claude' ? 'new-agent-claude-off' : 'new-agent-codex-blocked'}>{blockedReason}</span>
             : <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Ctrl+Enter to dispatch</span>}
         >
           <DialogButton variant="secondary" onClick={onClose}>
@@ -235,8 +396,8 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
           <DialogButton
             variant="primary"
             onClick={handleDispatch}
-            disabled={!name.trim() || !description.trim() || !projectPath.trim() || dispatching || claudeOff}
-            title={claudeOff ? CLAUDE_OFF : undefined}
+            disabled={!canDispatch}
+            title={blockedReason ?? undefined}
             testId="new-agent-dispatch"
           >
             {dispatching ? 'Dispatching...' : 'Dispatch agent'}

@@ -22,7 +22,6 @@ const reasonCopy = (reason: LogsEmptyReason, remoteHost?: string): string => {
   switch (reason) {
     case 'shell-only': return 'a shell has no transcript'
     case 'ssh': return `the transcript lives on ${remoteHost || 'the remote host'}`
-    case 'codex': return "Codex transcripts aren't indexed"
   }
 }
 

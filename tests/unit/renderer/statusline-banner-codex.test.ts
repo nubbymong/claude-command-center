@@ -81,19 +81,35 @@ describe('Statusline tab provider-aware banner', () => {
   it('renders the Codex banner on the statusline tab when active session is Codex', () => {
     mockSessions = [{ id: 's-1', provider: 'codex', label: 't', workingDirectory: '/', color: '#89b4fa', sessionType: 'local' }]
     mockActiveSessionId = 's-1'
-    act(() => { root.render(React.createElement(SettingsPage, { initialTab: 'statusline' })) })
+    act(() => { root.render(React.createElement(SettingsPage as React.ComponentType<{ initialTab?: string }>, { initialTab: 'statusline' })) })
     // Usage track MP6: its account now shows (the footer names it), so the
-    // note no longer says it does not.
+    // note no longer says it does not. P3.7: nor its lines changed (counted
+    // from the edits its rollout records) or its Duration (the conversation's
+    // running time), so it names no item it cannot fill.
     expect(container.querySelector('[data-testid="statusline-codex-note"]')?.textContent).toBe(
-      'These settings apply to Codex sessions too. A Codex session does not report lines changed or session time yet, so those items do not show for it.',
+      'These settings apply to Codex sessions too.',
     )
     expect(container.textContent).not.toMatch(/Claude-only/)
+  })
+
+  // P3.7 (row 37): the Model and Account items apply to a Codex session too
+  // (its model shows, and its account chip is hidden by Account since P3.6),
+  // so their descriptions name no provider.
+  it('the Model and Account items say what they show for every provider', () => {
+    mockSessions = [{ id: 's-1', provider: 'codex', label: 't', workingDirectory: '/', color: '#89b4fa', sessionType: 'local' }]
+    mockActiveSessionId = 's-1'
+    act(() => { root.render(React.createElement(SettingsPage as React.ComponentType<{ initialTab?: string }>, { initialTab: 'statusline' })) })
+    const text = container.textContent ?? ''
+    expect(text).toContain('Shows the active model')
+    expect(text).toContain('The account this session runs as')
+    expect(text).not.toContain('Claude model')
+    expect(text).not.toContain('Claude account this session')
   })
 
   it('does NOT render the Codex banner when active session is Claude', () => {
     mockSessions = [{ id: 's-1', provider: 'claude', label: 't', workingDirectory: '/', color: '#89b4fa', sessionType: 'local' }]
     mockActiveSessionId = 's-1'
-    act(() => { root.render(React.createElement(SettingsPage, { initialTab: 'statusline' })) })
+    act(() => { root.render(React.createElement(SettingsPage as React.ComponentType<{ initialTab?: string }>, { initialTab: 'statusline' })) })
     expect(container.querySelector('[data-testid="statusline-codex-note"]')).toBeNull()
   })
 

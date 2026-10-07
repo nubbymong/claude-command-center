@@ -360,6 +360,47 @@ describe('transcripts-worker', () => {
     expect(warns).toHaveLength(1)
   })
 
+  // P3.16 final-head VM finding D1 (row 31): Claude Code names a new
+  // conversation's transcript before it writes the file (at the first message).
+  it('a transcript bound before its file is written waits for it (still tailing, no warn) and reads it from the first message', () => {
+    const h = makeWorker()
+    bootWithRun(h)
+    const tPath = join(dir, 'fresh.jsonl')
+    h.send({ type: 'transcript-bind', sessionId: 's1', path: tPath, confidence: 'exact' })
+    h.worker.tickNow()
+    h.worker.tickNow()
+    let t = inspect((raw) => raw.prepare('SELECT status FROM transcripts').get()) as { status: string }
+    expect(t.status).toBe('tailing')
+
+    writeFileSync(tPath, jl('user', 'first'))
+    h.worker.tickNow()
+    t = inspect((raw) => raw.prepare('SELECT status FROM transcripts').get()) as { status: string }
+    expect(t.status).toBe('tailing')
+    const rows = inspect((raw) => raw.prepare('SELECT content FROM messages ORDER BY idx').all()) as { content: string }[]
+    expect(rows.map((r) => r.content)).toEqual(['first'])
+    const warns = h.out.filter((m) => m.type === 'log' && m.entry.level === 'warn' && /missing/.test(m.entry.message))
+    expect(warns).toHaveLength(0)
+  })
+
+  it('a worker restart while a tail waits for its file resumes the wait, and the file is read when it comes', () => {
+    const h1 = makeWorker()
+    bootWithRun(h1)
+    const tPath = join(dir, 'fresh.jsonl')
+    h1.send({ type: 'transcript-bind', sessionId: 's1', path: tPath, confidence: 'exact' })
+    h1.worker.tickNow()
+    h1.worker.stop() // worker-only death, no shutdown handshake
+
+    const h2 = makeWorker()
+    h2.send({ type: 'open', dbPath })
+    h2.worker.tickNow()
+    writeFileSync(tPath, jl('user', 'first'))
+    h2.worker.tickNow()
+
+    const rows = inspect((raw) => raw.prepare('SELECT content FROM messages ORDER BY idx').all()) as { content: string }[]
+    expect(rows.map((r) => r.content)).toEqual(['first'])
+    expect(h2.newMessages()).toEqual([{ type: 'new-messages', sessionId: 's1', configId: 'cfg1', count: 1 }])
+  })
+
   it('malformed lines are skipped (counted, not fatal); valid lines around them still ingest', () => {
     const h = makeWorker()
     bootWithRun(h)
@@ -797,5 +838,38 @@ describe('transcripts-worker', () => {
     h.send({ type: 'query', id: 22, kind: 'session-config', args: { sessionId: 'nobody' } })
     const resNone = h.out.find((m) => m.type === 'query-result' && m.id === 22) as { rows: unknown[] }
     expect(resNone.rows).toHaveLength(0)
+  })
+
+  // P3.12 (row 31): a Codex rollout, end to end through the real DB.
+  it('P3.12: a Codex rollout bound as codex-rollout is indexed with the Codex normalizer; read back with its provider; unbind retires it', () => {
+    const h = makeWorker()
+    h.send({ type: 'open', dbPath })
+    h.send({ type: 'run-start', meta: { sessionId: 'cx1', configId: 'cfgX', configLabel: 'CODEX', provider: 'codex', startedAt: 100 } })
+    const T = '2026-09-27T10:00:00.000Z'
+    const rollout = join(dir, 'rollout-2026-09-27T10-00-00-019dd000-0001-7000-8000-00000000000a.jsonl')
+    writeFileSync(rollout, [
+      { timestamp: T, type: 'session_meta', payload: { id: '019dd000-0001-7000-8000-00000000000a', cwd: '/w' } },
+      { timestamp: T, type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'INJECTED' }] } },
+      { timestamp: T, type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', id: 'u', content: [{ type: 'text', text: 'codexNeedle please' }] } } },
+      { timestamp: T, type: 'response_item', payload: { type: 'function_call', name: 'shell', call_id: 'c', arguments: JSON.stringify({ command: ['bash', '-lc', 'git status'] }) } },
+      { timestamp: T, type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', id: 'a', content: [{ type: 'Text', text: 'done' }] } } },
+    ].map((o) => JSON.stringify(o)).join('\n') + '\n')
+    const st = statSync(rollout, { bigint: true })
+    h.send({ type: 'transcript-bind', sessionId: 'cx1', path: rollout, confidence: 'exact', sourceFormat: 'codex-rollout', sourceIdentity: `${st.dev}:${st.ino}` })
+    h.worker.tickNow()
+    h.send({ type: 'query', id: 31, kind: 'read-messages', args: { sessionId: 'cx1', anchor: 'tail', dir: 'older', limit: 50 } })
+    const page = h.out.find((m) => m.type === 'query-result' && m.id === 31) as { rows: Array<{ role: string; kind: string; content: string; toolName: string | null; provider: string }> }
+    expect(page.rows.map((r) => [r.role, r.kind, r.kind === 'tool_call' ? r.toolName : r.content, r.provider])).toEqual([
+      ['user', 'message', 'codexNeedle please', 'codex'],
+      ['assistant', 'tool_call', 'shell', 'codex'],
+      ['assistant', 'message', 'done', 'codex'],
+    ])
+    h.send({ type: 'query', id: 32, kind: 'search', args: { query: 'INJECTED' } })
+    expect((h.out.find((m) => m.type === 'query-result' && m.id === 32) as { rows: unknown[] }).rows).toHaveLength(0)
+    h.send({ type: 'query', id: 33, kind: 'search', args: { query: 'codexNeedle' } })
+    expect((h.out.find((m) => m.type === 'query-result' && m.id === 33) as { rows: unknown[] }).rows).toHaveLength(1)
+    expect(inspect((raw) => raw.prepare('SELECT sourceFormat, status FROM transcripts').get())).toEqual({ sourceFormat: 'codex-rollout', status: 'tailing' })
+    h.send({ type: 'transcript-unbind', sessionId: 'cx1', path: rollout })
+    expect(inspect((raw) => raw.prepare('SELECT status FROM transcripts').get())).toEqual({ status: 'complete' })
   })
 })

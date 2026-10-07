@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { originalHomeEnv } from '../../helpers/home-guard-core.mjs'
+import { makensisIn, nsisCacheFolders, nsisCachePresent } from '../../helpers/nsis-cache'
 
 /**
  * BEHAVIOURAL tests for the destructive half of build/installer.nsh.
@@ -62,26 +64,21 @@ const PROBE_MACROS = [
 
 const PROBE_REG_KEY = 'HKCU\\Software\\CccProbe'
 
-function nsisCacheRoot(): string | null {
-  const local = process.env.LOCALAPPDATA
-  return local ? join(local, 'electron-builder', 'Cache', 'nsis') : null
+// electron-builder's cache folder in the LOCALAPPDATA the test home guard found: the guard
+// (tests/helpers/home-isolation.ts) points the variable at an isolated folder, and the
+// cache is in the original one. Read only, to locate the compiler; nothing is written there.
+function electronBuilderCache(): string | null {
+  const local = originalHomeEnv().LOCALAPPDATA ?? process.env.LOCALAPPDATA
+  return local ? join(local, 'electron-builder', 'Cache') : null
 }
 
 function findMakensis(): string | null {
   if (process.platform !== 'win32') return null
   if (process.env.MAKENSIS && existsSync(process.env.MAKENSIS)) return process.env.MAKENSIS
-  const cache = nsisCacheRoot()
-  if (cache && existsSync(cache)) {
-    // Newest first, so a refreshed cache wins over a stale one.
-    const versions = readdirSync(cache)
-      .filter((n) => n.startsWith('nsis-'))
-      .sort()
-      .reverse()
-    for (const v of versions) {
-      const exe = join(cache, v, 'makensis.exe')
-      if (existsSync(exe)) return exe
-    }
-  }
+  const cache = electronBuilderCache()
+  // Both cache layouts electron-builder has used, newest first (tests/helpers/nsis-cache.ts).
+  const cached = cache ? makensisIn(nsisCacheFolders(cache)) : null
+  if (cached) return cached
   for (const p of [
     'C:\\Program Files (x86)\\NSIS\\makensis.exe',
     'C:\\Program Files\\NSIS\\makensis.exe',
@@ -98,12 +95,21 @@ describe('installer.nsh behavioural probe — availability', () => {
     // The whole point of this file is that it RUNS. If the locator quietly
     // stops finding a compiler that is obviously present, everything below
     // turns into a green no-op and the guards go back to being untested.
-    const cache = nsisCacheRoot()
-    const cachePresent =
-      process.platform === 'win32' && cache !== null && existsSync(cache) &&
-      readdirSync(cache).some((n) => n.startsWith('nsis-'))
-    if (cachePresent) expect(MAKENSIS).not.toBeNull()
+    // NSIS cached in ANY layout (electron-builder 26 moved it from Cache\nsis\nsis-<v>\ to
+    // Cache\nsis-<v>\nsis-<v>-<random>\, and the old locator then skipped all 13 cases):
+    // the compiler must have been found.
+    const cache = electronBuilderCache()
+    const cachePresent = process.platform === 'win32' && cache !== null && nsisCachePresent(cache)
+    if (cachePresent) expect(MAKENSIS, `electron-builder caches NSIS under ${cache}, but no makensis.exe was found there`).not.toBeNull()
     else expect(true).toBe(true) // nothing to find; the suite below skips
+  })
+
+  it('looks in the LOCALAPPDATA the test home guard found, not the isolated one it points the variable at', () => {
+    // [host][CI] The guard (tests/helpers/home-isolation.ts) points LOCALAPPDATA at an
+    // isolated folder that never holds electron-builder's cache. A locator reading the
+    // variable skipped everything below, and the check above skipped with it.
+    const local = originalHomeEnv().LOCALAPPDATA ?? process.env.LOCALAPPDATA
+    expect(electronBuilderCache()).toBe(local ? join(local, 'electron-builder', 'Cache') : null)
   })
 })
 

@@ -1,6 +1,13 @@
 import { writeSessionInput } from '../components/terminal/tmuxWheelScroll'
+import { quoteArgForShell } from '../../shared/shell-quote'
 /**
- * Image transfer helper — gets a host-saved image into a Claude session.
+ * Image transfer helper: gets a host-saved image into a session. The prompts
+ * below are a Claude session's; a plain terminal (and the partner shell) gets
+ * only the image's path, quoted for its shell (composeShellImagePath, below);
+ * the other assistant's line goes through its own typing rule. Which route a
+ * pasted image takes is decided in hooks/useKeyboardShortcuts.ts.
+ *
+ * For a Claude session:
  *
  * Local sessions: write the absolute path into the prompt. Claude's
  * built-in Read tool ingests the file directly — no extra MCP round-
@@ -76,6 +83,40 @@ export function sendImageToSession(
     : composeFetchHostScreenshotPrompt(basename(hostFilePath), userContext)
   // Trailing \r submits the prompt to Claude
   writeSessionInput(sessionId, prompt + '\r')
+}
+
+/**
+ * The text Alt+V puts into a PLAIN terminal (a shell with no assistant): the
+ * image's path, quoted for the shell it runs (PowerShell on Windows, a POSIX
+ * shell elsewhere: shared/shell-quote.ts), and nothing else. A shell reads no
+ * images, so the sentence an assistant is told would be typed into it as a
+ * command, and an Enter would run it; a shell user wants the path at the cursor
+ * to use in a command of their own.
+ */
+export function composeShellImagePath(hostFilePath: string, isWin32: boolean): string {
+  return quoteArgForShell(hostFilePath, isWin32)
+}
+
+/** Whether `text` holds a control character (C0, DEL or C1). */
+function hasControlChar(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) return true
+  }
+  return false
+}
+
+/** Type the quoted path of a host-saved image at a plain terminal's prompt:
+ *  not submitted (no Enter). Returns whether it was typed.
+ *  PR-level ADR-009 round 1 (A1): off Windows the path is typed only when
+ *  main said the shell it spawns a plain terminal with is of the sh family
+ *  (`posixShell` 'sh', from the saved image's answer), and only when the path
+ *  holds no control character; otherwise nothing is typed and the caller says
+ *  where the image was saved. Windows (PowerShell) is unchanged. */
+export function typeImagePathIntoShell(sessionId: string, hostFilePath: string, isWin32: boolean, posixShell?: 'sh' | 'other'): boolean {
+  if (!isWin32 && (posixShell !== 'sh' || hasControlChar(hostFilePath))) return false
+  writeSessionInput(sessionId, composeShellImagePath(hostFilePath, isWin32))
+  return true
 }
 
 /**

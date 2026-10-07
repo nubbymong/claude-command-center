@@ -3,6 +3,7 @@ import SectionFrame from '../SectionFrame'
 import type { SessionContextResult } from '../../../../shared/github-types'
 import { relativeTime } from '../../../utils/relativeTime'
 import { trackUsage } from '../../../stores/tipsStore'
+import { recentFilesHeading } from './recent-files-heading'
 
 interface Props {
   sessionId: string
@@ -97,10 +98,10 @@ export default function SessionContextSection({ sessionId }: Props) {
           )}
           {ctx.recentFiles.length > 0 && (
             <div>
-              <div className="text-subtext0">Claude recently edited:</div>
+              <div className="text-subtext0">{recentFilesHeading(ctx.assistant)}</div>
               <ul className="ml-3">
                 {ctx.recentFiles.slice(0, 5).map((f) => (
-                  <li key={f.filePath} className="flex gap-2">
+                  <li key={f.pathKey ?? f.filePath} className="flex gap-2">
                     <code className="text-peach truncate" title={f.filePath}>
                       {f.filePath}
                     </code>

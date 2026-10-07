@@ -66,6 +66,7 @@ describe('a PTY that exits is recorded on its session', () => {
   })
 
   it('the handler still tells the user, which is what it was doing before', () => {
-    expect(body).toContain('Process exited with code')
+    // P3.15 round 1 (F3): through processExitLine, which names the code when it is known.
+    expect(body).toMatch(/processExitLine\(exitCode\)/)
   })
 })

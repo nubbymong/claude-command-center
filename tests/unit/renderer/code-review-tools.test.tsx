@@ -33,7 +33,7 @@ function provider(over: Partial<ProviderInstallationView> & Pick<ProviderInstall
   const cap = { enabled: true, labelExperimental: false }
   return {
     enabled: true, preference: 'on', discoveryState: 'found', version: '1.0.0', compatibility: 'supported', managedAccounts: over.providerId === 'codex',
-    signInMethods: { browser: cap, device: cap, apiKey: cap }, status: cap, logout: cap,
+    signInMethods: { browser: cap, device: cap, apiKey: cap }, status: cap, logout: cap, inUse: 0,
     ...over,
   }
 }
@@ -222,6 +222,21 @@ describe('Code review switches: off and cannot run', () => {
     setup()
     renderTools()
     expect(q('review-tool-claudeReview-note')).toBeNull()
+  })
+
+  it('P3.4 (row 14): keeps Codex review usable while Claude Code is off, with the mirror note', () => {
+    for (const setupArgs of [
+      { settings: { claudeEnabled: false, codexEnabled: true } },
+      { settings: { codexEnabled: true }, snap: snapshot({}, { claude: { enabled: false } }) },
+    ]) {
+      setup(setupArgs)
+      renderTools()
+      expect(sw('codexReview').disabled).toBe(false)
+      expect(q('review-tool-codexReview-note')?.textContent).toBe('Only Claude sessions use it; Claude Code is off.')
+    }
+    setup({ settings: { codexEnabled: true } })
+    renderTools()
+    expect(q('review-tool-codexReview-note')).toBeNull()
   })
 
   it('disables Claude review while Claude Code is off (snapshot or saved), and never writes', async () => {

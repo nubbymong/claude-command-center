@@ -22,6 +22,8 @@
  *                          finishing with startTour.
  *   5. guidedConfig      — the first-config SessionDialog, opened from the
  *                          tour, the sidebar FirstRunCard or the empty state.
+ *                          It launches a session, so a due loggingConsent
+ *                          notice (8) is shown before it.
  *   6. githubOnboarding  — opened by its own effect 120ms after the gates
  *                          above clear.
  *   7. codexReconfirm    — "Do you use Codex?", asked once of everyone who
@@ -64,7 +66,8 @@
  * at all — which is why a launch could paint release notes, a resume prompt and
  * a findings panel on top of one another. Sentinel is not a gate (it owns no
  * turn in the sequence); it is simply suppressed while any gate is up, as is the
- * pre-spawn account picker (#607) and the new-account prompt.
+ * new-account prompt, and the pre-spawn account picker (#607) and launch
+ * confirm are while any gate but the resume offer is (launchDialogsSuppressed).
  *
  * THE INVARIANT (#609): a gate this returns MUST render. Splitting the decision
  * — selecting a gate here while its render site ALSO tests something else — can
@@ -120,8 +123,6 @@ export interface BootGateState {
   helloCodexOpen?: boolean
   /** shouldShowWhatsNew() — true before postConfigInit has armed the harness. */
   whatsNewDue: boolean
-  /** shouldShowTraining() || isFirstInstall() — true before the tour opens. */
-  trainingDue: boolean
   /** isGitHubOnboardingDue() — true before the onboarding effect's 120ms timer fires. */
   githubOnboardingDue: boolean
 }
@@ -135,9 +136,15 @@ export function pickBootGate(s: BootGateState): BootGate | null {
   // Above the *Due short-circuit below: both are opened by a user action that
   // has already happened, so they must never be starved by a pending timer.
   if (s.tourActive) return 'guidedTour'
-  if (s.showGuidedConfig) return 'guidedConfig'
+  // P3.12 round 2 (W9): the first-config dialog launches a session, so a
+  // conversation indexing notice that is due comes first.
+  if (s.showGuidedConfig) return s.loggingConsentSeen ? 'guidedConfig' : 'loggingConsent'
   if (s.showGitHubOnboarding) return 'githubOnboarding'
-  if (s.whatsNewDue || s.trainingDue || s.githubOnboardingDue) return null
+  // No tour-due wait (PR 4 VM final): nothing opens the tour by itself since
+  // the onboarding page replaced its auto-open (2026-08-21), so waiting on an
+  // unseen tour card held every gate below, the resume prompt included, for
+  // good. The tour opens from the Feature Guide only, as the training gate.
+  if (s.whatsNewDue || s.githubOnboardingDue) return null
   if (s.codexReconfirmDue) return 'codexReconfirm'
   if (!s.loggingConsentSeen) return 'loggingConsent'
   if (s.resumePending) return 'resume'
@@ -161,4 +168,22 @@ export function bootChain(s: BootGateState): { gate: BootGate | null; helloCodex
     helloCodexGatesClear: pickBootGate({ ...s, helloCodexOpen: true }) === 'helloCodex',
     helloCodexTurn: gate === 'helloCodex',
   }
+}
+
+/**
+ * Whether the dialogs a launch can need before it starts -- the account
+ * choice (AccountLaunchGate) and the confirm for an unverified sign-in
+ * (LaunchAckConfirm) -- are held back by the gate on screen. They own no
+ * turn in the chain, so a gate holds them back (their queue waits, nothing
+ * is answered) and they surface once it clears: a restore starts its
+ * sessions the moment the resume offer is answered, and their dialogs must
+ * not paint over the page after it (the Multi Spawn startup page, #607).
+ * The resume offer itself does not hold them back (P3.5 VM finding V1): it
+ * is not modal, the user can launch a session while it is up, and no
+ * restore has started before it is answered, so a dialog then is for a
+ * launch the user just made; held back, that launch showed nothing and
+ * started nothing until the offer was answered.
+ */
+export function launchDialogsSuppressed(gate: BootGate | null): boolean {
+  return gate !== null && gate !== 'resume'
 }

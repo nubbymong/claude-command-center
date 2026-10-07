@@ -54,11 +54,15 @@ export default function LaunchAckConfirm({ suppressed = false }: { suppressed?: 
   const id = pending.requestId
   const sessionName = pending.sessionLabel || 'this session'
   const who = pending.email ? ` (${pending.email})` : ''
+  // A Cloud Agent's Retry asks the same question about a run, not a session
+  // (P4.11): its title, verb and buttons say so.
+  const agent = pending.retryAgent === true
+  const verb = agent ? `Retry ${sessionName}` : 'Launch'
   const question = pending.unknown
-    ? <>Launch {sessionName} on its saved Codex account?</>
+    ? <>{agent ? verb : `Launch ${sessionName}`} on its saved Codex account?</>
     : pending.external
-      ? <>Launch with the Codex sign-in already on this computer{who}?</>
-      : <>Launch with {pending.accountName}{who}? Its sign-in is not verified.</>
+      ? <>{verb} with the Codex sign-in already on this computer{who}?</>
+      : <>{verb} with {pending.accountName}{who}? Its sign-in is not verified.</>
   const why = pending.unknown
     ? 'This app could not read your accounts, so it cannot tell whether this sign-in needs confirming. Launching confirms it for this launch only.'
     : pending.external
@@ -67,7 +71,7 @@ export default function LaunchAckConfirm({ suppressed = false }: { suppressed?: 
   return (
     <DialogOverlay z="z-[60]" dim={0.5} testId="launch-ack-overlay">
       <DialogPanel key={id} width="w-[440px]" labelledBy="launch-ack-title" describedBy="launch-ack-question" testId="launch-ack-confirm">
-        <DialogHeader titleId="launch-ack-title" title="Start session" subtitle={<>Confirm the sign-in for <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{sessionName}</span></>} />
+        <DialogHeader titleId="launch-ack-title" title={agent ? 'Retry agent' : 'Start session'} subtitle={<>Confirm the sign-in for <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{sessionName}</span></>} />
         <DialogBody>
           <p id="launch-ack-question" className="text-[12.5px] leading-snug" style={{ color: 'var(--text-primary)' }} data-testid="launch-ack-question">
             {question}
@@ -75,11 +79,11 @@ export default function LaunchAckConfirm({ suppressed = false }: { suppressed?: 
           <p className="text-[11.5px] leading-snug mt-2" style={{ color: 'var(--text-muted)' }}>{why}</p>
         </DialogBody>
         <DialogFooter>
-          <DialogButton variant="secondary" onClick={() => reply(id, false)} testId="launch-ack-cancel" title="Do not start this session" autoFocus>
+          <DialogButton variant="secondary" onClick={() => reply(id, false)} testId="launch-ack-cancel" title={agent ? 'Do not retry this agent' : 'Do not start this session'} autoFocus>
             Cancel
           </DialogButton>
           <DialogButton variant="primary" onClick={() => reply(id, true)} testId="launch-ack-launch">
-            Launch
+            {agent ? 'Retry' : 'Launch'}
           </DialogButton>
         </DialogFooter>
       </DialogPanel>

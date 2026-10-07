@@ -1,7 +1,16 @@
 import React, { useEffect, useState, useMemo } from 'react'
-import { useMemoryStore } from '../stores/memoryStore'
+import { useMemoryStore, findMemory } from '../stores/memoryStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSessionStore } from '../stores/sessionStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { useProviderAccountsStore, accountDisplayName, providerView, ACCOUNT_NAME_FALLBACK } from '../stores/providerAccountsStore'
+import { usesCodex } from '../onboarding/provider-choice'
+import { ACCOUNT_MEMORY_DELETE_SHOWN, isAccountMemoryFile } from '../../shared/account-memories'
+import type { AccountMemories, AccountMemoryFile } from '../../shared/account-memories'
+import type { AccountsSnapshot } from '../../shared/providers'
+import type { ProviderId } from '../../shared/types'
+import { AccountMemoriesSection } from './memory/AccountMemoriesSection'
+import type { LabelledAccountMemories } from './memory/AccountMemoriesSection'
 import type { LiveSessionLite } from './memory/live-sessions'
 import PageFrame from './PageFrame'
 import MemoryKpiRow from './memory/MemoryKpiRow'
@@ -21,6 +30,16 @@ import {
 } from './memory/memory-stats'
 import { liveSessionsForProject } from './memory/live-sessions'
 
+/** A provider's name when the accounts snapshot has not named it yet. */
+const PROVIDER_NAME_FALLBACK: Readonly<Record<ProviderId, string>> = { claude: 'Claude Code', codex: 'Codex' }
+
+/** The name an account's memories are shown under: the account's own name
+ *  as Settings, Accounts shows it. */
+function accountMemoryLabel(snapshot: AccountsSnapshot | null, entry: AccountMemories): string {
+  const account = snapshot?.accounts.find((a) => a.id === entry.accountId)
+  return account ? accountDisplayName(snapshot, account) : ACCOUNT_NAME_FALLBACK
+}
+
 const SCOPE_OPTIONS: { label: string; value: ScopeFilter }[] = [
   { label: 'All', value: 'all' },
   { label: 'Active 30d', value: 'active30d' },
@@ -33,7 +52,7 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
   onJumpToSession?: (sessionId: string) => void
 }) {
   const {
-    projects, memories, loading, error,
+    projects, memories, accountMemories, loading, error,
     selectedProject, selectedMemoryId, searchQuery, selectedContent,
     scopeFilter, typeFilter, sortBy, sortDir, recentSessions,
     scan, selectProject, selectMemory, setSearch, deleteMemory, writeFrontmatter,
@@ -75,7 +94,39 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
     return () => clearTimeout(t)
   }, [searchInput])
 
-  const selectedMem = useMemo(() => memories.find(m => m.id === selectedMemoryId), [memories, selectedMemoryId])
+  // WP2 PR 4, P4.4 (row 55): each account's own memories, grouped by
+  // provider, each file named by its account; Codex's only while Codex is in
+  // use (only the Codex package names account memories folders).
+  const codexOn = useSettingsStore((s) => usesCodex(s.settings))
+  const providerSnapshot = useProviderAccountsStore((s) => s.snapshot)
+  const accountGroups = useMemo(() => {
+    const inUse = (p: ProviderId): boolean => p !== 'codex' || codexOn
+    const groups = new Map<ProviderId, LabelledAccountMemories[]>()
+    for (const entry of accountMemories ?? []) {
+      if (!inUse(entry.providerId)) continue
+      const list = groups.get(entry.providerId) ?? []
+      list.push({ entry, label: accountMemoryLabel(providerSnapshot, entry) })
+      groups.set(entry.providerId, list)
+    }
+    return [...groups.entries()].map(([providerId, accounts]) => ({
+      providerId,
+      providerName: providerView(providerSnapshot, providerId)?.displayName ?? PROVIDER_NAME_FALLBACK[providerId],
+      accounts,
+    }))
+  }, [accountMemories, providerSnapshot, codexOn])
+  // The accounts' files as search and the drawer see them: `project` names
+  // the account.
+  const accountFiles = useMemo<AccountMemoryFile[]>(
+    () => accountGroups.flatMap((g) => g.accounts.flatMap(({ entry, label }) => entry.files.map((f) => ({ ...f, project: label })))),
+    [accountGroups],
+  )
+
+  const selectedMem = useMemo(
+    () => (selectedMemoryId
+      ? findMemory({ memories }, selectedMemoryId) ?? accountFiles.find((m) => m.id === selectedMemoryId)
+      : undefined),
+    [memories, accountFiles, selectedMemoryId],
+  )
 
   // Dashboard derivations — now is captured once per render; < 1ms for typical
   // corpus sizes (~hundreds of files), so no stale concern within a render cycle.
@@ -201,14 +252,17 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
       onClose={onClose}
       scrollable={false}
     >
-      {/* Codex coverage note (P5.9): this page shows Claude Code memories only */}
-      <div className="rounded-md bg-blue/10 border border-blue/30 p-3 text-sm text-blue mx-5 mt-3">
-        This page shows Claude Code memories from <code className="font-mono text-[12px]">~/.claude/projects/*/memory/</code>. Codex memories are not shown here yet. Codex reads its project instructions from <code className="font-mono text-[12px]">AGENTS.md</code> files.
-      </div>
+      {/* Where each part of the page comes from (P5.9; WP2 PR 4 P4.4), shown
+          while Codex is in use: its memories live in each account's folder. */}
+      {codexOn && (
+        <div className="rounded-md bg-blue/10 border border-blue/30 p-3 text-sm text-blue mx-5 mt-3">
+          Claude Code memories come from <code className="font-mono text-[12px]">~/.claude/projects/*/memory/</code>, shared by every Claude account. Each Codex account keeps its own, listed by account below, read-only. Codex also reads project instructions from <code className="font-mono text-[12px]">AGENTS.md</code> files.
+        </div>
+      )}
 
       {/* Main body */}
       <div className="flex-1 overflow-y-auto p-5">
-        {loading && memories.length === 0 ? (
+        {loading && memories.length === 0 && accountFiles.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-overlay0 gap-2">
             <span className="font-mono text-xs">Scanning memory directories...</span>
           </div>
@@ -216,14 +270,14 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
           <div className="flex flex-col items-center justify-center py-16 text-red gap-2">
             <span className="font-mono text-xs">{error}</span>
           </div>
-        ) : projects.length === 0 ? (
+        ) : projects.length === 0 && accountGroups.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-overlay0 gap-2">
             <span className="font-mono text-xs">No memory directories found</span>
             <span className="text-[11px] text-overlay0">Claude Code stores memories in ~/.claude/projects/*/memory/</span>
           </div>
         ) : searchQuery ? (
           <MemorySearchResults
-            memories={memories}
+            memories={accountFiles.length > 0 ? [...memories, ...accountFiles] : memories}
             query={searchQuery}
             selectedId={selectedMemoryId}
             onSelect={selectMemory}
@@ -248,26 +302,56 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
             onOpenSessionLogs={onOpenSessionLogs ?? (() => {})}
           />
         ) : (
-          /* Dashboard */
+          /* Dashboard: Claude's store, then each account's own memories */
           <>
-            <MemoryKpiRow kpis={kpis} health={health} />
-            <div className="grid grid-cols-3 gap-3 mb-5">
-              <div className="col-span-2">
-                <MemoryActivityChart buckets={buckets} />
+            {projects.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 text-overlay0 gap-2">
+                <span className="font-mono text-xs">No Claude Code memories found</span>
+                <span className="text-[11px] text-overlay0">Claude Code stores memories in ~/.claude/projects/*/memory/</span>
               </div>
-              <MemoryTypeDonut types={types} />
-            </div>
-            <ProjectsRankedList
-              projects={rankedProjects}
-              liveCounts={liveCounts}
-              onSelect={selectProject}
-            />
+            ) : (
+              <>
+                <MemoryKpiRow kpis={kpis} health={health} />
+                <div className="grid grid-cols-3 gap-3 mb-5">
+                  <div className="col-span-2">
+                    <MemoryActivityChart buckets={buckets} />
+                  </div>
+                  <MemoryTypeDonut types={types} />
+                </div>
+                <ProjectsRankedList
+                  projects={rankedProjects}
+                  liveCounts={liveCounts}
+                  onSelect={selectProject}
+                />
+              </>
+            )}
+            {accountGroups.map((g) => (
+              <AccountMemoriesSection
+                key={g.providerId}
+                providerId={g.providerId}
+                providerName={g.providerName}
+                accounts={g.accounts}
+                selectedId={selectedMemoryId}
+                onSelect={selectMemory}
+              />
+            ))}
           </>
         )}
       </div>
 
       {/* Reading drawer — overlays everything */}
-      {selectedMem && (
+      {selectedMem && (isAccountMemoryFile(selectedMem) ? (
+        // An account's own memory: read-only (no frontmatter edit; Delete only
+        // once its VM check passes, ACCOUNT_MEMORY_DELETE_SHOWN).
+        <MemoryReadingDrawer
+          key={selectedMem.id}
+          memory={selectedMem}
+          content={selectedContent}
+          placeLabel="Account"
+          onClose={() => selectMemory(null)}
+          onDelete={ACCOUNT_MEMORY_DELETE_SHOWN ? () => deleteMemory(selectedMem.id) : undefined}
+        />
+      ) : (
         <MemoryReadingDrawer
           key={selectedMem.id}
           memory={selectedMem}
@@ -280,7 +364,7 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
             type: selectedMem.type,
           })}
         />
-      )}
+      ))}
     </PageFrame>
   )
 }

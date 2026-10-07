@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { useCloudAgentStore, setupCloudAgentListener } from '../stores/cloudAgentStore'
+import { useCloudAgentStore, setupCloudAgentListener, agentProviderOf, agentLaunchBlockedReason } from '../stores/cloudAgentStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { resolveAccountNameByEmail } from '../../shared/account-chip-color'
@@ -9,7 +9,27 @@ import { MetricChip } from './ui/MetricChip'
 import NewAgentDialog from './NewAgentDialog'
 import PageFrame from './PageFrame'
 import { AgentHubExplainer, AgentHubExamples } from './agent-hub/AgentHubOnboarding'
-import { CLAUDE_OFF, useClaudeOff } from '../lib/claudeOff'
+import { useLaunchGateSettings } from '../hooks/useLaunchConfig'
+import { useProviderAccountsStore, accountDisplayName } from '../stores/providerAccountsStore'
+import type { AccountsSnapshot } from '../../shared/providers'
+
+/** WP2 PR 4, P4.5 (row 57): why a Retry of this agent cannot start now --
+ *  its own provider is off (Claude Code), or off or not set up (Codex) --
+ *  re-read the moment either switch flips; null when it can. */
+function useRetryBlocked(agent: CloudAgent): string | null {
+  const gate = useLaunchGateSettings()
+  return agentLaunchBlockedReason(agentProviderOf(agent), gate)
+}
+
+/** A Codex agent's account by its registry id, as Accounts names it; null
+ *  when the account list does not hold it (any more). */
+function registryAccountName(snapshot: AccountsSnapshot | null, accountId: string | undefined): string | null {
+  if (!snapshot || !accountId) return null
+  const account = snapshot.accounts.find((a) => a.id === accountId)
+  return account ? accountDisplayName(snapshot, account) : null
+}
+
+const PROVIDER_LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex' }
 
 const STATUS_COLORS: Record<CloudAgentStatus, string> = {
   running:   'var(--status-info)',
@@ -90,8 +110,9 @@ function ContextMenu({ x, y, agent, onClose }: {
   const cancel = useCloudAgentStore(s => s.cancel)
   const remove = useCloudAgentStore(s => s.remove)
   const retry = useCloudAgentStore(s => s.retry)
-  // A retry is a new Claude Code run: off while Claude Code is switched off.
-  const claudeOff = useClaudeOff()
+  // A retry is a new run on the agent's own provider: off while that
+  // provider is switched off.
+  const retryBlocked = useRetryBlocked(agent)
   const menuRef = useRef<HTMLDivElement>(null)
   const isRunning = agent.status === 'running' || agent.status === 'pending'
 
@@ -119,8 +140,8 @@ function ContextMenu({ x, y, agent, onClose }: {
       label: 'Retry',
       icon: String.fromCodePoint(0x21BB),
       action: () => { retry(agent.id); onClose() },
-      disabled: claudeOff,
-      title: claudeOff ? CLAUDE_OFF : undefined,
+      disabled: !!retryBlocked,
+      title: retryBlocked ?? undefined,
     })
   }
 
@@ -361,9 +382,13 @@ export function SummaryTab({ agent }: { agent: CloudAgent }) {
   const isRunning = agent.status === 'running' || agent.status === 'pending'
   const profiles = useAccountProfilesStore(s => s.profiles)
   const accountAliases = useSettingsStore(s => s.settings.accountAliases)
-  const accountName = agent.accountEmail
-    ? resolveAccountNameByEmail(agent.accountEmail, profiles, accountAliases)
-    : null
+  const snapshot = useProviderAccountsStore(s => s.snapshot)
+  const provider = agentProviderOf(agent)
+  const accountName = provider !== 'claude'
+    ? registryAccountName(snapshot, agent.providerAccountId) ?? agent.accountEmail ?? null
+    : agent.accountEmail
+      ? resolveAccountNameByEmail(agent.accountEmail, profiles, accountAliases)
+      : null
 
   return (
     <div className="flex-1 overflow-auto space-y-4 p-1">
@@ -395,6 +420,9 @@ export function SummaryTab({ agent }: { agent: CloudAgent }) {
         </InfoCell>
         <InfoCell label="Agent ID">
           <span className="font-mono text-[10px]">{agent.id}</span>
+        </InfoCell>
+        <InfoCell label="Assistant">
+          <span data-testid="cloud-agent-assistant">{PROVIDER_LABELS[provider] ?? provider}</span>
         </InfoCell>
         {accountName && (
           <InfoCell label="Account">
@@ -446,7 +474,7 @@ function AgentDetail({ agent }: { agent: CloudAgent }) {
   const cancel = useCloudAgentStore(s => s.cancel)
   const remove = useCloudAgentStore(s => s.remove)
   const retry = useCloudAgentStore(s => s.retry)
-  const claudeOff = useClaudeOff()
+  const retryBlocked = useRetryBlocked(agent)
   const isRunning = agent.status === 'running' || agent.status === 'pending'
 
   return (
@@ -472,8 +500,8 @@ function AgentDetail({ agent }: { agent: CloudAgent }) {
               <>
                 <button
                   onClick={() => retry(agent.id)}
-                  disabled={claudeOff}
-                  title={claudeOff ? CLAUDE_OFF : undefined}
+                  disabled={!!retryBlocked}
+                  title={retryBlocked ?? undefined}
                   data-testid="cloud-agent-retry"
                   className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-sapphire/10 text-sapphire hover:bg-sapphire/20 transition-colors border border-sapphire/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
@@ -565,17 +593,25 @@ export default function CloudAgentsPage() {
     (email?: string) => (email ? resolveAccountNameByEmail(email, profiles, accountAliases) : null),
     [profiles, accountAliases],
   )
+  // A Codex agent's account is a registry account, named as Accounts names it.
+  const accountsSnapshot = useProviderAccountsStore(s => s.snapshot)
+  const nameForAgent = useCallback(
+    (agent: CloudAgent) => (agentProviderOf(agent) !== 'claude'
+      ? registryAccountName(accountsSnapshot, agent.providerAccountId) ?? agent.accountEmail ?? null
+      : nameForAccount(agent.accountEmail)),
+    [accountsSnapshot, nameForAccount],
+  )
   // Distinct accounts present across all agents (drives the account filter,
   // shown only when more than one account appears).
   const agentAccounts = useMemo(() => {
     const seen = new Map<string, string>()
     for (const a of allAgents) {
       if (a.accountEmail && !seen.has(a.accountEmail)) {
-        seen.set(a.accountEmail, nameForAccount(a.accountEmail) || a.accountEmail)
+        seen.set(a.accountEmail, nameForAgent(a) || a.accountEmail)
       }
     }
     return Array.from(seen, ([email, name]) => ({ email, name }))
-  }, [allAgents, nameForAccount])
+  }, [allAgents, nameForAgent])
 
   // Reset a stale account filter when its account no longer appears among the
   // agents (e.g. its agents were cleared) — otherwise the dropdown hides while
@@ -750,7 +786,7 @@ export default function CloudAgentsPage() {
               <p className="text-xs text-overlay0 mb-4 max-w-[200px]">
                 {filter !== 'all' || searchQuery
                   ? 'Try a different filter or search term'
-                  : 'Dispatch a cloud agent to run headless Claude tasks'}
+                  : 'Dispatch a cloud agent to run a headless task'}
               </p>
               {filter === 'all' && !searchQuery && (
                 <button
@@ -774,7 +810,7 @@ export default function CloudAgentsPage() {
                   selected={agent.id === selectedAgentId}
                   onClick={() => selectAgent(agent.id)}
                   onContextMenu={(e) => handleCardContextMenu(e, agent.id)}
-                  accountName={agentAccounts.length > 1 ? nameForAccount(agent.accountEmail) : null}
+                  accountName={agentAccounts.length > 1 ? nameForAgent(agent) : null}
                 />
               ))}
             </>

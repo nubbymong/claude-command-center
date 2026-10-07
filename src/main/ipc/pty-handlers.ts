@@ -1,10 +1,18 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, app } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, SSHOptions, SshEndTarget } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, isSessionLiveOrStarting, SSHOptions, SshEndTarget, getKeptCodexConversation, getKeptCodexConversationSource, codexRunEnded, codexConversationHeldElsewhere, endAgentRunsInFolder } from '../pty-manager'
 import type { CodexLaunch } from '../pty-manager'
+import { handOffAskQuestion } from '../pty-manager'
+import { ensureHelpWorkspace, helpWorkspaceDir } from '../help-workspace'
+import { ASK_HELP_FOLDER_FAILED } from '../../shared/ask-conductor-provider'
+import { getResourcesDirectory } from './setup-handlers'
 import { getAccountsService } from '../provider-accounts'
+import { awaitCodexHookFolders } from '../codex-hook-folders'
+import { getGateway } from '../hooks'
 import { providerLaunchRefusal } from '../provider-launch-gate'
-import type { AccountLease } from '../providers/core'
+import { claimConfigLaunch, settleConfigLaunch, discardConfigLaunch, noteConfigLaunchPreparation, type ConfigLaunchTicket } from '../launch-one-at-a-time'
+import type { AccountLease, AccountsService } from '../providers/core'
+import type { ConversationCarryNotice } from '../../shared/providers'
 import { forgetCanvasMarkers } from '../canvas/canvas-marker-delivery'
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
 import { logInfo } from '../debug-logger'
@@ -18,19 +26,26 @@ import { logWarn } from '../debug-logger'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
-import type { SshRuntime, DetachedRemoteLiveness, HostPingResult, DetachedRemote, SshEndRemoteResult } from '../../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness, HostPingResult, DetachedRemote, SshEndRemoteResult, SubmitTextResult } from '../../shared/types'
 import { detachedDestinationAgrees, type SshDestinationSource } from '../../shared/detached-destination'
 import { readDetachedRemotesRegistry } from '../session-state'
 import { pingHost } from '../host-ping'
 import { noteSessionSpawnForCanvas } from '../canvas/canvas-session-link'
+import { codexSessionGuidance } from '../canvas/codex-guidance'
+import { appWindowSender } from './trusted-sender'
+import { getRegistry } from '../model-registry-service'
+import { codexEffortRuns } from '../../shared/model-registry'
 import {
   sanitizeRestoredSpawnOptions,
   PERMISSION_MODES,
   EXTRA_ARGS_MAX,
   EXTRA_ARGS_CHARSET_RE,
   extraArgsRefineOk,
+  codexExtraArgsProblem,
   CODEX_MODEL_MAX,
   CODEX_MODEL_RE,
+  CODEX_EFFORTS,
+  CODEX_PRESETS,
 } from '../sanitize-restored-spawn-options'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
@@ -124,6 +139,118 @@ export const MAIN_INTERNAL_SPAWN_FIELDS = ['refreshAwaited', 'projectGate', 'pro
 /** Owner ids of Codex launch leases: one per spawn, so a respawn's new lease
  *  never shares an owner with the one it replaces. */
 let codexLaunchSeq = 0
+
+/** P3.6 (row 22): how long a respawn waits for the session's previous Codex
+ *  process to end before it carries the conversation. Past it nothing is
+ *  carried: what a process still running writes after the copy would be
+ *  lost. */
+export const CODEX_CARRY_EXIT_WAIT_MS = 5_000
+
+/** ADR-009 round 1 (PR 4): how long an Ask spawn waits for the runs working
+ *  in the help folder to end before it is rebuilt. Past it, with one still
+ *  running, the spawn starts nothing (fails closed). */
+export const ASK_HELP_RUNS_END_WAIT_MS = 5_000
+
+/** P3.6 (ADR-009 round 1, A6): how long a respawn waits for the copy itself.
+ *  A copy of the largest rollout takes well under a second on a local disk;
+ *  a volume that stops answering must not hold the session's start. Past it
+ *  the respawn goes on without the conversation (the failed-carry words),
+ *  and the copy stops at its next step, leaving nothing behind. */
+export const CODEX_CARRY_TIMEOUT_MS = 60_000
+
+/** The failed-carry words (realm-folders' own for an io-failed copy). */
+const CARRY_FAILED_WORDS = "The conversation could not be copied into the other Codex account's folder, so it was not carried over."
+
+/** A respawn's carry: the conversation it was for, and why it did not come
+ *  along (`resumed` is settled by the spawn). */
+interface RespawnCarry {
+  uuid: string
+  notice?: Omit<ConversationCarryNotice, 'resumed'>
+  /** The launch resumes no kept conversation: it starts a new one. */
+  fresh?: boolean
+}
+
+/** The words for a conversation whose claim was not certain (P3.6, owner
+ *  decision on ADR-009 round 1, B1). */
+const UNCERTAIN_WORDS = 'Another session started in the same folder at about the same time, so the app could not be sure which conversation was this one, and did not carry it over.'
+/** P3.10: the claim was only inferred, though Codex's hooks run for this
+ *  very session (round 1, S4: keyed to the session; its hooks name the
+ *  conversation it is on with every event, and did not name this one). True
+ *  whatever other tabs of the account chose in Codex's review. */
+const UNCONFIRMED_WORDS = 'Codex did not confirm that this session is on this conversation, so the app could not be sure it was this session\'s, and did not carry it over.'
+
+/**
+ * P3.6 (row 22; ADR-009 thesis 3): a Codex session respawned on another
+ * account (a Switch account restarts it on the new one, as Claude's does)
+ * carries the conversation it is on into that account: kill, carry, spawn.
+ * The conversation and the account it ran under are main's own record of
+ * THIS session (pty-manager's kept conversation), and the destination is the
+ * account this very launch was prepared on; nothing the renderer sends names
+ * a conversation, a path or another session. The copy waits for the
+ * session's previous process to have ended (bounded), so nothing it wrote
+ * after the copy is lost. Undefined when there is nothing to carry (no
+ * conversation known, or already on that account), and when this spawn is
+ * no longer the session's (`current`: closed, swept or superseded, before
+ * or during the wait): it starts nothing, and never holds the realms against
+ * the spawn that replaced it, which carries for itself. The copy is told the
+ * same (it stops at its next step, even once it holds the realms), and it is
+ * given CODEX_CARRY_TIMEOUT_MS. A conversation another open session is on
+ * is never carried (ADR-009 round 1, B1): copying it would fork it, and
+ * bringing a copy of it up to date would put this session's turns into the
+ * rollout the other is writing.
+ */
+async function carryForRespawn(sessionId: string, accountId: string, service: Pick<AccountsService, 'carryConversation'>, current: () => boolean): Promise<RespawnCarry | undefined> {
+  // Final once the old run was killed: killPty stops its status line, so
+  // nothing claims another conversation for it meanwhile.
+  const kept = getKeptCodexConversationSource(sessionId)
+  if (!kept || kept.accountId === accountId || !current()) return undefined
+  // Its claim could have been another session's (two new sessions in one
+  // folder, P3.5's recorded limit until P3.10's exact claim): never carried,
+  // and not resumed on the new account either, which starts a new one.
+  if (kept.uncertain) {
+    logWarn(`[pty] Session ${sessionId}: its conversation's claim was not certain, so it was not carried into the new account; a new one starts there`)
+    return { uuid: kept.uuid, fresh: true, notice: { code: 'conversation-uncertain', message: UNCERTAIN_WORDS } }
+  }
+  // P3.10: Codex's hooks run for this very session (round 1, S4), yet none
+  // named the conversation it is kept on: that was only inferred, and could
+  // be another writer's.
+  if (kept.unconfirmed) {
+    logWarn(`[pty] Session ${sessionId}: Codex did not confirm its conversation, so it was not carried into the new account; a new one starts there`)
+    return { uuid: kept.uuid, fresh: true, notice: { code: 'conversation-uncertain', message: UNCONFIRMED_WORDS } }
+  }
+  const ended = await codexRunEnded(sessionId, CODEX_CARRY_EXIT_WAIT_MS)
+  if (!current()) return undefined
+  if (!ended) {
+    logWarn(`[pty] Session ${sessionId}: its previous Codex run had not ended, so its conversation was not carried into the new account`)
+    return { uuid: kept.uuid, notice: { code: 'busy', message: "The session's previous run had not ended yet, so its conversation was not carried over." } }
+  }
+  if (codexConversationHeldElsewhere(sessionId, kept.uuid)) {
+    logWarn(`[pty] Session ${sessionId}: another open session is on its conversation, so it was not carried into the new account`)
+    // Nor resumed on the new account (ADR-009 round 2, C1): the other
+    // session may be on it there, and two sessions would write one rollout.
+    return { uuid: kept.uuid, fresh: true, notice: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.' } }
+  }
+  let expired = false
+  const live = (): boolean => !expired && current()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<'late'>((resolve) => { timer = setTimeout(() => { expired = true; resolve('late') }, CODEX_CARRY_TIMEOUT_MS) })
+  let r: Awaited<ReturnType<AccountsService['carryConversation']>> | null | 'late'
+  try {
+    r = await Promise.race([service.carryConversation({ accountId }, { uuid: kept.uuid, cwd: kept.cwd, accountId: kept.accountId }, { current: live }).catch(() => null), late])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+  if (r === 'late') {
+    logWarn(`[pty] Session ${sessionId}: its conversation took too long to copy into the new account, so it was not carried`)
+    return { uuid: kept.uuid, notice: { code: 'io-failed', message: CARRY_FAILED_WORDS } }
+  }
+  if (r && r.ok) {
+    logInfo(`[pty] Session ${sessionId}: its conversation was carried into the new account (${r.carried})`)
+    return { uuid: kept.uuid }
+  }
+  logWarn(`[pty] Session ${sessionId}: its conversation was not carried into the new account (${r ? r.code : 'internal'})`)
+  return { uuid: kept.uuid, notice: r ? { code: r.code, message: r.message } : { code: 'internal', message: 'The conversation could not be carried over.' } }
+}
 
 /** WP2: shell-only SSH sessions, by id (spawned as such by pty:spawn), and
  *  those among them whose "Launch Claude" main accepted. pty-manager
@@ -282,7 +409,8 @@ export const spawnOptionsSchema = z.object({
   // an ordinary flag or path needs one.
   // Cap, charset and refine are shared with the fail-open sanitizer (see the
   // permissionMode note above) — the collapse/trailing-backslash analysis
-  // stays here, the values live in sanitize-restored-spawn-options.ts.
+  // stays here, the values live in src/shared/extra-args.ts (re-exported by
+  // sanitize-restored-spawn-options.ts), which the session dialog reads too.
   extraArgs: z.string().max(EXTRA_ARGS_MAX).regex(EXTRA_ARGS_CHARSET_RE).refine(
     // Collapse backslashes before matching -- see the note above. Also reject a
     // trailing backslash outright: it turns the SSH launch line into a shell
@@ -315,8 +443,23 @@ export const spawnOptionsSchema = z.object({
     // launch argument. The value list lives in sanitize-restored-spawn-options.ts
     // so the fail-open sanitizer drops exactly what this parse would reject.
     model: z.string().max(CODEX_MODEL_MAX).regex(CODEX_MODEL_RE).optional().or(z.literal('')),
-    reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
-    permissionsPreset: z.enum(['read-only', 'standard', 'auto', 'unrestricted']),
+    // An allowlist, never a free string: it becomes `-c model_reasoning_effort=<value>`.
+    // The list lives with the sanitizer, which drops exactly what this rejects (P3.8).
+    reasoningEffort: z.enum(CODEX_EFFORTS).optional(),
+    // P3.8 (L2; round 2, PM1): 'plan' launches read-only, as 'read-only' does,
+    // then Codex's own /plan is typed into its first ready prompt (renderer,
+    // lib/codexComposer.ts).
+    permissionsPreset: z.enum(CODEX_PRESETS),
+    // P3.11 (row 62): the extraArgs field for Codex -- the same cap and
+    // charset, plus Codex's own refusals (the flags the app sets, the account,
+    // provider and endpoint settings, and a word Codex reads as a command);
+    // one rule (src/shared/extra-args.ts) for the dialog, this parse, the
+    // sanitizer (which drops exactly what this rejects, on every spawn) and the
+    // launch builder. Each word becomes one argument.
+    extraArgs: z.string().max(EXTRA_ARGS_MAX).regex(EXTRA_ARGS_CHARSET_RE).superRefine((v, ctx) => {
+      const problem = codexExtraArgsProblem(v)
+      if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `the Codex extra CLI arguments are refused: ${problem}` })
+    }).optional(),
   }).optional(),
   // WP2 (plan A10): the Codex account the session runs under -- an opaque
   // registry id, validated by the accounts service. Absent = the provider
@@ -538,8 +681,59 @@ function endTargetFromSavedConfig(configId: string, sessionId: string): SshEndTa
   }
 }
 
+/** P4.1 review A-2: the realm ownership of the account a launch prepared, from
+ *  the accounts snapshot (its `external` flag is the realm's ownership);
+ *  undefined when it cannot be told. */
+function codexAccountOwnership(service: AccountsService, accountId: string): 'conductor-managed' | 'external-default' | undefined {
+  try {
+    const account = service.snapshot().accounts.find((a) => a.id === accountId)
+    return account ? (account.external ? 'external-default' : 'conductor-managed') : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** WP2 PR 4, P4.1: `canvas:sessionGuidance`'s payload: one session id. */
+const sessionGuidanceSchema = z.object({ sessionId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/) }).strict()
+
+/** WP2 PR 4, P4.3: `askConductor:handOff`'s payload: the Ask session and the
+ *  question, bounded as the pty:spawn schema bounds askPrompt. */
+const askHandOffSchema = z.object({
+  sessionId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  question: z.string().min(1).max(8000),
+}).strict()
+
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {
-  ipcMain.handle('pty:spawn', async (_event, sessionId: string, options?: {
+  // WP2 PR 4, P4.1 (row 51): whether a Codex session's launch carried the
+  // canvas and vision skills' guidance with the tools, for the canvas page's
+  // one line. A pure read of main's own launch record; the app's window only.
+  const fromApp = appWindowSender(getWindow)
+  ipcMain.handle(IPC.CANVAS_SESSION_GUIDANCE, (e, args: unknown) => {
+    if (!fromApp(e)) return null
+    const parsed = sessionGuidanceSchema.safeParse(args)
+    if (!parsed.success) return null
+    return codexSessionGuidance(parsed.data.sessionId)
+  })
+
+  // WP2 PR 4, P4.3 (row 53): a question for a LIVE Ask session on Codex,
+  // typed through the run's pane and its submit primitive (pty-manager
+  // handOffAskQuestion), never the raw question and Enter. Only a running
+  // Codex session that launched as Ask takes one; the app's window only.
+  ipcMain.handle(IPC.ASK_CONDUCTOR_HAND_OFF, async (e, args: unknown): Promise<SubmitTextResult> => {
+    if (!fromApp(e)) return { delivered: false, reason: 'session-gone' }
+    const parsed = askHandOffSchema.safeParse(args)
+    if (!parsed.success) return { delivered: false, reason: 'refused-text' }
+    const win = getWindow()
+    if (!win || win.isDestroyed()) return { delivered: false, reason: 'session-gone' }
+    return handOffAskQuestion(win, parsed.data.sessionId, parsed.data.question)
+  })
+
+  // The body of pty:spawn. `claim` holds the one-at-a-time gate's ticket for this
+  // call (P3.13), and whether the call reached pty-manager's spawn: the handler
+  // registered below discards the ticket when the call ends, so a spawn that
+  // throws or returns early leaves nothing pending, unless pty-manager already
+  // holds the session (see there).
+  const spawnSession = async (sessionId: string, claim: { ticket?: ConfigLaunchTicket; spawnCalled?: boolean }, options?: {
     cwd?: string
     cols?: number
     rows?: number
@@ -557,6 +751,8 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     configLabel?: string
     /** Ask Conductor's opening question (see spawnOptionsSchema.askPrompt). */
     askPrompt?: string
+    /** An Ask Conductor session (session.kind === 'ask'; spawnOptionsSchema.isAsk). */
+    isAsk?: boolean
     loggingEnabled?: boolean
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
@@ -573,8 +769,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     provider?: 'claude' | 'codex'
     codexOptions?: {
       model?: string
-      reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-      permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+      reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+      permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
+      /** P3.11 (row 62): checked by the schema (codexExtraArgsProblem). */
+      extraArgs?: string
     }
     providerAccountId?: string
     acknowledgeRealmOnly?: boolean
@@ -591,6 +789,15 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       spawnOptionsSchema.parse(options)
     } catch (err) {
       throw new Error(`Invalid parameters: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    // P3.8 round 1 (J2): a Codex session starts on an effort its model runs.
+    // A saved config launched from the list skips the dialog that drops one
+    // it cannot run, so the launch drops it too: the model's own default then
+    // applies. Only ever removes (the value was allowlisted above).
+    if (options?.provider === 'codex' && options.codexOptions?.reasoningEffort
+        && !codexEffortRuns(getRegistry(), options.codexOptions.model, options.codexOptions.reasoningEffort)) {
+      logInfo(`[pty] ${sessionId}: the Codex effort is not one its model runs; starting on the model default`)
+      options = { ...options, codexOptions: { ...options.codexOptions, reasoningEffort: undefined } }
     }
 
     const win = getWindow()
@@ -617,6 +824,15 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       const refused = providerLaunchRefusal(launchProvider)
       if (refused) return { started: false as const, refused }
     }
+    // P3.13 (row 72): a config that is not Multi Spawn runs one copy at a
+    // time, and main holds it to that here, as the renderer's own launch
+    // surfaces do. Asked and, when it passes, claimed in this same tick,
+    // before anything is installed, prepared, leased or spawned, so a second
+    // copy asked for meanwhile finds the first (launch-one-at-a-time.ts). The
+    // provider rule above comes first: a provider that is off says so.
+    const configClaim = claimConfigLaunch(sessionId, options, { savedConfigs: () => readConfig('configs'), isLive: (id) => isSessionLiveOrStarting(id) })
+    if ('refused' in configClaim) return { started: false as const, refused: configClaim.refused }
+    claim.ticket = configClaim.ticket
     // A new spawn of this id replaces whatever ran under it before: an
     // accepted SSH "Launch Claude" of the old PTY no longer counts.
     sshClaudeLaunches.delete(sessionId)
@@ -642,8 +858,17 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // The legacy pin is a Claude Code CLI: installed only for a Claude launch
     // the gate above let through, never for a shell or a Codex session.
     const legacyInstall = launchProvider === 'claude' && !!(options?.legacyVersion?.enabled && options.legacyVersion.version && !isVersionInstalled(options.legacyVersion.version))
-    const preparation = codexSession || legacyInstall ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
+    // ADR-009 round 1 (PR 4): an Ask spawn waits too, for the runs in the help
+    // folder to end before it is rebuilt (below); while it waits, the end of
+    // the tab's own previous run is this spawn's to supersede, as a prepared
+    // Codex spawn's is.
+    const askSpawn = options?.isAsk === true && !options.shellOnly
+    const preparation = codexSession || legacyInstall || askSpawn ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
+    // PR-level ADR-009 round 1 (B1): once that preparation is cancelled or
+    // superseded, this spawn's ticket stops counting as one under way.
+    if (preparation) noteConfigLaunchPreparation(configClaim.ticket, () => preparation.current)
     let codexLease: AccountLease | undefined
+    let carry: RespawnCarry | undefined
     try {
       // Auto-install legacy version before spawn if needed
       if (legacyInstall && options?.legacyVersion) {
@@ -670,6 +895,14 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       let resolvedOptions: typeof options = options ? { ...options, terminalSecret: undefined, commandSecrets: undefined } : options
       if (resolvedOptions) {
         for (const mainInternal of MAIN_INTERNAL_SPAWN_FIELDS) delete (resolvedOptions as Record<string, unknown>)[mainInternal]
+        // Review R-3: an opening question rides only a launch made as Ask
+        // Conductor, on either assistant (each branch of pty-manager holds
+        // the same rule); on any other it is dropped here, and the log says
+        // so in a fixed sentence, never the question.
+        if (resolvedOptions.askPrompt !== undefined && resolvedOptions.isAsk !== true) {
+          logWarn(`[pty] Session ${sessionId}: an opening question on a launch that is not Ask Conductor's is dropped`)
+          delete (resolvedOptions as Record<string, unknown>).askPrompt
+        }
       }
       // An SSH block is bound to the config it names, ON DISK: the request must be
       // that config's own (host/port/username/remotePath/postCommand) or the spawn
@@ -749,6 +982,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
           kind: 'session',
           providerId: 'codex',
           ownerId: `${sessionId}:${++codexLaunchSeq}`,
+          sessionId,
           ...(options?.providerAccountId !== undefined ? { providerAccountId: options.providerAccountId } : {}),
           ...(options?.acknowledgeRealmOnly === true ? { acknowledgeRealmOnly: true } : {}),
           remote: !!options?.ssh,
@@ -757,8 +991,29 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         codexLease = prepared.lease
         resolvedOptions = {
           ...resolvedOptions,
-          codexLaunch: { lease: prepared.lease, executable: prepared.executable, env: prepared.env, sessionsDir: prepared.sessionsDir },
+          codexLaunch: {
+            lease: prepared.lease, executable: prepared.executable, env: prepared.env, sessionsDir: prepared.sessionsDir,
+            // WP2 PR 4, P4.1: the account's Codex folder, for the launch's
+            // canvas skills (question 5).
+            home: prepared.home,
+            // Review A-2: app-managed or this computer's own sign-in.
+            ownership: codexAccountOwnership(service, prepared.lease.accountId),
+          },
         }
+        // P3.6 (row 22): a respawn of this session on another account
+        // carries the conversation it is on into that account first, once
+        // its previous process has ended (carryForRespawn). Only when the
+        // launch resumes the kept conversation (pty-manager's rule): one
+        // that names its own (a restored tab) or opens the picker has none
+        // to carry.
+        if (!options?.resume && !options?.useResumePicker) carry = await carryForRespawn(sessionId, prepared.lease.accountId, service, () => !preparation || preparation.current)
+        if (carry?.fresh) resolvedOptions = { ...resolvedOptions, codexLaunch: { ...resolvedOptions!.codexLaunch!, freshConversation: true } }
+        // P3.10 round 4 (P1): a local launch waits, bounded, for the hook
+        // folders (prepared asynchronously; a no-op while ready), so a tab
+        // restored at start has its hooks; past the bound it starts without.
+        // Round 5 (G4): only while the Hooks gateway listens (otherwise the
+        // launch gets no hooks whatever the folders).
+        if (!options?.ssh && getGateway()?.status()?.listening === true) await awaitCodexHookFolders()
       }
 
       // Closed, swept or superseded while it was prepared: start nothing, and
@@ -818,8 +1073,72 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         })
       }
 
+      // WP2 PR 4, P4.3 (row 53): every Ask Conductor launch reads the help
+      // folder as exactly the app's own files. A Codex session may write there
+      // (Codex grants its sandbox the working folder, and the session that
+      // answers its first-launch screens holds no preset: PB8, 9.6 items 21
+      // and 22), so the folder is rebuilt here, in main, before EVERY Ask
+      // spawn of either assistant -- a first launch, a revive, a Restart,
+      // Past discussions, an account switch's remount, a restored tab -- and
+      // nothing a session wrote reaches the next. Fails closed: no rebuild, no
+      // launch. Last before the spawn, after every wait above.
+      if (askSpawn) {
+        const resourcesDir = getResourcesDirectory()
+        // ADR-009 round 1 (PR 4): first every run still working in the help
+        // folder (either assistant, the tab's own previous run included) is
+        // ended and its end waited for, bounded, so nothing writes there once
+        // it is rebuilt. One still running at the bound: nothing starts, with
+        // the same fixed sentence.
+        let ended = false
+        try { ended = await endAgentRunsInFolder(helpWorkspaceDir(resourcesDir), ASK_HELP_RUNS_END_WAIT_MS) } catch { ended = false }
+        if (preparation && !preparation.current) {
+          logInfo(`[pty] Session ${sessionId}: closed or superseded while the help folder's runs ended -- not spawning`)
+          codexLease?.release()
+          preparation.abandon()
+          return { started: false as const }
+        }
+        if (!ended) {
+          logWarn(`[pty] Session ${sessionId}: a run in the help folder did not end in time; Ask Conductor does not start`)
+          throw new Error(ASK_HELP_FOLDER_FAILED)
+        }
+        let helpDir: string
+        try {
+          helpDir = ensureHelpWorkspace(resourcesDir, { appVersion: app.getVersion() })
+        } catch {
+          // A fixed sentence (review RASK-2): ensureHelpWorkspace has logged
+          // the cause by its code; the error's own message never reaches the
+          // tab or the log.
+          throw new Error(ASK_HELP_FOLDER_FAILED)
+        }
+        // Review RASK-1: and it starts in the folder just rebuilt, whatever
+        // folder the tab kept (a Restart, Past discussions, a remount or a
+        // restored tab reuse the one it was opened in, which a move of the
+        // resources folder leaves behind, unrebuilt, or gone). pty-manager
+        // holds a resumed conversation to it too (askLaunchFolderHolds).
+        resolvedOptions = { ...resolvedOptions, cwd: helpDir }
+      }
+      claim.spawnCalled = true
       if (preparation) preparation.spawn(resolvedOptions)
       else spawnPty(win, sessionId, resolvedOptions)
+      // P3.13: pty-manager took the spawn the one-at-a-time gate passed. Only this
+      // spawn's own ticket is settled; a spawn refused or thrown before here
+      // changes nothing the gate holds.
+      settleConfigLaunch(configClaim.ticket)
+      // P3.8 round 3 (PB1): the permissions preset this run launched with,
+      // main's record of what it started, so the renderer's pill compares a
+      // choice for the next start with what is running.
+      const launched = options?.provider === 'codex' && !options?.shellOnly && resolvedOptions?.codexOptions
+        ? { codexPreset: resolvedOptions.codexOptions.permissionsPreset }
+        : undefined
+      // P3.6: what the terminal says when the conversation did not come
+      // along whole, from what the launch actually did (it resumed that
+      // conversation, from a copy already in the account, or started anew).
+      if (carry) {
+        const resumed = getKeptCodexConversation(sessionId)?.uuid === carry.uuid
+        if (carry.notice) return { started: true as const, carry: { ...carry.notice, resumed }, ...(launched ? { launched } : {}) }
+        if (!resumed) return { started: true as const, carry: { code: 'conversation-missing' as const, message: 'The conversation was copied into that account, but the new session did not resume it.', resumed: false }, ...(launched ? { launched } : {}) }
+      }
+      if (launched) return { started: true as const, launched }
     } catch (err) {
       if (codexLease) {
         // Registered, but the spawn failed after that: a Codex PTY is running
@@ -830,6 +1149,25 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       }
       preparation?.abandon()
       throw err
+    }
+  }
+
+  ipcMain.handle('pty:spawn', async (_event, sessionId: string, options?: Parameters<typeof spawnSession>[2]) => {
+    const claim: { ticket?: ConfigLaunchTicket; spawnCalled?: boolean } = {}
+    try {
+      return await spawnSession(sessionId, claim, options)
+    } finally {
+      // P3.13 (round 3): a ticket still pending now belongs to a spawn that
+      // pty-manager did not take (it threw, or returned early). Forget it. A
+      // ticket settled on the way is already gone, so this does nothing then.
+      // Round 4: except a spawn that reached pty-manager and threw after the
+      // PTY was registered: that session is running, so it counts as a copy
+      // (settled). A spawn that never reached it is forgotten even when the
+      // same session id is live (a forged same-id spawn must not re-point it).
+      if (claim.ticket) {
+        if (claim.spawnCalled && isSessionLiveOrStarting(sessionId)) settleConfigLaunch(claim.ticket)
+        else discardConfigLaunch(claim.ticket)
+      }
     }
   })
 
@@ -844,8 +1182,11 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     resizePty(sessionId, cols, rows)
   })
 
-  ipcMain.on('pty:kill', (_event, sessionId: string) => {
-    killPty(sessionId)
+  ipcMain.on('pty:kill', (_event, sessionId: string, reason?: unknown) => {
+    // P3.16a round 2 (Q5): a Restart's kill (its next process follows) is not
+    // the session's end; any other kill is a close. Only the exact string
+    // 'restart' is a Restart's.
+    killPty(sessionId, { reason: reason === 'restart' ? 'restart' : 'close' })
     sshClaudeLaunches.delete(sessionId)
     sshShellSessions.delete(sessionId)
     // #580: nothing left to deliver a queued canvas marker to. Logged loudly if

@@ -64,8 +64,15 @@ vi.mock('https', () => {
   return { default: { request }, request }
 })
 
-const { fetchAccountUsage, fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, recordLiveUsageForSession, _resetLiveUsageForTest, _resetSnapshotsForTest, LIVE_USAGE_MAX_AGE_MS } =
+const { fetchAccountUsage, fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, recordLiveUsageForSession, setLiveUsageTranscriptProfile, _resetLiveUsageForTest, _resetSnapshotsForTest, LIVE_USAGE_MAX_AGE_MS } =
   await import('../../src/main/usage/account-usage')
+
+// P3.2: the recorder files a figure under a profile only when the session's
+// transcript lies in that profile's folder (the Tokenomics folder rule, tested
+// in tk-attribution). Here a stand-in for that rule: /profiles/<id>/projects/...
+const transcriptOf = (sessionId: string, profileId = profileBySession.get(sessionId)) =>
+  `/profiles/${profileId}/projects/p/00000000-0000-4000-8000-000000000000.jsonl`
+const fakeFolderRule = (transcriptPath: string) => /^\/profiles\/([^/]+)\/projects\/[^/]+\/[^/]+\.jsonl$/.exec(transcriptPath)?.[1]
 
 const USAGE_HOST = 'api.anthropic.com'
 const REFRESH_HOST = 'console.anthropic.com'
@@ -88,6 +95,7 @@ function writeCreds(expiresAt = Date.now() + 3_600_000): void {
 const writeFreshCreds = (): void => writeCreds()
 
 beforeEach(() => {
+  setLiveUsageTranscriptProfile(fakeFolderRule)
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-live-open-'))
   profiles = [profile({ id: 'profile-x-1' })]
   profileBySession.clear()
@@ -104,7 +112,7 @@ describe('fetchAccountUsage — an OPEN account reuses its delivered figure (no 
   it('serves the delivered buckets with status ok and NO network request', async () => {
     inUse.add('profile-x-1')
     profileBySession.set('sess-1', 'profile-x-1')
-    recordLiveUsageForSession('sess-1', [bucket({ percent: 41 })], false)
+    recordLiveUsageForSession('sess-1', [bucket({ percent: 41 })], false, transcriptOf('sess-1'))
 
     const r = await fetchAccountUsage('profile-x-1')
     expect(r.status).toBe('ok')
@@ -123,7 +131,7 @@ describe('fetchAccountUsage — an OPEN account reuses its delivered figure (no 
   it('falls through to a GET (never a refresh) when the delivered payload had credits (Q1b)', async () => {
     inUse.add('profile-x-1')
     profileBySession.set('sess-1', 'profile-x-1')
-    recordLiveUsageForSession('sess-1', [bucket()], /* hasCredits */ true)
+    recordLiveUsageForSession('sess-1', [bucket()], /* hasCredits */ true, transcriptOf('sess-1'))
 
     await fetchAccountUsage('profile-x-1')
     expect(requestedHosts).toContain(USAGE_HOST)   // one GET to fill the credits row
@@ -136,7 +144,7 @@ describe('fetchAccountUsage — an OPEN account reuses its delivered figure (no 
     writeCreds(Date.now() - 60_000)
     inUse.add('profile-x-1')
     profileBySession.set('sess-1', 'profile-x-1')
-    recordLiveUsageForSession('sess-1', [bucket()], /* hasCredits */ true)
+    recordLiveUsageForSession('sess-1', [bucket()], /* hasCredits */ true, transcriptOf('sess-1'))
 
     await fetchAccountUsage('profile-x-1')
     expect(requestedHosts).not.toContain(REFRESH_HOST)
@@ -152,7 +160,7 @@ describe('fetchAccountUsage — an OPEN account reuses its delivered figure (no 
     seededSnapshots = { 'profile-x-1': { buckets: [bucket()], credits: { currency: 'USD', used: 1, limit: null, remaining: null, enabled: true }, fetchedAt: Date.now() - 1000 } }
     inUse.add('profile-x-1')
     profileBySession.set('sess-1', 'profile-x-1')
-    recordLiveUsageForSession('sess-1', [bucket()], false) // delivered has no credits...
+    recordLiveUsageForSession('sess-1', [bucket()], false, transcriptOf('sess-1')) // delivered has no credits...
 
     await fetchAccountUsage('profile-x-1')
     expect(requestedHosts).toContain(USAGE_HOST) // ...but the cached credits force the GET
@@ -161,7 +169,7 @@ describe('fetchAccountUsage — an OPEN account reuses its delivered figure (no 
   it('falls through to a GET when the delivered figure is STALE (older than the max age)', async () => {
     inUse.add('profile-x-1')
     profileBySession.set('sess-1', 'profile-x-1')
-    recordLiveUsageForSession('sess-1', [bucket()], false, Date.now() - LIVE_USAGE_MAX_AGE_MS - 1)
+    recordLiveUsageForSession('sess-1', [bucket()], false, transcriptOf('sess-1'), Date.now() - LIVE_USAGE_MAX_AGE_MS - 1)
 
     await fetchAccountUsage('profile-x-1')
     expect(requestedHosts).toContain(USAGE_HOST)
@@ -177,7 +185,7 @@ describe('fetchAccountUsage — an OPEN account reuses its delivered figure (no 
     profiles = [profile({ id: 'profile-x-1', isPrimary: true })]
     inUse.add('profile-x-1')
     profileBySession.set('sess-1', 'profile-x-1')
-    recordLiveUsageForSession('sess-1', [bucket()], false)
+    recordLiveUsageForSession('sess-1', [bucket()], false, transcriptOf('sess-1'))
 
     await fetchAccountUsage('profile-x-1')
     expect(requestedHosts).toContain(USAGE_HOST)
@@ -188,7 +196,7 @@ describe('recordLiveUsageForSession — what it stores', () => {
   it('stores nothing for a session with no local profile (SSH / default home)', async () => {
     inUse.add('profile-x-1')
     profileBySession.set('sess-ssh', undefined) // getClaudeProfileId -> undefined
-    recordLiveUsageForSession('sess-ssh', [bucket()], false)
+    recordLiveUsageForSession('sess-ssh', [bucket()], false, transcriptOf('sess-ssh'))
 
     await fetchAccountUsage('profile-x-1') // in use, but nothing was stored for it
     expect(requestedHosts).toContain(USAGE_HOST) // so it GETs
@@ -197,8 +205,8 @@ describe('recordLiveUsageForSession — what it stores', () => {
   it('ignores an empty or all-malformed bucket set', async () => {
     inUse.add('profile-x-1')
     profileBySession.set('sess-1', 'profile-x-1')
-    recordLiveUsageForSession('sess-1', [], false)
-    recordLiveUsageForSession('sess-1', [{ nope: 1 }, 'bad', null], false)
+    recordLiveUsageForSession('sess-1', [], false, transcriptOf('sess-1'))
+    recordLiveUsageForSession('sess-1', [{ nope: 1 }, 'bad', null], false, transcriptOf('sess-1'))
 
     await fetchAccountUsage('profile-x-1')
     expect(requestedHosts).toContain(USAGE_HOST) // nothing servable -> GET
@@ -207,7 +215,7 @@ describe('recordLiveUsageForSession — what it stores', () => {
   it('drops malformed buckets but keeps the valid ones', async () => {
     inUse.add('profile-x-1')
     profileBySession.set('sess-1', 'profile-x-1')
-    recordLiveUsageForSession('sess-1', [bucket({ percent: 7 }), { key: 1 }, bucket({ key: 'weekly:', label: 'Weekly', group: 'weekly', percent: 20 })], false)
+    recordLiveUsageForSession('sess-1', [bucket({ percent: 7 }), { key: 1 }, bucket({ key: 'weekly:', label: 'Weekly', group: 'weekly', percent: 20 })], false, transcriptOf('sess-1'))
 
     const r = await fetchAccountUsage('profile-x-1')
     expect(requestedHosts).toEqual([])
@@ -224,8 +232,8 @@ describe('fetchAllAccountsUsage — open accounts make no call and take no stagg
     ]
     inUse.add('profile-open-1'); inUse.add('profile-open-2')
     profileBySession.set('s1', 'profile-open-1'); profileBySession.set('s2', 'profile-open-2')
-    recordLiveUsageForSession('s1', [bucket({ percent: 10 })], false)
-    recordLiveUsageForSession('s2', [bucket({ percent: 20 })], false)
+    recordLiveUsageForSession('s1', [bucket({ percent: 10 })], false, transcriptOf('s1'))
+    recordLiveUsageForSession('s2', [bucket({ percent: 20 })], false, transcriptOf('s2'))
 
     const rows = await fetchAllAccountsUsage()
     expect(rows.map((r) => r.profileId)).toEqual(['profile-open-1', 'profile-open-2', 'profile-closed-3'])
@@ -246,7 +254,7 @@ describe('fetchAllAccountsUsage — open accounts make no call and take no stagg
     for (let i = 1; i <= 3; i++) {
       inUse.add(`profile-open-${i}`)
       profileBySession.set(`s${i}`, `profile-open-${i}`)
-      recordLiveUsageForSession(`s${i}`, [bucket()], false)
+      recordLiveUsageForSession(`s${i}`, [bucket()], false, transcriptOf(`s${i}`))
     }
     const timeoutSpy = vi.spyOn(global, 'setTimeout')
     await fetchAllAccountsUsage()
@@ -273,7 +281,7 @@ describe('fetchAllAccountsUsage — open accounts make no call and take no stagg
     profiles = [profile({ id: 'profile-cc' }), profile({ id: 'profile-closed' })]
     inUse.add('profile-cc')
     profileBySession.set('sc', 'profile-cc')
-    recordLiveUsageForSession('sc', [bucket()], false) // delivered tick: no credits
+    recordLiveUsageForSession('sc', [bucket()], false, transcriptOf('sc')) // delivered tick: no credits
     const timeoutSpy = vi.spyOn(global, 'setTimeout')
     await fetchAllAccountsUsage()
     // Both hit the usage endpoint (the cached credits force the open one to GET)...
@@ -291,8 +299,8 @@ describe('fetchAllAccountsUsageStreaming — per-account delivery in load order 
     ]
     inUse.add('profile-open-1'); inUse.add('profile-open-3')
     profileBySession.set('s1', 'profile-open-1'); profileBySession.set('s3', 'profile-open-3')
-    recordLiveUsageForSession('s1', [bucket({ percent: 10 })], false)
-    recordLiveUsageForSession('s3', [bucket({ percent: 30 })], false)
+    recordLiveUsageForSession('s1', [bucket({ percent: 10 })], false, transcriptOf('s1'))
+    recordLiveUsageForSession('s3', [bucket({ percent: 30 })], false, transcriptOf('s3'))
 
     const streamed: string[] = []
     await fetchAllAccountsUsageStreaming((u) => streamed.push(u.profileId))
@@ -308,7 +316,7 @@ describe('fetchAllAccountsUsageStreaming — per-account delivery in load order 
     profiles = [profile({ id: 'profile-open-1' }), profile({ id: 'profile-closed-2' })]
     inUse.add('profile-open-1')
     profileBySession.set('s1', 'profile-open-1')
-    recordLiveUsageForSession('s1', [bucket({ percent: 5 })], false)
+    recordLiveUsageForSession('s1', [bucket({ percent: 5 })], false, transcriptOf('s1'))
 
     const order: Array<{ id: string; hadCall: boolean }> = []
     await fetchAllAccountsUsageStreaming((u) => order.push({ id: u.profileId, hadCall: u.buckets[0]?.percent !== 5 }))
@@ -322,7 +330,38 @@ describe('fetchAllAccountsUsageStreaming — per-account delivery in load order 
     profiles = [profile({ id: 'profile-open-1' })]
     inUse.add('profile-open-1')
     profileBySession.set('s1', 'profile-open-1')
-    recordLiveUsageForSession('s1', [bucket()], false)
+    recordLiveUsageForSession('s1', [bucket()], false, transcriptOf('s1'))
     await expect(fetchAllAccountsUsageStreaming(() => { throw new Error('handler boom') })).rejects.toThrow('handler boom')
+  })
+})
+
+describe('the delivered figure belongs to the profile whose folder holds the transcript (P3.2, Switch account)', () => {
+  it('a write from the session\'s previous run under another profile is not filed under its current one', async () => {
+    inUse.add('profile-x-1')
+    profileBySession.set('sess-1', 'profile-x-1')
+    // The previous run's transcript lies in another profile's folder.
+    recordLiveUsageForSession('sess-1', [bucket({ percent: 99 })], false, transcriptOf('sess-1', 'profile-old-1'))
+    const r = await fetchAccountUsage('profile-x-1')
+    // Nothing was delivered for profile-x-1: it asks the network instead.
+    expect(requestedHosts).toContain(USAGE_HOST)
+    expect(r.buckets?.some((b) => b.percent === 99) ?? false).toBe(false)
+  })
+
+  it('with no transcript path nothing is recorded, as for a default-home session', async () => {
+    inUse.add('profile-x-1')
+    profileBySession.set('sess-1', 'profile-x-1')
+    recordLiveUsageForSession('sess-1', [bucket({ percent: 98 })], false)
+    recordLiveUsageForSession('sess-1', [bucket({ percent: 97 })], false, 42)
+    await fetchAccountUsage('profile-x-1')
+    expect(requestedHosts).toContain(USAGE_HOST)
+  })
+
+  it('its own transcript files it (the same write, the right folder)', async () => {
+    inUse.add('profile-x-1')
+    profileBySession.set('sess-1', 'profile-x-1')
+    recordLiveUsageForSession('sess-1', [bucket({ percent: 41 })], false, transcriptOf('sess-1'))
+    const r = await fetchAccountUsage('profile-x-1')
+    expect(requestedHosts).toEqual([])
+    expect(r.buckets?.[0]?.percent).toBe(41)
   })
 })

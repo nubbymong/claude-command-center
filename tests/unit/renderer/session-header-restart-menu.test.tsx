@@ -79,7 +79,7 @@ describe('Codex Restart menu', () => {
     openMenu()
     act(() => { item('pick')!.click() })
     expect(markSessionForResumePicker).toHaveBeenCalledWith('s1')
-    expect(killSessionPty).toHaveBeenCalledWith('s1')
+    expect(killSessionPty).toHaveBeenCalledWith('s1', { restart: true })
     // Restarted: re-added with a fresh createdAt, so its terminal remounts.
     expect(useSessionStore.getState().getSession('s1')!.createdAt).toBeGreaterThan(1)
   })
@@ -88,7 +88,7 @@ describe('Codex Restart menu', () => {
     renderWith(makeSession())
     openMenu()
     act(() => { item('fresh')!.click() })
-    expect(killSessionPty).toHaveBeenCalledWith('s1')
+    expect(killSessionPty).toHaveBeenCalledWith('s1', { restart: true })
     expect(markSessionForResumePicker).not.toHaveBeenCalled()
   })
 

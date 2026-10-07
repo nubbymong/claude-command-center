@@ -301,3 +301,17 @@ describe('restoreSavedSessions -- the Codex account binding (WP2 commit 6)', () 
     expect(again.find((x) => x.id === 'cl')!.providerAccountId).toBeUndefined()
   })
 })
+
+describe('restoreSavedSessions -- the indexing opt-out (P3.12, row 31)', () => {
+  it('a Codex session comes back with its config\'s opt-out (codexOptions.loggingEnabled); a Claude one with claudeOptions\', as before', async () => {
+    await restoreSavedSessions(state([
+      saved({ id: 'cx', provider: 'codex', codexOptions: { permissionsPreset: 'read-only', loggingEnabled: false } }),
+      saved({ id: 'cx-default', provider: 'codex', codexOptions: { permissionsPreset: 'read-only' } }),
+      saved({ id: 'cl', provider: 'claude', claudeOptions: { loggingEnabled: false } }),
+    ]), ref(), deps())
+    const by = (id: string) => useSessionStore.getState().sessions.find((x) => x.id === id)!
+    expect(by('cx').loggingEnabled).toBe(false)
+    expect(by('cx-default').loggingEnabled).toBeUndefined()
+    expect(by('cl').loggingEnabled).toBe(false)
+  })
+})

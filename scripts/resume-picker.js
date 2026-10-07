@@ -46,17 +46,35 @@ const readline = require('readline')
 // name for dotted/worktree paths, which is exactly why worktree conversations
 // were invisible. The case-insensitive readdirSync match in main() is kept as a
 // belt-and-braces guard on top of this.
+//
+// P3.16a round 2 (Q1): a name longer than 200 characters is cut at 200, and
+// `-` and the base-36 absolute value of a 32-bit hash of the WHOLE folder
+// follow it, as Claude Code names it (src/shared/project-key.ts, replicated).
 function encodeProjectPath(p) {
-  return String(p).replace(/[^A-Za-z0-9]/g, '-')
+  const cwd = String(p)
+  const name = cwd.replace(/[^A-Za-z0-9]/g, '-')
+  if (name.length <= 200) return name
+  let h = 0
+  for (let i = 0; i < cwd.length; i++) h = (h << 5) - h + cwd.charCodeAt(i) | 0
+  return name.slice(0, 200) + '-' + Math.abs(h).toString(36)
 }
 
 // ── Project-dir resolution ──────────────────────────────────────────
 // Mangle a cwd and case-insensitively match it against the on-disk
 // ~/.claude/projects folders (belt-and-braces on top of the now-correct
 // mangle). Returns the matched absolute folder path or null. FAIL-SAFE.
-function resolveProjectDir(claudeProjectsDir, cwd) {
+//
+// PR-level ADR-009 round 1 (A3): the folder is named from the cwd's REAL path,
+// as Claude Code names it and as the app does (src/main/logging/
+// transcript-discovery.ts claudeProjectDirName: fs.realpathSync, the JS one),
+// so a folder reached through a link or a junction finds its conversations; a
+// cwd whose real path cannot be read is named as given, as there. `realpath`
+// is injectable for the unit test.
+function resolveProjectDir(claudeProjectsDir, cwd, realpath = fs.realpathSync) {
   try {
-    const encoded = encodeProjectPath(cwd)
+    let folder = cwd
+    try { folder = realpath(cwd) } catch { /* named as given */ }
+    const encoded = encodeProjectPath(folder)
     let dirs
     try { dirs = fs.readdirSync(claudeProjectsDir) } catch { return null }
     for (const d of dirs) {
@@ -625,16 +643,88 @@ async function main() {
  *
  * `shell: false` fixes both: Node passes argv to CreateProcess directly and
  * quotes each element itself. The only thing shell:true was buying is the
- * ability to invoke a `.cmd` shim, so do that explicitly through cmd.exe with
- * an ARGS ARRAY -- the same shape src/main/providers/codex/spawn.ts already
- * uses. cmd.exe still parses the shim path, but the arguments are passed as
- * separate argv elements rather than concatenated into one command line.
+ * ability to invoke a `.cmd` shim, so that runs through cmd.exe explicitly.
+ *
+ * cmd.exe reads what follows `/c` itself: without /s it keeps the quotes only
+ * when the line holds exactly two of them around a program name, with none of
+ * `& < > ( ) @ ^ |` between them, and otherwise drops the first quote and the
+ * last one. A shim in a folder with a space or parentheses (npm's folder under
+ * a Windows user name with a space) therefore lost its quotes as soon as one
+ * argument needed quotes too (a `--settings` path with a space, the `--agents`
+ * JSON), and the launch did not start. So the shim
+ * runs the way Node runs a `shell: true` command, and the way the Claude
+ * version probe and the Codex picker run one: `/d /v:off /s /c "<line>"`,
+ * passed VERBATIM (AutoRun skipped, delayed expansion off). With /s cmd.exe
+ * drops exactly that outer pair; inside it the shim path is quoted and each
+ * argument is written exactly as Node writes an argv element
+ * (quoteArgLikeNode), so the arguments reach cmd.exe as they did before and
+ * only the shim path changes. A shim path carrying one of `" % & ^` or a
+ * control character is refused (null), as the version probe refuses it:
+ * cmd.exe or the shim itself would re-read it.
+ *
+ * P3.10 round 3b: the picker resolves its helpers from fixed locations: the
+ * cmd.exe that runs a shim is the system's own, by its full path
+ * (systemCmdExe).
  */
-function buildSpawnTarget(cmd, args) {
-  if (os.platform() === 'win32' && /\.(cmd|bat)$/i.test(cmd)) {
-    return { file: 'cmd.exe', argv: ['/c', cmd, ...args] }
+// eslint-disable-next-line no-control-regex
+const SHIM_PATH_UNSAFE_RE = /["%&^\x00-\x1f\x7f]/
+/** A variable's one value in `env`, matched as Windows matches names (either
+ *  case, ASCII names only): undefined when unset, null when two spellings
+ *  disagree. */
+function envOne(env, name) {
+  const values = new Set()
+  for (const k of Object.keys(env || {})) {
+    const v = env[k]
+    if (typeof v === 'string' && v !== '' && /^[A-Za-z]+$/.test(k) && k.toUpperCase() === name.toUpperCase()) values.add(v)
   }
-  return { file: cmd, argv: args }
+  if (values.size > 1) return null
+  return values.size === 1 ? [...values][0] : undefined
+}
+/** A folder name that cmd.exe or the file system would read as more than a name. */
+const ROOT_PART_UNSAFE_RE = /[<>|*?:]/
+/**
+ * P3.10 round 3b: the cmd.exe that runs a shim, by its full path:
+ * `<SystemRoot>\System32\cmd.exe`, written as ComSpec spells it only when
+ * ComSpec names exactly that file (in any case). SystemRoot is read from `env`
+ * and is C:\Windows only when it is not set; one that is not a plain absolute
+ * folder (a drive, then names, none of them `.` or `..`), or two spellings that
+ * disagree, give null (no start).
+ */
+function systemCmdExe(env) {
+  const root = envOne(env, 'SystemRoot')
+  if (root === null) return null
+  const base = (root === undefined ? 'C:\\Windows' : root).replace(/\\+$/, '')
+  const parts = base.split(/[\\/]/)
+  if (!/^[A-Za-z]:$/.test(parts[0]) || SHIM_PATH_UNSAFE_RE.test(base)) return null
+  if (parts.slice(1).some((p) => p === '' || p === '.' || p === '..' || ROOT_PART_UNSAFE_RE.test(p))) return null
+  const system = `${base}\\System32\\cmd.exe`
+  const comSpec = envOne(env, 'ComSpec')
+  return typeof comSpec === 'string' && comSpec.toLowerCase() === system.toLowerCase() ? comSpec : system
+}
+function quoteArgLikeNode(arg) {
+  // libuv's quote_cmd_arg, the rule Node applies to each argv element.
+  if (arg === '') return '""'
+  if (!/[ \t"]/.test(arg)) return arg
+  if (!/["\\]/.test(arg)) return `"${arg}"`
+  let out = ''
+  let slashes = 0
+  for (const ch of arg) {
+    if (ch === '\\') { slashes++; continue }
+    if (ch === '"') { out += '\\'.repeat(slashes * 2 + 1) + '"'; slashes = 0; continue }
+    out += '\\'.repeat(slashes) + ch
+    slashes = 0
+  }
+  return `"${out}${'\\'.repeat(slashes * 2)}"`
+}
+function buildSpawnTarget(cmd, args, platform = os.platform(), env = process.env) {
+  if (platform === 'win32' && /\.(cmd|bat)$/i.test(cmd)) {
+    if (SHIM_PATH_UNSAFE_RE.test(cmd)) return null
+    const shell = systemCmdExe(env)
+    if (!shell) return null
+    const line = [`"${cmd}"`, ...args.map(quoteArgLikeNode)].join(' ')
+    return { file: shell, argv: ['/d', '/v:off', '/s', '/c', `"${line}"`], verbatim: true }
+  }
+  return { file: cmd, argv: args, verbatim: false }
 }
 
 function getForwardedArgs() {
@@ -644,7 +734,7 @@ function getForwardedArgs() {
 
 // Resolve claude command — try native .exe first, then npm .cmd.
 function resolveClaudeCmd(env = process.env) {
-  // macOS multi-account realm (ADR-023): the app hands over the ABSOLUTE
+  // macOS multi-account realm (ADR-024): the app hands over the ABSOLUTE
   // binary the account's isolation check was taken for. Run exactly that --
   // never a `claude` this shell's PATH might resolve to another binary.
   // Set only for such a launch; the app removes any inherited value.
@@ -713,7 +803,13 @@ function launchClaude(resumeId, sourceCwd) {
   if (retarget.cwd) spawnOpts.cwd = retarget.cwd
 
   const target = buildSpawnTarget(cmd, args)
-  const result = spawnSync(target.file, target.argv, spawnOpts)
+  if (!target) {
+    console.error(SHIM_PATH_UNSAFE_RE.test(cmd)
+      ? `\n  Not starting Claude Code from ${displayPath(cmd)}: cmd.exe would re-read a character in that path. Install it in a folder without " % & or ^.\n`
+      : '\n  Not starting Claude Code: the Windows folder (SystemRoot) is not a plain absolute folder, so the system cmd.exe cannot be named.\n')
+    process.exit(1)
+  }
+  const result = spawnSync(target.file, target.argv, { ...spawnOpts, windowsVerbatimArguments: target.verbatim })
 
   // If resume failed (conversation no longer exists), fall back to fresh session.
   // The fresh fallback runs in the SAME (worktree) cwd so it lands where the
@@ -727,7 +823,7 @@ function launchClaude(resumeId, sourceCwd) {
     }
     if (spawnOpts.cwd) freshOpts.cwd = spawnOpts.cwd
     const freshTarget = buildSpawnTarget(cmd, forwarded)
-    const fresh = spawnSync(freshTarget.file, freshTarget.argv, freshOpts)
+    const fresh = spawnSync(freshTarget.file, freshTarget.argv, { ...freshOpts, windowsVerbatimArguments: freshTarget.verbatim })
     process.exit(fresh.status || 0)
   }
 

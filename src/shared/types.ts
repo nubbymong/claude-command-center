@@ -168,10 +168,26 @@ export interface TerminalOptions {
 }
 
 export interface CodexOptions {
-  /** gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex / gpt-5.3-codex-spark / gpt-5.2 */
+  /** A Codex model id: the registry's Codex models (resources/model-registry.json,
+   *  family codex), or one saved before them. Absent or '' = Codex's own default. */
   model?: string
-  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-  permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+  /** Absent (or 'none') = the model's own default; the spawn allowlist is
+   *  CODEX_EFFORTS (sanitize-restored-spawn-options.ts). */
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+  permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
+  /** P3.11 (row 62): the extraArgs field for Codex. Each word is one launch
+   *  argument, after every flag the app sets. One rule (codexExtraArgsProblem,
+   *  src/shared/extra-args.ts) in the dialog, which says why and holds Save
+   *  back, and at launch, which drops a refused value: the shared charset, and
+   *  no flag the app sets (model, -c settings, permissions, working folder,
+   *  resume), none that changes the account, provider or endpoint, and no word
+   *  Codex reads as one of its commands. */
+  extraArgs?: string
+  /** P3.12 (row 31): the per-config indexing opt-out, as
+   *  ClaudeOptions.loggingEnabled. DEFAULT-TRUE (undefined / true = on); when
+   *  false the app does not index this config's Codex conversations for the
+   *  Logs viewer. Codex keeps them in its account's sessions folder either way. */
+  loggingEnabled?: boolean
 }
 
 // ── Session Persistence ──
@@ -292,6 +308,17 @@ export interface SessionState {
    *  on files written before this feature; round-trips untouched through the
    *  main-side save/load (only `sessions` is migrated). */
   detachedRemotes?: DetachedRemote[]
+  /** P3.6: Codex conversations whose claim was not certain (two new sessions
+   *  in one folder), written by main at every save and read back by main at
+   *  load, so a Switch account never carries one after a relaunch either. */
+  codexUncertainConversations?: string[]
+  /** P3.7: each conversation's running time (main's
+   *  conversation-running-time.ts), written by main at every save and read
+   *  back by main at load, schema-checked, so a session's Duration carries on
+   *  across a relaunch. `gaps`: spans whose completed turns are not in `ms`
+   *  yet (the next run counts them); `gapMs` (P3.16): the part of those
+   *  turns a run had counted. */
+  conversationRunningTimes?: Array<{ id: string; ms: number; until: number; gaps?: Array<{ from: number; to: number }>; gapMs?: number }>
 }
 
 /**
@@ -441,11 +468,65 @@ export interface CloudAgent {
   profileId?: string
   /** Resolved account email at dispatch time. Drives the card label + account filter. */
   accountEmail?: string
+  /** The assistant this agent runs on (WP2 PR 4, P4.5, row 57). Absent on
+   *  every agent saved before PR 4, all of which ran Claude Code, so the field
+   *  is optional rather than defaulted and readers MUST treat undefined as
+   *  'claude'. */
+  provider?: ProviderId
+  /** A Codex agent's account (P4.5): the opaque registry id (`acct-`) of the
+   *  account its launch was prepared on, never a path or a credential. A
+   *  Claude Code agent names its account by `profileId`. A launch
+   *  acknowledgement is never stored. */
+  providerAccountId?: string
+  /** A Codex agent's model and effort, from the config it was started from,
+   *  kept so a Retry runs as the first run did. */
+  codexOptions?: CloudAgentCodexOptions
   output: string
   cost?: number
   duration?: number
   tokenUsage?: { inputTokens: number; outputTokens: number }
   error?: string
+}
+
+/** A Codex agent's model and reasoning effort (P4.5): its config's, as an
+ *  interactive launch of that config passes them. */
+export type CloudAgentCodexOptions = Pick<CodexOptions, 'model' | 'reasoningEffort'>
+
+/** What the New agent dialog sends (`cloudAgent:dispatch`, P4.5), held in
+ *  main to a strict schema (ipc/cloud-agent-handlers.ts): the provider, and
+ *  only that provider's own fields. */
+export interface CloudAgentDispatchParams {
+  name: string
+  description: string
+  projectPath: string
+  configId?: string
+  /** Absent means Claude Code. */
+  provider?: ProviderId
+  /** Claude Code: the account profile. */
+  profileId?: string
+  /** Claude Code: a pinned CLI version. */
+  legacyVersion?: { enabled: boolean; version: string }
+  /** Per run, never kept: Claude Code skips its permission prompts; a Codex
+   *  agent runs as Codex's Auto preset (section 10, question 7, default A). */
+  skipPermissions?: boolean
+  /** Codex: the account (an `acct-` id); absent, the provider default. */
+  providerAccountId?: string
+  /** Codex: this one launch may use the named account's unverified sign-in. */
+  acknowledgeRealmOnly?: true
+  /** Codex: the config's model and effort. */
+  codexOptions?: CloudAgentCodexOptions
+}
+
+/** A Retry's options (P4.5): this one retry may use the agent's unverified
+ *  sign-in, confirmed just before it. Never stored. */
+export interface CloudAgentRetryOptions {
+  acknowledgeRealmOnly?: true
+}
+
+/** A dispatch or retry main did not take (P4.5): not from the app's window,
+ *  or not a request it reads. Answered, never thrown; the page shows it. */
+export interface CloudAgentRequestRejected {
+  rejected: string
 }
 
 // ── Insights ──
@@ -459,6 +540,10 @@ export interface InsightsRun {
   /** Account this run was generated for (multi-account). Undefined = default. */
   accountEmail?: string
   profileId?: string
+  /** The assistant whose sessions this run reports on (WP2 PR 4, P4.7, row
+   *  68). Absent on every run written before PR 4, all of them Claude Code's,
+   *  so readers MUST treat undefined as 'claude'. */
+  provider?: ProviderId
   /** Run completed but KPI extraction failed: report is viewable, no kpis.json. */
   kpisUnavailable?: boolean
   /**
@@ -531,6 +616,86 @@ export interface InsightsData {
 
 /** Alias for backward compatibility */
 export type KpiData = InsightsData
+
+// -- WP2 PR 4 shared scaffold (S0; completion plan 9.3 item 1) --
+//
+// The shapes the PR 4 channels carry, landed before any lane starts. The
+// handlers that produce and check them come with the phase each one serves.
+
+/** Why the submit primitive did not deliver a text into a session's prompt
+ *  (completion plan P4.1; P4.3 reuses it). What the primitive does before
+ *  it reports one (a take-back, or no further key) is P4.1's rule.
+ *  - `busy-timeout`: no ready, empty prompt within the wait's bound (a turn
+ *    still running);
+ *  - `prompt-on-screen`: a trust prompt, a setup menu or an approval form
+ *    was on screen, before the write or on the re-read after it;
+ *  - `too-tall`: the text is visible but taller than the prompt at this
+ *    pane size, so it cannot be confirmed on screen;
+ *  - `not-drawn`: the text was never drawn within its bound;
+ *  - `refused-text`: the text holds a control character or a character the
+ *    prompt cannot take (outside the Basic Multilingual Plane);
+ *  - `session-gone`: the session ended or was replaced meanwhile. */
+export type SubmitNotDeliveredReason = 'busy-timeout' | 'prompt-on-screen' | 'too-tall' | 'not-drawn' | 'refused-text' | 'session-gone'
+
+/** The submit primitive's answer: typed and submitted, confirmed on screen,
+ *  or not delivered and why. */
+export type SubmitTextResult = { delivered: true } | { delivered: false; reason: SubmitNotDeliveredReason }
+
+/** Ask Conductor's one-line notices from main, drawn in the dock (P4.3):
+ *  `removed` counts the characters taken out of a question before it was
+ *  typed, because the prompt would have dropped them (question 6, default
+ *  A); `not-delivered` says the question was not sent and why, and the dock
+ *  keeps the question. */
+export type AskConductorNotice =
+  | { sessionId: string; kind: 'removed'; count: number }
+  | { sessionId: string; kind: 'not-delivered'; reason: SubmitNotDeliveredReason }
+
+/** A queued Agent Canvas marker the submit primitive could not deliver
+ *  (P4.1): the line as the canvas filed it, so the canvas can show it on the
+ *  review it belongs to. */
+export interface CanvasMarkerUndelivered {
+  sessionId: string
+  canvasId: string
+  line: string
+  reason: SubmitNotDeliveredReason
+}
+
+/** Whether a session's launch had the Agent Canvas and vision skills in its
+ *  account's own skills folder (P4.1, question 5, answered C), where they
+ *  reach every session of that account however it is started. `full`: all
+ *  of them. `tools-only`: the tools came without the skills named in
+ *  `skills`, and why, for the canvas page's one line:
+ *  - `own-skill`: a skill or file of that name there is not the app's (in
+ *    the user's own Codex folder, the user's own skill), which the app never
+ *    replaces;
+ *  - `skills-not-staged`: the skills could not be put in place (the folder
+ *    or a skill folder is a link, a write failed, the app has no record of
+ *    the folder to write into, or the account's folder is not one the app
+ *    writes into). */
+export type CanvasSessionGuidance =
+  | { guidance: 'full' }
+  | { guidance: 'tools-only'; reason: 'own-skill' | 'skills-not-staged'; skills: string[] }
+
+/** One of a provider account's own log folders (P4.4, row 56): `log`, the
+ *  account's log folder, where the sign-in log always lands; `log-dir`, the
+ *  folder its settings name for the session log, when they name one. Kinds,
+ *  never paths: main resolves the folder from the account id. */
+export type AccountLogFolderKind = 'log' | 'log-dir'
+
+/** The log folders a provider account has, by kind. */
+export interface AccountLogFolders {
+  accountId: string
+  folders: AccountLogFolderKind[]
+}
+
+/** Showing one (the account's log folder opened; a log_dir revealed in the
+ *  folder that holds it, never opened): refused for an unknown account, a
+ *  kind the account does not have, or a folder main will not show (not a
+ *  local directory, or a link or junction), and not found when the folder is
+ *  not there. */
+export type AccountLogFolderOpenResult =
+  | { ok: true }
+  | { ok: false; code: 'unknown-account' | 'not-set' | 'refused' | 'not-found' }
 
 // ── Cross-account insights (aggregate runs) ──
 // A cross-account roll-up keeps NUMBERS and PROSE strictly separate: every value

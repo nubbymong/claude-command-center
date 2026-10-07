@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useState } from 'react'
 import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { onlyAssistantInUse, type OnlyAssistant } from '../onboarding/provider-choice'
 
 // Anchored coach-mark tour over the LIVE app (not a modal wizard). Each step
 // spotlights a real element by a data-tour selector and floats a callout beside
@@ -9,15 +11,43 @@ import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
 interface TourStep {
   selector: string | null // null => centered welcome/handoff card
   title: string
-  body: string
+  /** A function where the copy names the assistants in use (P3.4, row 14):
+   *  given the one in use when only one is (onlyAssistantInUse). */
+  body: string | ((only: OnlyAssistant) => string)
   cta?: string // overrides "Next" on this step
+}
+
+function assistantsInUse(only: OnlyAssistant): string {
+  return only === 'claude' ? 'Claude Code' : only === 'codex' ? 'Codex' : 'Claude Code and Codex'
+}
+
+/** Where a saved config's sessions run. Codex runs on this computer only in
+ *  this release, and SSH (plain or persistent) is for Claude. */
+const SSH_KINDS = 'over SSH — plain, or persistent so a dropped link does not kill it'
+function whereSessionsRun(only: OnlyAssistant): string {
+  if (only === 'codex') return 'Codex, on this computer'
+  if (only === 'claude') return `Claude, here or on another machine ${SSH_KINDS}`
+  return `Claude or Codex here, or Claude on another machine ${SSH_KINDS}`
+}
+
+/** What the canvas does: the same card whichever assistants are in use (WP2
+ *  PR 4, P4.1 brought the Agent Canvas to Codex sessions). */
+const CANVAS_REVIEW = 'Your agent renders a mockup, a plan, or the site it just built, and you review it by pointing: click an element to leave a note, draw over it, then decide — approve that version, or send it back for another round. Testing mode goes further — click through a running build and every note saves the screen, the page state and how you got there. A small dot on the button means there is unfinished canvas work anyone here can pick up.'
+const CANVAS_CARD = `Every session has a Canvas button beside Snap. ${CANVAS_REVIEW}`
+
+/** Ask Conductor runs on the assistant in use (WP2 PR 4, P4.3, row 53): the
+ *  card names that assistant when only one is on; with both on it runs on the
+ *  one chosen in Settings, so the card names neither. */
+function helpCard(only: OnlyAssistant): string {
+  const session = only === 'codex' ? 'a Codex session' : only === 'claude' ? 'a Claude session' : 'a session'
+  return `The Feature Guide explains every feature in depth whenever you want it and can hand your question to Ask Conductor, ${session} that knows the app.`
 }
 
 const STEPS: TourStep[] = [
   {
     selector: null,
     title: 'This is your workbench',
-    body: 'AI Code Conductor runs your Claude Code and Codex sessions side by side. A quick look at where things live, then we’ll start your first session.',
+    body: (only) => `AI Code Conductor runs your ${assistantsInUse(only)} sessions side by side. A quick look at where things live, then we’ll start your first session.`,
   },
   {
     selector: '[data-tour="nav-rail"]',
@@ -31,7 +61,7 @@ const STEPS: TourStep[] = [
     // silently skip the step that explains the app's core concept.
     selector: '[data-tour="new-config"]',
     title: 'Saved configs live here',
-    body: 'The left panel has two modes — Saved is your launcher, Running is your live sessions. A saved config is a reusable launcher: project folder, model, account. Open the Saved tab, press "+ New" and pick Config to create one, then start a session from it whenever you want (Claude or Codex here, or Claude on another machine over SSH — plain, or persistent so a dropped link does not kill it).',
+    body: (only) => `The left panel has two modes — Saved is your launcher, Running is your live sessions. A saved config is a reusable launcher: project folder, model, account. Open the Saved tab, press "+ New" and pick Config to create one, then start a session from it whenever you want (${whereSessionsRun(only)}).`,
   },
   {
     // The Agent Canvas had no step at all, which made the app's second-largest
@@ -41,7 +71,7 @@ const STEPS: TourStep[] = [
     // anchored step relies on. It earns its place the moment a session exists.
     selector: '[data-tour="canvas-button"]',
     title: 'Review what your agent builds',
-    body: 'Every session has a Canvas button beside Snap. Your agent renders a mockup, a plan, or the site it just built, and you review it by pointing: click an element to leave a note, draw over it, then decide — approve that version, or send it back for another round. Testing mode goes further — click through a running build and every note saves the screen, the page state and how you got there. A small dot on the button means there is unfinished canvas work anyone here can pick up. Claude sessions draw on it; a Codex agent cannot put work there yet.',
+    body: CANVAS_CARD,
   },
   {
     // Anchored on data-tour, not aria-label: the nav button's label is dynamic
@@ -54,7 +84,7 @@ const STEPS: TourStep[] = [
   {
     selector: '[data-tour="help-button"]',
     title: 'Help lives here',
-    body: 'The Feature Guide explains every feature in depth whenever you want it and, with Claude Code on, can hand your question to Ask Conductor, a Claude session that knows the app.',
+    body: helpCard,
   },
   {
     selector: null,
@@ -92,6 +122,8 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
   useOccludesNativePanes()
   const [i, setI] = useState(0)
   const step = STEPS[i]
+  const only = useSettingsStore((s) => onlyAssistantInUse(s.settings))
+  const body = typeof step.body === 'function' ? step.body(only) : step.body
   const rect = useAnchorRect(step.selector)
   const last = i === STEPS.length - 1
 
@@ -193,7 +225,7 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
         </div>
         <div style={{ fontSize: 16, fontWeight: 650, marginBottom: 6 }}>{step.title}</div>
         <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text-secondary, #a8b2c0)', marginBottom: 14 }}>
-          {step.body}
+          {body}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button

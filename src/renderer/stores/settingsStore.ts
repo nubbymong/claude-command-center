@@ -3,6 +3,7 @@ import { saveConfigNow } from '../utils/config-saver'
 import { DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { migrateTypography } from './migrateTypography'
 import { parseFooterHiddenEntry } from '../../shared/usage-labels'
+import type { AskConductorProvider } from '../../shared/ask-conductor-provider'
 
 export type StatusLineFont = 'sans' | 'mono'
 
@@ -218,7 +219,7 @@ export interface AppSettings {
    *  (main ignores it otherwise, and hydrate drops it: migrateCodexAnswer).
    *  Absent = not answered yet: Codex is not set up, and main refuses its
    *  launches; false disables Codex surfaces incl. the codex_review built-in
-   *  tool. Codex support is Beta. */
+   *  tool. */
   codexEnabled?: boolean
   /** The user has answered whether they use Codex, in this model (owner
    *  decision 2026-09-26): written with `codexEnabled` by every way of
@@ -277,6 +278,14 @@ export interface AppSettings {
    *  an Ask session that is already open, because a display toggle must not
    *  destroy a running session. */
   showAskConductor: boolean
+  /** Which assistant Ask Conductor runs on while Claude Code and Codex are
+   *  both on (owner decision 2026-09-27, OD27 M4, option B; row 53, WP2 PR 4
+   *  P4.3): the Settings, General row "Ask Conductor runs on", shown only
+   *  while both are on; Sentinel's analysis follows it (P3.9). Claude Code by
+   *  default; turning a provider off never rewrites it. Read it only through
+   *  `askConductorProviderChoice` (shared/ask-conductor-provider.ts), which
+   *  reads anything but 'codex' as Claude Code. */
+  askConductorProvider?: AskConductorProvider
   /** #362: how the sidebar's Saved Configs panel lays configs out. 'list' is
    *  the sections-and-groups list that shipped first; 'cards' and 'find' are
    *  the two views from the design pass (both search with auto-complete, both
@@ -370,6 +379,9 @@ export interface AppSettings {
    *  written. Set true (with or without disabling logging) to suppress the
    *  prompt permanently. */
   loggingConsentSeen?: boolean
+  /** P3.12 round 1 (B5): the version of the notice seen (LOGGING_CONSENT_VERSION
+   *  in utils/logging-consent.ts); absent = the earlier notice (1). */
+  loggingConsentVersion?: number
   /** True once the legacy file logs have been imported into SQLite (Phase 2b). */
   legacyLogsMigrated?: boolean
   /** True once the one-time "legacy logs detected" surfacing has been shown. */
@@ -423,6 +435,11 @@ export interface AppSettings {
    *  the frozen global hangs at auth or carries stale usage limits). Switchable
    *  in Settings when the chosen account hits its usage limit. */
   sentinelAccountProfileId?: string | null
+  /** P3.9: the Codex account Sentinel's analysis runs under when it runs on
+   *  Codex (the provider in use, or the one Ask Conductor runs on with both
+   *  on). null/absent = the account Codex reviews run on; one that can no
+   *  longer run falls back to it, and the failure message says so. */
+  sentinelCodexAccountId?: string | null
   /** Session Watchdog (#235). Opt-in, default off — see WatchdogSettings. */
   watchdog?: WatchdogSettings
 }
@@ -456,6 +473,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updateChannel: 'stable' as const,
   showTips: true,
   showAskConductor: true,
+  askConductorProvider: 'claude',
   hooksEnabled: true,
   hooksPort: 19334,
   theme: 'dark',

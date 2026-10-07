@@ -309,6 +309,10 @@ export interface ToolCallFileSignal {
   filePath: string
   at: number
   tool: 'Read' | 'Write' | 'Edit' | 'NotebookEdit' | 'MultiEdit' | 'Bash'
+  /** P3.12 (W7, X6): the key the file is kept once by (its path relative to
+   *  the session's folder, case-folded for a Windows folder), unique in the
+   *  list; the list keys its rows on it. */
+  pathKey?: string
 }
 
 export interface TranscriptReference {
@@ -329,6 +333,9 @@ export interface SessionContextResult {
   otherSignals: Array<{ source: 'branch' | 'transcript' | 'pr-body'; number: number; repo?: string }>
   recentFiles: ToolCallFileSignal[]
   activePR?: { number: number; state: 'open' | 'closed' | 'merged'; draft: boolean }
+  /** P3.12 round 1 (A4): the session's assistant, which the recent-files
+   *  heading names. */
+  assistant?: 'claude' | 'codex'
 }
 
 export interface LocalGitState {

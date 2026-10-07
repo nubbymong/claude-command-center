@@ -1,7 +1,9 @@
 // WP2 commit 6 (F4, top): one row per provider the main process knows,
 // with its machine status and the on/off switch. At least one provider
 // always stays on; the main process enforces that and this card says so
-// under the switch that tried. A provider whose CLI was not found, could not
+// under the switch that tried. A switch-off refused because the provider is
+// in use says how much, following the count each snapshot main publishes
+// carries until nothing holds it. A provider whose CLI was not found, could not
 // be checked, is too old, or has not been looked for yet gets "Check again"
 // (6e, 6g): a new discovery, which is also the executable later launches and
 // sign-ins run. The same row shows the provider's own install or update
@@ -15,6 +17,7 @@ import ToggleSwitch from '../../github/config/ToggleSwitch'
 import { Section } from '../../SettingsPage'
 import { Pill, StatusText, ErrorLine, MutedLine, RowButton } from './accounts-ui'
 import { showHelloCodexReplay, codexSetUp } from '../../../onboarding/hello-codex'
+import { tryGetRendererProvider } from '../../../providers/core'
 
 /** The user has not said whether they use the provider (Codex after an
  *  update, until they answer: owner decision 2026-09-26). The row never says
@@ -118,14 +121,27 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
   const [busy, setBusy] = useState(false)
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // A switch-off refused because something holds the provider: how many, as
+  // main counted at the refusal and then with every snapshot after it. The
+  // line goes once nothing holds the provider.
+  const [inUse, setInUse] = useState<number | null>(null)
   const status = providerStatus(p)
   const purpose = installPurpose(p)
   const codexReady = useProviderAccountsStore((s) => codexSetUp(s.snapshot))
+
+  // Each new snapshot carries main's count afresh (p.inUse, always set), and
+  // after a refusal main publishes one each time the count moves: the line
+  // follows them and reads no snapshot of its own.
+  useEffect(() => {
+    const live = p.inUse
+    setInUse((n) => (n === null ? null : live > 0 ? live : null))
+  }, [p])
 
   // The result arrives with the snapshot main pushes after the check.
   const checkAgain = async () => {
     setChecking(true)
     setError(null)
+    setInUse(null)
     const r = await providerAccountActions.discover(p.providerId)
     setChecking(false)
     if (!r.ok) setError(r.message)
@@ -138,6 +154,7 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
   const toggle = async () => {
     setBusy(true)
     setError(null)
+    setInUse(null)
     // Main first (its refusals stand), then the saved setting (and, for a
     // provider not set up, the answer with it: saveProviderSwitch).
     const r = await providerAccountActions.switchProvider(p.providerId, !on)
@@ -147,9 +164,10 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
     else if (r.code === 'consumers' && typeof r.consumers === 'number' && r.consumers > 0) {
       // Everything holding the provider (sessions, reviews, sign-ins,
       // operations): never called sessions.
-      setError(`${p.displayName} is in use (${r.consumers}).`)
+      setInUse(r.consumers)
     } else setError(r.message)
   }
+  const shown = error ?? (inUse !== null ? `${p.displayName} is in use (${inUse}).` : null)
 
   return (
     <div className={`flex items-start gap-3 ${first ? 'pb-2.5' : 'py-2.5'}`} style={first ? undefined : { borderTop: '1px solid var(--border-subtle)' }} data-testid={`provider-row-${p.providerId}`}>
@@ -157,7 +175,8 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
           {p.displayName}
-          {p.providerId === 'codex' && <Pill tone="beta" testId={`provider-beta-${p.providerId}`}>Beta</Pill>}
+          {/* Labelled with the provider's maturity (WP1.21), read from its descriptor. */}
+          {tryGetRendererProvider(p.providerId)?.maturity === 'beta' && <Pill tone="beta" testId={`provider-beta-${p.providerId}`}>Beta</Pill>}
         </div>
         <StatusText tone={status.tone} testId={`provider-status-${p.providerId}`}>{status.text}</StatusText>
         {unset && (
@@ -194,7 +213,7 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
             disabled={busy}
           />
         </div>
-        {error && <ErrorLine testId={`provider-error-${p.providerId}`}>{error}</ErrorLine>}
+        {shown && <ErrorLine testId={`provider-error-${p.providerId}`}>{shown}</ErrorLine>}
       </div>
     </div>
   )

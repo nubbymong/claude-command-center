@@ -15,3 +15,11 @@ const PROFILE_ID_RE = /^[a-z0-9][a-z0-9-]*$/
 export function isValidProfileId(id: unknown): id is string {
   return typeof id === 'string' && id.length > 0 && id.length <= 128 && PROFILE_ID_RE.test(id)
 }
+
+// Where profile ids are compared without case (a folder name read back from a
+// Windows path), only the ASCII letters A-Z are lowered. A profile id is
+// ASCII, so a name holding any other letter is never read as one (Unicode
+// lowering would map KELVIN SIGN to k, for example; this never does).
+export function lowerAsciiLetters(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32))
+}

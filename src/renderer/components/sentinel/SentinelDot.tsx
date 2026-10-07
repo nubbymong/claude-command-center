@@ -11,7 +11,10 @@ import { isSentinelEnabled } from '../../../shared/sentinel-enabled'
 // (info / managed-only / mechanisms CCC doesn't use). It is a calm state — the
 // alarming colours (amber 'findings', red 'high') are reserved for findings that
 // would actually affect this install, so the colour means what the user expects.
-export type DotState = 'hidden' | 'ok' | 'analyzing' | 'reviewed' | 'findings' | 'high'
+// 'incomplete' (PR 4, owner answers review) = the last analysis failed (not a
+// refusal, a carried problem or unmatched findings) and no finding reaches the
+// user: the chip says so, in the same calm grey, instead of "no issues found".
+export type DotState = 'hidden' | 'ok' | 'analyzing' | 'reviewed' | 'incomplete' | 'findings' | 'high'
 
 export function deriveDotState(
   enabled: boolean,
@@ -24,8 +27,26 @@ export function deriveDotState(
   const reaching = open.filter((f) => findingReachesUser(f, ctx))
   if (reaching.some((f) => f.severity === 'high')) return 'high'
   if (reaching.length) return 'findings'
+  if (snap.lastAnalysisError && snap.lastAnalysisFailed === true) return 'incomplete'
   if (open.length) return 'reviewed'
   return 'ok'
+}
+
+/** The chip's tooltip for a state (exported for unit tests). */
+export function dotTooltip(state: DotState, snap: SentinelStateSnapshot | null, ctx: ReachabilityContext = {}): string {
+  const openFindings = snap ? snap.findings.filter((f) => f.status === 'open') : []
+  const openCount = openFindings.length
+  // The count that drives the alarm: findings that actually reach this install.
+  const reachingCount = openFindings.filter((fnd) => findingReachesUser(fnd, ctx)).length
+  return state === 'analyzing'
+    ? snap?.analyzingProvider === 'codex' ? 'Sentinel: analyzing the Codex update...' : 'Sentinel: analyzing Claude Code update\u2026'
+    : state === 'high' || state === 'findings'
+    ? `Sentinel: ${reachingCount} change${reachingCount !== 1 ? 's' : ''} affecting your setup`
+    : state === 'reviewed'
+    ? `Sentinel: ${openCount} change${openCount !== 1 ? 's' : ''} reviewed \u2014 none affect your setup`
+    : state === 'incomplete'
+    ? 'Sentinel: the last analysis did not complete. Open for details.'
+    : 'Sentinel: no issues found'
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -39,13 +60,9 @@ export default function SentinelDot() {
 
   if (state === 'hidden') return null
 
-  const openFindings = snap ? snap.findings.filter((f) => f.status === 'open') : []
-  const openCount = openFindings.length
-  // The count that drives the alarm — findings that actually reach this install.
-  const reachingCount = openFindings.filter((fnd) => findingReachesUser(fnd)).length
-
-  // Calm grey for 'ok' AND 'reviewed' (findings exist but none reach the user).
-  // Amber/red are reserved for findings that would actually affect this setup.
+  // Calm grey for 'ok', 'reviewed' (findings exist but none reach the user) and
+  // 'incomplete'. Amber/red are reserved for findings that would actually
+  // affect this setup.
   const dotColor =
     state === 'analyzing'
       ? 'bg-yellow animate-pulse'
@@ -53,16 +70,9 @@ export default function SentinelDot() {
       ? 'bg-red'
       : state === 'findings'
       ? 'bg-yellow'
-      : 'bg-overlay0' // ok + reviewed
+      : 'bg-overlay0' // ok + reviewed + incomplete
 
-  const tooltip =
-    state === 'analyzing'
-      ? 'Sentinel: analyzing Claude Code update…'
-      : state === 'high' || state === 'findings'
-      ? `Sentinel: ${reachingCount} change${reachingCount !== 1 ? 's' : ''} affecting your setup`
-      : state === 'reviewed'
-      ? `Sentinel: ${openCount} change${openCount !== 1 ? 's' : ''} reviewed — none affect your setup`
-      : 'Sentinel: no issues found'
+  const tooltip = dotTooltip(state, snap)
 
   return (
     <button

@@ -1,6 +1,6 @@
 // @vitest-environment node
 //
-// Re-attack r4, MAJOR 1 (ADR-023): the EXACT lines a macOS realm shell-only
+// Re-attack r4, MAJOR 1 (ADR-024): the EXACT lines a macOS realm shell-only
 // session types -- the base `cd ...; clear` line, then the `claude` pin as
 // separate lines -- run through a REAL interactive bash and dash whose rc
 // defines `alias claude=...`. Before the fix the one-line pin was a syntax

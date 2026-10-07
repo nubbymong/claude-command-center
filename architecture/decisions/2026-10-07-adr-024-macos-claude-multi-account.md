@@ -1,4 +1,4 @@
-# ADR-023: More than one Claude account on macOS, behind an experimental setting
+# ADR-024: More than one Claude account on macOS, behind an experimental setting
 
 - Status: Accepted
 - Date: 2026-10-07
@@ -126,6 +126,15 @@ decisions; it does not claim the owner's ratification beyond that record.
   lookup runs in the background; a launch within 30 seconds of the TTL
   counts as pending. Output with no JSON object (or over 1 MB) is refused as
   unreadable, with its own message.
+- **After the merge with beta 1a5e9de5 (WP2 PRs 3 and 4).** This ADR was
+  first written as ADR-023; beta took that number (Codex credits), so it is
+  ADR-024. Beta's provider-neutral Claude sign-in status and sign-out run
+  "the executable discovery proved" through a runner; on the macOS realm the
+  composition root checks the verdict first and hands the runner the verified
+  binary instead (`claudeAuthExecutable`). A non-primary realm profile's
+  sign-out does not ask for the computer-sign-in acknowledgement: it reaches
+  only that profile's own item. With the setting off, a non-primary profile's
+  sign-out on macOS is refused at the choke point (item 3), as its sessions are.
 - **Open items.** Pending refreshed tokens kept in memory are lost on an app
   exit before a locked Keychain answers. A command the user types in a realm
   shell other than `claude` itself (an absolute path to another CLI, or a

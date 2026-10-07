@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { MemoryFile, MemoryProject, MemoryScanResult } from '../../shared/types'
+import type { MemoryFile, MemoryProject } from '../../shared/types'
+import type { AccountMemories, AccountMemoryFile, MemoryScanWithAccounts } from '../../shared/account-memories'
 
 // NOTE: the scanner still emits `warnings` in MemoryScanResult (oversized /
 // missing MEMORY.md), but the rebuilt page derives index health from
@@ -9,6 +10,9 @@ interface MemoryState {
   // Data
   projects: MemoryProject[]
   memories: MemoryFile[]
+  /** WP2 PR 4, P4.4: each provider account's own memories (an account
+   *  folder's memories), apart from Claude's shared store above. */
+  accountMemories: AccountMemories[]
   totalSize: number
   scannedAt: number
 
@@ -41,9 +45,19 @@ interface MemoryState {
   setSort: (k: 'modified' | 'size' | 'name') => void
 }
 
+/** A memory by id: Claude's store first, then the accounts' own files. */
+export function findMemory(
+  state: { memories: MemoryFile[]; accountMemories?: AccountMemories[] },
+  id: string,
+): MemoryFile | AccountMemoryFile | undefined {
+  return state.memories.find((m) => m.id === id)
+    ?? (state.accountMemories ?? []).flatMap((a) => a.files).find((m) => m.id === id)
+}
+
 export const useMemoryStore = create<MemoryState>((set, get) => ({
   projects: [],
   memories: [],
+  accountMemories: [],
   totalSize: 0,
   scannedAt: 0,
 
@@ -63,10 +77,11 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
   scan: async () => {
     set({ loading: true, error: null })
     try {
-      const result: MemoryScanResult = await window.electronAPI.memory.scan()
+      const result: MemoryScanWithAccounts = await window.electronAPI.memory.scan()
       set({
         projects: result.projects,
         memories: result.memories,
+        accountMemories: Array.isArray(result.accountMemories) ? result.accountMemories : [],
         totalSize: result.totalSize,
         scannedAt: result.scannedAt,
         loading: false,
@@ -91,7 +106,7 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
       set({ selectedMemoryId: null, selectedContent: null })
       return
     }
-    const mem = get().memories.find(m => m.id === id)
+    const mem = findMemory(get(), id)
     if (!mem) return
     set({ selectedMemoryId: id, selectedContent: null })
     try {
@@ -108,7 +123,7 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
   setSearch: (query) => set({ searchQuery: query }),
 
   deleteMemory: async (id) => {
-    const mem = get().memories.find(m => m.id === id)
+    const mem = findMemory(get(), id)
     if (!mem) return
     try {
       await window.electronAPI.memory.delete(mem.path)
@@ -121,6 +136,8 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
   },
 
   writeFrontmatter: async (id, frontmatter) => {
+    // Claude's store only: an account's memory files carry a heading, not
+    // frontmatter (P4.4), and main refuses their paths here.
     const mem = get().memories.find(m => m.id === id)
     if (!mem) return
     try {

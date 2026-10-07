@@ -9,7 +9,7 @@
 //
 // PURE: the real Codex package on a fake CLI, in-memory everything.
 import { describe, it, expect } from 'vitest'
-import { ConsumerLeaseRegistry } from '../../src/main/providers/core'
+import { ConsumerLeaseRegistry, LAUNCH_LEASE_KINDS } from '../../src/main/providers/core'
 import { harness, addCodexAccount, MemoryPort, KEY, managedHome } from './accounts-harness'
 import type { ProviderPreference } from '../../src/shared/providers'
 
@@ -22,7 +22,7 @@ describe('the lease registry (WP1.46, WP1.61)', () => {
     r.add('acct-b', 'codex', { kind: 'session', ownerId: 's3' })
     expect([a.ok, b.ok]).toEqual([true, true])
     expect([r.count('acct-a'), r.runningSessions('acct-a'), r.count('acct-b'), r.countForProvider('codex'), r.countForProvider('claude')]).toEqual([3, 2, 1, 4, 0])
-    expect(r.describe('acct-a')).toEqual({ session: 2, review: 0, 'sign-in': 1, operation: 0 })
+    expect(r.describe('acct-a')).toEqual({ session: 2, review: 0, background: 0, 'sign-in': 1, operation: 0 })
     // The same owner again is the same lease, counted once.
     const again = r.add('acct-a', 'codex', { kind: 'session', ownerId: 's1' })
     expect(again).toMatchObject({ ok: true, existing: true })
@@ -72,7 +72,7 @@ describe('the lease registry (WP1.46, WP1.61)', () => {
     r.add('acct-a', 'codex', { kind: 'sign-in', ownerId: 'y', webContentsId: 8 })
     r.add('acct-a', 'codex', { kind: 'session', ownerId: 's1' })
     expect(r.releaseForRenderer(7)).toBe(1)
-    expect(r.describe('acct-a')).toEqual({ session: 1, review: 0, 'sign-in': 1, operation: 0 })
+    expect(r.describe('acct-a')).toEqual({ session: 1, review: 0, background: 0, 'sign-in': 1, operation: 0 })
   })
 })
 
@@ -211,15 +211,31 @@ describe('leases through the accounts service (WP1.16, WP1.46)', () => {
   })
 })
 
+describe('background runs: a third launch kind (WP2 PR 4 S0, for P4.5 and P4.7)', () => {
+  it('is a launch kind, counted apart from sessions and reviews, held by no session, and released by owner', () => {
+    expect(LAUNCH_LEASE_KINDS).toEqual(['session', 'review', 'background'])
+    const r = new ConsumerLeaseRegistry()
+    r.add('acct-a', 'codex', { kind: 'session', ownerId: 'x', sessionId: 's1' })
+    r.add('acct-a', 'codex', { kind: 'background', ownerId: 'agent-1' })
+    expect(r.describe('acct-a')).toEqual({ session: 1, review: 0, background: 1, 'sign-in': 0, operation: 0 })
+    expect([r.count('acct-a'), r.runningSessions('acct-a'), r.countKind('acct-a', 'background'), r.unattributed('acct-a')]).toEqual([2, 1, 1, 1])
+    expect(r.sessionsHolding('acct-a')).toEqual(['s1'])
+    // A background run holds the account like any consumer: no exclusive hold while it runs.
+    expect(r.hold('acct-a', 'codex')).toBeNull()
+    expect(r.releaseOwner('background', 'agent-1')).toBe(true)
+    expect(r.describe('acct-a')).toEqual({ session: 1, review: 0, background: 0, 'sign-in': 0, operation: 0 })
+  })
+})
+
 describe('reviewer invocations: one lease API with sessions (plan: provider review through MCP)', () => {
   it('the registry counts review leases apart from sessions, and releases them by owner', () => {
     const r = new ConsumerLeaseRegistry()
     r.add('acct-a', 'codex', { kind: 'session', ownerId: 'x' })
     r.add('acct-a', 'codex', { kind: 'review', ownerId: 'x' })
-    expect(r.describe('acct-a')).toEqual({ session: 1, review: 1, 'sign-in': 0, operation: 0 })
+    expect(r.describe('acct-a')).toEqual({ session: 1, review: 1, background: 0, 'sign-in': 0, operation: 0 })
     expect([r.count('acct-a'), r.runningSessions('acct-a'), r.countKind('acct-a', 'review')]).toEqual([2, 1, 1])
     expect(r.releaseOwner('review', 'x')).toBe(true)
-    expect(r.describe('acct-a')).toEqual({ session: 1, review: 0, 'sign-in': 0, operation: 0 })
+    expect(r.describe('acct-a')).toEqual({ session: 1, review: 0, background: 0, 'sign-in': 0, operation: 0 })
   })
 
   it('a review naming no account runs on the reviewer default, else the provider default; a named one runs on that one', async () => {
@@ -534,3 +550,38 @@ async function addCodexAccountWhileOn(h: Awaited<ReturnType<typeof harness>>, on
   off()
   return id
 }
+
+describe('the sessions a refusal names (P3.2, design 5.3)', () => {
+  it('lists each app session whose session or review holds the account once; sign-ins and operations are only counted', () => {
+    const r = new ConsumerLeaseRegistry()
+    r.add('acct-a', 'codex', { kind: 'session', ownerId: 'tab-1:1', sessionId: 'tab-1' })
+    r.add('acct-a', 'codex', { kind: 'review', ownerId: 'review:tab-1:1', sessionId: 'tab-1' })
+    r.add('acct-a', 'codex', { kind: 'review', ownerId: 'review:tab-2:2', sessionId: 'tab-2' })
+    r.add('acct-a', 'codex', { kind: 'sign-in', ownerId: 'acct-a', sessionId: 'tab-9' })
+    r.add('acct-a', 'codex', { kind: 'operation', ownerId: 'op-1' })
+    r.add('acct-a', 'codex', { kind: 'session', ownerId: 'no-session' })
+    r.add('acct-b', 'codex', { kind: 'session', ownerId: 'tab-3:1', sessionId: 'tab-3' })
+    expect(r.sessionsHolding('acct-a').sort()).toEqual(['tab-1', 'tab-2'])
+    expect(r.count('acct-a')).toBe(6)
+    r.releaseOwner('session', 'tab-1:1')
+    expect(r.sessionsHolding('acct-a').sort()).toEqual(['tab-1', 'tab-2'])
+    r.releaseOwner('review', 'review:tab-1:1')
+    expect(r.sessionsHolding('acct-a')).toEqual(['tab-2'])
+    expect(r.sessionsHolding('acct-none')).toEqual([])
+  })
+})
+
+describe('what no named session accounts for (P3.2 review round 3: "and N more")', () => {
+  it('a session and its own review are one name; sign-ins, operations and unnamed leases are counted', () => {
+    const r = new ConsumerLeaseRegistry()
+    r.add('acct-a', 'codex', { kind: 'session', ownerId: 'tab-1:1', sessionId: 'tab-1' })
+    r.add('acct-a', 'codex', { kind: 'review', ownerId: 'review:tab-1:1', sessionId: 'tab-1' })
+    expect(r.unattributed('acct-a')).toBe(0)
+    r.add('acct-a', 'codex', { kind: 'sign-in', ownerId: 'acct-a', sessionId: 'tab-9' })
+    r.add('acct-a', 'codex', { kind: 'operation', ownerId: 'op-1' })
+    r.add('acct-a', 'codex', { kind: 'session', ownerId: 'bare' })
+    r.add('acct-b', 'codex', { kind: 'operation', ownerId: 'op-2' })
+    expect(r.unattributed('acct-a')).toBe(3)
+    expect(r.unattributed('acct-none')).toBe(0)
+  })
+})

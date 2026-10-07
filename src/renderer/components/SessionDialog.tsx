@@ -6,16 +6,19 @@ import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegistryStore } from '../stores/registryStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { modelGroupsFromRegistry, effortsForModel, PERMISSION_MODES } from '../lib/claude-cli-options'
+import { codexEffortSupported, codexNewConfigModel } from '../codex-models'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { resolveAllowMultiSpawnOnSave } from '../utils/multiSpawn'
 import { secretValueProblem, secretPlacementProblem } from '../../shared/command-secret'
+import { claudeExtraArgsProblem, codexExtraArgsProblem } from '../../shared/extra-args'
 import { parseDockerPostCommand } from '../../shared/container-command'
 import { DialogOverlay, DialogPanel, DialogHeader, DialogFooter, DialogButton, ON_BRAND } from './ui/Dialog'
 import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { accountFieldState, defaultAccountId, providerTooOldText, accountEmail } from '../utils/launchAccount'
 import { ClaudeGlyph, CodexGlyph } from './sidebar/Badges'
 import { CLAUDE_OFF_LAUNCH_REASON, CODEX_OFF_LAUNCH_REASON, CODEX_NOT_SET_UP_LAUNCH_REASON } from '../hooks/useLaunchConfig'
+import { PERSISTENT_CLAUDE_OFF } from '../lib/claudeOff'
 import { codexPreference } from '../onboarding/provider-choice'
 
 /** The one launch the dialog's ticked "launch with the sign-in already on
@@ -234,9 +237,24 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   const [storedSecret, setStoredSecret] = useState(initial?.terminalOptions?.hasSecretArg ?? false)
 
   // ── Session startup (Codex)
-  const [codexModel, setCodexModel] = useState(initial?.codexOptions?.model ?? 'gpt-5.5')
-  const [codexEffort, setCodexEffort] = useState<NonNullable<CodexOptions['reasoningEffort']>>(initial?.codexOptions?.reasoningEffort ?? 'medium')
+  // P3.8 (rows 39, 40), as Claude's above: an edit reopens what is stored ('' =
+  // Default, no flag) rather than rewriting it to the new-config values, and a
+  // saved effort its model cannot run is dropped on load (and again on save).
+  // A new config starts as a new Claude config does (P3.8 round 1, J1): on
+  // the first model of the list (Claude's starts on its newest Opus) at
+  // Default effort.
+  const initialCodexModel = initial ? (initial.codexOptions?.model ?? '') : codexNewConfigModel(registry)
+  const [codexModel, setCodexModel] = useState(initialCodexModel)
+  const [codexEffort, setCodexEffort] = useState<NonNullable<CodexOptions['reasoningEffort']> | ''>(() => {
+    const saved = initial ? (initial.codexOptions?.reasoningEffort ?? '') : ''
+    return codexEffortSupported(registry, initialCodexModel, saved) ? saved : ''
+  })
   const [codexPreset, setCodexPreset] = useState<CodexOptions['permissionsPreset']>(initial?.codexOptions?.permissionsPreset ?? 'standard')
+  // P3.11 (row 62): Codex's Extra CLI arguments, kept apart from Claude Code's
+  // value (each assistant has its own flags).
+  const [codexExtraArgs, setCodexExtraArgs] = useState(initial?.codexOptions?.extraArgs ?? '')
+  // P3.12 (row 31): Codex's own indexing opt-out, as Claude's loggingEnabled.
+  const [codexLoggingEnabled, setCodexLoggingEnabled] = useState(initial?.codexOptions?.loggingEnabled !== false)
   // The Codex account (WP2 commit 6). `null` = not touched: the field shows
   // the saved binding, else the provider default, and follows the snapshot
   // until the user picks. Editing a config the user did not re-point keeps
@@ -386,6 +404,17 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
 
   // The footer's validation slot: names the next step in a fixed order instead
   // of letting Save silently no-op (the old dialog's worst habit).
+  // P3.11 round 1 (B2): the Extra CLI arguments this config would save (trimmed),
+  // held to the rule its assistant's launch uses (src/shared/extra-args.ts): a
+  // refused value is said under the field and holds Save back, since a launch
+  // drops it (pty:spawn's restore sanitizer runs on every spawn).
+  const extraArgsProblem = (() => {
+    const value = uiProvider === 'claude' ? extraArgs.trim() : uiProvider === 'codex' ? codexExtraArgs.trim() : ''
+    if (!value) return null
+    const problem = uiProvider === 'codex' ? codexExtraArgsProblem(value) : claudeExtraArgsProblem(value)
+    return problem ? `Extra CLI arguments: ${problem}` : null
+  })()
+
   const validationMsg = (() => {
     if (!uiProvider) return 'Choose what this launcher runs'
     if (!sessionType) return 'Choose where it runs'
@@ -444,6 +473,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
       // The per-launch confirmation for an unverified sign-in (canvas F6).
       if (askRealmAck && !realmAck) return 'Confirm the sign-in for this launch to continue'
     }
+    if (extraArgsProblem) return extraArgsProblem
     if (!label.trim()) return 'Add a label to save'
     return ''
   })()
@@ -460,6 +490,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
     // user never touches the model select (ADR-009 MINOR on #404).
     const effectiveEffort: EffortValue | '' =
       effortSupportedFor(registry, model, effortLevel) ? effortLevel : ''
+    const effectiveCodexEffort = codexEffortSupported(registry, codexModel, codexEffort) ? codexEffort : ''
 
     // Both of these gate a tip's "you have already found this" variant, and
     // neither was ever recorded — so the tips kept explaining effort levels and
@@ -503,10 +534,15 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
           : undefined)
       : initial?.terminalOptions
 
+    // '' (Default) is saved as nothing, as Claude's model and effort are.
     const codexOptions: CodexOptions | undefined = uiProvider === 'codex' ? {
-      model: codexModel,
-      reasoningEffort: codexEffort,
+      model: codexModel || undefined,
+      reasoningEffort: effectiveCodexEffort || undefined,
       permissionsPreset: codexPreset,
+      // Trimmed, and nothing for a blank field.
+      extraArgs: codexExtraArgs.trim() || undefined,
+      // DEFAULT-TRUE, as Claude's: only false is written (P3.12).
+      loggingEnabled: !codexLoggingEnabled ? false : undefined,
     } : undefined
 
     // SECURITY (adversarial review, #188): every credential decision is gated on
@@ -691,6 +727,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
     setSessionType('ssh')
     setDetachable(id === 'ssh-persistent')
   }
+  // SSH Persistent keeps the remote claude command alive in tmux; a
+  // terminal-only session launches no Claude while Claude Code is off (main
+  // refuses every Launch Claude), so nothing would persist. Disabled with the
+  // reason, as it is for Codex (P3.4 follow-up, row 14).
+  const terminalPersistentOff = uiProvider === 'terminal' && claudeDisabled
   const connectionCard = (id: ConnectionChoice, title: string, sub: string, disabled: boolean) => (
     <label className={cardCls(connectionChoice === id, disabled)}>
       <input
@@ -708,6 +749,58 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   )
 
   const inputCls = 'w-full bg-[var(--surface-base)] border border-[var(--border-strong)] rounded-lg px-2.5 py-1.5 text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none focus-ring'
+
+  // P3.11 (row 62): the one Extra CLI arguments field, in the Claude Code
+  // section and in Codex's: the same label, help button, input and hint, and
+  // (round 1, B2) the rule's message under it while the value is refused. The
+  // message is tied to the input (invalid, described by it), so a screen
+  // reader says it with the field; the footer's status line, always in the
+  // page, is the one that announces it. Fixer 10 (gate 3 quality nit 1): the
+  // label names the input (its id from the help key), not its placeholder.
+  const extraArgsField = (f: { value: string; onChange: (v: string) => void; helpKey: string; placeholder: string; hint: React.ReactNode; problem: string | null }) => (
+    <div>
+      <div className="flex items-center gap-1.5 mb-1">
+        <label htmlFor={`${f.helpKey}-input`} className="text-xs text-[var(--text-secondary)]">Extra CLI arguments</label>
+        <HelpBtn k={f.helpKey} label="About extra CLI arguments" />
+      </div>
+      <input
+        id={`${f.helpKey}-input`}
+        type="text"
+        value={f.value}
+        onChange={(e) => f.onChange(e.target.value)}
+        placeholder={f.placeholder}
+        spellCheck={false}
+        aria-invalid={f.problem ? true : undefined}
+        aria-describedby={f.problem ? `${f.helpKey}-problem` : undefined}
+        className={inputCls + ' font-mono text-xs'}
+      />
+      {f.problem && (
+        <p id={`${f.helpKey}-problem`} data-testid="extra-args-problem" className="text-[11px] mt-1 leading-snug text-[var(--status-warning)]">{f.problem}</p>
+      )}
+      <Hint k={f.helpKey}>{f.hint}</Hint>
+    </div>
+  )
+
+  // P3.12 (row 31): the one "Index conversation logs" field both sections
+  // render (the same label, checkbox and help button), each with its own
+  // value and hint.
+  const loggingField = (f: { checked: boolean; onChange: (v: boolean) => void; helpKey: string; hint: React.ReactNode }) => (
+    <div>
+      <div className="flex items-center gap-1.5">
+        <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
+          <input
+            type="checkbox"
+            checked={f.checked}
+            onChange={(e) => f.onChange(e.target.checked)}
+            className="rounded border-[var(--border-subtle)] accent-[var(--brand)]"
+          />
+          Index conversation logs
+        </label>
+        <HelpBtn k={f.helpKey} label="About conversation logs" />
+      </div>
+      <Hint k={f.helpKey}>{f.hint}</Hint>
+    </div>
+  )
 
   const permHint = DANGEROUS_MODE_COPY[permissionMode]
     ?? PERMISSION_MODES.find((m) => m.value === permissionMode)?.hint
@@ -743,7 +836,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
               data-testid="edit-while-running-note"
             >
               {liveSessionCount === 1 ? 'A session launched from this config is running.' : `${liveSessionCount} sessions launched from this config are running.`}{' '}
-              They keep the settings they launched with; your edits apply to sessions started from now on. Restarting a live SSH session after changing its connection details will be refused, and a restarted shell whose command line changed will run without its secret argument.
+              They keep the settings they launched with (but turning Index conversation logs off stops indexing them at once); your edits apply to sessions started from now on. Restarting a live SSH session after changing its connection details will be refused, and a restarted shell whose command line changed will run without its secret argument.
             </div>
           )}
 
@@ -778,10 +871,13 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
               <div className="flex gap-2 mt-2" role="radiogroup" aria-label="Connection">
                 {connectionCard('local', 'Local', 'Runs on this PC', false)}
                 {connectionCard('ssh', 'SSH', 'Another machine, plain session', uiProvider === 'codex')}
-                {connectionCard('ssh-persistent', 'SSH Persistent', 'Survives disconnects, reattaches', uiProvider === 'codex')}
+                {connectionCard('ssh-persistent', 'SSH Persistent', 'Survives disconnects, reattaches', uiProvider === 'codex' || terminalPersistentOff)}
               </div>
               {uiProvider === 'codex' && (
                 <p className="text-[11px] text-[var(--text-muted)] mt-1.5" data-testid="codex-local-note">Codex runs on this computer only in this release.</p>
+              )}
+              {terminalPersistentOff && (
+                <p className="text-[11px] text-[var(--text-muted)] mt-1.5" data-testid="claude-off-persistent-note">{PERSISTENT_CLAUDE_OFF}</p>
               )}
               {/* Allow Multi Spawn (phase 4). Off by default: a launcher runs
                   ONE session at a time, and every launch surface refuses the
@@ -1234,46 +1330,33 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                         <p className={`text-[11px] mt-1 ${permDangerous ? 'text-[var(--status-danger)]' : 'text-[var(--text-muted)]'}`}>{permHint}</p>
                       )}
                     </div>
-                    <div>
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <label className="text-xs text-[var(--text-secondary)]">Extra CLI arguments</label>
-                        <HelpBtn k="xargs" label="About extra CLI arguments" />
-                      </div>
-                      <input
-                        type="text"
-                        value={extraArgs}
-                        onChange={(e) => setExtraArgs(e.target.value)}
-                        placeholder={sessionType === 'ssh' ? '--add-dir /srv/shared' : '--verbose --add-dir F:\\shared_libs'}
-                        spellCheck={false}
-                        className={inputCls + ' font-mono text-xs'}
-                      />
-                      <Hint k="xargs">
-                        Advanced. Appended to the claude command exactly as typed. Shell characters are blocked
-                        and the app's own flags (--model, --effort, --permission-mode, --settings, --mcp-config,
-                        --agents, --resume) can't be overridden here.
-                      </Hint>
-                    </div>
-                    {sessionType === 'local' && (
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={loggingEnabled}
-                              onChange={(e) => setLoggingEnabled(e.target.checked)}
-                              className="rounded border-[var(--border-subtle)] accent-[var(--brand)]"
-                            />
-                            Index conversation logs
-                          </label>
-                          <HelpBtn k="logs" label="About conversation logs" />
-                        </div>
-                        <Hint k="logs">
+                    {extraArgsField({
+                      value: extraArgs,
+                      onChange: setExtraArgs,
+                      helpKey: 'xargs',
+                      problem: extraArgsProblem,
+                      placeholder: sessionType === 'ssh' ? '--add-dir /srv/shared' : '--verbose --add-dir F:\\shared_libs',
+                      hint: (
+                        <>
+                          Advanced. Appended to the claude command exactly as typed. Shell characters are blocked
+                          and the app's own flags (--model, --effort, --permission-mode, --settings, --mcp-config,
+                          --agents, --resume) can't be overridden here.
+                        </>
+                      ),
+                    })}
+                    {sessionType === 'local' && loggingField({
+                      checked: loggingEnabled,
+                      onChange: setLoggingEnabled,
+                      helpKey: 'logs',
+                      hint: (
+                        <>
                           Lets you browse this session's transcript inside the Conductor. Your conversation is always
                           saved by Claude Code either way (~/.claude/projects) — this only controls whether
-                          the app indexes it.
-                        </Hint>
-                      </div>
-                    )}
+                          the app indexes it. Turned off, indexing stops at once, a running session too; turned on,
+                          it applies to sessions started after.
+                        </>
+                      ),
+                    })}
                   </div>
                 </>
               )}
@@ -1286,10 +1369,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                   </Hint>
                   <div className="mt-1">
                     <CodexFormFields
-                      value={{ model: codexModel, reasoningEffort: codexEffort, permissionsPreset: codexPreset }}
+                      value={{ model: codexModel, reasoningEffort: codexEffort || undefined, permissionsPreset: codexPreset }}
                       onChange={(next) => {
-                        if (next.model !== undefined) setCodexModel(next.model)
-                        if (next.reasoningEffort !== undefined) setCodexEffort(next.reasoningEffort)
+                        // The fields always hand back the whole value; an absent
+                        // model or effort is Default ('').
+                        setCodexModel(next.model ?? '')
+                        setCodexEffort(next.reasoningEffort ?? '')
                         if (next.permissionsPreset !== undefined) setCodexPreset(next.permissionsPreset)
                       }}
                       onOpenAccounts={() => {
@@ -1313,6 +1398,45 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                         onAckChange: (checked) => setRealmAckFor(checked ? codexAccountId : null),
                       }}
                     />
+                    {/* P3.11 (row 62): the Extra CLI arguments field, after the
+                        Permissions (mt-4 keeps the Codex fields' spacing). */}
+                    <div className="mt-4 mb-2">
+                      {extraArgsField({
+                        value: codexExtraArgs,
+                        onChange: setCodexExtraArgs,
+                        helpKey: 'xargs-cx',
+                        problem: extraArgsProblem,
+                        placeholder: '--search --add-dir F:\\shared_libs',
+                        hint: (
+                          <>
+                            Advanced. Added to the codex command, each word as one argument. Shell characters are
+                            blocked, and so is anything the app sets or that changes the account, provider or
+                            endpoint: --model, -c (--config), --enable, --disable, --sandbox, --ask-for-approval and
+                            the other permission flags, --cd, --worktree, --last, --profile, --oss, --local-provider
+                            and --remote. A plain word such as login, or one such as /logout, is refused too: Codex
+                            reads it as one of its commands, and a word that is not a flag or a flag's value is its
+                            opening prompt. Give a folder as the value of --add-dir: --add-dir=docs, or --add-dir
+                            ./docs.
+                          </>
+                        ),
+                      })}
+                    </div>
+                    {/* P3.12 (row 31): the same "Index conversation logs" field. */}
+                    <div className="mb-2">
+                      {loggingField({
+                        checked: codexLoggingEnabled,
+                        onChange: setCodexLoggingEnabled,
+                        helpKey: 'logs-cx',
+                        hint: (
+                          <>
+                            Lets you browse this session's transcript inside the Conductor. Codex saves your
+                            conversation either way, in its account's sessions folder; this only controls whether the
+                            app indexes it. Turned off, indexing stops at once, a running session too; turned on, it
+                            applies to sessions started after.
+                          </>
+                        ),
+                      })}
+                    </div>
                   </div>
                 </>
               )}

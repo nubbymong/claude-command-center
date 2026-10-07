@@ -197,9 +197,9 @@ describe('findClaudeOnWindowsPath', () => {
     }
   })
 
-  it('never searches the current directory, and skips entries cmd.exe cannot run from', async () => {
-    // relative, drive-relative, root-relative, unexpanded (relative AND absolute),
-    // and the \\?\ and \\.\ device namespaces in either slash
+  it('reads only fully qualified PATH folders (a drive or a share) with nothing unexpanded', async () => {
+    // every spelling below finds nothing: none is such a folder, the \\?\ and
+    // \\.\ device namespaces in either slash among them
     const entries = ['.', 'bin', 'C:bin', '\\bin', '%USERPROFILE%\\bin', 'C:\\Users\\%USERNAME%\\bin', '',
       '\\\\?\\C:\\npm', '\\\\.\\C:\\npm', '\\\\?/C:\\npm', '\\\\./C:\\npm', '\\\\.', '\\\\?', '\\\\. ']
     for (const entry of entries) {
@@ -210,9 +210,33 @@ describe('findClaudeOnWindowsPath', () => {
     expect(await findClaudeOnWindowsPath('\\\\srv\\share\\bin', files('\\\\srv\\share\\bin\\claude.exe'))).toBe('\\\\srv\\share\\bin\\claude.exe')
   })
 
+  // Final nits (L3): the walk reads PATH folders by the shared rule
+  // (windows-path-names.ts, windowsPathFolderIsFullyQualified): a drive, or a
+  // share spelled with two leading slashes. [host]
+  it('reads a drive or a share spelled with two leading slashes, by the shared PATH-folder rule', async () => {
+    const anyExe = async (p: string): Promise<'file' | 'none'> => (p.toLowerCase().endsWith('claude.exe') ? 'file' : 'none')
+    expect(await findClaudeOnWindowsPath('\\\\\\srv\\share\\bin', anyExe)).toBeNull()
+    expect(await findClaudeOnWindowsPath('///srv/share/bin', anyExe)).toBeNull()
+    expect(await findClaudeOnWindowsPath('\\\\\\srv\\share\\bin;C:\\later', files('C:\\later\\claude.exe'))).toBe('C:\\later\\claude.exe')
+    expect(await findClaudeOnWindowsPath('\\\\srv\\share\\bin', files('\\\\srv\\share\\bin\\claude.exe'))).toBe('\\\\srv\\share\\bin\\claude.exe')
+  })
+
   it('drops a trailing dot or space from a folder name the way Windows does, but keeps .. meaning the parent', async () => {
     expect(await findClaudeOnWindowsPath('C:\\npm. ', files('C:\\npm\\claude.cmd'))).toBe('C:\\npm\\claude.cmd')
     expect(await findClaudeOnWindowsPath('C:\\a\\npm\\..', files('C:\\a\\claude.cmd'))).toBe('C:\\a\\claude.cmd')
+  })
+
+  // WP2 PR 4 review fix pass (ADR-009 L3): every folder of an entry is named as
+  // Windows names it when it starts the program, not only the last one, so the
+  // walk reads the folder a terminal runs from. [host]
+  it('names each folder of an entry as Windows does: a name ending in one dot loses it anywhere in the entry', async () => {
+    expect(await findClaudeOnWindowsPath('C:\\b\\a.\\bin', files('C:\\b\\a\\bin\\claude.exe'))).toBe('C:\\b\\a\\bin\\claude.exe')
+    // The literally spelled folder is never what the walk reads.
+    expect(await findClaudeOnWindowsPath('C:\\b\\a.\\bin', files('C:\\b\\a.\\bin\\claude.exe'))).toBeNull()
+    // So it does not pass over an entry a terminal uses for a later one.
+    expect(await findClaudeOnWindowsPath('C:\\b\\a.\\bin;C:\\L', files('C:\\b\\a\\bin\\claude.exe', 'C:\\L\\claude.exe'))).toBe('C:\\b\\a\\bin\\claude.exe')
+    // A name ending in two dots is kept as spelled, as Windows keeps it (discovery then refuses that path).
+    expect(await findClaudeOnWindowsPath('C:\\T..', files('C:\\T..\\claude.exe', 'C:\\T\\claude.exe'))).toBe('C:\\T..\\claude.exe')
   })
 
   it('awaits one entry at a time, and does not ask a folder that could not be reached again', async () => {

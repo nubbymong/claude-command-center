@@ -36,7 +36,7 @@ import { NotificationsPoller } from '../github/session/notifications-poller'
 import { buildSessionContext } from '../github/session/session-context-service'
 import { extractFileSignals } from '../github/session/tool-call-inspector'
 import { scanTranscriptMessages } from '../github/session/transcript-scanner'
-import { loadTranscriptEvents } from '../github/session/transcript-loader'
+import { loadSessionTranscriptEvents } from '../github/session/codex-rollout-loader'
 import { emptyGitHubConfig, DEFAULT_AUTH_FEATURE_TOGGLES } from '../../shared/github-constants'
 import { buildOAuthScopeString } from '../github/auth/oauth-scope'
 import { reauthPlanForProfile } from '../github/auth/reauth-plan'
@@ -61,6 +61,9 @@ interface RegisterDeps {
   getWindow: () => BrowserWindow | null
   loadSessions: LoadSessions
   saveSessions: SaveSessions
+  /** P3.12 (row 65): the rollout a Codex session's watcher holds (pty-manager),
+   *  which its Session Context reads; absent = none. */
+  codexRolloutFor?: (sessionId: string) => { path: string; sessionsDir: string } | null
 }
 
 interface OAuthFlow {
@@ -798,8 +801,12 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     // signals (recent files edited via Read/Edit/Bash) come from a
     // separate, narrower inspector that never reads message bodies.
     const cfg = await getCachedConfig()
-    const events = await loadTranscriptEvents(session?.workingDirectory)
-    const recentFiles = extractFileSignals(events.toolCalls)
+    // P3.12 (row 65): a Codex session's own rollout (the one its watcher
+    // holds, in its realm), else Claude's project folder, as before.
+    const events = await loadSessionTranscriptEvents(session, deps.codexRolloutFor ?? (() => null))
+    // P3.12 round 1 (A4): the paths relative to the session's folder, so a
+    // file named relative and absolute is listed once.
+    const recentFiles = extractFileSignals(events.toolCalls, session?.workingDirectory)
     const transcriptRefs = cfg?.transcriptScanningOptIn
       ? scanTranscriptMessages(events.messages)
       : []
@@ -842,7 +849,9 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
         }
       },
     })
-    return { ok: true, data: ctx }
+    // P3.12 round 1 (A4): the heading of the recent files names the
+    // session's own assistant.
+    return { ok: true, data: { ...ctx, assistant: session?.provider === 'codex' ? 'codex' : 'claude' } }
   })
 
   // Helper: resolve a token for an action IPC. Every action needs a token

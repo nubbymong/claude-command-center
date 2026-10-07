@@ -21,7 +21,9 @@ import { generateId } from '../utils/id'
 import { buildCommandLine, commandSecretRef, commandSecretKey } from '../../shared/command-secret'
 import { isAllowedBrowserUrl } from '../../shared/browser-url'
 import { trackUsage } from '../stores/tipsStore'
-import { CODEX_MODELS } from '../codex-models'
+import { codexModelOptions, codexEffortSupported } from '../codex-models'
+import { typeIntoCodexComposer, codexPlanModeShown, type CodexTyping } from '../lib/codexComposer'
+import { useRegistryStore } from '../stores/registryStore'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { sessionCapabilities } from '../lib/session-capabilities'
 import { planBar, inapplicability, effectiveKind, type BandPlan } from './command-bar/layout'
@@ -57,11 +59,57 @@ export function openSettingsTab(tab: string): void {
 
 // -- Codex toolbar sub-components --
 
-const CODEX_PRESETS = ['read-only', 'standard', 'auto', 'unrestricted'] as const
+/** P3.8 (L2; round 2, PM1): 'plan' is Claude's Plan mode launch option
+ *  (read-only, then Codex's own /plan in its first ready prompt). */
+const CODEX_PRESETS = ['read-only', 'standard', 'plan', 'auto', 'unrestricted'] as const
 type CodexPreset = typeof CODEX_PRESETS[number]
 
+/** How long a pill says why a Codex command was not sent. */
+const CODEX_PILL_NOTE_MS = 6000
+
+/**
+ * P3.8 round 1 (L1, row 41; the default pending the owner's decision): on a
+ * live session the model pill opens Codex's own model-and-effort picker. Codex
+ * has no one-line command for a model or an effort (the VM probe: `/model
+ * <slug>` is sent as a message and there is no /effort), so a bare `/model` is
+ * typed, only at Codex's ready prompt (lib/codexComposer.ts); the choice is
+ * made in Codex's picker, keeping the conversation, and the strip then shows
+ * what Codex reports.
+ */
+function CodexModelPill({ sessionId, label }: { sessionId: string; label: string }) {
+  const [note, setNote] = React.useState<string | null>(null)
+  const pending = React.useRef<CodexTyping | null>(null)
+  React.useEffect(() => () => { pending.current?.cancel(); pending.current = null }, [sessionId])
+  React.useEffect(() => {
+    if (!note) return
+    const t = setTimeout(() => setNote(null), CODEX_PILL_NOTE_MS)
+    return () => clearTimeout(t)
+  }, [note])
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={() => {
+          const typing = typeIntoCodexComposer(sessionId, '/model')
+          if (typing.typed) { pending.current = typing; setNote(null) } else setNote(typing.reason ?? null)
+        }}
+        className="bg-base border border-surface1 rounded px-1.5 h-7 text-xs text-text"
+        title="Model and effort: opens Codex's own picker"
+        data-testid="codex-model-pill"
+      >
+        {label}
+      </button>
+      {note && <span className="text-[10px] text-overlay1" role="status" data-testid="codex-model-note">{note}</span>}
+    </div>
+  )
+}
+
+/** P3.8 (row 39): the registry's Codex models, as the session dialog offers
+ *  them ('' = Default: Codex's own choice). For a session with no live run:
+ *  the choice applies at its next start. */
 function CodexModelDropdown({ value, onChange }: { value: string; onChange: (next: string) => void }) {
   const [dirty, setDirty] = React.useState(false)
+  const registry = useRegistryStore((s) => s.registry)
   return (
     <div className="flex items-center gap-1">
       <select
@@ -69,25 +117,64 @@ function CodexModelDropdown({ value, onChange }: { value: string; onChange: (nex
         onChange={(e) => { setDirty(true); onChange(e.target.value) }}
         className="bg-base border border-surface1 rounded px-1.5 h-7 text-xs text-text"
       >
-        {CODEX_MODELS.map((m) => (<option key={m} value={m}>{m}</option>))}
+        {codexModelOptions(registry, value).map((m) => (<option key={m.value || 'default'} value={m.value}>{m.label}</option>))}
       </select>
       {dirty && <span className="text-[10px] text-overlay1">Restart session to apply</span>}
     </div>
   )
 }
 
-function PermissionsPresetDropdown({ value, onChange }: { value: CodexPreset; onChange: (next: CodexPreset) => void }) {
+/** How often a live Plan mode session's pill reads Codex's footer. */
+const PLAN_MODE_READ_MS = 1000
+
+/**
+ * P3.8 rounds 2 and 3 (PM1, T19): whether Codex's own footer shows its Plan
+ * mode, read from the session's live screen (the footer row under its
+ * composer, the session's models) while `active`; the last reading holds
+ * while no footer shows (a popup or a prompt is up). null until one is read.
+ */
+function useCodexPlanModeShown(sessionId: string, active: boolean): boolean | null {
+  const [shown, setShown] = React.useState<boolean | null>(null)
+  React.useEffect(() => {
+    setShown(null)
+    if (!active) return
+    const read = () => {
+      const now = codexPlanModeShown(sessionId)
+      if (now !== null) setShown(now)
+    }
+    read()
+    const t = setInterval(read, PLAN_MODE_READ_MS)
+    return () => clearInterval(t)
+  }, [sessionId, active])
+  return shown
+}
+
+function PermissionsPresetDropdown({ sessionId, live, launched, value, onChange }: { sessionId: string; live: boolean; launched?: CodexPreset; value: CodexPreset; onChange: (next: CodexPreset) => void }) {
   const [dirty, setDirty] = React.useState(false)
+  // P3.8 round 3 (PB1): a live run is compared with the preset it launched
+  // with (main's record, per run), so the hint and the label survive a
+  // remount: "Restart session to apply" while the choice differs from the
+  // run. Without that record (a stopped session) a change made here is.
+  const known = live && launched !== undefined
+  const pendingRestart = known ? launched !== value : dirty
+  // P3.8 rounds 2 and 3 (PM1): a Plan mode run starts read-only and is in
+  // Codex's Plan mode only while its footer says so; the pill says which,
+  // for a run launched in Plan mode and still set to it. Any other choice
+  // reads as chosen.
+  const truthful = known && launched === 'plan' && value === 'plan'
+  const planShown = useCodexPlanModeShown(sessionId, truthful)
+  const label = (p: CodexPreset): string => (p === 'plan' && truthful && planShown !== true ? 'read-only (Plan mode off)' : p)
   return (
     <div className="flex items-center gap-1">
       <select
         value={value}
         onChange={(e) => { setDirty(true); onChange(e.target.value as CodexPreset) }}
         className="bg-base border border-surface1 rounded px-1.5 h-7 text-xs text-text"
+        title={truthful ? (planShown === true ? "In Codex's Plan mode (read-only)" : 'Read-only; Codex is not in Plan mode: type /plan to plan, /permissions to change what it may do') : undefined}
       >
-        {CODEX_PRESETS.map((p) => (<option key={p} value={p}>{p}</option>))}
+        {CODEX_PRESETS.map((p) => (<option key={p} value={p}>{label(p)}</option>))}
       </select>
-      {dirty && <span className="text-[10px] text-overlay1">Restart session to apply</span>}
+      {pendingRestart && <span className="text-[10px] text-overlay1">Restart session to apply</span>}
     </div>
   )
 }
@@ -853,14 +940,37 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         {(session?.provider ?? 'claude') === 'codex' && session?.codexOptions && (
           <>
             <div className="w-px h-4 mx-0.5 shrink-0" style={{ background: 'var(--border-subtle)' }} />
+            {/* Keyed by the run (P3.8 round 1, J4): a pill's "Restart session to
+                apply" goes with the Restart it asked for. */}
             <PermissionsPresetDropdown
+              key={`preset-${session.createdAt}`}
+              sessionId={session.id}
+              live={!session.ptyExited && !session.neverStarted}
+              launched={session.launchedCodexPreset}
               value={session.codexOptions.permissionsPreset ?? 'standard'}
               onChange={(next) => updateSession(session.id, { codexOptions: { ...session.codexOptions!, permissionsPreset: next } })}
             />
+            {!session.ptyExited && !session.neverStarted ? (
+              <CodexModelPill
+                key={`model-${session.id}`}
+                sessionId={session.id}
+                label={session.modelName
+                  ? `${session.modelName}${session.reasoningEffort ? ` ${session.reasoningEffort}` : ''}`
+                  : (session.codexOptions.model || 'Default')}
+              />
+            ) : (
             <CodexModelDropdown
-              value={session.codexOptions.model ?? 'gpt-5.5'}
-              onChange={(next) => updateSession(session.id, { codexOptions: { ...session.codexOptions!, model: next } })}
+              key={`model-${session.createdAt}`}
+              value={session.codexOptions.model ?? ''}
+              onChange={(next) => {
+                // As the session dialog: an effort the new model cannot run
+                // drops to Default rather than ride the next start.
+                const co = session.codexOptions!
+                const keep = codexEffortSupported(useRegistryStore.getState().registry, next, co.reasoningEffort)
+                updateSession(session.id, { codexOptions: { ...co, model: next || undefined, ...(keep ? {} : { reasoningEffort: undefined }) } })
+              }}
             />
+            )}
           </>
         )}
 

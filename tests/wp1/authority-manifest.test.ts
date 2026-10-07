@@ -35,6 +35,7 @@ import {
   CLI_OWNED_NAMESPACES, CLI_OWNED_CENSUS_FRAGMENTS, CENSUS_CLASSIFICATION, canonicalManifestDigest,
 } from '../../scripts/claude-authority-classification.mjs'
 import { CLI_OWNED_CENSUS_RULINGS } from '../../scripts/claude-authority-census-rulings.mjs'
+import { originalHomeEnv } from '../helpers/home-guard-core.mjs'
 
 const REPO = path.resolve(__dirname, '..', '..')
 const MANIFEST_PATH = path.join(REPO, 'src', 'main', 'providers', 'claude', 'claude-authority-manifest.json')
@@ -50,10 +51,19 @@ const MANIFEST_PATH = path.join(REPO, 'src', 'main', 'providers', 'claude', 'cla
  *  is found once the live one has moved on. A candidate of another digest is
  *  not the fixture; with none matching, the regeneration is skipped and says
  *  which builds it saw. */
+/** USERPROFILE and HOME as the test home guard found them, then the current ones. The
+ *  guard (tests/helpers/home-isolation.ts) points both at an isolated folder, and the
+ *  installed builds are under the original home. Read only, to find the binary; nothing
+ *  is written there. */
+function binaryHomes(): string[] {
+  const original = originalHomeEnv()
+  return [...new Set([original.USERPROFILE, original.HOME, process.env.USERPROFILE, process.env.HOME, os.homedir()].filter((h): h is string => Boolean(h)))]
+}
+
 function pinnedBinary(): string | null {
   const prov = authorityManifestProvenance()
   const exe = process.platform === 'win32' ? 'claude.exe' : 'claude'
-  const homes = [...new Set([process.env.USERPROFILE, process.env.HOME, os.homedir()].filter((h): h is string => Boolean(h)))]
+  const homes = binaryHomes()
   const candidates = [
     process.env.CLAUDE_BINARY,
     ...(prov?.cliVersion ? homes.map((h) => path.join(h, '.local', 'share', 'claude', 'versions', prov.cliVersion)) : []),
@@ -864,6 +874,16 @@ describe('regeneration from the pinned fixture', () => {
     },
     300000,
   )
+
+  it('looks under the homes the test home guard found, not only the isolated ones it points HOME and USERPROFILE at', () => {
+    // [host][CI] The guard (tests/helpers/home-isolation.ts) points both variables, and so
+    // os.homedir(), at an isolated folder that never holds an installed build. A lookup
+    // under those alone skipped the regeneration on every machine that has the fixture.
+    const original = originalHomeEnv()
+    for (const home of [original.USERPROFILE, original.HOME]) {
+      if (home) expect(binaryHomes()).toContain(home)
+    }
+  })
 
   it('says clearly when the fixture is absent rather than failing the suite', () => {
     // The whole point of tier 1: this suite is meaningful without the binary.

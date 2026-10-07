@@ -1,4 +1,5 @@
 import type { ToolCallFileSignal } from '../../../shared/github-types'
+import { stripSpoofableText } from '../../../shared/safe-text'
 
 /**
  * Narrow subset of the session transcript event shape this module reads.
@@ -29,8 +30,39 @@ const BASH_PATH_ALLOWLIST = new Set(['git', 'gh', 'cat', 'rm', 'mv', 'cp', 'ls',
 const PATH_ARG_REGEX = /^(?:\/|~|\.\/|\.\.\/|[A-Za-z]:|\w+\/)/
 
 const MAX_FILES = 20
+const MAX_PATH_CHARS = 500
 const MAX_LOOKBACK_EVENTS = 100
 const MAX_LOOKBACK_MS = 30 * 60 * 1000
+
+/**
+ * P3.12 round 1 (A4) and round 2 (W7): a file path relative to `root` (the
+ * session's folder) when it names a file inside it, with `/` separators and
+ * no leading `./`, and the key the recent-files list keeps it once by. A
+ * Windows folder (a drive letter or a UNC path) compares case-insensitively
+ * and reads a backslash as a separator, and its key is case-folded; a path
+ * outside the folder stays as it is. Nothing else of the path changes.
+ */
+function relativeToRoot(filePath: string, root?: string): { path: string; key: string } {
+  let rel = filePath
+  const folder = typeof root === 'string' ? root.trim() : ''
+  const windows = /^[A-Za-z]:[\\/]/.test(folder) || folder.startsWith('\\\\')
+  if (windows) rel = rel.replace(/\\/g, '/')
+  const base = (windows ? folder.replace(/\\/g, '/') : folder).replace(/\/+$/, '')
+  if (base) {
+    const prefix = base + '/'
+    const inside = windows ? rel.toLowerCase().startsWith(prefix.toLowerCase()) : rel.startsWith(prefix)
+    if (inside) rel = rel.slice(prefix.length)
+  }
+  while (rel.startsWith('./')) rel = rel.slice(2)
+  return { path: rel, key: windows ? rel.toLowerCase() : rel }
+}
+
+/** A file path as the recent-files list shows it: relative to `root` as
+ *  above, as plain text (control, C1, direction and zero-width characters
+ *  each a space, as the app's other untrusted prose). */
+export function recentFilePath(filePath: string, root?: string): string {
+  return stripSpoofableText(relativeToRoot(filePath, root).path, MAX_PATH_CHARS).trim()
+}
 
 /**
  * Extracts recent-file signals from a session's transcript tool-call events.
@@ -51,23 +83,21 @@ const MAX_LOOKBACK_MS = 30 * 60 * 1000
  * the transcript-scanning opt-in toggle in spec §10 can be independently
  * justified without auditing the entire tool-call shape.
  */
-export function extractFileSignals(events: TranscriptToolCall[]): ToolCallFileSignal[] {
+export function extractFileSignals(events: TranscriptToolCall[], root?: string): ToolCallFileSignal[] {
   const now = Date.now()
   const cutoff = now - MAX_LOOKBACK_MS
   const recent = events.slice(-MAX_LOOKBACK_EVENTS).filter((e) => e.timestamp >= cutoff)
 
-  const signals: ToolCallFileSignal[] = []
+  // Round 2 (W7): each signal with the key its file is kept once by.
+  const keyed: Array<{ key: string; signal: ToolCallFileSignal }> = []
   for (const e of recent) {
     if (e.type !== 'tool_call') continue
 
     if (FILE_TOOLS.has(e.tool)) {
-      const fp = typeof e.args?.file_path === 'string' ? e.args.file_path : null
-      if (fp) {
-        signals.push({
-          filePath: fp,
-          at: e.timestamp,
-          tool: e.tool as ToolCallFileSignal['tool'],
-        })
+      const raw = typeof e.args?.file_path === 'string' ? e.args.file_path : null
+      const fp = raw !== null ? recentFilePath(raw, root) : null
+      if (raw !== null && fp) {
+        keyed.push({ key: relativeToRoot(raw, root).key, signal: { filePath: fp, at: e.timestamp, tool: e.tool as ToolCallFileSignal['tool'] } })
       }
       continue
     }
@@ -79,18 +109,21 @@ export function extractFileSignals(events: TranscriptToolCall[]): ToolCallFileSi
       if (!BASH_PATH_ALLOWLIST.has(first)) continue
       for (const tok of tokens.slice(1)) {
         if (PATH_ARG_REGEX.test(tok)) {
-          signals.push({ filePath: tok, at: e.timestamp, tool: 'Bash' })
+          const fp = recentFilePath(tok, root)
+          if (fp) keyed.push({ key: relativeToRoot(tok, root).key, signal: { filePath: fp, at: e.timestamp, tool: 'Bash' } })
         }
       }
     }
     // All other tools: nothing is read.
   }
 
-  // Dedupe by filePath (newest wins).
+  // Dedupe by the file's path (newest wins): P3.12 round 1 (A4) and round 2
+  // (W7), one file named relative and absolute is listed once, and two files
+  // whose names differ only in what is not shown are two.
   const latest = new Map<string, ToolCallFileSignal>()
-  for (const s of signals) {
-    const prev = latest.get(s.filePath)
-    if (!prev || s.at > prev.at) latest.set(s.filePath, s)
+  for (const { key, signal } of keyed) {
+    const prev = latest.get(key)
+    if (!prev || signal.at > prev.at) latest.set(key, { ...signal, pathKey: key })
   }
   return Array.from(latest.values())
     .sort((a, b) => b.at - a.at)

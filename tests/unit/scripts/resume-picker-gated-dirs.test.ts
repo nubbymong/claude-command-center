@@ -73,7 +73,7 @@ describe('the picker honours the gated directory set of a managed launch', () =>
 
   it('exits on a refusal BEFORE the spawn, and never falls back to the configured directory', () => {
     const decision = source.indexOf('const retarget = resolveRetargetCwd(resumeId, sourceCwd, process.cwd(), process.env, fs.existsSync)')
-    const spawn = source.indexOf('const result = spawnSync(target.file, target.argv, spawnOpts)')
+    const spawn = source.indexOf('const result = spawnSync(target.file, target.argv, { ...spawnOpts, windowsVerbatimArguments: target.verbatim })')
     expect(decision, 'the spawn site does not consult resolveRetargetCwd').toBeGreaterThan(0)
     expect(decision).toBeLessThan(spawn)
     const between = source.slice(decision, spawn)

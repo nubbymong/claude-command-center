@@ -32,9 +32,12 @@ import { logInfo, logError, logDebug, logWarn } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { atomicWriteFileSync, isRenameStageFailure } from './atomic-write'
 import { mimeForImage } from './clipboard-file'
-import { removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
+import { tryGetProvider } from './providers'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
 import type { VisionCommand, VisionResult } from './vision-manager'
+// From the owner module itself (vision-manager re-exports it): a caller that
+// mocks vision-manager still gets the real class to test against.
+import { VisionPortHeldError } from './vision-browser-owner'
 import { readConfig } from './config-manager'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
 import { getInstallSecret } from './install-secret'
@@ -122,13 +125,16 @@ export function mcpSessionToken(sessionId: string): string {
 
 export type McpClientProvider = 'claude' | 'codex'
 
-/** The provider each session's credential was issued to this run, recorded
- *  when the app hands the session its token and read back when the session
- *  connects: a connection's tool set follows the session it authenticated as.
- *  The latest issue for a session id stands, except that a Codex record is
- *  kept for the run: a session's provider is fixed when it is created, so a
- *  later Claude issue for a Codex session's id is not one to honour. One small
- *  entry per session id. */
+/** The provider each session's credential was issued to for its current
+ *  launch, recorded when the app hands the session its token and read back
+ *  when the session connects: a connection's tool set follows the session it
+ *  authenticated as. The latest issue for a session id stands, except that a
+ *  Codex record is kept for the launch: a launch's provider is fixed when it
+ *  starts, so a later Claude issue for a Codex launch's id is not one to
+ *  honour. The record is released when the session's process is torn down
+ *  (releaseMcpSessionProvider), so the next launch under the same id (an Ask
+ *  tab revived on another assistant) records its own. One small entry per
+ *  session id. */
 const sessionProviders = new Map<string, McpClientProvider>()
 
 /** Hand a session its MCP credential, recording the provider it goes to.
@@ -139,8 +145,17 @@ export function issueMcpSessionToken(sessionId: string, provider: McpClientProvi
   return mcpSessionToken(sessionId)
 }
 
-/** The provider a session's credential was issued to this run, or null when
- *  none was: such a session is not offered a tool set on the SSE route. */
+/** Release a session's record when its process is torn down
+ *  (pty-manager.ts cleanupSessionResources, which runs before every launch
+ *  and when a session ends). Until its next launch issues again, the
+ *  session's credential is served no tool set on either route. */
+export function releaseMcpSessionProvider(sessionId: string): void {
+  sessionProviders.delete(sessionId)
+}
+
+/** The provider a session's credential was issued to for its current launch,
+ *  or null when none was: such a session is not offered a tool set on the SSE
+ *  route. */
 export function mcpSessionProvider(sessionId: string): McpClientProvider | null {
   return sessionProviders.get(sessionId) ?? null
 }
@@ -908,9 +923,12 @@ export async function startMcpServer(
 
     // ── Vision tools (require connected browser) ────────────────────────────
     // Registered as one gated group; inner indentation intentionally unchanged.
-    // Not advertised to Codex sessions: vision is Claude-only for now (user
-    // call 2026-07-02) — the onboarding p6 card carries the same note.
-    if (toolOn('vision') && source !== 'codex') {
+    // WP2 PR 4, P4.2 (row 52): offered to a Codex session too, under the same
+    // switch (the "Claude-only for now" call of 2026-07-02 is lifted). Every
+    // call routes to the connection's bound session's own pinned target
+    // (withVision), and a Codex connection is bound to its session as a
+    // Claude one is.
+    if (toolOn('vision')) {
     // -- Status --
     server.tool('vision_status', 'Check the Conductor browser\'s connection status. The vision_* tools drive a real Chrome that can read pages a plain fetch cannot — call this first if a vision call fails or you are unsure the browser is up.', {}, async () => {
       const vm = getVisionManager()
@@ -1035,11 +1053,11 @@ export async function startMcpServer(
     // session's Browser tool and NEVER navigates a page the user is viewing —
     // the page loads only when the user opens the pane / clicks the pill. No
     // approval, by design (owner's framing). Gated on the Conductor-tools master
-    // only (it is neither a vision nor a canvas sub-tool); not advertised to
-    // Codex, matching the vision/canvas Claude-only stance. Binds to the
-    // transport's authenticated session and refuses a mismatched model-supplied
-    // id — see decideAgentBrowserPush.
-    if (toolsMaster && source !== 'codex') server.tool(
+    // only (it is neither a vision nor a canvas sub-tool); WP2 PR 4, P4.2 (row
+    // 52): offered to a Codex session too. Binds to the transport's
+    // authenticated session (a Codex session's own, on its /mcp connection) and
+    // refuses a mismatched model-supplied id -- see decideAgentBrowserPush.
+    if (toolsMaster) server.tool(
       'open_in_app_browser',
       'Show the USER a web page in their in-app browser pane for this session (http/https only). Use it when you have a URL worth the user seeing — a preview, a PR, docs, a built site — the same as pasting the link in chat. A notification pill appears on their Browser tool; the page loads when they open the pane or click the pill, and it never interrupts a page they are already viewing. This is the user\'s VISIBLE browser, NOT the vision_* automation browser (which only you see).',
       {
@@ -1101,9 +1119,13 @@ export async function startMcpServer(
     // Agent Canvas: both tools are about the session's OWN canvas — the
     // snapshot reads its rendered page and the render writes to it — so like
     // codex_review they bind to the transport's session id and refuse a
-    // model-supplied one (#188). Not advertised to Codex, which connects without
-    // a bound session id — every call would refuse, so offering it is a lie.
-    if (source !== 'codex' && toolOn('canvas')) {
+    // model-supplied one (#188). WP2 PR 4, P4.1 (row 51): offered to a Codex
+    // session too. Its /mcp connection is bound to its session by the same
+    // per-session credential a Claude connection presents (`boundSessionId =
+    // authedSession` on the /mcp route), and the serving rule is keyed on that
+    // session id and checks no provider (canvas-store, ADR-016, ADR-017), so a
+    // Codex session's canvas is its own exactly as a Claude session's is.
+    if (toolOn('canvas')) {
       registerCanvasTools(server, z, () => boundSessionId, {
         getCanvasState: (sessionId: string) => getCanvasStateForSession(sessionId),
         // canvas_snapshot only: follows the agent's drafting canvas while a
@@ -1354,14 +1376,26 @@ export async function startMcpServer(
       // SSEServerTransport which is the only route their MCP client supports.
       if (req.url?.startsWith('/mcp') && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
         try {
-          // The /mcp (Streamable HTTP) route is Codex-only — Claude clients use
-          // /sse. Force source='codex' here rather than reading ?source= so the
+          // The /mcp (Streamable HTTP) route is Codex-only -- Claude clients use
+          // /sse. The source is never read from the request (?source=), so the
           // Codex URL can carry cccSessionId as its ONLY query param (no `&` to
-          // trip the win32 cmd.exe spawn), and so the Codex tool set cannot be
-          // widened by spoofing ?source=claude (GHSA-q83v-phcc-hgv4).
-          const source = 'codex' as const
+          // trip the win32 cmd.exe spawn) and a request cannot choose its tool
+          // set (GHSA-q83v-phcc-hgv4).
           // Authenticated session, not a query re-parse (GHSA-q83v-phcc-hgv4).
           const boundSessionId = authedSession
+          // WP2 PR 4, P4.2 review (A42-1): served only to a session whose
+          // credential this run issued to Codex, as /sse refuses a session with
+          // none. The HMAC key outlives a run, so a credential from an earlier
+          // one still verifies, and since P4.2 this route also carries the
+          // vision and in-app browser tools. A Claude session's credential gets
+          // nothing here either: its tool set is the SSE route's.
+          if (mcpSessionProvider(boundSessionId) !== 'codex') {
+            logWarn(`[vision-mcp] Refused /mcp request (sid=${boundSessionId}): no Codex credential was issued to this session in this run`)
+            res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
+            res.end('Forbidden')
+            return
+          }
+          const source = 'codex' as const
           const server = createServer(source, boundSessionId, 'http')
           // Stateless: a request's cancel arrives on a POST of its own, to a
           // fresh server that never saw the request. Route it to the review
@@ -1611,8 +1645,9 @@ export async function startConductorMcpServer(
   // U6: Codex gets the conductor MCP per-spawn via `-c` overrides
   // (buildCodexSpawn), NOT a global ~/.codex/config.toml write. Heal any stale
   // block a pre-U6 version / crash left behind so plain `codex` outside CCC
-  // doesn't try the dead endpoint.
-  removeConductorVisionFromCodexConfig()
+  // doesn't try the dead endpoint. Done by the Codex package, through the
+  // registry (WP2 PR 4).
+  tryGetProvider('codex')?.removeLegacyMcpServerConfig?.()
   logInfo(`[mcp] Conductor MCP server started on port ${port} (vision: ${getGlobalManager() ? 'connected' : 'idle'})`)
 }
 
@@ -1627,7 +1662,7 @@ export function stopConductorMcpServer(): void {
   if (conductorMcpPort !== 0) {
     stopMcpServer()
     removeMcpSettings()
-    removeConductorVisionFromCodexConfig()
+    tryGetProvider('codex')?.removeLegacyMcpServerConfig?.()
     conductorMcpPort = 0
     logInfo('[mcp] Conductor MCP server stopped')
   }
@@ -1682,6 +1717,11 @@ export async function startBrowserAtBoot(
   try {
     await launchBrowser(browser, debugPort, visionConfig.url, headless)
   } catch (err) {
+    // The debug port stays in use: vision is not started (VisionPortHeldError).
+    if (err instanceof VisionPortHeldError) {
+      logError(`[vision] Vision was not started at boot: ${err.message}`)
+      return
+    }
     logError(`[vision] Browser spawn at boot failed: ${(err as Error)?.message}. Heartbeat will retry if browser becomes reachable.`)
   }
   await startGlobalVision({

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { useMemoryStore } from '../../../src/renderer/stores/memoryStore'
+import { useMemoryStore, findMemory } from '../../../src/renderer/stores/memoryStore'
 import type { MemoryFile, MemoryProject, MemoryScanResult } from '../../../src/shared/types'
 
 function makeMemory(overrides: Partial<MemoryFile> = {}): MemoryFile {
@@ -278,5 +278,53 @@ describe('memoryStore', () => {
       await useMemoryStore.getState().scan()
       expect(useMemoryStore.getState().recentSessions).toEqual({})
     })
+  })
+})
+
+// [host] WP2 PR 4, P4.4 (row 55): each provider account's own memories, kept
+// apart from Claude's store: scanned in, found by id for the reading drawer,
+// and never given a frontmatter write.
+describe('memoryStore: account memories', () => {
+  const accountFile = {
+    ...makeMemory({ id: 'acc-1', name: 'MEMORY', filename: 'MEMORY.md', project: '', projectDir: 'account:acct-1', path: '/realms/r1/memories/MEMORY.md' }),
+    providerId: 'codex' as const, accountId: 'acct-1', relPath: 'MEMORY.md',
+  }
+  const accounts = [{ providerId: 'codex' as const, accountId: 'acct-1', external: false, state: 'present' as const, truncated: false, files: [accountFile] }]
+
+  beforeEach(() => {
+    useMemoryStore.setState({ memories: [], accountMemories: [], selectedMemoryId: null, selectedContent: null } as never)
+    vi.clearAllMocks()
+  })
+
+  it('scan keeps the accounts\' memories apart from Claude\'s, and an older main without them reads as none', async () => {
+    getMockMemoryAPI().scan.mockResolvedValueOnce({ projects: [], memories: [makeMemory()], warnings: [], totalSize: 0, scannedAt: 1, accountMemories: accounts })
+    await useMemoryStore.getState().scan()
+    expect(useMemoryStore.getState().memories).toHaveLength(1)
+    expect(useMemoryStore.getState().accountMemories).toEqual(accounts)
+    getMockMemoryAPI().scan.mockResolvedValueOnce({ projects: [], memories: [], warnings: [], totalSize: 0, scannedAt: 2 })
+    await useMemoryStore.getState().scan()
+    expect(useMemoryStore.getState().accountMemories).toEqual([])
+  })
+
+  it('selectMemory finds an account file by id and reads its path', async () => {
+    useMemoryStore.setState({ accountMemories: accounts } as never)
+    getMockMemoryAPI().read.mockResolvedValueOnce('# Memory')
+    await useMemoryStore.getState().selectMemory('acc-1')
+    expect(getMockMemoryAPI().read).toHaveBeenCalledWith('/realms/r1/memories/MEMORY.md')
+    expect(useMemoryStore.getState().selectedContent).toBe('# Memory')
+  })
+
+  it('writeFrontmatter never writes an account file', async () => {
+    useMemoryStore.setState({ accountMemories: accounts } as never)
+    await useMemoryStore.getState().writeFrontmatter('acc-1', { name: 'x' })
+    expect(getMockMemoryAPI().writeFrontmatter).not.toHaveBeenCalled()
+  })
+
+  it('findMemory: Claude\'s store first, then the accounts', () => {
+    const claude = makeMemory({ id: 'same' })
+    const acct = { ...accountFile, id: 'same' }
+    expect(findMemory({ memories: [claude], accountMemories: [{ ...accounts[0], files: [acct] }] }, 'same')).toBe(claude)
+    expect(findMemory({ memories: [], accountMemories: accounts }, 'acc-1')).toBe(accountFile)
+    expect(findMemory({ memories: [] }, 'acc-1')).toBeUndefined()
   })
 })

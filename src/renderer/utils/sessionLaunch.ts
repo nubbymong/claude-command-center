@@ -42,14 +42,20 @@ export function shouldGateAccountChoice(opts: {
 /**
  * Whether the mid-session "Switch Account" control applies to a session (the
  * Sidebar context menu + the SessionStatusStrip pill). Same rule as the launch
- * gate minus the launch-only conditions: account profiles are LOCAL Claude only,
- * so Codex (its own Codex account) and SSH (remote host's login) sessions can
- * never switch a local CCC profile even when 2+ profiles exist (BUG-13).
+ * gate minus the launch-only conditions: a LOCAL session with a real choice of
+ * its own provider's accounts. Claude's are its local profiles, so an SSH
+ * session (the remote host's login) never switches one (BUG-13). P3.6 (row
+ * 22): a Codex session switches among the Codex accounts (its registry
+ * accounts, archived ones left out: `providerAccountCount`), also local only
+ * in this release; Claude's profiles never count for it.
  */
 export function canSwitchAccountForSession(opts: {
   provider?: ProviderId
   isSsh?: boolean
   profileCount: number
+  /** How many accounts a Switch account would list for a session of a
+   *  provider other than Claude Code (utils/switchAccountItems). */
+  providerAccountCount?: number
   /** Shell-only panes (incl. the add-account /login shell, which is pinned to
    *  a brand-new profile) must never offer Switch Account: respawning the
    *  login shell under another profile redirects the /login into that
@@ -57,15 +63,19 @@ export function canSwitchAccountForSession(opts: {
   shellOnly?: boolean
 }): boolean {
   const provider = opts.provider ?? 'claude'
+  if (opts.shellOnly || opts.isSsh) return false
+  if (provider !== 'claude') return (opts.providerAccountCount ?? 0) >= 2
   // macOS: Claude Code keeps its live OAuth token in the login Keychain,
   // which per-profile HOME redirection cannot isolate — switching would
   // relabel the session while every API call kept using the shared token
   // (Mac readiness review 2026-07-02, confirmed blocker). Multi-account is
   // off on macOS unless the experimental setting is on, which gives each
   // non-primary profile its own CLAUDE_CONFIG_DIR and so its own Keychain
-  // entry (src/shared/mac-multi-account.ts).
+  // entry (src/shared/mac-multi-account.ts, ADR-024). (This rule is Claude
+  // Code's; a Codex session switches as it launches, in the account's own
+  // folder.)
   if (typeof window !== 'undefined' && claudeMultiAccountBlocked(window.electronPlatform, useSettingsStore.getState().settings)) return false
-  return !opts.shellOnly && opts.profileCount >= 2 && provider === 'claude' && !opts.isSsh
+  return opts.profileCount >= 2
 }
 
 /**

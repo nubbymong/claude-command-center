@@ -3,8 +3,12 @@
 export type {
   ProviderPackage, ProviderPackageFactory, ProviderSetupOperations, ProviderAuthOperations, ProviderRealmOperations,
   ProviderManagedLaunchOperations, ProviderRealmFolderOperations, ProviderLaunchOperations, LaunchPreparation, ProviderReviewOperations, ReviewRunInput, ReviewRunResult, ReviewUsage, RealmFolderResult, RealmFolderFailureCode, ExternalDefaultRealmSpec, ProviderEnablementSpec,
+  ProviderBackgroundOperations, BackgroundRunInput, BackgroundRunResult,
+  ProviderInsightsOperations, InsightsRunInput, InsightsRunResult,
   DiscoveryResult, InstallRecipe, InstalledCli, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthStatusOptions, AuthFailureCode, AuthCredentialKind,
+  ModelCatalogueEntry, ModelCatalogueFailureCode, ModelCatalogueResult,
   ProviderUsageOperations, UsageReading, UsageLookup, UsageReadOutcome, UsageReadResult, UsageReadOptions,
+  ProviderPricingOperations, ModelPrice,
 } from './package'
 export {
   registerProvider, getProvider, tryGetProvider,
@@ -32,3 +36,6 @@ export { AccountsService, USAGE_READ_GAP_MS, USAGE_READ_REUSE_MS, USAGE_READ_TRA
 export type { AccountsServiceDeps, LaunchLeaseResult, PreparedLaunchResult } from './accounts-service'
 // WP2 commit 6e: the shell line a terminal tab types for a recipe main allows to run.
 export { recipeRunLine } from './recipe-run-line'
+// WP2 PR 4, P4.6: work registered at start that runs before an account is archived.
+export { onBeforeAccountArchive, prepareAccountArchive, _resetAccountArchiveHooksForTest } from './archive-hooks'
+export type { BeforeAccountArchive } from './archive-hooks'

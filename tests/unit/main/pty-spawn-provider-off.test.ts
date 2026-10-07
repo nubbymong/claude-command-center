@@ -14,12 +14,13 @@
  * account lease -- while the provider is off, and goes ahead while it is on.
  * A terminal-only session runs no provider and always goes ahead.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const handlers = new Map<string, (...a: unknown[]) => unknown>()
 vi.mock('electron', () => ({
   ipcMain: { handle: (ch: string, fn: (...a: unknown[]) => unknown) => { handlers.set(ch, fn) }, on: (ch: string, fn: (...a: unknown[]) => unknown) => { handlers.set(ch, fn) } },
   BrowserWindow: class {},
+  app: { getVersion: () => '0.0.0-test' },
 }))
 const spawnPty = vi.fn()
 const beginSpawnPreparation = vi.fn((win: unknown, sid: string) => ({ current: true, spawn: (o: unknown) => spawnPty(win, sid, o), abandon: vi.fn() }))
@@ -30,6 +31,14 @@ vi.mock('../../../src/main/pty-manager', () => ({
   spawnPty, writePty: vi.fn(), resizePty: vi.fn(), killPty: vi.fn(), getSshFlow: () => flow, endSshRemote: vi.fn(),
   beginSpawnPreparation, holdsCodexLaunchLease: () => false, codexLaunchLeaseTaken: () => false,
   isSessionWritable: (id: string) => live.has(id),
+  // P3.13: what the one-at-a-time rule asks, from the same live PTYs.
+  isSessionLiveOrStarting: (id: string) => live.has(id),
+  // P3.6: no conversation kept, so a Codex spawn carries nothing.
+  getKeptCodexConversationSource: () => undefined,
+  getKeptCodexConversation: () => undefined,
+  codexRunEnded: async () => true,
+  // ADR-009 round 1: no run is working in the help folder.
+  endAgentRunsInFolder: async () => true,
 }))
 vi.mock('../../../src/main/debug-capture', () => ({ logUserInput: vi.fn(), isDebugModeEnabled: () => false }))
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
@@ -37,10 +46,23 @@ const installVersion = vi.fn(async () => ({ ok: true }))
 vi.mock('../../../src/main/legacy-version-manager', () => ({ isVersionInstalled: () => false, installVersion }))
 vi.mock('../../../src/main/services/pty-integrity-monitor', () => ({ getPtyIntegrityMonitor: () => ({ record: vi.fn(), report: vi.fn() }) }))
 vi.mock('../../../src/main/canvas/canvas-session-link', () => ({ noteSessionSpawnForCanvas: vi.fn() }))
+// WP2 PR 4, P4.3: every Ask spawn rebuilds the help folder in main first (and
+// fails closed); here it stands in, so no real folder is written.
+vi.mock('../../../src/main/help-workspace', () => ({ ensureHelpWorkspace: vi.fn(() => '/res/help'), helpWorkspaceDir: (dir: string) => `${dir}/help` }))
+vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => '/res' }))
 let configsOnDisk: unknown = null
 vi.mock('../../../src/main/config-manager', () => ({ readConfig: (key: string) => (key === 'configs' ? configsOnDisk : null) }))
 const loadCredential = vi.fn((_k: string) => 'pw')
 vi.mock('../../../src/main/credential-store', () => ({ loadCredential: (k: string) => loadCredential(k) }))
+// P3.10 round 5 (G4): whether the Hooks gateway listens (off unless a case turns it on).
+// As in the app, a gateway that does not listen is still there (the in-process
+// gateway with hooks off, or the supervisor's proxy while it starts or backs
+// off): its status says listening: false. `present: false` is no gateway at all.
+const gw = vi.hoisted(() => ({ listening: false, present: true }))
+vi.mock('../../../src/main/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/hooks')>()),
+  getGateway: () => (gw.present ? { status: () => ({ listening: gw.listening, port: gw.listening ? 51234 : null }) } : null),
+}))
 
 // The accounts service's answer, per provider: on, off, or a saved setting
 // that could not be read. `null` = no service at all.
@@ -61,6 +83,7 @@ vi.mock('../../../src/main/provider-accounts', () => ({
 }))
 
 const { registerPtyHandlers, countSshClaudeLaunches } = await import('../../../src/main/ipc/pty-handlers')
+const { startCodexHookFolders, stopCodexHookFolders } = await import('../../../src/main/codex-hook-folders')
 registerPtyHandlers(() => ({} as never))
 const spawn = handlers.get('pty:spawn')!
 const launchClaude = handlers.get('ssh:flow:launchClaude')!
@@ -146,6 +169,34 @@ describe('pty:spawn refuses a launch of a provider that is off', () => {
     await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'standard' } })
     expect(acct.prepareLaunch).toHaveBeenCalledTimes(1)
     expect(spawnPty).toHaveBeenCalledTimes(1)
+  })
+
+  // P3.8 round 1 (J2): a saved config launched from the list (no dialog in
+  // between) still starts on an effort its model runs: one it cannot run is
+  // dropped at the launch, and the model's own default applies.
+  it('a Codex launch whose saved effort its model cannot run starts on the model default; one it runs is kept', async () => {
+    set('on', 'on')
+    await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { model: 'gpt-5.6-luna', reasoningEffort: 'ultra', permissionsPreset: 'standard' } })
+    expect(spawnPty.mock.calls[0][2].codexOptions).toEqual({ model: 'gpt-5.6-luna', reasoningEffort: undefined, permissionsPreset: 'standard' })
+    spawnPty.mockClear()
+    await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { model: 'gpt-5.6-luna', reasoningEffort: 'max', permissionsPreset: 'standard' } })
+    expect(spawnPty.mock.calls[0][2].codexOptions.reasoningEffort).toBe('max')
+    spawnPty.mockClear()
+    await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { model: 'gpt-5.5', reasoningEffort: 'minimal', permissionsPreset: 'standard' } })
+    expect(spawnPty.mock.calls[0][2].codexOptions.reasoningEffort).toBeUndefined()
+  })
+
+  // P3.8 round 3 (PB1): main says which preset each Codex run launched with,
+  // so the renderer's permissions pill compares the next start's choice with
+  // what is running rather than with its own record of a change.
+  it('a started Codex run reports the preset it launched with; a Claude run reports none', async () => {
+    set('on', 'on')
+    for (const preset of ['plan', 'standard', 'read-only'] as const) {
+      const r = await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { model: 'gpt-5.5', permissionsPreset: preset } })
+      expect(r, preset).toEqual({ started: true, launched: { codexPreset: preset } })
+    }
+    const claude = await spawn({}, SID, { cwd: 'C:/w', provider: 'claude' })
+    expect(claude === undefined || !('launched' in (claude as object))).toBe(true)
   })
 
   it('a terminal-only session runs no provider: it starts while every provider is off', async () => {
@@ -247,5 +298,66 @@ describe('the legacy Claude Code CLI install is for a Claude launch only', () =>
   it('for a Claude session while Claude Code is on (the control)', async () => {
     await spawn({}, SID, { cwd: 'C:/w', ...pinned })
     expect(installVersion).toHaveBeenCalledTimes(1)
+  })
+})
+
+// P3.10 round 4 (P1): a local Codex launch waits, bounded, for the hook
+// folders (prepared asynchronously, a no-op while ready); a Claude launch does
+// not ask for them.
+describe('P3.10 round 4: a local Codex launch waits for its hook folders', () => {
+  afterEach(() => { stopCodexHookFolders(); gw.listening = false; gw.present = true })
+
+  it('the spawn waits for the preparation, then starts; a Claude launch does not ask for it', async () => {
+    set('on', 'on')
+    gw.listening = true
+    let release: (ok: boolean) => void = () => {}
+    let asked = 0
+    startCodexHookFolders({ providerOn: () => true, prepare: () => { asked++; return new Promise<boolean>((r) => { release = r }) } })
+    const p = spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'standard' } })
+    await new Promise((r) => setTimeout(r, 30))
+    expect(asked).toBe(1)
+    expect(spawnPty).not.toHaveBeenCalled()
+    release(true)
+    await p
+    expect(spawnPty).toHaveBeenCalledTimes(1)
+    await spawn({}, 'b2c3d4e5f6a1b2c3d4e5f6a1', { cwd: 'C:/w' })
+    expect(asked).toBe(1)
+  })
+
+  it('round 5 (G4): with the Hooks gateway there but not listening, the launch does not wait for the hook folders', async () => {
+    set('on', 'on')
+    let asked = 0
+    startCodexHookFolders({ providerOn: () => true, prepare: () => { asked++; return new Promise<boolean>(() => {}) } })
+    await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'standard' } })
+    expect(asked).toBe(0)
+    expect(spawnPty).toHaveBeenCalledTimes(1)
+  })
+
+  it('round 5 (G4): with no Hooks gateway at all, the launch does not wait for the hook folders', async () => {
+    set('on', 'on')
+    gw.present = false
+    let asked = 0
+    startCodexHookFolders({ providerOn: () => true, prepare: () => { asked++; return new Promise<boolean>(() => {}) } })
+    await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'standard' } })
+    expect(asked).toBe(0)
+    expect(spawnPty).toHaveBeenCalledTimes(1)
+  })
+})
+
+// P3.16a round 2 (Q5): pty:kill tells pty-manager whether a Restart made the
+// kill (its next process follows, so the exit is not the session's end) or it
+// is a close. Only the exact string 'restart' is a Restart's.
+describe('pty:kill says whether it is a Restart\'s kill (P3.16a round 2, Q5)', () => {
+  it('the exact string \'restart\' is a Restart\'s kill; anything else, or nothing, is a close', async () => {
+    const { killPty } = await import('../../../src/main/pty-manager')
+    const killed = killPty as unknown as ReturnType<typeof vi.fn>
+    const kill = handlers.get('pty:kill')!
+    const cases: Array<[unknown, 'restart' | 'close']> = [[undefined, 'close'], ['restart', 'restart'], ['Restart', 'close'], ['restart ', 'close'], [{ reason: 'restart' }, 'close'], [1, 'close'], [null, 'close']]
+    for (const [arg, reason] of cases) {
+      killed.mockClear()
+      if (arg === undefined) kill({}, SID)
+      else kill({}, SID, arg)
+      expect(killed, JSON.stringify(arg)).toHaveBeenCalledWith(SID, { reason })
+    }
   })
 })

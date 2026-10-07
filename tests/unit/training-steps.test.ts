@@ -3,12 +3,13 @@ import {
   trainingSteps,
   currentTrainingVersion,
   getNewSteps,
+  compareTrainingVersions,
   type TrainingStep,
 } from '../../src/renderer/training-steps'
 
 describe('training-steps', () => {
   describe('trainingSteps array', () => {
-    it('has exactly 23 steps', () => {
+    it('has exactly 24 steps', () => {
       // v1.5.12 added dynamic-workflows; permission-tray step removed with the
       // feature; v2-readiness added multi-account + sentinel steps (16 -> 18);
       // v2.0.0 added the ai-usage-meter step (18 -> 19); the Agent Canvas got
@@ -19,8 +20,10 @@ describe('training-steps', () => {
       // #443 deprecated the Agent Hub, so its card left (21 -> 20). The 2.1
       // canvas rework's Canvas Explained page got a card (20 -> 21). The second
       // provider (2.1.1) added two surfaces with no card: the Providers and
-      // Accounts page, and code review in both directions (21 -> 23).
-      expect(trainingSteps).toHaveLength(23)
+      // Accounts page, and code review in both directions (21 -> 23). Cloud
+      // Agents, without a card since the Agent Hub's left, got one of its own
+      // (the owner's 2026-10-04 answer; 23 -> 24).
+      expect(trainingSteps).toHaveLength(24)
     })
 
     it('every step has required fields', () => {
@@ -108,7 +111,8 @@ describe('training-steps', () => {
       // cards are a proportionate interruption, replaying the 2.1 set is not.
       // They stay at 2.1.1, not above it: see the comment on the Providers and
       // Accounts card for why a higher pin would hold the boot chain instead.
-      expect(getNewSteps('2.1.0').map((s) => s.id)).toEqual(['provider-accounts', 'ask-conductor', 'code-review'])
+      // Cloud Agents joined them (the owner's 2026-10-04 answer).
+      expect(getNewSteps('2.1.0').map((s) => s.id)).toEqual(['provider-accounts', 'ask-conductor', 'code-review', 'cloud-agents'])
       // Users arriving from 2.0.x get it as part of the normal backlog.
       expect(getNewSteps('2.0.0').map((s) => s.id)).toContain('ask-conductor')
     })
@@ -125,6 +129,26 @@ describe('training-steps', () => {
       for (const step of trainingSteps) {
         expect(compareSemver(ver, step.sinceVersion)).toBeGreaterThanOrEqual(0)
       }
+    })
+  })
+
+  // [host] PR 4 VM final: a tour stamp of a prerelease (2.1.1-beta.2) read as
+  // 2.1.0 (Number('1-beta') is NaN, then 0), so the 2.1.1 cards counted as
+  // unseen. A prerelease is read as its release: a 2.1.1 beta carries the
+  // 2.1.1 cards.
+  describe('the tour version compare reads a prerelease as its release', () => {
+    it('a stamp of 2.1.1-beta.2 has seen the 2.1.1 cards; a 2.1.0 one has not', () => {
+      expect(getNewSteps('2.1.1-beta.2')).toEqual([])
+      expect(getNewSteps('2.1.0').map((s) => s.sinceVersion)).toContain('2.1.1')
+      expect(getNewSteps('2.1.0-rc.10').map((s) => s.sinceVersion)).toContain('2.1.1')
+    })
+    it('orders by the numbers, whatever follows them', () => {
+      expect(compareTrainingVersions('2.1.1-beta.2', '2.1.1')).toBe(0)
+      expect(compareTrainingVersions('2.1.2-beta.1', '2.1.1')).toBeGreaterThan(0)
+      expect(compareTrainingVersions('2.1.0-rc.10', '2.1.1')).toBeLessThan(0)
+      expect(compareTrainingVersions('v2.1.1', '2.1.1')).toBe(0)
+      expect(compareTrainingVersions('2.10.0', '2.9.9')).toBeGreaterThan(0)
+      expect(compareTrainingVersions('garbage', '0.0.0')).toBe(0)
     })
   })
 

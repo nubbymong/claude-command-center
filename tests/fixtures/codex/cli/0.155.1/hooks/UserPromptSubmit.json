@@ -1,0 +1,10 @@
+{
+  "session_id": "00000000-0000-7000-8000-000000000001",
+  "turn_id": "00000000-0000-7000-8000-000000000003",
+  "transcript_path": "C:\\Users\\alex\\AppData\\Local\\AI Code Conductor\\resources\\codex-realms\\realm-00000000000000000000000000000001\\sessions\\2026\\09\\27\\rollout-2026-09-27T12-08-23-00000000-0000-7000-8000-000000000001.jsonl",
+  "cwd": "C:\\Users\\alex\\projects\\demo",
+  "hook_event_name": "UserPromptSubmit",
+  "model": "gpt-6-astra",
+  "permission_mode": "bypassPermissions",
+  "prompt": "Reply with exactly two lowercase words separated by one space. First word: seen if any instruction or tool description available to you contains the text P31-MCP-INSTRUCTIONS-MARKER, otherwise unseen. Second word: tool if you have a tool whose description contains P31-MCP-TOOL-DESCRIPTION-MARKER, otherwise notool. Do not run any commands and do not call any tools."
+}

@@ -12,8 +12,12 @@ function bucketOf(ts: number): number {
   return d.getDay() * 24 + d.getHours()
 }
 
-function pricingCte(pricing: Record<string, TkPricing>): { cte: string; binds: Record<string, unknown> } {
-  const entries = Object.entries(pricing)
+/** The pricing CTE a query joins its usage to by price key. `used` (P3.8
+ *  round 1, Q2): only the price keys the stored usage names are bound, so a
+ *  live list of hundreds of models is not bound into every query; a key no
+ *  usage names could never change a cost. */
+export function pricingCte(pricing: Record<string, TkPricing>, used?: ReadonlySet<string>): { cte: string; binds: Record<string, unknown> } {
+  const entries = Object.entries(pricing).filter(([model]) => !used || used.has(model))
   if (entries.length === 0) return { cte: `pricing(pm,pin,pout,pcr,pcw) AS (SELECT NULL,0,0,0,0 WHERE 0)`, binds: {} }
   const rows: string[] = []
   const binds: Record<string, unknown> = {}
@@ -303,8 +307,23 @@ export interface TkDb {
   close(): void
 }
 
-export function openTkDb(dbPath: string): TkDb {
+/** How an open reports what it could not do but went on without (P3.8
+ *  round 3): the worker passes its log. */
+export interface TkDbOpenOptions { log?: (message: string) => void }
+
+export function openTkDb(dbPath: string, opts: TkDbOpenOptions = {}): TkDb {
   const sqlite = new Database(dbPath)
+  // P3.8 round 3 (DB): an open that fails while it is set up (a locked file,
+  // say) closes the handle it opened before the error goes on.
+  try {
+    return setUpTkDb(sqlite, opts)
+  } catch (err) {
+    try { sqlite.close() } catch { /* already closed */ }
+    throw err
+  }
+}
+
+function setUpTkDb(sqlite: Database.Database, opts: TkDbOpenOptions): TkDb {
   sqlite.exec(DDL)
 
   // `CREATE TABLE IF NOT EXISTS` leaves an existing tk_files alone, so the
@@ -674,6 +693,55 @@ export function openTkDb(dbPath: string): TkDb {
     }
   }
 
+  // P3.8 round 1 (M1): a Codex turn is priced by its model's own id, as the
+  // session strip prices it. Rows stored before were keyed to the longest
+  // price key their model started with (a model with no price of its own
+  // took a shorter model's), so they are keyed to their own model. The price
+  // key is in no table's primary key, so nothing collides. The v1 rollups
+  // belong to older builds and are left as they are. One transaction.
+  // Round 2 (RK): run on EVERY open, not once behind a marker, so rows an
+  // older build stores after this one first ran (a downgrade, then back) are
+  // keyed at the next open. The database opens in the Tokenomics worker, off
+  // the main thread; with nothing to re-key the UPDATEs only scan.
+  const exactCodexPriceModel = sqlite.transaction(() => {
+    sqlite.exec(`
+      UPDATE tk_events SET priceModel = model WHERE provider = 'codex' AND priceModel <> model;
+      UPDATE ${DAILY} SET priceModel = model WHERE provider = 'codex' AND priceModel <> model;
+      UPDATE ${HEAT} SET priceModel = model WHERE provider = 'codex' AND priceModel <> model;
+      UPDATE tk_session_models SET priceModel = model WHERE priceModel <> model
+        AND sessionId IN (SELECT sessionId FROM tk_sessions WHERE provider = 'codex');
+    `)
+  })
+  // Round 3 (Q2): a re-key that cannot run (a read-only or locked file)
+  // costs the open nothing: the rows wait for an open that can write them,
+  // and it is logged. With nothing to change it only scans (30 ms at 200,000
+  // rows on the VM), so no index is added for it.
+  try {
+    exactCodexPriceModel()
+  } catch (err) {
+    opts.log?.(`[tokenomics] Codex price keys not refreshed this open: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  /** P3.8 rounds 1 and 2 (Q2, UP): the price keys the stored usage names, for
+   *  the pricing CTE, read again only after a write: keyed by this
+   *  connection's row changes, the file's data version (another connection's
+   *  commit) and the rollup swaps (a rebuild renames tables). Prepared per
+   *  read: a rebuild swaps the rollup tables. */
+  const versionStmt = sqlite.prepare('SELECT total_changes() AS n, (SELECT data_version FROM pragma_data_version) AS v')
+  let rollupSwaps = 0
+  let usedCache: { key: string; keys: Set<string> } | null = null
+  const usedPriceModels = (): Set<string> => {
+    const ver = versionStmt.get() as { n: number; v: number }
+    const key = `${ver.n}:${ver.v}:${rollupSwaps}`
+    if (usedCache && usedCache.key === key) return usedCache.keys
+    const keys = new Set(
+      (sqlite.prepare(`SELECT priceModel FROM ${DAILY} UNION SELECT priceModel FROM ${HEAT} UNION SELECT priceModel FROM tk_session_models`)
+        .all() as Array<{ priceModel: string }>).map((r) => r.priceModel),
+    )
+    usedCache = { key, keys }
+    return keys
+  }
+
   // Usage track MP9: rebuilding the daily and hourly rollups from the stored
   // events, in steps the worker paces (TK_REBUILD_PAGE rows each, yielding
   // between them), into shadow tables. Queries keep reading the live tables
@@ -717,6 +785,7 @@ export function openTkDb(dbPath: string): TkDb {
     if (page.length === maxRows) return { done: r.done, total, finished: false }
     sqlite.exec(`DROP TABLE ${DAILY}; ALTER TABLE ${DAILY}_next RENAME TO ${DAILY};
       DROP TABLE ${HEAT}; ALTER TABLE ${HEAT}_next RENAME TO ${HEAT};`)
+    rollupSwaps++
     if (dirtyEpoch === r.epoch) setMetaStmt.run('rollupsDirty', '0')
     rebuild = null
     return { done: r.done, total: r.done, finished: true }
@@ -816,7 +885,7 @@ export function openTkDb(dbPath: string): TkDb {
     getSessionCwd: (sessionId) => { const r = getCwd.get(sessionId) as { projectDir: string } | undefined; return r?.projectDir || null },
     querySummary(pricing, filter = {}, nowMs) {
       const now = nowMs ?? Date.now()
-      const { cte, binds: pb } = pricingCte(pricing)
+      const { cte, binds: pb } = pricingCte(pricing, usedPriceModels())
       const cfg = filter.configId   // undefined=all, null=External(''), string=that id
       const cfgVal = cfg === undefined ? undefined : (cfg === null ? '' : cfg)
 
@@ -925,7 +994,7 @@ export function openTkDb(dbPath: string): TkDb {
       }
     },
     querySessions(pricing, query = {}) {
-      const { cte, binds: pb } = pricingCte(pricing)
+      const { cte, binds: pb } = pricingCte(pricing, usedPriceModels())
       const cfg = query.configId
       const cfgVal = cfg === undefined ? undefined : (cfg === null ? '' : cfg)
       let where = ''
@@ -982,7 +1051,7 @@ export function openTkDb(dbPath: string): TkDb {
     },
 
     querySessionDetail(pricing, sessionId) {
-      const { cte, binds: pb } = pricingCte(pricing)
+      const { cte, binds: pb } = pricingCte(pricing, usedPriceModels())
       const s = sqlite.prepare(
         `SELECT s.*, c.label AS cfgLabel FROM tk_sessions s LEFT JOIN tk_configs c ON s.configId=c.configId WHERE s.sessionId=@sid`
       ).get({ sid: sessionId }) as any

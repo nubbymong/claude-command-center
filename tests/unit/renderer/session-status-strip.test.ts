@@ -276,12 +276,15 @@ describe('SessionStatusStrip -- account chip', () => {
 })
 
 describe('SessionStatusStrip -- provider gating', () => {
-  it('hides the Claude controls for a codex session but keeps telemetry', async () => {
+  // P3.8 (row 61): a Codex session has Compact (Codex's own /compact) and
+  // Restart, as Claude's does; its Model pill is not built yet (row 41).
+  it("gives a codex session Compact and Restart, no Model pill, and keeps telemetry", async () => {
     sessionState = { activeSessionId: codexSession.id, sessions: [codexSession] }
     await render(codexSession.id)
     expect(buttonByTitle('Permission mode')).toBeUndefined()
-    expect(buttonByTitle('Compact the conversation')).toBeUndefined()
-    expect(buttonByTitle('Restart session')).toBeUndefined()
+    expect(buttonByTitle('Model')).toBeUndefined()
+    expect(buttonByTitle('Compact the conversation')).toBeDefined()
+    expect(buttonByTitle('Restart session')).toBeDefined()
     // Telemetry still renders
     expect(container.textContent).toContain('gpt-5.5')
     expect(container.textContent).toContain('12%')

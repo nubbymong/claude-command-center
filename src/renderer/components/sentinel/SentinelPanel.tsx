@@ -1,7 +1,12 @@
 import React, { useCallback, useState } from 'react'
 import { useSentinelStore } from '../../stores/sentinelStore'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { usesClaude, usesCodex } from '../../onboarding/provider-choice'
 import type { SentinelFinding } from '../../../shared/sentinel-types'
-import { selectBreakingFindings, surfaceLabel, formatFindingText, formatSentinelReportText } from './sentinel-report-text'
+import {
+  selectBreakingFindings, surfaceLabel, providerTag, formatFindingText, formatSentinelReportText,
+  sentinelVersionParts, sentinelCompatibleSubject, sentinelAnalyzingText, SENTINEL_SEPARATOR, type SentinelScope,
+} from './sentinel-report-text'
 import {
   DialogOverlay,
   DialogPanel,
@@ -57,7 +62,8 @@ function BreakingRow({ finding }: { finding: SentinelFinding }) {
   const handleMute = () => {
     void window.electronAPI.sentinel.setStatus(finding.id, 'muted')
   }
-  const sfc = surfaceLabel(finding.surface)
+  const sfc = surfaceLabel(finding.surface, finding.provider)
+  const tag = providerTag(finding)
   const severe = finding.severity === 'high'
 
   return (
@@ -88,6 +94,15 @@ function BreakingRow({ finding }: { finding: SentinelFinding }) {
         </p>
       )}
       <div className="flex items-center gap-1.5 flex-wrap mt-1">
+        {/* P3.9: a Codex finding says it is Codex's (both can be in use). */}
+        {tag && (
+          <span
+            className="inline-block text-[10px] px-1.5 py-px rounded"
+            style={{ background: 'var(--surface-overlay)', color: 'var(--text-muted)' }}
+          >
+            {tag}
+          </span>
+        )}
         {sfc && (
           <span
             className="inline-block text-[10px] px-1.5 py-px rounded"
@@ -111,6 +126,12 @@ export default function SentinelPanel() {
   const panelOpen = useSentinelStore((s) => s.panelOpen)
   const setPanelOpen = useSentinelStore((s) => s.setPanelOpen)
 
+  // P3.9: the assistants in use, whose versions and all-clear the panel
+  // names (a provider that is off shows nothing).
+  const claudeOn = useSettingsStore((s) => usesClaude(s.settings))
+  const codexOn = useSettingsStore((s) => usesCodex(s.settings))
+  const scope: SentinelScope = { claudeOn, codexOn }
+
   const close = useCallback(() => setPanelOpen(false), [setPanelOpen])
   // Escape is now the keyboard way out. The backdrop used to close on click,
   // which the house rule forbids (Ctrl+C in a terminal fires click events and
@@ -120,11 +141,11 @@ export default function SentinelPanel() {
   if (!panelOpen) return null
 
   const breaking = selectBreakingFindings(snap)
-  const version = snap?.lastSeenCcVersion ?? 'unknown'
   const subtitleDate = snap?.lastAnalysisAt
     ? new Date(snap.lastAnalysisAt).toLocaleString()
     : 'no analysis yet'
-  const subtitle = `CC ${version} · ${snap?.analyzing ? 'analyzing…' : subtitleDate}`
+  const subtitle = [...sentinelVersionParts(snap, scope), snap?.analyzing ? 'analyzing\u2026' : subtitleDate].join(SENTINEL_SEPARATOR)
+  const compatible = sentinelCompatibleSubject(snap, scope)
 
   return (
     <DialogOverlay dim={0.5}>
@@ -139,7 +160,7 @@ export default function SentinelPanel() {
             <div className="flex items-center gap-2 shrink-0">
               {breaking.length > 0 && (
                 <CopyButton
-                  getText={() => formatSentinelReportText(snap)}
+                  getText={() => formatSentinelReportText(snap, scope)}
                   label="Copy"
                   title="Copy the full report to the clipboard"
                 />
@@ -161,13 +182,19 @@ export default function SentinelPanel() {
             <DialogCallout tone="warning">{snap.lastAnalysisError}</DialogCallout>
           </div>
         )}
+        {/* P3.9 round 1: an analysis that read part of the notes says so. */}
+        {!snap?.analyzing && snap?.lastAnalysisNote && (
+          <div className="px-[18px] pt-3 shrink-0">
+            <DialogCallout tone="info" testId="sentinel-analysis-note">{snap.lastAnalysisNote}</DialogCallout>
+          </div>
+        )}
 
         {/* Body: one honest state at a time. Never a green "compatible" verdict
             while analyzing or after a failed run (the AI didn't get to say). */}
         <DialogBody className="flex-1">
           {breaking.length === 0 && snap?.analyzing && (
             <p className="text-xs py-6 text-center" style={{ color: 'var(--text-muted)' }}>
-              Analyzing the Claude Code update… this can take a few minutes.
+              {sentinelAnalyzingText(snap)}
             </p>
           )}
 
@@ -189,7 +216,7 @@ export default function SentinelPanel() {
               </svg>
               <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>No breaking changes</p>
               <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                Claude Code {version} is compatible with AI Code Conductor.
+                {compatible.text} {compatible.plural ? 'are' : 'is'} compatible with AI Code Conductor.
               </p>
             </div>
           )}

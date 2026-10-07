@@ -4,11 +4,51 @@ This file is evidence for WP1.1 and WP1.60 (`docs/wp1/evidence/mode-matrix.md`).
 - `tests/e2e/codex-session-creation.spec.ts`
 - `tests/e2e/codex-settings-section.spec.ts`
 
-The ledger also cites WP1.2. Its evidence is `docs/wp1/evidence/real-cli-matrix.md`, not this file.
+The ledger also cites WP1.2. Its real-CLI evidence is `docs/wp1/evidence/real-cli-matrix.md` (P4.10); this file holds WP1.2's two mode-matrix cells below (Codex only on a fresh install, and the minimum real launch).
 
-It is a partial record. WP1.1 and WP1.60 stay `planned` in the traceability manifest: WP1.60's upgrade, restart, enable/disable and minimum real-launch modes are not covered here (see "Not covered").
+The matrix below has its recorded VM runs ("The mode matrix's runs (P4.9, PR 4)"). WP1.1 and WP1.60 are still `planned` in the traceability manifest: they move to evidenced when the traceability binding records this file with its digest (P4.10), not in this file.
 
-**Current record:** commit `0cb1bf31bf1f090c7fadd902c41219b0e2a36fa9`, the WP2 final candidate head, with no patch applied. Earlier runs are kept below as history.
+## The mode matrix (P4.9, PR 4, row 67)
+
+Every cell of WP1.60's matrix now has an e2e spec that drives it in the real app. `tests/wp1/mode-matrix.test.ts` (host-safe) checks every cell but the minimum real launch against the accounts service's own rules, and fails if a cell's spec is missing or if the table below differs from its cells, items and specs. The minimum real launch has no accounts-service case: its contract half is its spec and P4.8's real-CLI conformance job (`docs/wp1/evidence/ci-matrix.md`); the same test checks the spec's first-screen reader on screen text rendered from the 9.2 probe captures. The specs run on the Windows test VM only; they were written in PR 4, and their runs are recorded in "The mode matrix's runs (P4.9, PR 4)" below.
+
+| Cell | Items | E2e spec (VM) | What it drives |
+|---|---|---|---|
+| Fresh install, Claude Code only, no Codex installed | WP1.1 | `tests/e2e/onboarding-provider-select.spec.ts` | The onboarding from its first page; the assistants page's Claude only; no Codex page; Claude on, Codex off and answered; Settings, Accounts shows Codex off. A stand-in `claude` answers the version check. |
+| Fresh install, Codex only | WP1.2 | `tests/e2e/onboarding-provider-select.spec.ts`, `tests/e2e/codex-session-creation.spec.ts` | Codex only with the fake Codex: no Claude page, Set up Codex ready to sign in; then a Codex config created and bound to its account. |
+| Fresh install, both | WP1.3 | `tests/e2e/onboarding-provider-select.spec.ts` | Both, with no Codex installed: Set up Codex says the CLI was not found; both saved on; Accounts says Codex was not found. |
+| Upgrade | WP1.60 | `tests/e2e/codex-reconfirm-upgrade.spec.ts` | "Do you use Codex?" after an update, for a Claude-only, a Codex-only and a dual upgrader. |
+| Restart: a tab, an app relaunch | WP1.60 | `tests/e2e/codex-mode-restart.spec.ts` | A Codex tab's Restart starts a new Codex process on the same account folder with the same options; after a crash the relaunch offers the tab back and it starts Codex on its account. |
+| Enable and disable round trips | WP1.60 | `tests/e2e/codex-mode-enable-disable.spec.ts` | The in-use refusal while a tab runs; off, the config says why and a restart reads Not started; on again, the restart starts it; off at the next start, the restored tab reads Not started until Codex is on and the tab restarted. |
+| Minimum real launch | WP1.60, WP1.2 | `tests/e2e/codex-real-launch.spec.ts` | The real Codex 0.153.4 and 0.155.1 in a Codex tab, no sign-in (a fake API key), the loopback fake model: the first screens answered by the 9.2 rules, a ready composer, one prompt answered, and the account's `config.toml` changed only by those answers. |
+
+The fake-CLI specs use the e2e fake Codex (`tests/e2e/helpers/fake-codex.ts`), which stands in for Codex's TUI when the app starts a session and records each start beside itself. `tests/e2e/helpers/codex-mode.ts` holds what the mode specs share, and `tests/e2e/helpers/codex-first-screens.ts` how the real launch reads Codex's first screens: the live screen is the lowest title on screen, Enter goes only on the verified selected row of that screen's own menu, each screen is answered once, and ready needs Codex's placeholder in the composer above its footer (during the sandbox set-up the composer reads "Input disabled until setup completes." over the same footer).
+
+What the VM run must give:
+- the spec list from `git ls-files tests/e2e/*.spec.ts` (26 specs with these four), passed explicitly, never a bare `npx playwright test`;
+- for `codex-real-launch.spec.ts`, which is skipped without them:
+  - `CCC_E2E_REAL_CODEX`: the installs, `<version>=<absolute path>` joined by `;`, for example the npm `codex.cmd` of 0.153.4 and the `codex.exe` 0.155.1 ships (both routes are then covered). Given, it must name both versions, each an existing file, or the spec fails;
+  - `CCC_E2E_FAKE_MODEL_URL`: the loopback fake model's base URL, the fake model already running on the VM (9.2, report item 17);
+- the isolation below (a fake home, `CODEX_HOME` and `CLAUDE_CONFIG_DIR` cleared). No spec starts Codex on, or writes into, the VM user's own `~/.codex`.
+
+## The mode matrix's runs (P4.9, PR 4)
+
+Four runs of the whole e2e suite on the Windows test VM (WINDOWS_1), on 2026-10-03 and (the last) 2026-10-04, each with the 26 tracked specs passed explicitly, the loopback fake model running, and the real installs given to `codex-real-launch.spec.ts` (0.153.4 as the npm `codex.cmd`, 0.155.1 as `codex.exe`):
+
+| Run | Commit | VM local start (PDT) | Result |
+|---|---|---|---|
+| e2e-956df1a3 | `956df1a3c32c03857fc55b9f3eec3046cd26c445` | 05:34:41 | 94 of 94 passed, none skipped (Playwright 3.3 min) |
+| e2e-956df1a3-run2 | `956df1a3c32c03857fc55b9f3eec3046cd26c445` | 05:39:55 | 94 of 94 passed, none skipped (3.2 min) |
+| e2e-c65d0b19 | `c65d0b1925d3df77fb50dafc68bc88870bcdf724` | 11:12:32 | 94 of 94 passed, none skipped (3.4 min) |
+| e2e-bb1b5e4a (2026-10-04) | `bb1b5e4a082dcd0e18230571c716157e774d6f36` | 04:54 | 94 of 94 passed, none skipped or flaky (4.2 min) |
+
+- Every cell of the matrix above passed in each run: `onboarding-provider-select.spec.ts` 3 tests (a fresh install with Claude Code only, both, and Codex only), `codex-session-creation.spec.ts` 2, `codex-reconfirm-upgrade.spec.ts` 3, `codex-mode-restart.spec.ts` 2, `codex-mode-enable-disable.spec.ts` 4, and `codex-real-launch.spec.ts` 3 (the two installs named, then a real launch of 0.153.4 through `codex.cmd` and of 0.155.1 through `codex.exe`, each through its first screens to an answered prompt). The 20 other specs passed their 77 tests.
+- Build: each run built its commit with electron-vite (exit 0), the main bundle checked for the commit's short sha; package version 2.1.1-beta.1.
+- Isolation: each run counted the VM user's real folders before and after: 76 `.claude` settings sidecars, 6,536 files under `~\.codex` and 554 under `~\.claude`, the same after as before, with no file under either written since the run's start; no app, Electron or Codex process was left. The helper's `ccc-e2e-*` data folders were left in `%TEMP%` (16 after the first run), as in the earlier records.
+- A run of `codex-real-launch.spec.ts` alone at 956df1a3 (05:44:41) passed 3 of 3 in 37.1 s, the real folders again unchanged.
+- The VM-side logs are kept with the runs (fictional data). Not run: macOS and Linux (these specs are VM-only).
+
+**The earlier full-suite record (21 specs, before PR 4's specs):** commit `0cb1bf31bf1f090c7fadd902c41219b0e2a36fa9`, the WP2 final candidate head, with no patch applied. Earlier runs are kept below as history.
 
 - Date: 2026-09-25 (VM local clock 15:47:21-15:49:56 PDT).
 - Commit: `0cb1bf31bf1f090c7fadd902c41219b0e2a36fa9` (`origin/session/beta/c4d568ce-wp2-codex`).
@@ -21,7 +61,7 @@ It is a partial record. WP1.1 and WP1.60 stay `planned` in the traceability mani
   - `c55ba0c7`: front-facing docs and in-app copy for Codex (README, user guide, app-knowledge, tips, Feature Guide, guided tour, Hello Codex), and the `package.json` description.
   - `0cb1bf31`: the legacy Codex ledger and manifest brought in step with that sweep, and two app-knowledge sentences shortened.
   - None of them touches an e2e spec.
-- Machine: Hyper-V VM WinDev2407Eval, Windows 11 Enterprise Evaluation 10.0.22621 (build 22621), 64-bit.
+- Machine: the Windows test VM (Hyper-V), Windows 11 Enterprise Evaluation 10.0.22621 (build 22621), 64-bit.
 - Toolchain: Node v24.16.0, Electron 43.7.1, @playwright/test 1.62.1, app 2.1.1-beta.1. The lockfile is unchanged since `38cbc9d7`; `package.json` changed only its description.
 - Build:
   - `npm ci` exits 255. Its postinstall `electron-rebuild` of node-pty and better-sqlite3 fails with MSB8040, because the Spectre-mitigated libraries are not installed on the VM. Both modules load their shipped N-API win32-x64 prebuilds, so the run is unaffected.
@@ -149,11 +189,13 @@ The driving setup for the rows below:
 | Fresh, Claude found | Claude CLI Setup (terminal focused; skipped) -> Welcome -> assistants with Claude, Codex, Both all selectable (default Both) | reached |
 | Fresh, Codex only, this computer already signed in | Set up Codex settles on "Using this sign-in" + "Add a new Codex account (Recommended)"; Hello Codex is correctly not due (external sign-in) | reached (first run, `accec3c2`) |
 
-Not covered here, for WP1.60's other modes:
+Not covered by the rows above, for WP1.60's other modes, when they were recorded:
 - upgrade;
 - restart;
 - enable and disable round trips;
 - a minimum launch smoke of a real Codex session.
+
+Each now has its spec in "The mode matrix (P4.9, PR 4, row 67)" above: the upgrade `codex-reconfirm-upgrade.spec.ts` (VM only), the rest P4.9's specs. Their runs are in "The mode matrix's runs (P4.9, PR 4)" above.
 
 ## History
 

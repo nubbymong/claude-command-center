@@ -89,7 +89,18 @@ function writeCredFile(id: string, relDir: string) {
 // -- which is precisely the failure these tests exist to catch.
 beforeAll(() => { composeProviders() })
 
+/** The platform the per-profile cases run as: this host's, except on macOS.
+ *  There every profile runs on the Mac's one Claude Code sign-in (D2), so a
+ *  sign-out always asks for the acknowledgement and HOME stays the real home;
+ *  the per-profile cases then run as Linux, the other POSIX model, and the
+ *  macOS cases stub darwin themselves. */
+const HOST_PLATFORM = process.platform
+const PER_PROFILE_PLATFORM: NodeJS.Platform = HOST_PLATFORM === 'darwin' ? 'linux' : HOST_PLATFORM
+let hostPlatformDescriptor: PropertyDescriptor | undefined
+
 beforeEach(async () => {
+  hostPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { value: PER_PROFILE_PLATFORM, configurable: true })
   // A PROFILE-SHAPED root (<resources>/account-profiles/<id>): only a home that
   // resolves to a profile id is ever on the macOS realm (pass 3, m8), so the
   // fixture must look like the real layout. The module's own internals (the
@@ -109,6 +120,7 @@ beforeEach(async () => {
   await gateManagedLaunch(process.cwd())
 })
 afterEach(async () => {
+  if (hostPlatformDescriptor) Object.defineProperty(process, 'platform', hostPlatformDescriptor)
   ;(await import('../../src/main/account-profiles'))._setRootsForTest(null)
   fs.rmSync(dirname(root), { recursive: true, force: true })
 })
@@ -477,5 +489,62 @@ describe('readClaudeCliAuth — starting mid-rotation waits for the refresh (#49
     noteProfileRefreshInFlight('profile-other-9', new Promise(() => { /* never settles */ }))
     await readClaudeCliAuth(ID)
     expect(execCalls).toBe(1)
+  })
+})
+
+// WP2 PR 4 review fix pass (A2-S2, A2-Q5): the provider-neutral check runs
+// through a runner (the executable discovery proved, no shell); the panel's
+// probe is unchanged. On macOS the probe reads what a session there runs on:
+// the Mac's one sign-in, with HOME left at the real home (#117, D2).
+describe('readClaudeCliAuth -- through a runner, and on macOS [host]', () => {
+  type Run = { refused?: string; spawnError?: string; exitCode: number | null; stdout: string; timedOut: boolean }
+  function runner(answer: Run) {
+    const calls: Array<{ args: string[]; env: Record<string, string>; timeoutMs: number }> = []
+    const cwd = join(root, 'bin')
+    fs.mkdirSync(cwd, { recursive: true })
+    return { calls, cwd, run: async (args: readonly string[], env: Record<string, string>, timeoutMs: number) => { calls.push({ args: [...args], env: { ...env }, timeoutMs }); return answer } }
+  }
+
+  it('runs `claude auth status` through the runner, never by name through a shell, and reads a signed-out answer from its output', async () => {
+    fs.mkdirSync(join(root, ID), { recursive: true })
+    let execRan = false
+    execFileImpl = (_c, _a, _o, cb) => { execRan = true; cb(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' }) }
+    const r1 = runner({ exitCode: 1, stdout: JSON.stringify({ loggedIn: false }), timedOut: false })
+    const out = await readClaudeCliAuth(ID, r1)
+    expect(execRan).toBe(false)
+    expect(out).toEqual(expect.objectContaining({ authenticated: false, source: 'cli-status' }))
+    expect(r1.calls.map((c) => [c.args, c.timeoutMs])).toEqual([[['auth', 'status'], 10_000]])
+    expect(r1.calls[0].env.USERPROFILE).toBe(join(root, ID))
+    // The gate read the folder the CLI runs in.
+    expect(peekGateVerdict(r1.cwd)).toEqual({ status: 'clean' })
+    expect(hasTransientProfileConsumer(ID)).toBe(false)
+  })
+
+  it('a runner that could not start the CLI falls back to the credential file, which says where its answer came from', async () => {
+    writeCredFile(ID, '.claude')
+    for (const answer of [
+      { refused: 'not absolute', exitCode: null, stdout: '', timedOut: false },
+      { spawnError: 'ENOENT', exitCode: null, stdout: '', timedOut: false },
+      { exitCode: null, stdout: JSON.stringify({ loggedIn: false }), timedOut: true },
+    ]) {
+      const out = await readClaudeCliAuth(ID, runner(answer))
+      expect(out).toEqual(expect.objectContaining({ authenticated: true, source: 'credential-file' }))
+    }
+  })
+
+  it('macOS: HOME is left at the real home, as withProfileHome leaves it for a session there', async () => {
+    fs.mkdirSync(join(root, ID), { recursive: true })
+    let seen: Record<string, string> | undefined
+    execFileImpl = (_c, _a, o, cb) => { seen = (o as { env: Record<string, string> }).env; cb(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' }) }
+    const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    try {
+      await readClaudeCliAuth(ID)
+    } finally {
+      Object.defineProperty(process, 'platform', realPlatform)
+    }
+    expect(seen).toBeDefined()
+    expect(seen!.HOME).not.toBe(join(root, ID))
+    // Elsewhere it is still pointed at the profile home (the case above this block).
   })
 })

@@ -217,8 +217,8 @@ reviewer account is set in Settings, Accounts."
     rate-limit figures do not apply to Codex.
 - Where: Feature Guide, Integrations.
 - Vignette: a comparison table (Claude, Codex): instructions file;
-  permissions (Claude permission settings; Read-only, Standard, Auto,
-  Unrestricted); runs over SSH (Yes; Not in this release); vision, browser,
+  permissions (Claude permission settings; Read-only, Standard, Plan mode,
+  Auto, Unrestricted); runs over SSH (Yes; Not in this release); vision, browser,
   canvas (Yes; Not yet); code review (Asks Codex; Asks Claude, or "Not yet"
   without `claude_review`, or "Needs Claude Code on" with Claude Code off);
   usage shown (Rate limits; Tokens, and its limits when it sends them).
@@ -294,6 +294,9 @@ Page text:
 - Page 5, table, Codex usage: "Tokens" -> "Tokens, and its limits when it
   sends them" (a Codex session's strip shows Codex's own rate limits, when
   Codex reports them).
+- Page 5, table, Codex permissions: "Read-only, Standard, Auto, Unrestricted"
+  -> "Read-only, Standard, Plan mode, Auto, Unrestricted" (completion plan
+  P3.8 added the Plan mode choice to the session dialog; the P3.16 sweep).
 - Page 5, table, Codex code review: "Not yet" -> "Asks Claude" (5b shipped;
   data-driven, see above).
 

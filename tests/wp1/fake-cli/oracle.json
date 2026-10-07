@@ -1,0 +1,2053 @@
+{
+  "schema": "ccc-wp1-fake-cli-oracle/2",
+  "item": "WP1.69",
+  "cli": "codex",
+  "versions": {
+    "minimum": "0.153.4",
+    "pinned": "0.155.1",
+    "source": "src/main/providers/codex/cli-contract.ts"
+  },
+  "upstreamSource": "tests/wp1/fixtures/codex-cli-source.json",
+  "about": [
+    "What the app relies on the Codex CLI doing, that a fake Codex CLI reproduces, for the minimum and pinned versions the",
+    "contract names. Each claim rests on the CLI itself: a sanitised real capture (P3.1, tests/fixtures/codex/cli/<version>/,",
+    "ANONYMISED.txt there), the app-server schema the CLI generated, a recorded observation of a real run, or the upstream",
+    "source at the release tag (tests/wp1/fixtures/codex-cli-source.json: tag, commit, file sha256, verbatim lines). What the",
+    "app's own code or plans say is recorded as an app assumption: it must agree, but it never backs a claim alone. Nothing",
+    "here is taken from a fake. tests/wp1/fake-cli-oracle.test.ts checks every entry against its sources (the real side)",
+    "and every fake against every entry it claims (the fake side)."
+  ],
+  "rules": {
+    "lines": "A stream is split on line feeds (carriage returns dropped); blank lines are ignored.",
+    "modes": "exactly: the stream has exactly these lines, in order. inOrder: these lines occur in this order, other lines may sit between them. document: the whole stream is one JSON value.",
+    "streams": "stdout or stderr: the stream the real CLI uses. appReads names the streams the app accepts the lines on, when it is more tolerant than the CLI; the fakes are held to the real stream.",
+    "matchers": "exact: the line itself. regex: an anchored regular expression. rpcResult: a JSON-RPC answer with this id whose result has these fields. json: the document has these fields. {version} stands for the entry version (escaped inside a regex). sameFolderAsEnv: the value names the folder the variable names (the CLI canonicalises CODEX_HOME; the fakes echo it, and their virtual homes are already canonical, so they are compared exactly).",
+    "exitCode": "A number. Absent: not asserted, and a citation says why.",
+    "afterwards": "Then the named entry is run in the same realm and must hold too.",
+    "kinds": "upstream: verbatim lines of the release source, held in the upstream fixture. observation: a capture or a recorded real run (docs/wp2/evidence/, tests/fixtures/codex/). app-assumption: this app's source or plans; every path under src/ and the docs/wp2 plans is one.",
+    "backing": "For each version an entry covers, an asserted exit code, its lines, the stream of its lines and its afterwards must each be backed by a capture or schema of that version or by an upstream or observation citation; an app assumption never backs one alone. Every citation that backs a value must carry the entry value (so an app assumption that disagrees with the CLI is red). An upstream citation is checked against the fixture line by line, and its exit code, stream and samples against what those lines print and exit with."
+  },
+  "fakes": {
+    "wp1-fake-cli": {
+      "file": "tests/wp1/fake-cli.test.ts",
+      "symbol": "FAKE",
+      "versions": [
+        "0.155.1"
+      ],
+      "note": "the script that suite runs through a real shim, in CI and on the VM only; it prints 0.155.1 only"
+    },
+    "e2e-fake-codex": {
+      "file": "tests/e2e/helpers/fake-codex.ts",
+      "symbol": "installFakeCodex",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "note": "the e2e stand-in, installed at a given version; signInFakeRealm signs a realm in"
+    }
+  },
+  "preconditions": {
+    "empty-home": {
+      "means": "CODEX_HOME names an existing, empty folder (a fresh realm); no credential or NODE_OPTIONS in the environment",
+      "citations": [
+        {
+          "kind": "upstream",
+          "role": "codex-home",
+          "path": "codex-rs/utils/home-dir/src/lib.rs",
+          "versions": [
+            "0.153.4",
+            "0.155.1"
+          ],
+          "excerpt": [
+            {
+              "line": 9,
+              "text": "/// - If `CODEX_HOME` is set, the value must exist and be a directory. The"
+            },
+            {
+              "line": 10,
+              "text": "///   value will be canonicalized and this function will Err otherwise."
+            }
+          ]
+        }
+      ]
+    },
+    "signed-in": {
+      "means": "the realm is signed in, by either method (the exec captures were taken in a realm signed in with ChatGPT)",
+      "citations": [
+        {
+          "kind": "observation",
+          "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+          "versions": [
+            "0.153.4",
+            "0.155.1"
+          ],
+          "quote": "The app-managed realm of a managed ChatGPT account (browser sign-in, Pro plan)"
+        }
+      ]
+    },
+    "signed-in-api-key": {
+      "means": "the realm was signed in with an API key read from a stdin pipe (codex login --with-api-key)",
+      "citations": [
+        {
+          "kind": "observation",
+          "path": "tests/fixtures/codex/cli/0.153.4/help/login-help.txt",
+          "versions": [
+            "0.153.4"
+          ],
+          "quote": "Read the API key from stdin"
+        },
+        {
+          "kind": "observation",
+          "path": "tests/fixtures/codex/cli/0.155.1/help/login-help.txt",
+          "versions": [
+            "0.155.1"
+          ],
+          "quote": "Read the API key from stdin"
+        },
+        {
+          "kind": "upstream",
+          "role": "api-key-login",
+          "path": "codex-rs/cli/src/login.rs",
+          "versions": [
+            "0.153.4",
+            "0.155.1"
+          ],
+          "excerpt": [
+            {
+              "line": 204,
+              "text": "pub async fn run_login_with_api_key("
+            },
+            {
+              "line": 220,
+              "text": "    match login_with_api_key("
+            },
+            {
+              "line": 221,
+              "text": "        &config.codex_home,"
+            }
+          ]
+        }
+      ]
+    },
+    "signed-in-chatgpt": {
+      "means": "the realm was signed in through the browser (codex login)",
+      "citations": [
+        {
+          "kind": "app-assumption",
+          "path": "src/main/providers/codex/cli-contract.ts",
+          "versions": [
+            "0.153.4",
+            "0.155.1"
+          ],
+          "quote": "if (/^Logged in using ChatGPT\\b/.test(line)) return { state: 'signed-in', via: 'chatgpt' }"
+        }
+      ]
+    },
+    "stdin-pipe": {
+      "means": "stdin is a pipe carrying the entry's stdinLines, each ended by a line feed, then closed",
+      "citations": []
+    },
+    "stdin-tty": {
+      "means": "stdin is a terminal",
+      "citations": []
+    }
+  },
+  "entries": [
+    {
+      "id": "version",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "--version"
+      ],
+      "app": {
+        "operation": "version"
+      },
+      "preconditions": [
+        "empty-home"
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [
+          {
+            "stream": "stdout",
+            "mode": "exactly",
+            "lines": [
+              {
+                "exact": "codex-cli {version}"
+              }
+            ]
+          },
+          {
+            "stream": "stderr",
+            "mode": "exactly",
+            "lines": []
+          }
+        ]
+      },
+      "sources": {
+        "captures": [
+          {
+            "version": "0.153.4",
+            "path": "tests/fixtures/codex/cli/0.153.4/help/version.txt",
+            "format": "exit-stdout-stderr"
+          },
+          {
+            "version": "0.155.1",
+            "path": "tests/fixtures/codex/cli/0.155.1/help/version.txt",
+            "format": "exit-stdout-stderr"
+          }
+        ],
+        "citations": []
+      },
+      "reliedOnBy": "discovery proves the version (parseCodexVersion, cli-contract.ts)",
+      "fakes": [
+        "wp1-fake-cli",
+        "e2e-fake-codex"
+      ]
+    },
+    {
+      "id": "login-status-signed-out",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "login",
+        "status"
+      ],
+      "app": {
+        "operation": "status"
+      },
+      "preconditions": [
+        "empty-home"
+      ],
+      "expect": {
+        "exitCode": 1,
+        "streams": [
+          {
+            "stream": "stderr",
+            "appReads": [
+              "stdout",
+              "stderr"
+            ],
+            "mode": "inOrder",
+            "lines": [
+              {
+                "exact": "Not logged in"
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [],
+        "citations": [
+          {
+            "kind": "upstream",
+            "role": "login-status",
+            "path": "codex-rs/cli/src/login.rs",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 443,
+                "text": "pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {"
+              },
+              {
+                "line": 499,
+                "text": "        Ok(None) => {"
+              },
+              {
+                "line": 500,
+                "text": "            eprintln!(\"Not logged in\");"
+              },
+              {
+                "line": 501,
+                "text": "            std::process::exit(1);"
+              }
+            ],
+            "backs": [
+              "exitCode",
+              "lines",
+              "stream"
+            ],
+            "exitCode": 1,
+            "stream": "stderr",
+            "samples": [
+              "Not logged in"
+            ]
+          },
+          {
+            "kind": "upstream",
+            "role": "login-dispatch",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.153.4"
+            ],
+            "excerpt": [
+              {
+                "line": 1526,
+                "text": "                Some(LoginSubcommand::Status) => {"
+              },
+              {
+                "line": 1527,
+                "text": "                    run_login_status(login_cli.config_overrides).await;"
+              }
+            ],
+            "backs": [],
+            "note": "`codex login status` runs run_login_status"
+          },
+          {
+            "kind": "upstream",
+            "role": "login-dispatch",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 1609,
+                "text": "                Some(LoginSubcommand::Status) => {"
+              },
+              {
+                "line": 1610,
+                "text": "                    run_login_status(login_cli.config_overrides).await;"
+              }
+            ],
+            "backs": [],
+            "note": "`codex login status` runs run_login_status"
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "an API key - <redacted key>`, or `Not logged in` with exit 1.",
+            "backs": [
+              "exitCode",
+              "lines"
+            ],
+            "exitCode": 1,
+            "samples": [
+              "Not logged in"
+            ]
+          },
+          {
+            "kind": "app-assumption",
+            "path": "docs/wp2/plan.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "exit 1 `Not logged in`",
+            "backs": [
+              "exitCode",
+              "lines"
+            ],
+            "exitCode": 1,
+            "samples": [
+              "Not logged in"
+            ]
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "export function parseCodexLoginStatus(exitCode: number | null, stdout: string, stderr: string)",
+            "backs": [
+              "appReads"
+            ]
+          }
+        ]
+      },
+      "reliedOnBy": "parseCodexLoginStatus (cli-contract.ts): signed-out only on exit 1 with this line",
+      "fakes": [
+        "wp1-fake-cli",
+        "e2e-fake-codex"
+      ]
+    },
+    {
+      "id": "login-status-api-key",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "login",
+        "status"
+      ],
+      "app": {
+        "operation": "status"
+      },
+      "preconditions": [
+        "signed-in-api-key"
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [
+          {
+            "stream": "stderr",
+            "appReads": [
+              "stdout",
+              "stderr"
+            ],
+            "mode": "inOrder",
+            "lines": [
+              {
+                "regex": "^Logged in using an API key - .+$"
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [],
+        "citations": [
+          {
+            "kind": "upstream",
+            "role": "login-status",
+            "path": "codex-rs/cli/src/login.rs",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 443,
+                "text": "pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {"
+              },
+              {
+                "line": 465,
+                "text": "            AuthMode::ApiKey => match auth.get_token() {"
+              },
+              {
+                "line": 466,
+                "text": "                Ok(api_key) => {"
+              },
+              {
+                "line": 467,
+                "text": "                    eprintln!(\"Logged in using an API key - {}\", safe_format_key(&api_key));"
+              },
+              {
+                "line": 468,
+                "text": "                    std::process::exit(0);"
+              }
+            ],
+            "backs": [
+              "exitCode",
+              "lines",
+              "stream"
+            ],
+            "exitCode": 0,
+            "stream": "stderr",
+            "samples": [
+              "Logged in using an API key - ***"
+            ]
+          },
+          {
+            "kind": "upstream",
+            "role": "api-key-redaction",
+            "path": "codex-rs/cli/src/login.rs",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 579,
+                "text": "fn safe_format_key(key: &str) -> String {"
+              },
+              {
+                "line": 580,
+                "text": "    if key.len() <= 13 {"
+              },
+              {
+                "line": 581,
+                "text": "        return \"***\".to_string();"
+              },
+              {
+                "line": 583,
+                "text": "    let prefix = &key[..8];"
+              },
+              {
+                "line": 584,
+                "text": "    let suffix = &key[key.len() - 5..];"
+              },
+              {
+                "line": 585,
+                "text": "    format!(\"{prefix}***{suffix}\")"
+              }
+            ],
+            "backs": [],
+            "note": "the key as shown: *** for 13 characters or fewer, else its first 8, ***, its last 5"
+          },
+          {
+            "kind": "upstream",
+            "role": "login-dispatch",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.153.4"
+            ],
+            "excerpt": [
+              {
+                "line": 1526,
+                "text": "                Some(LoginSubcommand::Status) => {"
+              },
+              {
+                "line": 1527,
+                "text": "                    run_login_status(login_cli.config_overrides).await;"
+              }
+            ],
+            "backs": [],
+            "note": "`codex login status` runs run_login_status"
+          },
+          {
+            "kind": "upstream",
+            "role": "login-dispatch",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 1609,
+                "text": "                Some(LoginSubcommand::Status) => {"
+              },
+              {
+                "line": 1610,
+                "text": "                    run_login_status(login_cli.config_overrides).await;"
+              }
+            ],
+            "backs": [],
+            "note": "`codex login status` runs run_login_status"
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "if (exitCode === 0) { if (/^Logged in using ChatGPT\\b/.test(line)) return { state: 'signed-in', via: 'chatgpt' } if (/^Logged in using an API key\\b/.test(line)) return { state: 'signed-in', via: 'api-key' }",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": 0
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "export function parseCodexLoginStatus(exitCode: number | null, stdout: string, stderr: string)",
+            "backs": [
+              "appReads"
+            ]
+          }
+        ]
+      },
+      "reliedOnBy": "parseCodexLoginStatus: signed-in via api-key",
+      "fakes": [
+        "wp1-fake-cli",
+        "e2e-fake-codex"
+      ]
+    },
+    {
+      "id": "login-status-chatgpt",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "login",
+        "status"
+      ],
+      "app": {
+        "operation": "status"
+      },
+      "preconditions": [
+        "signed-in-chatgpt"
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [
+          {
+            "stream": "stderr",
+            "appReads": [
+              "stdout",
+              "stderr"
+            ],
+            "mode": "inOrder",
+            "lines": [
+              {
+                "exact": "Logged in using ChatGPT"
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [],
+        "citations": [
+          {
+            "kind": "upstream",
+            "role": "login-status",
+            "path": "codex-rs/cli/src/login.rs",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 443,
+                "text": "pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {"
+              },
+              {
+                "line": 475,
+                "text": "            AuthMode::Chatgpt | AuthMode::ChatgptAuthTokens => {"
+              },
+              {
+                "line": 476,
+                "text": "                eprintln!(\"Logged in using ChatGPT\");"
+              },
+              {
+                "line": 477,
+                "text": "                std::process::exit(0);"
+              }
+            ],
+            "backs": [
+              "exitCode",
+              "lines",
+              "stream"
+            ],
+            "exitCode": 0,
+            "stream": "stderr",
+            "samples": [
+              "Logged in using ChatGPT"
+            ]
+          },
+          {
+            "kind": "upstream",
+            "role": "login-dispatch",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.153.4"
+            ],
+            "excerpt": [
+              {
+                "line": 1526,
+                "text": "                Some(LoginSubcommand::Status) => {"
+              },
+              {
+                "line": 1527,
+                "text": "                    run_login_status(login_cli.config_overrides).await;"
+              }
+            ],
+            "backs": [],
+            "note": "`codex login status` runs run_login_status"
+          },
+          {
+            "kind": "upstream",
+            "role": "login-dispatch",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 1609,
+                "text": "                Some(LoginSubcommand::Status) => {"
+              },
+              {
+                "line": 1610,
+                "text": "                    run_login_status(login_cli.config_overrides).await;"
+              }
+            ],
+            "backs": [],
+            "note": "`codex login status` runs run_login_status"
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "The pinned CLI prints one line: `Logged in using ChatGPT`, `Logged in using",
+            "backs": [
+              "lines"
+            ],
+            "samples": [
+              "Logged in using ChatGPT"
+            ]
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "if (exitCode === 0) { if (/^Logged in using ChatGPT\\b/.test(line)) return { state: 'signed-in', via: 'chatgpt' }",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": 0
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "export function parseCodexLoginStatus(exitCode: number | null, stdout: string, stderr: string)",
+            "backs": [
+              "appReads"
+            ]
+          }
+        ]
+      },
+      "reliedOnBy": "parseCodexLoginStatus: signed-in via chatgpt",
+      "fakes": [
+        "wp1-fake-cli"
+      ]
+    },
+    {
+      "id": "login-api-key-pipe",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "login",
+        "--with-api-key"
+      ],
+      "app": {
+        "operation": "login-api-key"
+      },
+      "preconditions": [
+        "empty-home",
+        "stdin-pipe"
+      ],
+      "stdinLines": [
+        "sk-oracle-test-key"
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [],
+        "afterwards": "login-status-api-key"
+      },
+      "sources": {
+        "captures": [],
+        "citations": [
+          {
+            "kind": "upstream",
+            "role": "api-key-login",
+            "path": "codex-rs/cli/src/login.rs",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 46,
+                "text": "const LOGIN_SUCCESS_MESSAGE: &str = \"Successfully logged in\";"
+              },
+              {
+                "line": 204,
+                "text": "pub async fn run_login_with_api_key("
+              },
+              {
+                "line": 220,
+                "text": "    match login_with_api_key("
+              },
+              {
+                "line": 221,
+                "text": "        &config.codex_home,"
+              },
+              {
+                "line": 226,
+                "text": "        Ok(_) => {"
+              },
+              {
+                "line": 227,
+                "text": "            eprintln!(\"{LOGIN_SUCCESS_MESSAGE}\");"
+              },
+              {
+                "line": 228,
+                "text": "            std::process::exit(0);"
+              }
+            ],
+            "backs": [
+              "exitCode",
+              "afterwards"
+            ],
+            "exitCode": 0,
+            "afterwards": "login-status-api-key"
+          },
+          {
+            "kind": "upstream",
+            "role": "login-dispatch",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.153.4"
+            ],
+            "excerpt": [
+              {
+                "line": 1547,
+                "text": "                    } else if login_cli.with_api_key {"
+              },
+              {
+                "line": 1548,
+                "text": "                        let api_key = read_api_key_from_stdin();"
+              },
+              {
+                "line": 1549,
+                "text": "                        run_login_with_api_key(login_cli.config_overrides, api_key).await;"
+              }
+            ],
+            "backs": [],
+            "note": "the key is read from stdin, then the login runs"
+          },
+          {
+            "kind": "upstream",
+            "role": "login-dispatch",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 1630,
+                "text": "                    } else if login_cli.with_api_key {"
+              },
+              {
+                "line": 1631,
+                "text": "                        let api_key = read_api_key_from_stdin();"
+              },
+              {
+                "line": 1632,
+                "text": "                        run_login_with_api_key(login_cli.config_overrides, api_key).await;"
+              }
+            ],
+            "backs": [],
+            "note": "the key is read from stdin, then the login runs"
+          },
+          {
+            "kind": "upstream",
+            "role": "stdin-secret",
+            "path": "codex-rs/cli/src/login.rs",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 277,
+                "text": "pub fn read_api_key_from_stdin() -> String {"
+              },
+              {
+                "line": 278,
+                "text": "    read_stdin_secret("
+              },
+              {
+                "line": 279,
+                "text": "        \"--with-api-key expects the API key on stdin. Try piping it, e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`.\","
+              }
+            ],
+            "backs": []
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/auth-operations.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "else if (out.exitCode !== 0) failure = refuse('provider-refused')",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": 0
+          }
+        ]
+      },
+      "reliedOnBy": "an API key sign-in fails on any exit but 0, and succeeds only when a status run agrees afterwards (auth-operations.ts)",
+      "fakes": [
+        "wp1-fake-cli"
+      ]
+    },
+    {
+      "id": "login-api-key-tty-refused",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "login",
+        "--with-api-key"
+      ],
+      "app": {
+        "operation": "login-api-key"
+      },
+      "preconditions": [
+        "empty-home",
+        "stdin-tty"
+      ],
+      "expect": {
+        "exitCode": 1,
+        "streams": [],
+        "afterwards": "login-status-signed-out"
+      },
+      "sources": {
+        "captures": [],
+        "citations": [
+          {
+            "kind": "upstream",
+            "role": "stdin-secret",
+            "path": "codex-rs/cli/src/login.rs",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 293,
+                "text": "fn read_stdin_secret(terminal_message: &str, reading_message: &str, empty_message: &str) -> String {"
+              },
+              {
+                "line": 294,
+                "text": "    let mut stdin = std::io::stdin();"
+              },
+              {
+                "line": 296,
+                "text": "    if stdin.is_terminal() {"
+              },
+              {
+                "line": 297,
+                "text": "        eprintln!(\"{terminal_message}\");"
+              },
+              {
+                "line": 298,
+                "text": "        std::process::exit(1);"
+              }
+            ],
+            "backs": [
+              "exitCode",
+              "afterwards"
+            ],
+            "exitCode": 1,
+            "afterwards": "login-status-signed-out",
+            "note": "the refusal exits before the key is read, so nothing is stored"
+          },
+          {
+            "kind": "upstream",
+            "role": "login-dispatch",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.153.4"
+            ],
+            "excerpt": [
+              {
+                "line": 1547,
+                "text": "                    } else if login_cli.with_api_key {"
+              },
+              {
+                "line": 1548,
+                "text": "                        let api_key = read_api_key_from_stdin();"
+              },
+              {
+                "line": 1549,
+                "text": "                        run_login_with_api_key(login_cli.config_overrides, api_key).await;"
+              }
+            ],
+            "backs": [
+              "afterwards"
+            ],
+            "afterwards": "login-status-signed-out",
+            "note": "the key is read before the login runs"
+          },
+          {
+            "kind": "upstream",
+            "role": "login-dispatch",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 1630,
+                "text": "                    } else if login_cli.with_api_key {"
+              },
+              {
+                "line": 1631,
+                "text": "                        let api_key = read_api_key_from_stdin();"
+              },
+              {
+                "line": 1632,
+                "text": "                        run_login_with_api_key(login_cli.config_overrides, api_key).await;"
+              }
+            ],
+            "backs": [
+              "afterwards"
+            ],
+            "afterwards": "login-status-signed-out",
+            "note": "the key is read before the login runs"
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/cli-runner.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "the pinned CLI refuses a TTY stdin",
+            "backs": [
+              "afterwards"
+            ],
+            "afterwards": "login-status-signed-out"
+          }
+        ]
+      },
+      "reliedOnBy": "the API key is written to a stdin pipe, never a terminal (cli-runner.ts, auth-operations.ts)",
+      "fakes": [
+        "wp1-fake-cli"
+      ]
+    },
+    {
+      "id": "logout-signs-out",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "logout"
+      ],
+      "app": {
+        "operation": "logout"
+      },
+      "preconditions": [
+        "signed-in-api-key"
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [],
+        "afterwards": "login-status-signed-out"
+      },
+      "sources": {
+        "captures": [],
+        "citations": [
+          {
+            "kind": "upstream",
+            "role": "logout",
+            "path": "codex-rs/cli/src/login.rs",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 510,
+                "text": "pub async fn run_logout(cli_config_overrides: CliConfigOverrides) -> ! {"
+              },
+              {
+                "line": 514,
+                "text": "    let logged_out = match logout_with_revoke("
+              },
+              {
+                "line": 515,
+                "text": "        &config.codex_home,"
+              },
+              {
+                "line": 547,
+                "text": "    if logged_out || cleared_bedrock_config {"
+              },
+              {
+                "line": 548,
+                "text": "        eprintln!(\"Successfully logged out\");"
+              },
+              {
+                "line": 549,
+                "text": "    } else {"
+              },
+              {
+                "line": 550,
+                "text": "        eprintln!(\"Not logged in\");"
+              },
+              {
+                "line": 552,
+                "text": "    std::process::exit(0);"
+              }
+            ],
+            "backs": [
+              "exitCode",
+              "afterwards"
+            ],
+            "exitCode": 0,
+            "afterwards": "login-status-signed-out"
+          },
+          {
+            "kind": "upstream",
+            "role": "login-dispatch",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.153.4"
+            ],
+            "excerpt": [
+              {
+                "line": 1559,
+                "text": "        Some(Subcommand::Logout(mut logout_cli)) => {"
+              },
+              {
+                "line": 1569,
+                "text": "            run_logout(logout_cli.config_overrides).await;"
+              }
+            ],
+            "backs": []
+          },
+          {
+            "kind": "upstream",
+            "role": "login-dispatch",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 1642,
+                "text": "        Some(Subcommand::Logout(mut logout_cli)) => {"
+              },
+              {
+                "line": 1652,
+                "text": "            run_logout(logout_cli.config_overrides).await;"
+              }
+            ],
+            "backs": []
+          },
+          {
+            "kind": "observation",
+            "path": "tests/fixtures/codex/cli/0.153.4/help/help.txt",
+            "versions": [
+              "0.153.4"
+            ],
+            "quote": "logout Remove stored authentication credentials",
+            "backs": [
+              "afterwards"
+            ],
+            "afterwards": "login-status-signed-out"
+          },
+          {
+            "kind": "observation",
+            "path": "tests/fixtures/codex/cli/0.155.1/help/help.txt",
+            "versions": [
+              "0.155.1"
+            ],
+            "quote": "logout Remove stored authentication credentials",
+            "backs": [
+              "afterwards"
+            ],
+            "afterwards": "login-status-signed-out"
+          }
+        ]
+      },
+      "reliedOnBy": "logout succeeds only when a status run agrees afterwards; the app does not read its exit code (auth-operations.ts)",
+      "fakes": [
+        "wp1-fake-cli"
+      ]
+    },
+    {
+      "id": "exec-json-review",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "exec",
+        "--json",
+        "--ephemeral",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        "-m",
+        "gpt-5.5",
+        "-"
+      ],
+      "app": {
+        "operation": "review"
+      },
+      "preconditions": [
+        "signed-in",
+        "stdin-pipe"
+      ],
+      "stdinLines": [
+        "Review the change."
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [
+          {
+            "stream": "stdout",
+            "mode": "inOrder",
+            "lines": [
+              {
+                "regex": "^\\{\"type\":\"thread\\.started\",\"thread_id\":\"[^\"]+\"\\}$"
+              },
+              {
+                "exact": "{\"type\":\"turn.started\"}"
+              },
+              {
+                "regex": "^\\{\"type\":\"item\\.completed\",\"item\":\\{\"id\":\"[^\"]+\",\"type\":\"agent_message\",\"text\":\"(?:[^\"\\\\]|\\\\.)*\"\\}\\}$"
+              },
+              {
+                "regex": "^\\{\"type\":\"turn\\.completed\",\"usage\":\\{\"input_tokens\":\\d+,\"cached_input_tokens\":\\d+,(?:\"[a-z_]+\":\\d+,)*\"output_tokens\":\\d+(?:,\"[a-z_]+\":\\d+)*\\}\\}$"
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [
+          {
+            "version": "0.153.4",
+            "path": "tests/fixtures/codex/cli/0.153.4/exec-json.jsonl",
+            "format": "stdout-jsonl",
+            "note": "P3.1 runs 1 (0.155.1) and 3 (0.153.4): codex exec --json --skip-git-repo-check -C <folder> -c notify=... -c hooks...; the hook-trust warning items between the events are not part of the oracle (inOrder)"
+          },
+          {
+            "version": "0.155.1",
+            "path": "tests/fixtures/codex/cli/0.155.1/exec-json.jsonl",
+            "format": "stdout-jsonl",
+            "note": "P3.1 runs 1 (0.155.1) and 3 (0.153.4): codex exec --json --skip-git-repo-check -C <folder> -c notify=... -c hooks...; the hook-trust warning items between the events are not part of the oracle (inOrder)"
+          },
+          {
+            "version": "0.155.1",
+            "path": "tests/fixtures/codex/cli/0.155.1/exec-ephemeral-developer-instructions-json.jsonl",
+            "format": "stdout-jsonl",
+            "note": "P3.1 run 5: codex exec --ephemeral --json ... -c developer_instructions=..."
+          }
+        ],
+        "citations": [
+          {
+            "kind": "observation",
+            "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "Exit 0 on success",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": 0
+          },
+          {
+            "kind": "observation",
+            "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "JSONL on stdout: `thread.started {thread_id}`, `turn.started`, `item.started` and `item.completed` with `item:",
+            "backs": [
+              "lines"
+            ]
+          }
+        ]
+      },
+      "reliedOnBy": "createCodexExecEventReader (review.ts): the last agent_message is the review; usage from turn.completed (input_tokens, cached_input_tokens, output_tokens)",
+      "fakes": [
+        "wp1-fake-cli"
+      ]
+    },
+    {
+      "id": "exec-json-cloud-agent",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "exec",
+        "--json",
+        "-s",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "app": {
+        "agentSandbox": "read-only"
+      },
+      "preconditions": [
+        "signed-in",
+        "stdin-pipe"
+      ],
+      "stdinLines": [
+        "Fix the typo in README.md."
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [
+          {
+            "stream": "stdout",
+            "mode": "inOrder",
+            "lines": [
+              {
+                "regex": "^\\{\"type\":\"thread\\.started\",\"thread_id\":\"[^\"]+\"\\}$"
+              },
+              {
+                "exact": "{\"type\":\"turn.started\"}"
+              },
+              {
+                "regex": "^\\{\"type\":\"item\\.completed\",\"item\":\\{\"id\":\"[^\"]+\",\"type\":\"agent_message\",\"text\":\"(?:[^\"\\\\]|\\\\.)*\"\\}\\}$"
+              },
+              {
+                "regex": "^\\{\"type\":\"turn\\.completed\",\"usage\":\\{\"input_tokens\":\\d+,\"cached_input_tokens\":\\d+,(?:\"[a-z_]+\":\\d+,)*\"output_tokens\":\\d+(?:,\"[a-z_]+\":\\d+)*\\}\\}$"
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [
+          {
+            "version": "0.153.4",
+            "path": "tests/fixtures/codex/cli/0.153.4/exec-json.jsonl",
+            "format": "stdout-jsonl",
+            "note": "P3.1 runs 1 (0.155.1) and 3 (0.153.4): codex exec --json --skip-git-repo-check -C <folder> -c notify=... -c hooks...; the hook-trust warning items between the events are not part of the oracle (inOrder)"
+          },
+          {
+            "version": "0.155.1",
+            "path": "tests/fixtures/codex/cli/0.155.1/exec-json.jsonl",
+            "format": "stdout-jsonl",
+            "note": "P3.1 runs 1 (0.155.1) and 3 (0.153.4): codex exec --json --skip-git-repo-check -C <folder> -c notify=... -c hooks...; the hook-trust warning items between the events are not part of the oracle (inOrder)"
+          }
+        ],
+        "citations": [
+          {
+            "kind": "observation",
+            "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "Exit 0 on success",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": 0
+          },
+          {
+            "kind": "observation",
+            "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "JSONL on stdout: `thread.started {thread_id}`, `turn.started`, `item.started` and `item.completed` with `item:",
+            "backs": [
+              "lines"
+            ]
+          }
+        ]
+      },
+      "reliedOnBy": "a Cloud Agent's run (agent-run.ts) reads the same events through createCodexExecEventReader",
+      "fakes": [
+        "e2e-fake-codex"
+      ]
+    },
+    {
+      "id": "app-server-usage-read",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "app-server"
+      ],
+      "app": {
+        "operation": "app-server",
+        "stdin": "appServerMessages"
+      },
+      "preconditions": [
+        "signed-in",
+        "stdin-pipe"
+      ],
+      "stdinLines": [
+        "{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"codex_cli_rs\",\"title\":null,\"version\":\"{version}\"},\"capabilities\":null}}",
+        "{\"method\":\"initialized\"}",
+        "{\"id\":2,\"method\":\"account/rateLimits/read\"}"
+      ],
+      "expect": {
+        "streams": [
+          {
+            "stream": "stdout",
+            "mode": "inOrder",
+            "lines": [
+              {
+                "rpcResult": {
+                  "id": 1,
+                  "schema": "initializeResponse",
+                  "fields": {
+                    "codexHome": {
+                      "type": "string",
+                      "sameFolderAsEnv": "CODEX_HOME"
+                    },
+                    "platformFamily": {
+                      "type": "string"
+                    },
+                    "platformOs": {
+                      "type": "string"
+                    },
+                    "userAgent": {
+                      "type": "string",
+                      "regex": "^[^\\s/]+/{version}(?: .*)?$"
+                    }
+                  }
+                }
+              },
+              {
+                "rpcResult": {
+                  "id": 2,
+                  "schema": "rateLimitsReadResponse",
+                  "fields": {
+                    "rateLimits": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [],
+        "schemas": [
+          {
+            "version": "0.153.4",
+            "path": "tests/fixtures/codex/app-server/0.153.4/usage-schema.json"
+          },
+          {
+            "version": "0.155.1",
+            "path": "tests/fixtures/codex/app-server/0.155.1/usage-schema.json"
+          }
+        ],
+        "citations": [
+          {
+            "kind": "observation",
+            "path": "tests/fixtures/codex/app-server/0.153.4/usage-schema.json",
+            "versions": [
+              "0.153.4"
+            ],
+            "quote": "Absolute path to the server's $CODEX_HOME directory.",
+            "backs": [
+              "lines"
+            ]
+          },
+          {
+            "kind": "observation",
+            "path": "tests/fixtures/codex/app-server/0.155.1/usage-schema.json",
+            "versions": [
+              "0.155.1"
+            ],
+            "quote": "Absolute path to the server's $CODEX_HOME directory.",
+            "backs": [
+              "lines"
+            ]
+          },
+          {
+            "kind": "upstream",
+            "role": "app-server-initialize",
+            "path": "codex-rs/app-server/src/request_processors/initialize_processor.rs",
+            "versions": [
+              "0.153.4"
+            ],
+            "excerpt": [
+              {
+                "line": 8,
+                "text": "use codex_login::default_client::get_codex_user_agent;"
+              },
+              {
+                "line": 96,
+                "text": "        let codex_home = self.config.codex_home.clone();"
+              },
+              {
+                "line": 141,
+                "text": "        let user_agent = get_codex_user_agent();"
+              },
+              {
+                "line": 142,
+                "text": "        let response = InitializeResponse {"
+              },
+              {
+                "line": 143,
+                "text": "            user_agent,"
+              },
+              {
+                "line": 144,
+                "text": "            codex_home,"
+              }
+            ],
+            "backs": [
+              "lines"
+            ],
+            "note": "initialize answers with the user agent and the configured codex_home"
+          },
+          {
+            "kind": "upstream",
+            "role": "app-server-initialize",
+            "path": "codex-rs/app-server/src/request_processors/initialize_processor.rs",
+            "versions": [
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 8,
+                "text": "use codex_login::default_client::get_codex_user_agent;"
+              },
+              {
+                "line": 126,
+                "text": "        let codex_home = self.config.codex_home.clone();"
+              },
+              {
+                "line": 176,
+                "text": "        let user_agent = get_codex_user_agent();"
+              },
+              {
+                "line": 177,
+                "text": "        let response = InitializeResponse {"
+              },
+              {
+                "line": 178,
+                "text": "            user_agent,"
+              },
+              {
+                "line": 179,
+                "text": "            codex_home,"
+              }
+            ],
+            "backs": [
+              "lines"
+            ],
+            "note": "initialize answers with the user agent and the configured codex_home"
+          },
+          {
+            "kind": "upstream",
+            "role": "user-agent",
+            "path": "codex-rs/login/src/auth/default_client.rs",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 40,
+                "text": "pub const DEFAULT_ORIGINATOR: &str = \"codex_cli_rs\";"
+              },
+              {
+                "line": 164,
+                "text": "pub fn get_codex_user_agent() -> String {"
+              },
+              {
+                "line": 165,
+                "text": "    let build_version = env!(\"CARGO_PKG_VERSION\");"
+              },
+              {
+                "line": 168,
+                "text": "    let prefix = format!("
+              },
+              {
+                "line": 169,
+                "text": "        \"{}/{build_version} ({} {}; {}) {}\","
+              },
+              {
+                "line": 170,
+                "text": "        originator.value.as_str(),"
+              }
+            ],
+            "backs": [
+              "lines"
+            ],
+            "note": "the user agent is <originator>/<crate version> then a space"
+          },
+          {
+            "kind": "upstream",
+            "role": "login-crate-version",
+            "path": "codex-rs/login/Cargo.toml",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 2,
+                "text": "name = \"codex-login\""
+              },
+              {
+                "line": 3,
+                "text": "version.workspace = true"
+              }
+            ],
+            "backs": [
+              "lines"
+            ]
+          },
+          {
+            "kind": "upstream",
+            "role": "workspace-version",
+            "path": "codex-rs/Cargo.toml",
+            "versions": [
+              "0.153.4"
+            ],
+            "excerpt": [
+              {
+                "line": 149,
+                "text": "[workspace.package]"
+              },
+              {
+                "line": 150,
+                "text": "version = \"0.153.4\""
+              }
+            ],
+            "backs": [
+              "lines"
+            ],
+            "note": "the crate version is the release"
+          },
+          {
+            "kind": "upstream",
+            "role": "workspace-version",
+            "path": "codex-rs/Cargo.toml",
+            "versions": [
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 153,
+                "text": "[workspace.package]"
+              },
+              {
+                "line": 154,
+                "text": "version = \"0.155.1\""
+              }
+            ],
+            "backs": [
+              "lines"
+            ],
+            "note": "the crate version is the release"
+          },
+          {
+            "kind": "upstream",
+            "role": "jsonrpc-response",
+            "path": "codex-rs/app-server-protocol/src/rpc.rs",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 67,
+                "text": "/// A successful (non-error) response to a request."
+              },
+              {
+                "line": 69,
+                "text": "pub struct JSONRPCResponse {"
+              },
+              {
+                "line": 70,
+                "text": "    pub id: RequestId,"
+              },
+              {
+                "line": 71,
+                "text": "    pub result: Result,"
+              }
+            ],
+            "backs": [
+              "lines"
+            ],
+            "note": "an answer carries the id of its request"
+          },
+          {
+            "kind": "upstream",
+            "role": "codex-home",
+            "path": "codex-rs/utils/home-dir/src/lib.rs",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 9,
+                "text": "/// - If `CODEX_HOME` is set, the value must exist and be a directory. The"
+              },
+              {
+                "line": 10,
+                "text": "///   value will be canonicalized and this function will Err otherwise."
+              },
+              {
+                "line": 13,
+                "text": "pub fn find_codex_home() -> std::io::Result<AbsolutePathBuf> {"
+              },
+              {
+                "line": 14,
+                "text": "    let codex_home_env = std::env::var(\"CODEX_HOME\")"
+              }
+            ],
+            "backs": [
+              "lines"
+            ],
+            "note": "codex_home is CODEX_HOME, canonicalised"
+          },
+          {
+            "kind": "upstream",
+            "role": "app-server-stdio",
+            "path": "codex-rs/app-server-transport/src/transport/stdio.rs",
+            "versions": [
+              "0.153.4"
+            ],
+            "excerpt": [
+              {
+                "line": 24,
+                "text": "pub async fn start_stdio_connection("
+              },
+              {
+                "line": 44,
+                "text": "        let stdin = io::stdin();"
+              },
+              {
+                "line": 83,
+                "text": "        let mut stdout = io::stdout();"
+              },
+              {
+                "line": 88,
+                "text": "            json.push('\\n');"
+              },
+              {
+                "line": 89,
+                "text": "            if let Err(err) = stdout.write_all(json.as_bytes()).await {"
+              }
+            ],
+            "backs": [
+              "stream"
+            ],
+            "stream": "stdout",
+            "note": "requests by line on stdin, each answer one JSON line on stdout"
+          },
+          {
+            "kind": "upstream",
+            "role": "app-server-stdio",
+            "path": "codex-rs/app-server-transport/src/transport/stdio.rs",
+            "versions": [
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 28,
+                "text": "pub async fn start_stdio_connection("
+              },
+              {
+                "line": 73,
+                "text": "            for line in std::io::stdin().lock().lines() {"
+              },
+              {
+                "line": 87,
+                "text": "            let mut stdout = std::io::stdout().lock();"
+              },
+              {
+                "line": 89,
+                "text": "                if let Err(err) = stdout.write_all(json.as_bytes()) {"
+              },
+              {
+                "line": 141,
+                "text": "            json.push('\\n');"
+              }
+            ],
+            "backs": [
+              "stream"
+            ],
+            "stream": "stdout",
+            "note": "requests by line on stdin, each answer one JSON line on stdout"
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/app-server-client.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "answer must name the realm the helper was started in",
+            "backs": [
+              "lines"
+            ]
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/app-server-client.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "The helper names its own version first in its user agent",
+            "backs": [
+              "lines"
+            ]
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/app-server-client.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "only its two responses by id",
+            "backs": [
+              "lines"
+            ]
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/app-server-client.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "closes the helper's stdin (`finish`), and the caller ends the process chain.",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": null
+          }
+        ]
+      },
+      "reliedOnBy": "the usage read (app-server-client.ts): initialize must name the realm and the proven version; the read must carry rateLimits",
+      "fakes": [
+        "wp1-fake-cli",
+        "e2e-fake-codex"
+      ]
+    },
+    {
+      "id": "debug-models-bundled",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "debug",
+        "models",
+        "--bundled"
+      ],
+      "app": {
+        "operation": "models"
+      },
+      "preconditions": [
+        "empty-home"
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [
+          {
+            "stream": "stdout",
+            "mode": "document",
+            "lines": [
+              {
+                "json": {
+                  "models": {
+                    "type": "array",
+                    "minItems": 1,
+                    "each": {
+                      "slug": {
+                        "type": "string"
+                      },
+                      "display_name": {
+                        "type": "string"
+                      },
+                      "visibility": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [
+          {
+            "version": "0.153.4",
+            "path": "tests/fixtures/codex/cli/0.153.4/debug-models-bundled.trimmed.json",
+            "format": "json-document",
+            "note": "the catalogue bundled in the 0.153.4 binary, parsed from its bytes and trimmed (the fixture $comment); not a run"
+          }
+        ],
+        "citations": [
+          {
+            "kind": "upstream",
+            "role": "debug-models",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.153.4"
+            ],
+            "excerpt": [
+              {
+                "line": 294,
+                "text": "struct DebugModelsCommand {"
+              },
+              {
+                "line": 296,
+                "text": "    #[arg(long = \"bundled\", default_value_t = false)]"
+              },
+              {
+                "line": 1038,
+                "text": "fn main() -> anyhow::Result<()> {"
+              },
+              {
+                "line": 2292,
+                "text": "async fn run_debug_models_command("
+              },
+              {
+                "line": 2296,
+                "text": "    let catalog = if cmd.bundled {"
+              },
+              {
+                "line": 2297,
+                "text": "        bundled_models_response()?"
+              },
+              {
+                "line": 2317,
+                "text": "    serde_json::to_writer(std::io::stdout(), &catalog)?;"
+              },
+              {
+                "line": 2318,
+                "text": "    println!();"
+              },
+              {
+                "line": 2319,
+                "text": "    Ok(())"
+              }
+            ],
+            "backs": [
+              "exitCode",
+              "stream"
+            ],
+            "exitCode": 0,
+            "stream": "stdout"
+          },
+          {
+            "kind": "upstream",
+            "role": "debug-models",
+            "path": "codex-rs/cli/src/main.rs",
+            "versions": [
+              "0.155.1"
+            ],
+            "excerpt": [
+              {
+                "line": 306,
+                "text": "struct DebugModelsCommand {"
+              },
+              {
+                "line": 308,
+                "text": "    #[arg(long = \"bundled\", default_value_t = false)]"
+              },
+              {
+                "line": 1125,
+                "text": "fn main() -> anyhow::Result<()> {"
+              },
+              {
+                "line": 2396,
+                "text": "async fn run_debug_models_command("
+              },
+              {
+                "line": 2400,
+                "text": "    let catalog = if cmd.bundled {"
+              },
+              {
+                "line": 2401,
+                "text": "        bundled_models_response()?"
+              },
+              {
+                "line": 2421,
+                "text": "    serde_json::to_writer(std::io::stdout(), &catalog)?;"
+              },
+              {
+                "line": 2422,
+                "text": "    println!();"
+              },
+              {
+                "line": 2423,
+                "text": "    Ok(())"
+              }
+            ],
+            "backs": [
+              "exitCode",
+              "stream"
+            ],
+            "exitCode": 0,
+            "stream": "stdout"
+          },
+          {
+            "kind": "observation",
+            "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "`codex debug models` prints the catalogue as JSON (slug, display name, default and supported",
+            "backs": [
+              "lines"
+            ]
+          },
+          {
+            "kind": "app-assumption",
+            "path": "docs/wp2/completion-plan.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "run (`codex debug models --bundled` on 0.153.4 and 0.155.1: accepted, the",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": 0,
+            "note": "the reader accepts only exit 0 (model-catalogue.ts)"
+          },
+          {
+            "kind": "app-assumption",
+            "path": "src/main/providers/codex/model-catalogue.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "if (r.exitCode !== 0) return fail('failed',",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": 0
+          }
+        ]
+      },
+      "reliedOnBy": "parseCodexModelCatalogue (model-catalogue.ts): one JSON object with a models list",
+      "fakes": [
+        "wp1-fake-cli"
+      ]
+    }
+  ],
+  "notCovered": [
+    "Fake behaviour with no source, so no entry: the browser and device sign-in output (wp1-fake-cli login, login --device-auth and its HANG flow), the sleep helper, the analysis exec argv, the app-server modes chosen by an APP_SERVER file, the e2e session stand-in, and the guards each fake adds of its own (an ambient credential or NODE_OPTIONS: exit 9; no CODEX_HOME: exit 8; an unknown argv: exit 64; the e2e exec refusals: exit 65).",
+    "Upstream lines the app does not read, and the wp1 FAKE prints differently, so no line claim: login --with-api-key prints \"Reading API key from stdin...\" and \"Successfully logged in\" on stderr (login.rs read_stdin_secret, run_login_with_api_key), the FAKE \"Read key <key>\" and \"Successfully logged in\" on stdout; logout prints \"Successfully logged out\" (or \"Not logged in\") on stderr (run_logout), the FAKE on stdout; a terminal on stdin gets \"--with-api-key expects the API key on stdin. ...\" on stderr, the FAKE \"refuses a TTY\". The app decides by the exit code and a status run afterwards (auth-operations.ts).",
+    "Real behaviour with a source but no fake: the read error a signed-out realm gets from app-server (-32600, app-server-client.ts), the refused-edit run (exec-edit-sandbox-refused-json.jsonl), exec resume, the other login status lines (workload identity, access tokens, Amazon Bedrock)."
+  ]
+}

@@ -38,15 +38,22 @@ export const MARKER_FALLBACK_FLUSH_MS = 120_000
 export const MARKER_QUEUE_MAX = 32
 
 export interface MarkerQueueDeps {
-  /** Deliver one line to the session's agent. */
-  write: (sessionId: string, line: string) => void
+  /** Deliver one line to the session's agent, with the canvas it was filed on
+   *  when the caller named one (WP2 PR 4: it travels with the line itself). */
+  write: (sessionId: string, line: string, canvasId?: string) => void
   /** Arm the fallback flush. Returns its canceller. Injected for tests. */
   setTimer?: (fn: () => void, ms: number) => () => void
 }
 
+/** One held marker: its line and the canvas it was filed on. */
+interface PendingMarker {
+  line: string
+  canvasId?: string
+}
+
 interface SessionState {
   turnOpen: boolean
-  pending: string[]
+  pending: PendingMarker[]
   cancelFallback: (() => void) | null
 }
 
@@ -68,7 +75,7 @@ const TURN_OPENING_EVENTS: ReadonlySet<string> = new Set([
 
 export class CanvasMarkerQueue {
   private readonly sessions = new Map<string, SessionState>()
-  private readonly write: (sessionId: string, line: string) => void
+  private readonly write: (sessionId: string, line: string, canvasId?: string) => void
   private readonly setTimer: (fn: () => void, ms: number) => () => void
 
   constructor(deps: MarkerQueueDeps) {
@@ -97,12 +104,13 @@ export class CanvasMarkerQueue {
    * otherwise at the end of the turn that is in flight.
    *
    * Returns 'sent' or 'queued' so the caller (and the tests) can tell which
-   * happened without reaching into the state.
+   * happened without reaching into the state. `canvasId`, when given, stays
+   * with the line through the queue to its write.
    */
-  deliver(sessionId: string, line: string): 'sent' | 'queued' {
+  deliver(sessionId: string, line: string, canvasId?: string): 'sent' | 'queued' {
     const s = this.state(sessionId)
     if (!s.turnOpen) {
-      this.write(sessionId, line)
+      this.write(sessionId, line, canvasId)
       return 'sent'
     }
     // COLLAPSE an identical pending line (adversarial review, 2026-09-01).
@@ -119,7 +127,9 @@ export class CanvasMarkerQueue {
     // Dedupe against PENDING only, never against what has already been written: a
     // second identical verdict in a LATER turn is a real event and must go out.
     // The cap stays as the backstop for genuinely distinct floods.
-    if (s.pending.includes(line)) {
+    // WP2 PR 4: the same line about ANOTHER canvas is a different event (two
+    // canvases of one session can file the same words), so it is not collapsed.
+    if (s.pending.some((p) => p.line === line && p.canvasId === canvasId)) {
       logInfo(`[canvas-marker] duplicate marker for ${sessionId} collapsed into the pending one`)
       this.armFallback(sessionId, s)
       return 'queued'
@@ -129,9 +139,9 @@ export class CanvasMarkerQueue {
       // the canvas, and an unbounded queue on a wedged session is worse than a
       // dropped stale line. Loud, because it should never happen.
       const dropped = s.pending.shift()
-      logWarn(`[canvas-marker] queue full for ${sessionId} — dropped the oldest marker: ${dropped}`)
+      logWarn(`[canvas-marker] queue full for ${sessionId} -- dropped the oldest marker: ${dropped?.line}`)
     }
-    s.pending.push(line)
+    s.pending.push({ line, ...(canvasId !== undefined ? { canvasId } : {}) })
     logInfo(`[canvas-marker] agent turn is open for ${sessionId} — queued marker (${s.pending.length} pending)`)
     this.armFallback(sessionId, s)
     return 'queued'
@@ -174,11 +184,11 @@ export class CanvasMarkerQueue {
     s.cancelFallback?.()
     s.cancelFallback = null
     if (s.pending.length === 0) return 0
-    const lines = s.pending
+    const held = s.pending
     s.pending = []
-    logInfo(`[canvas-marker] flushing ${lines.length} queued marker(s) for ${sessionId}`)
-    for (const line of lines) this.write(sessionId, line)
-    return lines.length
+    logInfo(`[canvas-marker] flushing ${held.length} queued marker(s) for ${sessionId}`)
+    for (const marker of held) this.write(sessionId, marker.line, marker.canvasId)
+    return held.length
   }
 
   /** The session is gone: nothing left to deliver it to. */

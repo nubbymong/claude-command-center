@@ -8,7 +8,7 @@ Thanks for your interest in contributing! This document covers setup, coding sta
 - npm 9+
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
 - Optional: OpenAI's [Codex CLI](https://github.com/openai/codex) 0.153.4 or newer, to work on Codex features
-- Windows 10/11, macOS 12+, or Linux with glibc 2.39+ (Linux support is experimental — verified on Ubuntu 24.04 and Rocky 10)
+- Windows 10/11, macOS 13+, or Linux with glibc 2.39+ (Linux support is experimental — verified on Ubuntu 24.04 and Rocky 10)
 
 ## Getting Started
 
@@ -20,6 +20,15 @@ npm run dev
 ```
 
 This starts the app in development mode with hot module reloading. Changes to renderer code (React components, styles) update instantly. Main process changes require a restart.
+
+### Native modules and local packaging
+
+The install's `postinstall` (`scripts/postinstall-native.mjs`) gets node-pty and better-sqlite3 ready for Electron:
+
+- **Windows:** it uses the prebuilt binaries both packages ship, as CI and the release build do, so no C++ toolchain is needed. A module with no prebuild for your architecture is built from source. Building from source (`npm run rebuild`) needs Visual Studio 2022 with the Desktop development with C++ workload and the Spectre-mitigated libraries for its MSVC version; without them node-pty's build stops at MSB8040. After `npm run rebuild`, run `node node_modules/node-pty/scripts/post-install.js`: it puts node-pty's bundled ConPTY beside the from-source build, which loads ahead of the prebuilds (the install's own postinstall runs it for you).
+- **macOS and Linux:** it rebuilds both against Electron, as CI and the release build do there, so you need Xcode's command line tools, or a C++ compiler, make and Python.
+
+`npm run package` (and `package:win`, `package:store`) packages those binaries as they are installed (`--config.npmRebuild=false`, as `release.yml` does), then `npm run verify:package` checks them in `dist/`.
 
 ## Project Structure
 

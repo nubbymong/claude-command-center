@@ -44,7 +44,21 @@ export type ToTranscriptsWorker =
       path: string
       confidence: 'exact' | 'heuristic'
       sourceVersion?: string
+      /** P3.12: the transcript's format; absent = Claude's JSONL. A Codex
+       *  rollout is tailed with the Codex normalizer. */
+      sourceFormat?: 'claude-jsonl' | 'codex-rollout'
+      /** P3.12 round 1: a Codex rollout's file identity (dev:ino) as its
+       *  watcher claimed it; the tail reads only that file. */
+      sourceIdentity?: string
     }
+  /** P3.12 (Y1): when Codex conversations were written while not indexed:
+   *  each listed conversation's windows ([start, end), end null while open),
+   *  whole; `before`, every record stamped earlier; `replace`, the whole
+   *  set (the worker's start). Every read skips the records stamped inside. */
+  | { type: 'not-indexed-windows'; conversations: Record<string, Array<[number, number | null]>>; before: number | null; replace?: boolean }
+  /** P3.12: the session is no longer on this transcript (a Codex claim let
+   *  go): its tail is drained and retired; what it gave stays. */
+  | { type: 'transcript-unbind'; sessionId: string; path: string }
   | {
       // #480: durable session->conversation mapping, written on every EXACT bind.
       // Independent of the runs/transcripts index so restart resume has a single

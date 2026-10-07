@@ -10,7 +10,7 @@ import { useFocusTrap } from '../../../hooks/useFocusTrap'
 import { useSettingsStore } from '../../../stores/settingsStore'
 import { claudeMultiAccountBlocked } from '../../../../shared/mac-multi-account'
 
-export type PillTone = 'default' | 'reviewer' | 'warn' | 'beta' | 'muted'
+export type PillTone = 'default' | 'reviewer' | 'warn' | 'beta' | 'muted' | 'running'
 
 const PILL_TOKEN: Record<PillTone, string> = {
   default: 'var(--brand)',
@@ -18,6 +18,7 @@ const PILL_TOKEN: Record<PillTone, string> = {
   warn: 'var(--status-warning)',
   beta: 'var(--brand)',
   muted: 'var(--text-muted)',
+  running: 'var(--status-success)',
 }
 
 /** A rounded badge ("Default", "Reviewer", "Beta", "Confirm each launch"). */
@@ -32,6 +33,17 @@ export function Pill({ tone, children, testId, title }: { tone: PillTone; childr
     >
       {children}
     </span>
+  )
+}
+
+/** "N running" on an account row (design 5.3): the sessions running on it now. */
+export function RunningPill({ count, testId }: { count: number; testId?: string }) {
+  if (count <= 0) return null
+  return (
+    <Pill tone="running" testId={testId}>
+      <span className="w-1.5 h-1.5 rounded-full mr-1.5 shrink-0" style={{ background: 'var(--status-success)' }} aria-hidden />
+      {count} running
+    </Pill>
   )
 }
 

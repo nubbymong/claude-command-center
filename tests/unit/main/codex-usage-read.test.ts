@@ -25,6 +25,7 @@ import type { Harness, CliRun } from '../../wp1/accounts-harness'
 import { createCodexLiveUsage, createCodexUsageOperations, codexExecutableKey, CODEX_DEFAULT_LIMIT_ID } from '../../../src/main/providers/codex'
 import type { CodexUsageFsPort, CodexRunResult, CodexUsageRead, CodexUsageReadOptions } from '../../../src/main/providers/codex'
 import { USAGE_READ_TRANSIENT_LIMIT } from '../../../src/main/providers/core'
+import { recordAuthCheck } from '../../../src/shared/providers'
 import type { ProviderAccountUsageView, ProviderPreference } from '../../../src/shared/providers'
 import type { AllowanceReading } from '../../../src/shared/usage-types'
 
@@ -189,6 +190,10 @@ describe('the usage port\'s fresh read (MP8)', () => {
 interface HelperOpts {
   percent?: number
   plan?: string
+  /** The answer's own rateLimits.credits (P3.14), as the helper writes it. */
+  credits?: unknown
+  /** A credits object on a per-limit map entry only (never shown). */
+  mapCredits?: unknown
   /** Answer nothing: the read is under way until stopped. */
   hold?: boolean
   /** The read's answer is this JSON-RPC error. */
@@ -221,7 +226,7 @@ function appServer(o: HelperOpts = {}) {
         queueMicrotask(() => {
           if (m.method === 'initialize') say({ id: m.id, result: { codexHome: r.home, platformFamily: 'windows', platformOs: 'windows', userAgent: 'codex_cli_rs/0.155.1' } })
           if (m.method === 'account/rateLimits/read') {
-            const answer = () => say(o.error ? { id: m.id, error: o.error } : { id: m.id, result: { rateLimits: { limitId: CODEX_DEFAULT_LIMIT_ID, primary: { usedPercent: o.percent ?? 21, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 }, planType: o.plan ?? 'pro' } } })
+            const answer = () => say(o.error ? { id: m.id, error: o.error } : { id: m.id, result: { rateLimits: { limitId: CODEX_DEFAULT_LIMIT_ID, primary: { usedPercent: o.percent ?? 21, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 }, planType: o.plan ?? 'pro', ...(o.credits === undefined ? {} : { credits: o.credits }) }, ...(o.mapCredits === undefined ? {} : { rateLimitsByLimitId: { codex_spark: { limitId: 'codex_spark', primary: { usedPercent: 3, windowDurationMins: 300 }, credits: o.mapCredits } } }) } })
             if (o.gate) void o.gate.then(answer)
             else answer()
           }
@@ -267,13 +272,13 @@ function rolloutFs() {
   }
   return {
     port,
-    rollout: (sessions: string, pct: number) => {
+    rollout: (sessions: string, pct: number, credits?: unknown) => {
       const d = `${sessions}\\2026\\09\\20`
       const parts = norm(d).split('\\')
       for (let i = 1; i <= parts.length; i++) dirs.add(parts.slice(0, i).join('\\'))
       files.set(norm(`${d}\\rollout-2026-09-20T09-00-00-a.jsonl`), JSON.stringify({
         timestamp: '2026-09-20T09:00:01Z', type: 'event_msg',
-        payload: { type: 'token_count', info: null, rate_limits: { limit_id: CODEX_DEFAULT_LIMIT_ID, primary: { used_percent: pct, window_minutes: 300 }, plan_type: 'plus' } },
+        payload: { type: 'token_count', info: null, rate_limits: { limit_id: CODEX_DEFAULT_LIMIT_ID, primary: { used_percent: pct, window_minutes: 300 }, plan_type: 'plus', ...(credits === undefined ? {} : { credits }) } },
       }) + '\n')
     },
   }
@@ -335,6 +340,51 @@ describe('who is read (ADR-022, bound 2)', () => {
     expect(helperRuns(t.h).map((x) => x.home)).toEqual([managedHome(realmOf(t.h, a))])
     // Its lease is let go once the helper has ended.
     await until(() => t.h.leases.count(a) === 0, 'the read lease to go')
+  })
+
+  // P3.14 (ADR-023): the credits count of a fresh read is shown with it. The
+  // read, the helper's messages and the schema checks are exactly as before.
+  it('a fresh read shows the credits of the answer\'s own rateLimits, in the view the page draws', async () => {
+    const t = await setup()
+    t.use(appServer({ credits: { hasCredits: true, unlimited: false, balance: '1250.0000000000' } }))
+    const a = await addCodexAccount(t.h, 'A')
+    const r = await t.h.service.readAccountUsage({ accountId: a }, READ)
+    expect(r).toMatchObject({ ok: true, usage: { status: 'ok', source: 'read', credits: { hasCredits: true, unlimited: false, balance: 1250 } } })
+    // The same one read, the same three messages.
+    expect(helperRuns(t.h)).toHaveLength(1)
+  })
+
+  it('credits of the wrong shape are not shown, and the reading still is; a per-limit entry\'s credits are never shown', async () => {
+    const t = await setup()
+    const a = await addCodexAccount(t.h, 'A')
+    for (const helper of [appServer({ credits: { hasCredits: 'yes', unlimited: false, balance: '5' } }), appServer({ credits: 'junk' }), appServer({ mapCredits: { hasCredits: true, unlimited: true, balance: '999' } })]) {
+      t.use(helper)
+      const r = await t.h.service.readAccountUsage({ accountId: a }, READ)
+      if (!r.ok) throw new Error(r.code)
+      expect(r.usage).toMatchObject({ status: 'ok', source: 'read' })
+      expect(Object.prototype.hasOwnProperty.call(r.usage, 'credits')).toBe(false)
+      // A Retry reads again (the floor is off here), so each helper is asked.
+      await until(() => t.h.leases.count(a) === 0, 'the read lease to go')
+    }
+    expect(helperRuns(t.h)).toHaveLength(3)
+  })
+
+  it('a read whose answer has no credits shows a view with no credits key', async () => {
+    const t = await setup()
+    const a = await addCodexAccount(t.h, 'A')
+    const r = await t.h.service.readAccountUsage({ accountId: a }, READ)
+    if (!r.ok) throw new Error(r.code)
+    expect(r.usage.source).toBe('read')
+    expect(Object.prototype.hasOwnProperty.call(r.usage, 'credits')).toBe(false)
+  })
+
+  it('a failed read falls to the last-seen reading, and its credits come with it', async () => {
+    const t = await setup()
+    t.use(appServer({ error: { code: -32603, message: 'backend' } }))
+    const a = await addCodexAccount(t.h, 'A')
+    t.fs.rollout(sessionsOf(t.h, a), 37, { has_credits: true, unlimited: false, balance: '88.5' })
+    const r = await t.h.service.readAccountUsage({ accountId: a }, READ)
+    expect(r).toMatchObject({ ok: true, usage: { source: 'last-seen', credits: { hasCredits: true, unlimited: false, balance: 88.5 } } })
   })
 
   it('Codex off or not answered: no helper, no discovery', async () => {
@@ -402,9 +452,16 @@ describe('who is read (ADR-022, bound 2)', () => {
   it('an account whose new sign-in could not be recorded is never read', async () => {
     const t = await setup()
     const a = await addCodexAccount(t.h, 'A')
+    // Signed out, so the new sign-in runs in its own realm (P3.3: one that is
+    // signed in is staged, and a record that cannot be written leaves it on
+    // its own sign-in, unchanged). The login works; recording it does not.
+    expect(await t.h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
     t.h.port.failWrites = [t.h.port.writes + 1]
-    expect((await t.h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).ok).toBe(false)
-    expect(t.h.doc().accounts.find((x) => x.id === a)!.lastKnownAuthState).toBe('signed-in')
+    expect((await t.h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).ok).toBe(false)
+    // The record still says signed out, but the realm is signed in now: made
+    // to say signed in by hand, the unrecorded sign-in still keeps it unread.
+    const recorded = await t.h.store.mutate((d, now) => recordAuthCheck(d, a, { state: 'signed-in' }, now))
+    expect(recorded.ok).toBe(true)
     await t.h.service.readAccountUsage({ accountId: a }, READ)
     await stream(t)
     expect(helperRuns(t.h)).toEqual([])
@@ -654,7 +711,7 @@ describe('what stops a read, and what waits for one (#49)', () => {
 
   it('signing in again stops the read and waits for it', async () => {
     const f = await inFlight()
-    const again = f.t.h.service.signInAgain({ accountId: f.a, method: 'browser' }, 1)
+    const again = f.t.h.service.signInAgain({ sameAccount: true, accountId: f.a, method: 'browser' }, 1)
     await until(() => f.run.stopped, 'the read to be stopped')
     f.releaseKill()
     expect(await again).toMatchObject({ ok: true, state: 'signed-in' })

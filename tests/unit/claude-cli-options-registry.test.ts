@@ -18,7 +18,7 @@ describe('registry-derived option lists', () => {
     // The alias rows are the old hardcoded MODELS array and still come first —
     // "Opus" always means the newest Opus.
     expect(modelsFromRegistry(reg).slice(0, 5)).toEqual([
-      { label: 'Opus', value: 'opus', hint: 'Latest Opus (200k context)' },
+      { label: 'Opus', value: 'opus', hint: 'Latest Opus' },
       { label: 'Opus 1M', value: 'opus[1m]', hint: 'Latest Opus (1M context)' },
       { label: 'Fable', value: 'fable', hint: 'Latest Fable · most capable, ~2x faster than Opus' },
       { label: 'Sonnet', value: 'sonnet', hint: 'Latest Sonnet' },
@@ -49,7 +49,7 @@ describe('registry-derived option lists', () => {
     expect(titles).toEqual(['Latest', 'Opus', 'Fable', 'Sonnet', 'Haiku'])
     const opus = groups.find((g) => g.title === 'Opus')!
     expect(opus.items.map((i) => i.value)).toEqual([
-      'claude-opus-5', 'claude-opus-4-8-fast', 'claude-opus-4-8',
+      'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8-fast', 'claude-opus-4-8',
       'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-4-5',
     ])
     expect(opus.items.find((i) => i.value === 'claude-opus-4-6')!.label).toBe('Opus 4.6')

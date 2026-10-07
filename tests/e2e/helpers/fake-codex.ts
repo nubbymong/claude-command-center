@@ -10,8 +10,22 @@
  * The script is the observable contract of the repo's fake Codex CLI
  * (tests/wp1/fake-cli.test.ts, `FAKE`), cut to what an app instance asks it
  * without a real sign-in: `--version`, and `login status` (signed in when the
- * account's folder holds the fake credential, `auth.fake`). The same guard
- * refuses an ambient credential or NODE_OPTIONS, and anything else exits 64.
+ * account's folder holds the fake credential, `auth.fake`), the usage
+ * helper (`app-server`), and a Cloud Agent's `exec --json` run (WP2 PR 4,
+ * P4.5; see readFakeExecRecords). The same guard refuses an ambient
+ * credential or NODE_OPTIONS, and anything else exits 64.
+ *
+ * P4.9 (row 67): a session launch stands in for Codex's TUI, so a spec can
+ * start, restart and stop Codex tabs without a real Codex. The app's session
+ * argv carries `--sandbox` and starts with a flag (a fresh launch) or with
+ * `resume` (a resumed one); no CLI operation the app runs does
+ * (cli-runner.ts), and a Cloud Agent's `exec` run starts with `exec`. Such a
+ * launch is recorded in `launches.jsonl` beside the fake (its argv,
+ * CODEX_HOME, working folder and pid; helpers/codex-mode.ts reads it), prints
+ * one ready line, and stays up until `/exit` and Enter, Ctrl+C or the end of
+ * its input. A session runs in the app's own environment, not the
+ * allowlisted one of a CLI operation, so only an ambient credential is
+ * refused there.
  * On Windows it sits behind the same npm-style `.cmd` shim (npm's cmd-shim
  * template), with node's absolute path where the template runs a bare `node`,
  * so it needs no node on the PATH it is given. That fake is a constant inside
@@ -32,7 +46,27 @@ function fakeScript(version: string): string {
   return [
     "const fs = require('fs'), path = require('path')",
     'const NL = String.fromCharCode(10)',
-    "const a = process.argv.slice(2).join(' ')",
+    "const argv = process.argv.slice(2)",
+    "const a = argv.join(' ')",
+    // P4.9: a session launch (see the header): recorded, then up until told to quit.
+    "if ((argv[0] === 'resume' || /^-/.test(argv[0] || '')) && argv.includes('--sandbox')) {",
+    "  if (process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY) { process.stderr.write('LEAK' + NL); process.exit(9) }",
+    "  fs.appendFileSync(path.join(__dirname, 'launches.jsonl'), JSON.stringify({ argv, codexHome: process.env.CODEX_HOME || null, cwd: process.cwd(), pid: process.pid, tty: !!process.stdin.isTTY, at: Date.now() }) + NL)",
+    '  const CRLF = String.fromCharCode(13, 10)',
+    `  process.stdout.write('Fake Codex ${version} (e2e stand-in): ready' + CRLF)`,
+    "  const quit = () => { process.stdout.write('Fake Codex: bye' + CRLF); process.exit(0) }",
+    "  let typed = ''",
+    '  if (process.stdin.isTTY && process.stdin.setRawMode) process.stdin.setRawMode(true)',
+    "  process.stdin.setEncoding('utf8')",
+    "  process.stdin.on('data', (c) => {",
+    '    if (c.includes(String.fromCharCode(3))) return quit()',
+    '    typed = (typed + c).slice(-64)',
+    "    if (typed.includes('/exit' + String.fromCharCode(13))) quit()",
+    '  })',
+    "  process.stdin.on('end', quit)",
+    '  setInterval(() => {}, 1000)',
+    '  return',
+    '}',
     "if (process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.NODE_OPTIONS) { process.stderr.write('LEAK' + NL); process.exit(9) }",
     `if (a === '--version') { process.stdout.write('codex-cli ${version}' + NL); process.exit(0) }`,
     'const home = process.env.CODEX_HOME',
@@ -58,6 +92,34 @@ function fakeScript(version: string): string {
     '  })',
     "  process.stdin.on('end', () => process.exit(0))",
     '  setInterval(() => {}, 1000)',
+    '  return',
+    '}',
+    // WP2 PR 4, P4.5 (row 57): a Cloud Agent's headless run, `exec --json`
+    // with the task on stdin. It refuses any argv the app must never send (a
+    // working-folder flag, a sandbox bypass, danger-full-access, --ephemeral,
+    // --ignore-user-config), records what it was given in the account folder
+    // (argv, working folder, sandbox, the task's length and SHA-256, never the
+    // task), and answers with the events the real CLI writes.
+    "if (process.argv[2] === 'exec') {",
+    '  const args = process.argv.slice(3)',
+    "  const never = ['--dangerously-bypass-approvals-and-sandbox', '--yolo', '--full-auto', '--ephemeral', '--ignore-user-config', '-C', '--cd', 'danger-full-access']",
+    "  if (args[0] !== '--json' || args[args.length - 1] !== '-' || !args.includes('--skip-git-repo-check') || args.some((x) => never.includes(x))) { process.stderr.write('refused exec ' + args.join(' ') + NL); process.exit(65) }",
+    "  const at = args.indexOf('-s')",
+    "  const sandbox = at >= 0 ? args[at + 1] : ''",
+    "  if (sandbox !== 'read-only' && sandbox !== 'workspace-write') { process.stderr.write('refused sandbox ' + sandbox + NL); process.exit(65) }",
+    "  let task = ''",
+    "  process.stdin.setEncoding('utf8')",
+    '  process.stdin.on(\'data\', (c) => { task += c })',
+    "  process.stdin.on('end', () => {",
+    "    const sha = require('crypto').createHash('sha256').update(task).digest('hex')",
+    "    fs.writeFileSync(path.join(home, 'fake-exec-' + Date.now() + '-' + process.pid + '.json'), JSON.stringify({ args, cwd: process.cwd(), sandbox, taskLength: task.length, taskSha256: sha }))",
+    '    const ev = (o) => process.stdout.write(JSON.stringify(o) + NL)',
+    "    ev({ type: 'thread.started', thread_id: '00000000-0000-7000-8000-0000000000e2' })",
+    "    ev({ type: 'turn.started' })",
+    "    ev({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text: 'fake agent: ' + task.length + ' characters, ' + sandbox } })",
+    "    ev({ type: 'turn.completed', usage: { input_tokens: 1200, cached_input_tokens: 200, cache_write_input_tokens: 0, output_tokens: 34, reasoning_output_tokens: 0 } })",
+    '    process.exit(0)',
+    '  })',
     '  return',
     '}',
     "process.stderr.write('unknown ' + a + NL); process.exit(64)",
@@ -91,6 +153,23 @@ export function installFakeCodex(dir: string, version: string = FAKE_CODEX_VERSI
 export function signInFakeRealm(realmDir: string, how = 'Logged in using an API key - sk-***'): void {
   fs.mkdirSync(realmDir, { recursive: true })
   fs.writeFileSync(path.join(realmDir, 'auth.fake'), `${how}\n`)
+}
+
+/** What the fake's `exec --json` mode recorded in an account folder, one
+ *  record per run, oldest first (P4.5). Never the task itself. */
+export interface FakeExecRecord {
+  args: string[]
+  cwd: string
+  sandbox: 'read-only' | 'workspace-write'
+  taskLength: number
+  taskSha256: string
+}
+
+export function readFakeExecRecords(realmDir: string): FakeExecRecord[] {
+  let names: string[] = []
+  try { names = fs.readdirSync(realmDir).filter((n) => /^fake-exec-\d+-\d+\.json$/.test(n)) } catch { return [] }
+  const stamp = (n: string) => Number(n.split('-')[2])
+  return names.sort((x, y) => stamp(x) - stamp(y)).map((n) => JSON.parse(fs.readFileSync(path.join(realmDir, n), 'utf8')) as FakeExecRecord)
 }
 
 /** The folders on `pathValue` minus every one that holds a Codex. */

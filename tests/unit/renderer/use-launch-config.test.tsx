@@ -78,6 +78,14 @@ describe('useLaunchConfig loggingEnabled mapping (#188)', () => {
     expect(session.loggingEnabled).toBeUndefined()
   })
 
+  it('P3.12: a Codex config\'s own opt-out (codexOptions.loggingEnabled) reaches the session; its Claude field never does', () => {
+    const codex = { ...base, provider: 'codex' as const, providerAccountId: 'acct-1' }
+    addSession.mockClear()
+    expect(launchWith({ ...codex, codexOptions: { permissionsPreset: 'read-only', loggingEnabled: false } }).loggingEnabled).toBe(false)
+    addSession.mockClear()
+    expect(launchWith({ ...codex, claudeOptions: { loggingEnabled: false }, codexOptions: { permissionsPreset: 'read-only' } }).loggingEnabled).toBeUndefined()
+  })
+
   it('does NOT copy the retired enableCodexReview flag onto the session', () => {
     const session = launchWith({ ...base, claudeOptions: { enableCodexReview: true } })
     expect(session.enableCodexReview).toBeUndefined()

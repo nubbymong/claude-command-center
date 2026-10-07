@@ -28,6 +28,7 @@ import {
   mangleCwdToProjectDir,
   makeHeuristicBinder,
   resolveResumeTargetFromTranscript,
+  claudeProjectDirName,
 } from '../../../src/main/logging/transcript-discovery'
 
 // ---------------------------------------------------------------------------
@@ -470,6 +471,88 @@ describe('makeHeuristicBinder', () => {
     const binding = binder.bindOnce('sess-bnd', cwd, startedAt)
     expect(binding).not.toBeNull()
     void boundary
+  })
+
+  // P3.16a round 2 (Q1): the folder scanned is the one Claude Code writes to.
+  // A fake file system (nothing on disk): it lists only the folder named here.
+  describe('the folder Claude Code names (Q1)', () => {
+    const ROOT = path.join(path.sep === '\\' ? 'C:\\fake' : '/fake', 'projects')
+    const fakeFs = (folderName: string, file: string, mtimeMs: number) => {
+      const reads: string[] = []
+      return {
+        reads,
+        fsImpl: {
+          readdirSync: (dir: string) => { reads.push(dir); if (dir !== path.join(ROOT, folderName)) throw new Error('ENOENT'); return [file] },
+          statSync: (_p: string) => ({ mtimeMs }),
+        },
+      }
+    }
+    it('a launch folder whose name is longer than 200 characters: the name cut at 200 with the hash Claude Code adds', () => {
+      const cwd = 'C:\\Users\\jane\\' + 'a'.repeat(190)
+      const name = 'C--Users-jane-' + 'a'.repeat(186) + '-vwg8id'
+      const { reads, fsImpl } = fakeFs(name, 'conv.jsonl', 1_000_000)
+      const binding = makeHeuristicBinder({ projectsRoot: ROOT, fsImpl }).bindOnce('sess-long', cwd, 1_000_000)
+      expect(reads).toEqual([path.join(ROOT, name)])
+      expect(binding?.path).toBe(path.normalize(path.join(ROOT, name, 'conv.jsonl')))
+    })
+    it('a launch folder reached through a link: the folder it points to (Claude Code names its real path, on every platform)', () => {
+      const realpath = (p: string) => (p === '/home/u/link' ? '/data/proj' : p)
+      const { reads, fsImpl } = fakeFs('-data-proj', 'conv.jsonl', 1_000_000)
+      const binding = makeHeuristicBinder({ projectsRoot: ROOT, fsImpl, launchFolder: { realpath } }).bindOnce('sess-link', '/home/u/link', 1_000_000)
+      expect(reads).toEqual([path.join(ROOT, '-data-proj')])
+      expect(binding).not.toBeNull()
+    })
+  })
+})
+
+describe('claudeProjectDirName (Q1)', () => {
+  it('Linux and macOS: the real path of the launch folder, named by the shared rule', () => {
+    const realpath = (p: string) => (p === '/home/u/link' ? '/data/proj' : p)
+    expect(claudeProjectDirName('/home/u/link', { realpath })).toBe('-data-proj')
+  })
+  it('a launch folder that cannot be resolved (gone, or no access): named as given', () => {
+    const realpath = (_p: string): string => { throw new Error('ENOENT') }
+    expect(claudeProjectDirName('/gone/folder', { realpath })).toBe('-gone-folder')
+  })
+  // Fixer 3 (F6): Claude Code takes the real path on every platform; the VM
+  // probe at 2.1.280 found it is Node's JS realpathSync (a junction resolved,
+  // the case and the drive letter kept as written). The drive letter is not
+  // changed here: not every local launch reaches Claude Code through
+  // PowerShell, which writes it in upper case.
+  it('Windows: the real path of the launch folder too, its case and drive letter as the real path keeps them', () => {
+    const realpath = (p: string) => (p === 'C:\\w\\link' ? 'C:\\w\\Target Real' : p)
+    expect(claudeProjectDirName('C:\\w\\link', { realpath })).toBe('C--w-Target-Real')
+    expect(claudeProjectDirName('c:\\w\\proj', { realpath })).toBe('c--w-proj')
+    const gone = (_p: string): string => { throw new Error('ENOENT') }
+    expect(claudeProjectDirName('C:\\gone\\folder', { realpath: gone })).toBe('C--gone-folder')
+  })
+  it.skipIf(process.platform !== 'win32')('Windows, the real file system: a junction is resolved and a name keeps the case it was given (JS realpathSync, not the native one)', (ctx) => {
+    const PREFIX = 'ccc-f6-realpath-'
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), PREFIX))
+    try {
+      const real = path.join(base, 'Target Real')
+      fs.mkdirSync(path.join(real, 'CaseDir'), { recursive: true })
+      const link = path.join(base, 'link')
+      // A temp volume that cannot hold a junction (FAT or exFAT): skipped, never
+      // passed. ENOENT and EEXIST are this test's own setup going wrong, so they
+      // fail it; it catches any other symlinkSync error.
+      let linked = false
+      try {
+        fs.symlinkSync(real, link, 'junction')
+        linked = true
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code === 'ENOENT' || code === 'EEXIST') throw err
+      }
+      if (!linked) return ctx.skip()
+      const given = path.join(link, 'casedir')
+      const name = claudeProjectDirName(given)
+      expect(name).toBe(mangleCwdToProjectDir(path.join(fs.realpathSync(real), 'casedir')))
+      expect(name).not.toBe(mangleCwdToProjectDir(fs.realpathSync.native(given)))
+      expect(name).not.toBe(mangleCwdToProjectDir(given))
+    } finally {
+      if (path.basename(base).startsWith(PREFIX) && path.dirname(base) === os.tmpdir()) fs.rmSync(base, { recursive: true, force: true })
+    }
   })
 })
 

@@ -31,7 +31,8 @@ import ConfigContextMenu from './sidebar/ConfigContextMenu'
 import SessionContextMenu from './sidebar/SessionContextMenu'
 import ConfigEditGuardDialog from './sidebar/ConfigEditGuardDialog'
 import { configEditGuardState } from './sidebar/configEditGuard'
-import { openArtifactsPerSetting } from '../lib/claude-web-targets'
+import { openArtifactsPerSetting, claudeWebActionProfileId, codexWebActionAccountId } from '../lib/claude-web-targets'
+import { useCodexWebStore } from '../stores/codexWebStore'
 import GroupContextMenu from './sidebar/GroupContextMenu'
 import SectionHeader from './sidebar/SectionHeader'
 import GroupHeader from './sidebar/GroupHeader'
@@ -55,6 +56,8 @@ import { deriveOnboarding } from '../onboarding/gate'
 import { useHelloCodexStore } from '../onboarding/hello-codex-open'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSwitchAccount } from '../hooks/useSwitchAccount'
+import { switchAccountItems } from '../utils/switchAccountItems'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
 import { injectAttentionStyles } from '../utils/injectAttentionStyles'
 import { closeSessionBatch } from '../utils/closeSessionBatch'
@@ -327,7 +330,13 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const primaryProfileId = accountProfiles.find((p) => p.isPrimary)?.id
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const menuSession = sessionContextMenu ? sessions.find((s) => s.id === sessionContextMenu.sessionId) ?? null : null
-  const canSwitchAccount = canSwitchAccountForSession({ provider: menuSession?.provider, isSsh: !!menuSession?.sshConfig, shellOnly: !!menuSession?.shellOnly, profileCount: accountProfiles.length })
+  // P3.6 (row 22): the menu's Switch Account lists the session provider's
+  // accounts, as the strip's pill does (utils/switchAccountItems).
+  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
+  // P4.6 (row 58): a Codex account's chatgpt.com status, for the menu's item.
+  const codexWebByAccount = useCodexWebStore((s) => s.byAccount)
+  const menuSwitchItems = switchAccountItems(menuSession, { profiles: accountProfiles, aliases: accountAliases, snapshot: accountsSnapshot })
+  const canSwitchAccount = canSwitchAccountForSession({ provider: menuSession?.provider, isSsh: !!menuSession?.sshConfig, shellOnly: !!menuSession?.shellOnly, profileCount: accountProfiles.length, providerAccountCount: menuSwitchItems.length })
   const switchMenuAccount = useSwitchAccount(menuSession)
 
   // Inject attention styles on mount
@@ -958,7 +967,13 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         onRenameFinish={handleFinishSessionRename}
         onRenameCancel={() => { setRenamingSessionId(null); setSessionRenameValue('') }}
         onClick={(e) => handleSessionClick(session.id, e)}
-        onContextMenu={(e) => { e.preventDefault(); const prefetchId = sshMappedProfileId(session, accountProfiles) ?? (session.profileId ?? primaryProfileId); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
+        // P4.6 (row 58): prefetch the account the menu acts on, from the same
+        // helper as its actionProfileId. None for a Codex row, or for a row whose
+        // menu has no account items, so neither runs the primary Claude
+        // profile's `claude auth status` (both refreshes skip an undefined id).
+        // A Codex row prefetches its own account's chatgpt.com status instead
+        // (a local read in main), for the menu's web-session item.
+        onContextMenu={(e) => { e.preventDefault(); const prefetchId = claudeWebActionProfileId(session, primaryProfileId, accountProfiles); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId); const codexWebId = codexWebActionAccountId(session, accountsSnapshot); if (codexWebId) void useCodexWebStore.getState().refresh(codexWebId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
         isSelected={selectedSessionIds.has(session.id)}
         isFocused={focusedSessionIndex === flatIndex}
         ordinal={sessionOrdinals.get(session.id)}
@@ -1594,9 +1609,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         // mapped profile for a mapped SSH session. Undefined for a shell-only
         // session, and for an SSH session with no matching local profile — which
         // keeps the profile-scoped items hidden/off there, exactly as before.
-        const actionProfileId = !s.shellOnly && s.sessionType === 'local'
-          ? (s.profileId ?? primaryProfileId)
-          : sshProfileId
+        // Undefined for a Codex session too (P4.6, row 58): the primary fallback
+        // made Claude's items act on another account there (claude-web-targets).
+        const actionProfileId = claudeWebActionProfileId(s, primaryProfileId, accountProfiles)
+        const codexWebId = codexWebActionAccountId(s, accountsSnapshot)
         return (
           <SessionContextMenu
             x={sessionContextMenu.x}
@@ -1616,6 +1632,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             // toggle that would be a no-op. The menu stays open: these are
             // three independent switches and users flip more than one.
             watchdogChecks={s.watchdog?.checks}
+            watchdogUnavailable={s.watchdog?.unavailable}
             onToggleWatchdogCheck={(key) => {
               const current = s.watchdog?.checks
               if (!current) return
@@ -1633,12 +1650,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             }}
             onDismiss={() => setSessionContextMenu(null)}
             canSwitchAccount={canSwitchAccount}
-            profiles={accountProfiles}
-            accountAliases={accountAliases}
-            onSwitchAccount={(profileId) => {
+            switchItems={menuSwitchItems}
+            onSwitchAccount={(accountId) => {
               // Gates the multi-account tip's "you already do this" variant.
               trackUsage('accounts.switch-session-account')
-              switchMenuAccount(s.id, profileId)
+              switchMenuAccount(s.id, accountId)
             }}
             // #216: account actions on the session itself. Gated to a local
             // session with a resolved account — an SSH session's browser and
@@ -1685,6 +1701,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                   }
                 : undefined
             }
+            // P4.6 (row 58): a Codex session's own account's chatgpt.com
+            // sign-in (codexWebActionAccountId: the account it runs under).
+            onCodexWebSignIn={codexWebId ? () => { void useCodexWebStore.getState().signIn(codexWebId) } : undefined}
+            codexWebSignedIn={!!codexWebId && codexWebByAccount[codexWebId]?.status === 'active'}
+            codexWebUnavailable={codexWebId ? codexWebByAccount[codexWebId]?.unavailable ?? null : null}
           />
         )
       })()}

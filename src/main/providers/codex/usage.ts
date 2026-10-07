@@ -65,8 +65,9 @@ import fs from 'node:fs'
 import type { AllowanceReading } from '../../../shared/usage-types'
 import { planLabelFor } from '../../../shared/usage-types'
 import type { ProviderUsageOperations, RealmRef, UsageLookup, UsageReading, UsageReadResult, UsageReadOptions } from '../core'
-import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets } from './rate-limits'
+import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, zonedTimeMs } from './rate-limits'
 import { classifyCodexVersion } from './cli-contract'
+import { findCodexRollout } from './rollout-lookup'
 import type { CodexUsageRead, CodexUsageReadOptions } from './auth-operations'
 
 /** The first tail read of a rollout. */
@@ -203,8 +204,10 @@ export function realCodexUsageFsPort(platform: NodeJS.Platform = process.platfor
 
 /** The allowance in one tail of a rollout: every token_count that carries
  *  rate_limits (a pre-response one included), newest reading of each limit.
- *  The first line of a partial tail is cut and never read. */
-function allowanceInTail(text: string, whole: boolean, now: number): AllowanceReading | null {
+ *  The first line of a partial tail is cut and never read. `after` (a carried
+ *  conversation's mark: ADR-023) keeps only the events dated after it; an event
+ *  with no zoned time is then no event. */
+function allowanceInTail(text: string, whole: boolean, now: number, after: number | null = null): AllowanceReading | null {
   let body = text
   if (!whole) {
     const nl = body.indexOf('\n')
@@ -220,7 +223,12 @@ function allowanceInTail(text: string, whole: boolean, now: number): AllowanceRe
     const e = evt as Record<string, unknown>
     const payload = e.payload as Record<string, unknown> | undefined
     if (e.type !== 'event_msg' || !payload || typeof payload !== 'object' || payload.type !== 'token_count' || payload.rate_limits == null) continue
-    const at = Date.parse(String(e.timestamp ?? ''))
+    let at = Date.parse(String(e.timestamp ?? ''))
+    if (after !== null) {
+      const zoned = zonedTimeMs(e.timestamp)
+      if (zoned === null || zoned <= after) continue
+      at = zoned
+    }
     readings.push(normaliseCodexRateLimits(payload.rate_limits, 'rollout', Number.isFinite(at) ? at : null, now))
   }
   const merged = mergeAllowanceReadings(readings)
@@ -230,12 +238,12 @@ function allowanceInTail(text: string, whole: boolean, now: number): AllowanceRe
 /** One rollout's allowance: a 256 KiB tail, then once a 2 MiB one.
  *  'unread' when it could not be read (busy, too many open files, changed or
  *  unverifiable): not the same as a rollout with no allowance in it. */
-async function allowanceInRollout(port: CodexUsageFsPort, file: string, entry: CodexUsageEntry, now: number): Promise<AllowanceReading | null | 'unread'> {
+async function allowanceInRollout(port: CodexUsageFsPort, file: string, entry: CodexUsageEntry, now: number, after: number | null = null): Promise<AllowanceReading | null | 'unread'> {
   for (const max of [CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES]) {
     let tail: { text: string; whole: boolean }
     try { tail = await port.readTail(file, max, entry) } catch { return 'unread' }
     if (!tail || typeof tail.text !== 'string') return 'unread'
-    const found = allowanceInTail(tail.text, tail.whole === true, now)
+    const found = allowanceInTail(tail.text, tail.whole === true, now, after)
     if (found || tail.whole === true) return found
   }
   return null
@@ -327,8 +335,8 @@ async function newestRollouts(sessionsDir: string, port: CodexUsageFsPort): Prom
 
 /** What the reading of these rollouts depends on: their paths and, as lstat
  *  saw them, identity, size and last write. */
-const fingerprintOf = (c: readonly Candidate[]): string =>
-  JSON.stringify(c.map((x) => [x.file, x.entry.dev, x.entry.ino, x.entry.size, x.entry.mtimeMs]))
+const fingerprintOf = (c: readonly Candidate[], cutoffs: readonly (number | null)[] = []): string =>
+  JSON.stringify(c.map((x, i) => [x.file, x.entry.dev, x.entry.ino, x.entry.size, x.entry.mtimeMs, cutoffs[i] ?? null]))
 
 /** A cache the reader may keep a result in, by sessions folder. */
 export interface LastSeenCache {
@@ -349,17 +357,21 @@ export type LastSeenLookup = { ok: true; reading: AllowanceReading | null } | { 
  * rollout examined could be read. Never rejects. See the module comment for
  * exactly what it may open.
  */
-export async function lookupLastSeenAllowance(sessionsDir: string, port: CodexUsageFsPort, now: number = Date.now(), cache?: LastSeenCache): Promise<LastSeenLookup> {
+export async function lookupLastSeenAllowance(sessionsDir: string, port: CodexUsageFsPort, now: number = Date.now(), cache?: LastSeenCache, marks?: CodexCarryMarks): Promise<LastSeenLookup> {
   try {
     const walk = await newestRollouts(sessionsDir, port)
     if (walk.unverifiable) return { ok: false }
-    const fingerprint = fingerprintOf(walk.candidates)
+    // A conversation carried into this realm (ADR-023): only the events written
+    // after the carry count. The marks are part of what a cached reading was
+    // read under.
+    const cutoffs = walk.candidates.map((c) => (marks ? marks.cutoff(sessionsDir, codexRolloutIdFromName(c.file)) : null))
+    const fingerprint = fingerprintOf(walk.candidates, cutoffs)
     const held = cache?.get(sessionsDir)
     if (held && held.fingerprint === fingerprint) return { ok: true, reading: held.reading }
     let best: AllowanceReading | null = null
     let unread = false
-    for (const c of walk.candidates) {
-      const r = await allowanceInRollout(port, c.file, c.entry, now)
+    for (const [i, c] of walk.candidates.entries()) {
+      const r = await allowanceInRollout(port, c.file, c.entry, now, cutoffs[i])
       if (r === 'unread') { unread = true; continue }
       if (r && (best === null || (r.readingAt ?? -Infinity) > (best.readingAt ?? -Infinity))) best = r
     }
@@ -374,8 +386,8 @@ export async function lookupLastSeenAllowance(sessionsDir: string, port: CodexUs
 }
 
 /** The reading lookupLastSeenAllowance finds, or null (none, or unavailable). */
-export async function readLastSeenAllowance(sessionsDir: string, port: CodexUsageFsPort, now: number = Date.now(), cache?: LastSeenCache): Promise<AllowanceReading | null> {
-  const r = await lookupLastSeenAllowance(sessionsDir, port, now, cache)
+export async function readLastSeenAllowance(sessionsDir: string, port: CodexUsageFsPort, now: number = Date.now(), cache?: LastSeenCache, marks?: CodexCarryMarks): Promise<AllowanceReading | null> {
+  const r = await lookupLastSeenAllowance(sessionsDir, port, now, cache, marks)
   return r.ok ? r.reading : null
 }
 
@@ -437,14 +449,530 @@ export function createCodexLiveUsage(platform: NodeJS.Platform = process.platfor
   }
 }
 
-/** A reading as the port reports it: buckets, time, plan name; null when it
- *  has nothing to draw. Never throws. */
+// ---------------------------------------------------------------------------
+// Carry marks (P3.14 rounds 1 to 3; ADR-023)
+// ---------------------------------------------------------------------------
+
+/** Conversations kept in the marks: the newest, so the file stays small. A
+ *  realm with more than its share evicts its own oldest, never another's. */
+export const CODEX_CARRY_MARKS_MAX = 256
+/** What the marks file may hold. A text over it is not one this code wrote. */
+export const CODEX_CARRY_MARKS_FILE_MAX_CHARS = 1024 * 1024
+const MARKS_REALM_RE = /^[A-Za-z0-9._-]{1,128}$/
+const MARKS_DIR_MAX = 4096
+const MARKS_MAX_MS = 8.64e15
+/** What a mark that throws is taken for: a time no event is dated after, so
+ *  nothing of that rollout counts. (The store itself never throws.) */
+const MARKS_CLOSED = Number.MAX_SAFE_INTEGER
+/** The first wait before the marks file is read again after it could not be, and the longest. */
+const MARKS_RETRY_MS = 1000
+const MARKS_RETRY_MAX_MS = 30_000
+/** A realm dropped while the file could not be read is remembered, up to this many. */
+const MARKS_DROPPED_MAX = 256
+/** So are the adoptions (a Sign in again's history copy) made meanwhile. */
+const MARKS_ADOPT_QUEUE_MAX = 64
+/** And the copies a carry found already there meanwhile, to mark once the file
+ *  reads if it has no mark for them; past this, the mark made for the carry stays. */
+const MARKS_IF_NONE_MAX = 64
+/** Failed set-asides in a run after which a file is no longer set aside in that
+ *  run: it stays where it is and is still read after each wait. */
+const MARKS_ASIDE_TRIES = 3
+const ROLLOUT_ID_RE = /(?:^|[\\/])rollout-[^\\/]*?-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$/
+const CONVERSATION_ID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+/** How far past now a stamp may claim to be before it is taken for garbage. */
+const NEWEST_STAMP_FUTURE_MS = 7 * 24 * 60 * 60 * 1000
+
+/** The conversation id in a rollout's file name or path
+ *  (`rollout-<time>-<id>.jsonl`), lower case, or null. */
+export function codexRolloutIdFromName(file: unknown): string | null {
+  if (typeof file !== 'string' || file.length > MARKS_DIR_MAX * 2) return null
+  const m = ROLLOUT_ID_RE.exec(file)
+  return m ? m[1].toLowerCase() : null
+}
+
+/** The newest zoned time any line of `text` carries (a tail of a rollout: its
+ *  first line may be cut), or null. A stamp more than a week past `now` is
+ *  taken for garbage and ignored. Never throws. */
+export function newestStampInTail(text: string, now: number): number | null {
+  if (typeof text !== 'string') return null
+  const limit = now + NEWEST_STAMP_FUTURE_MS
+  let newest: number | null = null
+  for (const raw of text.split('\n')) {
+    if (!raw.includes('"timestamp"')) continue
+    let evt: unknown
+    try { evt = JSON.parse(raw) } catch { continue }
+    if (!evt || typeof evt !== 'object') continue
+    const at = zonedTimeMs((evt as Record<string, unknown>).timestamp)
+    if (at !== null && at <= limit && (newest === null || at > newest)) newest = at
+  }
+  return newest
+}
+
+/** The newest zoned time in the carried copy of conversation `id` under
+ *  `sessionsDir`, read the way the last-seen reader reads a rollout: its last
+ *  256 KiB and, when that holds no time and the copy is longer, once its last
+ *  2 MiB (a final line past 256 KiB is not lost); or null when there is none,
+ *  or the copy cannot be found or read. */
+export function newestCarriedStamp(sessionsDir: string, id: string, now: number = Date.now()): number | null {
+  try {
+    const found = findCodexRollout(sessionsDir, id)
+    if (!found) return null
+    const fd = fs.openSync(found.path, 'r')
+    try {
+      const st = fs.fstatSync(fd)
+      if (!st.isFile()) return null
+      for (const bound of [CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES]) {
+        const len = Math.min(st.size, bound)
+        const buf = Buffer.alloc(len)
+        const got = fs.readSync(fd, buf, 0, len, st.size - len)
+        const newest = newestStampInTail(buf.subarray(0, got).toString('utf8'), now)
+        if (newest !== null || len >= st.size) return newest
+      }
+      return null
+    } finally {
+      fs.closeSync(fd)
+    }
+  } catch {
+    return null
+  }
+}
+
+/** Where the marks are kept between runs: the app's own configuration, next to
+ *  the account registry (never a file in an account's folder). `unavailable`:
+ *  it cannot be read now (asked again after a wait; a throw counts as that).
+ *  `not-ready`: the resources folder is not known yet (asked again at once; no
+ *  failed read). `corrupt`: it is there but is not a plain file within its size
+ *  cap. */
+export interface CodexCarryMarksPort {
+  read(): { kind: 'ok'; text: string } | { kind: 'missing' } | { kind: 'unavailable' } | { kind: 'not-ready' } | { kind: 'corrupt' }
+  /** Replace the file. Throws on any failure. */
+  write(text: string): void
+  /** Move the file out of its place (renamed, the newest few kept) and put
+   *  `replacement` in it, in one step; true when both were done, false with the
+   *  file as it was otherwise. */
+  setAside(replacement: string): boolean
+}
+
+/**
+ * Which conversations Switch Account carried into which account's folder, and
+ * when (ADR-023). A carried copy holds the earlier account's events, which are
+ * not this account's allowance, plan or credits: a reader of that rollout
+ * counts only the events dated after the carry (`cutoff`), and an event with no
+ * zoned time then counts for nothing. The harm guarded against is a temporary
+ * display of the other account's figures on the wrong card, so a marks file
+ * that cannot be read or written never stops a carry or a Sign in again and
+ * never blanks a card. Kept in memory and in the injected port:
+ * - while the file cannot be read, marks, drops and adoptions are kept in
+ *   memory and written once it can be (a copy a carry found already there is
+ *   marked then only when the file has no mark for it); the first failed read
+ *   is a floor for the folders carried into since (no event dated at or before
+ *   it counts there); the read is asked again after a growing wait (not at all
+ *   counted as failed while the resources folder is not known yet);
+ * - a file that is not what this code wrote (not a plain file within its cap,
+ *   not the expected shape in any field) is set aside and replaced in one step,
+ *   never overwritten, with a floor at that moment: no rollout counts an event
+ *   dated before it; if that cannot be done the file stays as it was, and after
+ *   MARKS_ASIDE_TRIES failures in a run it is not set aside again in that run;
+ * - a mark that cannot be written is kept in memory and written when it can be;
+ * - the file is trimmed at write time (oldest first) to fit what a read accepts.
+ * Bounded to the newest CODEX_CARRY_MARKS_MAX, a realm over its share evicting
+ * its own oldest; a realm's marks go with its account (`dropRealm`). Everything
+ * read back is validated; nothing here ever throws.
+ */
+export interface CodexCarryMarks {
+  /** Mark `conversationId` as carried into `realmId`'s `sessionsDir` at `at`
+   *  (epoch ms). True when it is held (written, or kept in memory until the
+   *  file can be); false only for arguments that are not a realm, a folder, a
+   *  conversation or a time. */
+  record(realmId: string, sessionsDir: string, conversationId: string, at: number): boolean
+  /** The time of the mark itself; null for none; undefined while the file has
+   *  not been read (a mark may be in it). */
+  markOf(sessionsDir: string, conversationId: string | null): number | null | undefined
+  /** Take a mark back (a copy that failed). */
+  remove(sessionsDir: string, conversationId: string): void
+  /** A copy the carry found already in the folder keeps the mark it has; only
+   *  one with none is marked at `at`. While the file has not been read, the
+   *  mark made for the carry is taken back and this is settled when it reads
+   *  (past MARKS_IF_NONE_MAX such copies, the mark made for the carry stays). */
+  markIfNone(realmId: string, sessionsDir: string, conversationId: string, at: number): void
+  /** The time after which a rollout's events count: its mark, or the floor if
+   *  later, or null for no mark and no floor. While the file has not been
+   *  read: for a folder carried into since, the later of its mark and the
+   *  first failed read. */
+  cutoff(sessionsDir: string, conversationId: string | null): number | null
+  /** Forget every mark of a realm (its account was removed). */
+  dropRealm(realmId: string): void
+  /** A realm's marks, kept for its replacement folder (a sign in again's
+   *  history copy): each mark of `fromRealmId` is recorded for `toRealmId`'s
+   *  `toSessionsDir`, the later time kept (those of a file not read yet follow
+   *  when it is). False only for arguments that are not a realm or a folder. */
+  adopt(fromRealmId: string, toRealmId: string, toSessionsDir: string): boolean
+}
+
+interface CarryMark { realm: string; dir: string; id: string; at: number }
+interface CarryDoc { marks: CarryMark[]; floor: number | null }
+
+const ownOf = (o: Record<string, unknown>, k: string): unknown => (Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined)
+
+/** The marks and floor a persisted text holds, or null for anything this code
+ *  did not write: text too long or not JSON, another schema, a list that is not
+ *  a list, or any field of any mark that is not what a mark's is. Own
+ *  properties only. */
+function parseCarryDoc(text: string): CarryDoc | null {
+  if (typeof text !== 'string' || text.length === 0 || text.length > CODEX_CARRY_MARKS_FILE_MAX_CHARS) return null
+  let doc: unknown
+  try { doc = JSON.parse(text) } catch { return null }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return null
+  const d = doc as Record<string, unknown>
+  const marks = ownOf(d, 'marks')
+  if (ownOf(d, 'schema') !== 1 || !Array.isArray(marks) || marks.length > CODEX_CARRY_MARKS_MAX) return null
+  const floorRaw = ownOf(d, 'floor')
+  let floor: number | null = null
+  if (floorRaw !== undefined) {
+    if (typeof floorRaw !== 'number' || !Number.isFinite(floorRaw) || Math.abs(floorRaw) > MARKS_MAX_MS) return null
+    floor = floorRaw
+  }
+  const out: CarryMark[] = []
+  for (const raw of marks) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const m = raw as Record<string, unknown>
+    const realm = ownOf(m, 'realm')
+    const dir = ownOf(m, 'dir')
+    const id = ownOf(m, 'id')
+    const at = ownOf(m, 'at')
+    if (typeof realm !== 'string' || !MARKS_REALM_RE.test(realm)) return null
+    if (typeof dir !== 'string' || dir.length === 0 || dir.length > MARKS_DIR_MAX) return null
+    if (typeof id !== 'string' || !CONVERSATION_ID_RE.test(id)) return null
+    if (typeof at !== 'number' || !Number.isFinite(at) || Math.abs(at) > MARKS_MAX_MS) return null
+    out.push({ realm, dir, id: id.toLowerCase(), at })
+  }
+  return { marks: out, floor }
+}
+
+export function createCodexCarryMarks(opts: { port?: CodexCarryMarksPort; platform?: NodeJS.Platform; max?: number; now?: () => number; log?: (message: string) => void } = {}): CodexCarryMarks {
+  const keyOf = keyer(opts.platform ?? process.platform)
+  const port = opts.port
+  const max = typeof opts.max === 'number' && opts.max > 0 ? Math.floor(opts.max) : CODEX_CARRY_MARKS_MAX
+  const clock = () => { try { const n = opts.now ? opts.now() : Date.now(); return Number.isFinite(n) ? n : Date.now() } catch { return Date.now() } }
+  /** What the marks are now: once the file has been read, the file's and this
+   *  run's; before, only this run's. */
+  const marks = new Map<string, CarryMark>()
+  /** The persisted marks have been read (or there is no port to read). */
+  let loaded = !port
+  /** The floor a file set aside left: no rollout counts an event dated at or before it. */
+  let floor: number | null = null
+  /** The first moment the file could not be read: for the folders carried into
+   *  meanwhile, no event dated at or before it counts. Used only while the file
+   *  is unread; once it is read, its own marks and floor rule. */
+  let heldSince: number | null = null
+  /** Failed reads in a row, and the time before which the file is not read again. */
+  let failures = 0
+  let retryAt = Number.NEGATIVE_INFINITY
+  /** Something kept in memory that the file does not have yet, and the same
+   *  wait before a write that failed is tried again. */
+  let dirty = false
+  let writeFailures = 0
+  let writeRetryAt = Number.NEGATIVE_INFINITY
+  /** Realms dropped, and adoptions made, while the file could not be read:
+   *  applied to what it holds once it can be. */
+  const dropped = new Set<string>()
+  const adoptions: Array<{ from: string; to: string; dir: string }> = []
+  /** Copies a carry found already there while the file could not be read:
+   *  each is marked once the file reads, only when the file has no mark for it. */
+  const ifNone = new Map<string, CarryMark>()
+  /** Set-asides that failed in this run. */
+  let asideFailures = 0
+  const keyFor = (dir: string, id: string) => `${keyOf(dir)}|${id}`
+  const validDir = (dir: unknown): dir is string => typeof dir === 'string' && dir.length > 0 && dir.length <= MARKS_DIR_MAX
+  const validId = (id: unknown): id is string => typeof id === 'string' && CONVERSATION_ID_RE.test(id)
+  const validAt = (at: unknown): at is number => typeof at === 'number' && Number.isFinite(at) && Math.abs(at) <= MARKS_MAX_MS
+  const waitAfter = (n: number) => Math.min(MARKS_RETRY_MAX_MS, MARKS_RETRY_MS * 2 ** Math.min(n - 1, 10))
+  /** Over the bound, the realm with the most marks gives up its oldest. */
+  const evictFrom = (map: Map<string, CarryMark>) => {
+    while (map.size > max) {
+      const counts = new Map<string, number>()
+      for (const m of map.values()) counts.set(m.realm, (counts.get(m.realm) ?? 0) + 1)
+      let busiest = ''
+      let most = -1
+      for (const [realm, n] of counts) if (n > most) { busiest = realm; most = n }
+      let victim: string | undefined
+      for (const [k, m] of map) if (m.realm === busiest) { victim = k; break }
+      if (victim === undefined) break
+      map.delete(victim)
+    }
+  }
+  const putInto = (map: Map<string, CarryMark>, m: CarryMark) => {
+    const k = keyFor(m.dir, m.id)
+    map.delete(k)
+    map.set(k, m)
+    evictFrom(map)
+  }
+  /** Each mark of `from` recorded for `to`'s folder, the later time kept; true when there was one. */
+  const rekeyInto = (map: Map<string, CarryMark>, from: string, to: string, dir: string): boolean => {
+    let any = false
+    for (const m of [...map.values()]) {
+      if (m.realm !== from) continue
+      const there = map.get(keyFor(dir, m.id))
+      putInto(map, { realm: to, dir, id: m.id, at: there ? Math.max(there.at, m.at) : m.at })
+      any = true
+    }
+    return any
+  }
+  /** Keep `p` to be marked once the file reads, if the file has no mark for it;
+   *  past the bound it is marked now instead (that only hides more). With one
+   *  kept for it already, the earlier time stays, or with `later` the later. */
+  const keepIfNone = (p: CarryMark, later: boolean) => {
+    const k = keyFor(p.dir, p.id)
+    const there = ifNone.get(k)
+    if (there) {
+      if (later && p.at > there.at) ifNone.set(k, p)
+      return
+    }
+    if (ifNone.size >= MARKS_IF_NONE_MAX) { putInto(marks, p); return }
+    ifNone.set(k, p)
+  }
+  /** A folder this run carried into (a copy found already there included), or
+   *  adopted a history into, while the file could not be read. */
+  const isHeld = (dir: string): boolean => {
+    const key = keyOf(dir)
+    for (const m of marks.values()) if (keyOf(m.dir) === key) return true
+    for (const a of adoptions) if (keyOf(a.dir) === key) return true
+    for (const p of ifNone.values()) if (keyOf(p.dir) === key) return true
+    return false
+  }
+  /** The file text for `map` and `floorAt`, the oldest marks left out until it fits what a read accepts. */
+  const serialiseOf = (map: Map<string, CarryMark>, floorAt: number | null): { text: string; kept: Map<string, CarryMark> } => {
+    const kept = new Map(map)
+    const text = (list: CarryMark[]) => JSON.stringify({ schema: 1, ...(floorAt !== null ? { floor: floorAt } : {}), marks: list })
+    let out = text([...kept.values()])
+    while (out.length > CODEX_CARRY_MARKS_FILE_MAX_CHARS && kept.size > 0) {
+      const oldest = kept.keys().next().value
+      if (oldest === undefined) break
+      kept.delete(oldest)
+      out = text([...kept.values()])
+    }
+    return { text: out, kept }
+  }
+  /** Write what is held now; a failure leaves it held, to be tried again after a wait. */
+  const writeNow = (): boolean => {
+    if (!port || !loaded) return false
+    try {
+      const { text, kept } = serialiseOf(marks, floor)
+      port.write(text)
+      marks.clear()
+      for (const [k, m] of kept) marks.set(k, m)
+      dirty = false
+      writeFailures = 0
+      writeRetryAt = Number.NEGATIVE_INFINITY
+      return true
+    } catch {
+      dirty = true
+      writeFailures++
+      writeRetryAt = clock() + waitAfter(writeFailures)
+      return false
+    }
+  }
+  /** Something changed: written now when the file is known, else when it is read. */
+  const changed = () => {
+    if (!port || !loaded) return
+    dirty = true
+    writeNow()
+  }
+  const holdSince = () => { if (heldSince === null) heldSince = clock() }
+  const failRead = (): false => {
+    failures++
+    retryAt = clock() + waitAfter(failures)
+    holdSince()
+    return false
+  }
+  /** What the marks are once the file's are known: the file's (not those of a
+   *  realm dropped meanwhile, and moved as adopted meanwhile), a copy found
+   *  already there meanwhile where they have no mark for it, then this run's. */
+  const mergedWith = (fileMarks: CarryMark[]): Map<string, CarryMark> => {
+    const out = new Map<string, CarryMark>()
+    for (const m of fileMarks) if (!dropped.has(m.realm)) putInto(out, m)
+    for (const a of adoptions) rekeyInto(out, a.from, a.to, a.dir)
+    for (const [k, p] of ifNone) if (!out.has(k)) putInto(out, p)
+    for (const m of marks.values()) putInto(out, m)
+    return out
+  }
+  /** The file is known: take what it holds, with this run's beside it. */
+  const commitLoad = (merged: Map<string, CarryMark>, fileFloor: number | null, written: boolean, fileMarks: CarryMark[]) => {
+    const pending = marks.size > 0 || ifNone.size > 0
+    const touched = pending
+      || fileMarks.some((m) => dropped.has(m.realm))
+      || (adoptions.length > 0 && fileMarks.some((m) => adoptions.some((a) => a.from === m.realm)))
+    marks.clear()
+    for (const [k, m] of merged) marks.set(k, m)
+    if (fileFloor !== null) floor = fileFloor
+    loaded = true
+    failures = 0
+    retryAt = Number.NEGATIVE_INFINITY
+    dropped.clear()
+    adoptions.length = 0
+    ifNone.clear()
+    if (written) { dirty = false; return }
+    if (touched) { dirty = true; writeNow() }
+  }
+  /** Whether the marks are known: the file read (or none to read), asked again
+   *  only after a wait while it cannot be (and not counted as failed while the
+   *  resources folder is not known yet). A write that failed is tried again here. */
+  const ensureLoaded = (): boolean => {
+    if (loaded) {
+      if (dirty && port && clock() >= writeRetryAt) writeNow()
+      return true
+    }
+    if (!port) return true
+    if (clock() < retryAt) return false
+    let r: ReturnType<CodexCarryMarksPort['read']>
+    try { r = port.read() } catch { return failRead() }
+    if (!r) return failRead()
+    if (r.kind === 'not-ready') { holdSince(); return false }
+    if (r.kind === 'missing') { commitLoad(mergedWith([]), null, false, []); return true }
+    if (r.kind === 'ok') {
+      const parsed = parseCarryDoc(r.text)
+      if (parsed) { commitLoad(mergedWith(parsed.marks), parsed.floor, false, parsed.marks); return true }
+    } else if (r.kind !== 'corrupt') {
+      return failRead()
+    }
+    // Not what this code wrote: put it aside, never over it, and in the same
+    // step put a file in its place that holds the floor and what this run has
+    // made. Nothing before this moment counts in any rollout from now on. If
+    // that cannot be done the file stays where it was: it is found again.
+    // After MARKS_ASIDE_TRIES failures in this run it is not tried again (it
+    // would be renamed aside and back at every try): the file stays, is read
+    // again after each wait, and the store stays as for a file it cannot read.
+    if (asideFailures >= MARKS_ASIDE_TRIES) return failRead()
+    const at = clock()
+    const merged = mergedWith([])
+    const replacement = serialiseOf(merged, at)
+    let aside = false
+    try { aside = port.setAside(replacement.text) === true } catch { aside = false }
+    if (!aside) {
+      asideFailures++
+      if (asideFailures === MARKS_ASIDE_TRIES) {
+        try { opts.log?.(`[codex] carry marks: the marks file is not one the app wrote and could not be set aside in ${MARKS_ASIDE_TRIES} tries; it is left where it is for this run, and the conversations carried meanwhile are held by time`) } catch { /* nothing to tell */ }
+      }
+      return failRead()
+    }
+    commitLoad(replacement.kept, at, true, [])
+    return true
+  }
+  return {
+    record(realmId, sessionsDir, conversationId, at) {
+      try {
+        if (typeof realmId !== 'string' || !MARKS_REALM_RE.test(realmId)) return false
+        if (!validDir(sessionsDir) || !validId(conversationId) || !validAt(at)) return false
+        ensureLoaded()
+        const k = keyFor(sessionsDir, conversationId.toLowerCase())
+        putInto(marks, { realm: realmId, dir: sessionsDir, id: conversationId.toLowerCase(), at })
+        changed()
+        return marks.has(k)
+      } catch {
+        return false
+      }
+    },
+    markOf(sessionsDir, conversationId) {
+      try {
+        if (!validDir(sessionsDir) || !validId(conversationId)) return null
+        ensureLoaded()
+        const m = marks.get(keyFor(sessionsDir, conversationId.toLowerCase()))
+        if (m) return m.at
+        return loaded ? null : undefined
+      } catch {
+        return null
+      }
+    },
+    remove(sessionsDir, conversationId) {
+      try {
+        if (!validDir(sessionsDir) || !validId(conversationId)) return
+        ensureLoaded()
+        if (marks.delete(keyFor(sessionsDir, conversationId.toLowerCase()))) changed()
+      } catch { /* nothing to take back */ }
+    },
+    markIfNone(realmId, sessionsDir, conversationId, at) {
+      try {
+        if (typeof realmId !== 'string' || !MARKS_REALM_RE.test(realmId)) return
+        if (!validDir(sessionsDir) || !validId(conversationId) || !validAt(at)) return
+        ensureLoaded()
+        const id = conversationId.toLowerCase()
+        const k = keyFor(sessionsDir, id)
+        if (loaded) {
+          // The file is known: the mark there stands (one made for the carry
+          // and merged over the file's while the copy ran included: it only
+          // hides more); a copy with none is marked now.
+          if (!marks.has(k)) { putInto(marks, { realm: realmId, dir: sessionsDir, id, at }); changed() }
+          return
+        }
+        // Not known yet: the file's mark, if it has one, must not be replaced
+        // by the one made for the carry. Taken back, settled when the file reads.
+        marks.delete(k)
+        keepIfNone({ realm: realmId, dir: sessionsDir, id, at }, false)
+      } catch { /* the mark made for the carry stands */ }
+    },
+    cutoff(sessionsDir, conversationId) {
+      try {
+        if (!validDir(sessionsDir) || !validId(conversationId)) return null
+        const known = ensureLoaded()
+        const mark = marks.get(keyFor(sessionsDir, conversationId.toLowerCase()))?.at ?? null
+        if (known) {
+          if (floor === null) return mark
+          return mark === null ? floor : Math.max(mark, floor)
+        }
+        // The file has not been read: only a folder carried into since is held, to the first failed read.
+        if (heldSince === null || !isHeld(sessionsDir)) return mark
+        return mark === null ? heldSince : Math.max(mark, heldSince)
+      } catch {
+        return MARKS_CLOSED
+      }
+    },
+    dropRealm(realmId) {
+      try {
+        if (typeof realmId !== 'string') return
+        ensureLoaded()
+        let any = false
+        for (const [k, m] of [...marks.entries()]) if (m.realm === realmId) { marks.delete(k); any = true }
+        for (const [k, p] of [...ifNone.entries()]) if (p.realm === realmId) ifNone.delete(k)
+        if (!loaded) {
+          // Not brought back by the file once it can be read.
+          if (dropped.size < MARKS_DROPPED_MAX) dropped.add(realmId)
+          return
+        }
+        if (any) changed()
+      } catch { /* nothing to forget */ }
+    },
+    adopt(fromRealmId, toRealmId, toSessionsDir) {
+      try {
+        if (typeof fromRealmId !== 'string' || typeof toRealmId !== 'string' || !MARKS_REALM_RE.test(toRealmId) || !validDir(toSessionsDir)) return false
+        ensureLoaded()
+        const any = rekeyInto(marks, fromRealmId, toRealmId, toSessionsDir)
+        if (loaded) {
+          if (any) changed()
+        } else {
+          // A copy found already there is settled for the new folder too.
+          for (const p of [...ifNone.values()]) if (p.realm === fromRealmId) keepIfNone({ realm: toRealmId, dir: toSessionsDir, id: p.id, at: p.at }, true)
+          // The file's own marks of the old realm follow once it can be read.
+          if (adoptions.length < MARKS_ADOPT_QUEUE_MAX) adoptions.push({ from: fromRealmId, to: toRealmId, dir: toSessionsDir })
+        }
+        return true
+      } catch {
+        return false
+      }
+    },
+  }
+}
+
+/** A reading as the port reports it: buckets, time, plan name and, when the
+ *  reading carries them, the credits count (ADR-023; the key is omitted
+ *  otherwise); null when it has nothing to draw. Never throws. */
 function toUsageReading(r: AllowanceReading | null): UsageReading | null {
   try {
     if (!r) return null
     const buckets = readingToBuckets(r)
     if (buckets.length === 0) return null
-    return { buckets, readingAt: r.readingAt, planLabel: planLabelFor(r.planType) }
+    const out: UsageReading = { buckets, readingAt: r.readingAt, planLabel: planLabelFor(r.planType) }
+    if (r.credits) out.credits = r.credits
+    return out
   } catch {
     return null
   }
@@ -457,6 +985,9 @@ export interface CodexUsageDeps {
   fs: CodexUsageFsPort
   live: CodexLiveUsage
   now?: () => number
+  /** Conversations carried into a realm by Switch Account (ADR-023): the
+   *  last-seen reading counts only the events written after the carry. */
+  marks?: CodexCarryMarks
   /** The longest a caller waits (tests shorten it). */
   timeoutMs?: number
   /** Usage track MP8: the auth operations' one helper read. Absent: the
@@ -542,7 +1073,7 @@ export function createCodexUsageOperations(deps: CodexUsageDeps): ProviderUsageO
       return shared(reading, realmKey(realm), async (): Promise<UsageLookup> => {
         const dir = await locate(realm)
         if (!dir) return { ok: false }
-        const r = await lookupLastSeenAllowance(dir, deps.fs, now(), cache)
+        const r = await lookupLastSeenAllowance(dir, deps.fs, now(), cache, deps.marks)
         return r.ok ? { ok: true, reading: toUsageReading(r.reading) } : { ok: false }
       }, { ok: false })
     },

@@ -13,6 +13,7 @@ import { defineConfig } from 'vitest/config'
 // their lane file (maxConcurrency 1), because those DO share remote state
 // (~/.claude sidecars, tmux sessions). CCC_LIVE_WORKERS caps the worker count
 // for small FROM boxes (default: one worker per lane file).
+// Deliberately NOT under the home guard (tests/helpers/home-isolation.ts): this pack drives real ssh with the user's real keys.
 export default defineConfig({
   test: {
     include: ['tests/live/**/*.live.ts'],

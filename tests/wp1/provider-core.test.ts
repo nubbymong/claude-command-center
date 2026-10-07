@@ -204,7 +204,7 @@ describe('realm environment patch (D1/D3, WP1.38 contract level)', () => {
   it('a patch may only SET what the provider declares: no loader variable, no other realm, and no re-adding an ambient credential', () => {
     // The ambient list is removed, never re-settable. The first shape of this
     // contract made it implicitly owned, so a Claude patch could set
-    // CLAUDE_CONFIG_DIR (then forbidden by D1; ADR-023 now lets the Claude package
+    // CLAUDE_CONFIG_DIR (then forbidden by D1; ADR-024 now lets the Claude package
     // own it for the macOS realm -- this policy does not) or re-add ANTHROPIC_API_KEY
     // one line after the removal pass deleted it.
     for (const set of [{ CLAUDE_CONFIG_DIR: '/hijack' }, { OPENAI_API_KEY: 'sk-injected' }, { USERPROFILE: '/other/realm' }])

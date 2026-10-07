@@ -32,7 +32,11 @@ vi.mock('electron', () => ({
     show: vi.fn(),
   })),
   dialog: { showOpenDialog: vi.fn() },
-  clipboard: { readImage: vi.fn(), readText: vi.fn() },
+  // Electron 44's clipboard shape: read() resolves ClipboardItem[] and
+  // readText() resolves a string (the sync readImage/readBuffer/availableFormats
+  // are gone), and an image is decoded with nativeImage.createFromBuffer.
+  clipboard: { read: vi.fn(async () => []), readText: vi.fn(async () => '') },
+  nativeImage: { createFromBuffer: vi.fn() },
   safeStorage: { isEncryptionAvailable: vi.fn(() => false) },
   Menu: { buildFromTemplate: vi.fn(), setApplicationMenu: vi.fn() },
   protocol: { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() },

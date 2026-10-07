@@ -3,8 +3,9 @@ import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
 import { randomId } from '../shared/id'
 import { isIpcStreamEnd, IPC_STREAM_END_WAIT_MS } from '../shared/ipc-stream'
 import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
-import type { StatuslineData } from '../shared/types'
+import type { StatuslineData, SubmitTextResult, AskConductorNotice, CanvasMarkerUndelivered, CanvasSessionGuidance, AccountLogFolders, AccountLogFolderKind, AccountLogFolderOpenResult } from '../shared/types'
 import type { WebviewNavState } from '../shared/browser-url'
+import type { AccountPaneStateView, CodexWebSessionView, CodexWebSignInState } from '../shared/account-web-session'
 import type { ModelRegistry } from '../shared/model-registry'
 import type { SentinelStateSnapshot } from '../shared/sentinel-types'
 import type {
@@ -33,7 +34,7 @@ import type {
   TrailEntry,
 } from '../shared/canvas'
 import type {
-  AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest,
+  AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest, SignInAgainRequest, SignInAgainResult,
   CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest, SecretDeposit, KnownAuthState, ProviderId,
   ResolveConflictRequest, SetReviewerDefaultRequest, ProviderAccountUsageView, ProviderUsageStreamResult,
 } from '../shared/providers'
@@ -102,6 +103,9 @@ export interface WatchdogPublicState {
   armed: boolean
   /** #605: which auto-retry checks are live for this session right now. */
   checks: WatchdogChecks
+  /** P3.10: checks this session's CLI has no patterns for (Codex: the
+   *  safeguard), off and not switchable; absent when there are none. */
+  unavailable?: Array<keyof WatchdogChecks>
   attempts: number
   overloadAttempts: number
   safeguardAttempts: number
@@ -127,8 +131,11 @@ export interface ElectronAPI {
     list: () => Promise<import('../shared/account-types').AccountProfile[]>
     create: (name?: string) => Promise<import('../shared/account-types').AccountProfile>
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
-    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string }>
-    delete: (id: string) => Promise<{ ok: boolean; error?: string }>
+    /** `code: 'in-use'`: a live session runs on the account; `sessions`
+     *  names them, `unnamed` counts other holders (P3.2). A removal refused
+     *  after its claude.ai sign-in was cleared says `in-use-cleared`. */
+    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string; code?: 'in-use'; sessions?: string[] }>
+    delete: (id: string) => Promise<{ ok: boolean; error?: string; code?: 'in-use' | 'in-use-cleared'; sessions?: string[]; unnamed?: number }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     /** Credential generation (stat stamp + signed-in), never token contents. */
     credentialStamp: (id: string, opts?: { fresh?: boolean }) => Promise<{ ok: boolean; stamp: string | null; signedIn: boolean; unknown?: boolean }>
@@ -165,7 +172,9 @@ export interface ElectronAPI {
     openFolder: () => Promise<string | null>
   }
   clipboard: {
-    saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
+    /** PR-level ADR-009 round 1 (A1): off Windows, `posixShell` says whether
+     *  the shell a plain terminal runs is of the sh family ('sh') or not. */
+    saveImage: () => Promise<{ path: string; posixShell?: 'sh' | 'other' } | { error: 'no-image' | 'too-large' }>
     /** Focus-independent clipboard text read, retried for Windows delayed-render (#145). */
     readText: () => Promise<string>
   }
@@ -225,18 +234,22 @@ export interface ElectronAPI {
       provider?: 'claude' | 'codex'
       codexOptions?: {
         model?: string
-        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
+        /** P3.11 (row 62): extra CLI arguments; main checks them. */
+        extraArgs?: string
       }
       /** WP2: the Codex account the session runs under (an opaque registry
        *  id). Absent = the provider default. */
       providerAccountId?: string
       /** WP2: THIS launch's acknowledgement of an unverified sign-in. */
       acknowledgeRealmOnly?: boolean
-    }) => Promise<{ started: false } | ({ started: false } & import('../shared/providers').ProviderLaunchRefused) | void>
+    }) => Promise<{ started: false } | ({ started: false } & import('../shared/providers').SpawnRefused) | { started: true; carry?: import('../shared/providers').ConversationCarryNotice; launched?: { codexPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan' } } | void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
-    kill: (sessionId: string) => void
+    /** P3.16a round 2 (Q5): `'restart'` when a Restart ends the process (its
+     *  next one follows), so its exit is not the session's end. */
+    kill: (sessionId: string, reason?: 'restart') => void
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
   }
@@ -314,6 +327,11 @@ export interface ElectronAPI {
     disable: () => Promise<boolean>
     isEnabled: () => Promise<boolean>
     openFolder: () => Promise<string>
+    /** WP2 PR 4 (P4.4): each provider account's log folders, by kind; never paths. */
+    accountLogFolders: () => Promise<AccountLogFolders[]>
+    /** WP2 PR 4 (P4.4): open one of them. Main resolves the folder from the
+     *  account id; the renderer never names a path. */
+    openAccountLogFolder: (args: { accountId: string; folder: AccountLogFolderKind }) => Promise<AccountLogFolderOpenResult>
   }
   usage: {
     getSessionUsage: (sessionId: string) => Promise<unknown>
@@ -380,9 +398,19 @@ export interface ElectronAPI {
     paneBounds: (args: { sessionId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean }>
     paneVisible: (args: { sessionId: string; visible: boolean }) => Promise<{ ok: boolean }>
     paneReload: (sessionId: string) => Promise<{ ok: boolean }>
-    paneGetState: (sessionId: string) => Promise<{ ok: true; state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null } | null } | { ok: false; error: string }>
-    onPaneState: (cb: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void) => () => void
-    onPaneClosed: (cb: (e: { sessionId: string }) => void) => () => void
+    paneGetState: (sessionId: string) => Promise<{ ok: true; state: AccountPaneStateView | null } | { ok: false; error: string }>
+    onPaneState: (cb: (state: AccountPaneStateView) => void) => () => void
+    onPaneClosed: (cb: (e: { sessionId: string; reason?: string }) => void) => () => void
+  }
+  /** A Codex account's chatgpt.com web session (WP2 PR 4, P4.6), keyed by its
+   *  registry account id. The pane's other controls are accountWeb's. */
+  codexWeb: {
+    status: (accountId: string) => Promise<{ ok: true; web: CodexWebSessionView } | { ok: false; error: string }>
+    signIn: (accountId: string) => Promise<{ ok: true; state: CodexWebSignInState } | { ok: false; error: string }>
+    signInState: () => Promise<{ ok: true; state: CodexWebSignInState } | { ok: false; error: string }>
+    cancel: (accountId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    signOut: (accountId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    paneOpen: (args: { sessionId: string; accountId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean; error?: string }>
   }
   canvas: {
     getState: (args: { sessionId: string }) => Promise<CanvasState | null>
@@ -481,6 +509,12 @@ export interface ElectronAPI {
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
     /** #580: the chat line that tells the agent a verdict/review was filed. Queued while the agent's turn is open. */
     agentMarker: (args: { sessionId: string; canvasId: string; line: string }) => Promise<{ delivery: 'sent' | 'queued' | 'unwired' | 'refused'; reason?: string }>
+    /** WP2 PR 4 (P4.1): a queued marker the submit primitive could not deliver,
+     *  for the review it belongs to. */
+    onAgentMarkerUndelivered: (cb: (e: CanvasMarkerUndelivered) => void) => () => void
+    /** WP2 PR 4 (P4.1): whether this session's launch carried the canvas and
+     *  vision skills' guidance with the tools, for the canvas page's one line. */
+    sessionGuidance: (args: { sessionId: string }) => Promise<CanvasSessionGuidance | null>
     /** C1: reopen a version for review; later ready versions become withdrawn.
      *  Wakes no ROUND — settled stays settled. */
     versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
@@ -640,7 +674,7 @@ export interface ElectronAPI {
     sendSecret: (deposit: SecretDeposit) => void
     signIn: (req: SignInRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
     /** Sign an existing managed account in again, in its own realm. */
-    signInAgain: (req: SignInRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    signInAgain: (req: SignInAgainRequest) => Promise<AccountsResult<SignInAgainResult>>
     onSignInOutput: (cb: (event: SignInOutputEvent) => void) => () => void
     cancelSignIn: (accountId: string) => Promise<AccountsResult>
     completeSetup: (req: CompleteSetupRequest) => Promise<AccountsResult<{ accountId: string }>>
@@ -714,8 +748,12 @@ export interface ElectronAPI {
     killCliSetup: () => Promise<boolean>
   }
   insights: {
-    run: (opts?: { profileId?: string }) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
-    runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
+    /** `provider` (WP2 PR 4, P4.7): the assistant the run reports on; absent means Claude Code.
+     *  A Codex run names its Codex account in `profileId`, and `acknowledgeRealmOnly` is that
+     *  run's own confirmation for exactly that account (mockup D12). A request main does not
+     *  take is answered `{ rejected }` (not the app window, or not a request it reads). */
+    run: (opts?: { profileId?: string; provider?: ProviderId; acknowledgeRealmOnly?: true }) => Promise<string | import('../shared/providers').ProviderLaunchRefused | import('../shared/types').CloudAgentRequestRejected>
+    runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../shared/providers').ProviderLaunchRefused | import('../shared/types').CloudAgentRequestRejected>
     getCatalogue: () => Promise<import('../shared/types').InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<import('../shared/types').KpiData | null>
@@ -749,11 +787,15 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<import('../shared/types').CloudAgent | import('../shared/providers').ProviderLaunchRefused>
+    /** `provider` (WP2 PR 4, P4.5): the assistant the agent runs on; absent
+     *  means Claude Code. Main holds the request to a strict schema: only that
+     *  provider's own fields (CloudAgentDispatchParams). */
+    dispatch: (agent: import('../shared/types').CloudAgentDispatchParams) => Promise<import('../shared/types').CloudAgent | import('../shared/providers').ProviderLaunchRefused | import('../shared/types').CloudAgentRequestRejected>
     cancel: (id: string) => Promise<boolean>
     /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
     remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
-    retry: (id: string) => Promise<import('../shared/types').CloudAgent | null | import('../shared/providers').ProviderLaunchRefused>
+    /** `opts` (P4.5): this one retry may use the agent's unverified sign-in. */
+    retry: (id: string, opts?: import('../shared/types').CloudAgentRetryOptions) => Promise<import('../shared/types').CloudAgent | null | import('../shared/providers').ProviderLaunchRefused | import('../shared/types').CloudAgentRequestRejected>
     list: () => Promise<import('../shared/types').CloudAgent[]>
     getOutput: (id: string) => Promise<string>
     /** #371: `ok:false` means nothing was cleared — do not filter the list. */
@@ -777,6 +819,15 @@ export interface ElectronAPI {
   }
   help: {
     workspace: () => Promise<string | null>
+  }
+  /** WP2 PR 4 (P4.3): Ask Conductor on a provider whose prompt takes a
+   *  question only as text typed at its ready composer. */
+  askConductor: {
+    /** Give a live Ask tab its next question through main's submit primitive
+     *  (never raw keystrokes and a carriage return). */
+    handOff: (args: { sessionId: string; question: string }) => Promise<SubmitTextResult>
+    /** Main's one-line notices for the dock: characters removed, or a question not delivered. */
+    onNotice: (cb: (notice: AskConductorNotice) => void) => () => void
   }
   tokenomics: {
     summary: (filter?: import('../shared/types').TkSummaryFilter) => Promise<import('../shared/types').TkSummary | null>
@@ -969,7 +1020,7 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.send(IPC.PTY_WRITE, sessionId, data),
     resize: (sessionId, cols, rows) =>
       ipcRenderer.send(IPC.PTY_RESIZE, sessionId, cols, rows),
-    kill: (sessionId) => ipcRenderer.send(IPC.PTY_KILL, sessionId),
+    kill: (sessionId, reason) => (reason === 'restart' ? ipcRenderer.send(IPC.PTY_KILL, sessionId, 'restart') : ipcRenderer.send(IPC.PTY_KILL, sessionId)),
     onData: (sessionId, callback) => onChannel(ptyDataChannel(sessionId), callback),
     onExit: (sessionId, callback) => onChannel(ptyExitChannel(sessionId), callback)
   },
@@ -1027,7 +1078,9 @@ const electronAPI: ElectronAPI = {
     enable: () => ipcRenderer.invoke(IPC.DEBUG_ENABLE),
     disable: () => ipcRenderer.invoke(IPC.DEBUG_DISABLE),
     isEnabled: () => ipcRenderer.invoke(IPC.DEBUG_IS_ENABLED),
-    openFolder: () => ipcRenderer.invoke(IPC.DEBUG_OPEN_FOLDER)
+    openFolder: () => ipcRenderer.invoke(IPC.DEBUG_OPEN_FOLDER),
+    accountLogFolders: () => ipcRenderer.invoke(IPC.DEBUG_ACCOUNT_LOG_FOLDERS),
+    openAccountLogFolder: (args: { accountId: string; folder: AccountLogFolderKind }) => ipcRenderer.invoke(IPC.DEBUG_OPEN_ACCOUNT_LOG_FOLDER, args)
   },
   usage: {
     getSessionUsage: (sessionId) =>
@@ -1083,10 +1136,18 @@ const electronAPI: ElectronAPI = {
     paneVisible: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_VISIBLE, args),
     paneReload: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_RELOAD, sessionId),
     paneGetState: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_GET_STATE, sessionId),
-    onPaneState: (cb: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void) =>
+    onPaneState: (cb: (state: AccountPaneStateView) => void) =>
       onChannel(IPC.ACCOUNT_WEB_PANE_STATE, cb),
-    onPaneClosed: (cb: (e: { sessionId: string }) => void) =>
+    onPaneClosed: (cb: (e: { sessionId: string; reason?: string }) => void) =>
       onChannel(IPC.ACCOUNT_WEB_PANE_CLOSED, cb),
+  },
+  codexWeb: {
+    status: (accountId) => ipcRenderer.invoke(IPC.CODEX_WEB_STATUS, accountId),
+    signIn: (accountId) => ipcRenderer.invoke(IPC.CODEX_WEB_SIGN_IN, accountId),
+    signInState: () => ipcRenderer.invoke(IPC.CODEX_WEB_SIGN_IN_STATE),
+    cancel: (accountId) => ipcRenderer.invoke(IPC.CODEX_WEB_CANCEL, accountId),
+    signOut: (accountId) => ipcRenderer.invoke(IPC.CODEX_WEB_SIGN_OUT, accountId),
+    paneOpen: (args) => ipcRenderer.invoke(IPC.CODEX_WEB_PANE_OPEN, args),
   },
   // Agent Canvas — per-session review surface state + change push. Content
   // itself loads straight into the canvas iframe over ccc-ux://, not IPC.
@@ -1133,6 +1194,8 @@ const electronAPI: ElectronAPI = {
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_VERSION_VERDICT, args),
     agentMarker: (args: { sessionId: string; canvasId: string; line: string }) => ipcRenderer.invoke(IPC.CANVAS_AGENT_MARKER, args),
+    onAgentMarkerUndelivered: (cb: (e: CanvasMarkerUndelivered) => void) => onChannel(IPC.CANVAS_AGENT_MARKER_UNDELIVERED, cb),
+    sessionGuidance: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.CANVAS_SESSION_GUIDANCE, args),
     versionReopen: (args: { sessionId: string; versionId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_VERSION_REOPEN, args),
     annotationReopen: (args: { sessionId: string; annotationId: string }) =>
@@ -1242,7 +1305,7 @@ const electronAPI: ElectronAPI = {
     gracefulExit: () => ipcRenderer.invoke(IPC.SESSION_GRACEFUL_EXIT)
   },
   insights: {
-    run: (opts?: { profileId?: string }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN, opts),
+    run: (opts?: { profileId?: string; provider?: ProviderId; acknowledgeRealmOnly?: true }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN, opts),
     runAll: (opts?: { profileIds?: string[] }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN_ALL, opts),
     getCatalogue: () => ipcRenderer.invoke(IPC.INSIGHTS_GET_CATALOGUE),
     getReport: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_REPORT, runId),
@@ -1281,11 +1344,12 @@ const electronAPI: ElectronAPI = {
       onChannel(IPC.VISION_STATUS_CHANGED, callback)
   },
   cloudAgent: {
-    dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) =>
+    dispatch: (params: import('../shared/types').CloudAgentDispatchParams) =>
       ipcRenderer.invoke(IPC.CLOUD_AGENT_DISPATCH, params),
     cancel: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_CANCEL, id),
     remove: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_REMOVE, id),
-    retry: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_RETRY, id),
+    retry: (id: string, opts?: import('../shared/types').CloudAgentRetryOptions) =>
+      opts === undefined ? ipcRenderer.invoke(IPC.CLOUD_AGENT_RETRY, id) : ipcRenderer.invoke(IPC.CLOUD_AGENT_RETRY, id, opts),
     list: () => ipcRenderer.invoke(IPC.CLOUD_AGENT_LIST),
     getOutput: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_GET_OUTPUT, id),
     clearCompleted: () => ipcRenderer.invoke(IPC.CLOUD_AGENT_CLEAR_COMPLETED),
@@ -1312,6 +1376,10 @@ const electronAPI: ElectronAPI = {
   },
   help: {
     workspace: () => ipcRenderer.invoke(IPC.HELP_WORKSPACE)
+  },
+  askConductor: {
+    handOff: (args: { sessionId: string; question: string }) => ipcRenderer.invoke(IPC.ASK_CONDUCTOR_HAND_OFF, args),
+    onNotice: (cb: (notice: AskConductorNotice) => void) => onChannel(IPC.ASK_CONDUCTOR_NOTICE, cb),
   },
   tokenomics: {
     summary: (filter?: import('../shared/types').TkSummaryFilter) => ipcRenderer.invoke(IPC.TOKENOMICS2_SUMMARY, filter ?? {}),
@@ -1351,9 +1419,12 @@ const electronAPI: ElectronAPI = {
     signIn: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN, req.secretHandle !== undefined
       ? { accountId: req.accountId, method: req.method, secretHandle: req.secretHandle }
       : { accountId: req.accountId, method: req.method }),
-    signInAgain: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, req.secretHandle !== undefined
-      ? { accountId: req.accountId, method: req.method, secretHandle: req.secretHandle }
-      : { accountId: req.accountId, method: req.method }),
+    signInAgain: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, {
+      accountId: req.accountId, method: req.method,
+      ...(req.secretHandle !== undefined ? { secretHandle: req.secretHandle } : {}),
+      sameAccount: req.sameAccount,
+      ...(req.acknowledgeExternal !== undefined ? { acknowledgeExternal: req.acknowledgeExternal } : {}),
+    }),
     onSignInOutput: (cb) => onChannel<SignInOutputEvent>(IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT, cb),
     cancelSignIn: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_CANCEL_SIGN_IN, { accountId }),
     completeSetup: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_COMPLETE_SETUP, req),

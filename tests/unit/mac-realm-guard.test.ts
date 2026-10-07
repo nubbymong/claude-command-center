@@ -409,6 +409,21 @@ describe('the macOS realm launch guard', () => {
     }
   })
 
+  // Merge with beta 1a5e9de5: the provider-neutral sign-in status and sign-out
+  // (WP2 PR 4) run "the executable discovery proved"; on the macOS realm they
+  // run the verified binary instead, after the check.
+  it('merge: the Claude sign-in status / sign-out run the verified binary on the realm, the discovered one elsewhere', async () => {
+    const { otherHome, primaryHome } = setup()
+    const { claudeAuthExecutable } = await import('../../src/main/providers/compose')
+    const id = (h: string) => P.listProfiles().find((p) => P.getProfileConfigDir(p.id) === h)!.id
+    asPlatform('darwin')
+    expect(await claudeAuthExecutable(id(otherHome), '/discovered/claude')).toBe(cliPath)
+    expect(probes).toHaveLength(1) // the check ran first
+    expect(await claudeAuthExecutable(id(primaryHome), '/discovered/claude')).toBe('/discovered/claude')
+    asPlatform('linux')
+    expect(await claudeAuthExecutable(id(otherHome), '/discovered/claude')).toBe('/discovered/claude')
+  })
+
   it('MAJOR 1: the resume picker runs CCC_CLAUDE_BIN when the app hands it one (absolute only)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const picker = require('../../scripts/resume-picker.js') as { resolveClaudeCmd: (env?: Record<string, string | undefined>) => string }

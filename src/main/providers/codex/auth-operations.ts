@@ -46,12 +46,13 @@
 //   by a failed or cut-off run is dropped rather than shown.
 // - nothing throws: every odd port answer fails closed with a code.
 import path from 'node:path'
-import type { AuthMethod, AuthRealm, KnownAuthState, RealmOwnership } from '../../../shared/providers'
+import type { AuthMethod, AuthRealm, KnownAuthState, RealmOwnership, RealmUse } from '../../../shared/providers'
 import type {
   ProviderAuthOperations, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthStatusOptions, AuthFailureCode, AuthCredentialKind, LaunchPreparation,
 } from '../core'
 import { redactSecrets } from '../../hooks/hook-payload-redactor'
 import { redactTokens } from '../../github/security/token-redactor'
+import { foldPathCase } from '../../utils/path-validator'
 import { parseCodexLoginStatus, classifyCodexVersion } from './cli-contract'
 import {
   createAppServerUsageClient, APP_SERVER_READ_DEADLINE_MS, APP_SERVER_INITIALIZE_TIMEOUT_MS, APP_SERVER_EXIT_GRACE_MS, APP_SERVER_MAX_LINE,
@@ -79,7 +80,7 @@ export interface CodexAuthDeps {
   /** The realm record behind an opaque reference and the roots its home is
    *  derived from, looked up in the registry (injected by the composition
    *  root). */
-  lookupRealm(realm: RealmRef): Promise<CodexRealmLookup>
+  lookupRealm(realm: RealmRef, use: RealmUse): Promise<CodexRealmLookup>
   /** The canonical path and file identity of a realm home. Throws when it
    *  cannot be read (a missing folder included). */
   realmIdentity(home: string): CodexRealmIdentity
@@ -192,6 +193,7 @@ export interface CodexUsageReadOptions {
 export type CodexAuthOperations = ProviderAuthOperations & {
   prepareLaunch(realm: RealmRef): Promise<LaunchPreparation | Refusal>
   usageSessionsDir(realm: RealmRef): Promise<string | null>
+  accountFolders(realm: RealmRef): Promise<{ logDir: string; memoriesDir: string; configFile: string } | null>
   readUsage(realm: RealmRef, opts?: CodexUsageReadOptions): Promise<CodexUsageRead>
 }
 
@@ -199,8 +201,11 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
   const platform = deps.executablePorts.platform
   const pathApi = platform === 'win32' ? path.win32 : path.posix
   const caseless = platform === 'win32' || platform === 'darwin'
+  // Case folded as the account-folder checks fold it (foldPathCase: how
+  // Windows compares names), so the realm home this accepts and the folders
+  // named in it are held to one rule.
   const samePath = (a: string, b: string) => {
-    const norm = (p: string) => { const s = p.replace(/[\\/]+$/, ''); return caseless ? s.toLowerCase() : s }
+    const norm = (p: string) => { const s = p.replace(/[\\/]+$/, ''); return caseless ? foldPathCase(s) : s }
     return norm(a) === norm(b)
   }
   const locks = deps.locks ?? createCodexRealmLocks()
@@ -225,11 +230,11 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
   /** The realm's home and ownership, from the looked-up record. Anything odd
    *  about the reference or the record -- a throwing getter included -- is
    *  `realm-unavailable`. */
-  async function locate(ref: RealmRef): Promise<{ ok: true; home: string; ownership: RealmOwnership } | Refusal> {
+  async function locate(ref: RealmRef, use: RealmUse): Promise<{ ok: true; home: string; ownership: RealmOwnership } | Refusal> {
     try {
       const id = ref && typeof ref === 'object' ? (ref as { authRealmId?: unknown }).authRealmId : undefined
       if (typeof id !== 'string' || !id) return refuse('realm-unavailable')
-      const found: CodexRealmLookup = await deps.lookupRealm({ authRealmId: id })
+      const found: CodexRealmLookup = await deps.lookupRealm({ authRealmId: id }, use)
       if (!found || found.ok !== true || !found.realm || found.realm.id !== id || !found.roots) return refuse('realm-unavailable')
       const ownership = found.realm.ownership
       if (ownership !== 'conductor-managed' && ownership !== 'external-default') return refuse('realm-unavailable')
@@ -241,8 +246,8 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
     }
   }
 
-  async function prepare(ref: RealmRef, purpose: 'status' | 'login' | 'logout' | 'launch'): Promise<Ready | Refusal> {
-    const where = await locate(ref)
+  async function prepare(ref: RealmRef, purpose: 'status' | 'login' | 'logout' | 'launch' | 'usage'): Promise<Ready | Refusal> {
+    const where = await locate(ref, purpose)
     if (isRefusal(where)) return where
     const ownership = where.ownership
     let fsid: CodexRealmIdentity
@@ -250,7 +255,9 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
     if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !samePath(fsid.canonical, where.home)) return refuse('realm-unavailable')
     const exe = currentExecutable()
     if (!exe.ok) return exe
-    if (ownership === 'conductor-managed' && purpose !== 'logout') {
+    // Every run in a managed folder, a sign-out included (review round 2):
+    // the CLI loads a .env there whatever it was started for.
+    if (ownership === 'conductor-managed') {
       let present: unknown
       try { present = deps.envFilePresent(where.home) } catch { present = true }
       if (present !== false) return refuse('realm-env-file')
@@ -421,12 +428,39 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
      *  when refused. */
     async usageSessionsDir(realm: RealmRef): Promise<string | null> {
       try {
-        const where = await locate(realm)
+        const where = await locate(realm, 'sessions')
         if (isRefusal(where)) return null
         let fsid: CodexRealmIdentity
         try { fsid = deps.realmIdentity(where.home) } catch { return null }
         if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !samePath(fsid.canonical, where.home)) return null
         return pathApi.join(where.home, 'sessions')
+      } catch {
+        return null
+      }
+    },
+
+    /** WP2 PR 4, P4.4 (rows 55, 56): the realm's own log folder (`log/`,
+     *  where codex-login.log always lands, and codex-tui.log unless log_dir
+     *  moves it), memories folder (`memories/`) and settings file
+     *  (`config.toml`, whose root-level log_dir may name another log
+     *  folder), for the Memory page and the log folders in Settings, Debug
+     *  Logging. Located exactly as usageSessionsDir locates the sessions
+     *  folder, and held to the same canonical-home check, so nothing is shown
+     *  from a home a launch would refuse. Paths only: nothing inside is read,
+     *  made or checked here; each reader checks what it reads (no link, no
+     *  `.git`, a local folder). No CLI. Null when refused. */
+    async accountFolders(realm: RealmRef): Promise<{ logDir: string; memoriesDir: string; configFile: string } | null> {
+      try {
+        const where = await locate(realm, 'sessions')
+        if (isRefusal(where)) return null
+        let fsid: CodexRealmIdentity
+        try { fsid = deps.realmIdentity(where.home) } catch { return null }
+        if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !samePath(fsid.canonical, where.home)) return null
+        return {
+          logDir: pathApi.join(where.home, 'log'),
+          memoriesDir: pathApi.join(where.home, 'memories'),
+          configFile: pathApi.join(where.home, 'config.toml'),
+        }
       } catch {
         return null
       }
@@ -479,7 +513,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         // helper slot go: never before its kills have settled.
         let handedOff = false
         try {
-          const r = await prepare(realm, 'status')
+          const r = await prepare(realm, 'usage')
           if (isRefusal(r)) { free(); return refused(r.code) }
           if (r.ownership !== 'conductor-managed') { free(); return refused('external-realm') }
           const release = holdRealm(r, 'exclusive')
@@ -542,13 +576,15 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         try {
           const out = await run(r, 'logout', { timeoutMs: LOGOUT_TIMEOUT_MS })
           if (isRefusal(out)) return out
-          if (out.timedOut) return refuse('timed-out')
+          // A failure after the CLI ran says so (ran): whatever the read-back
+          // then gave, the realm may have changed (review round 3, C3).
+          if (out.timedOut) return { ...refuse('timed-out'), ran: true }
           if (out.spawnError) return refuse('not-started')
           // The verdict is the realm's state afterwards, not logout's exit code.
           const s = await readStatus(r)
           if (s.state === 'signed-out') return { ok: true, state: 'signed-out' }
-          if (s.state === 'signed-in') return { ...refuse('still-signed-in'), state: 'signed-in', credential: credentialOf(s.via) }
-          return refuse(s.code, s.message)
+          if (s.state === 'signed-in') return { ...refuse('still-signed-in'), state: 'signed-in', credential: credentialOf(s.via), ran: true }
+          return { ...refuse(s.code, s.message), ran: true }
         } finally {
           releaseAfterKills(r, release)
         }
@@ -582,7 +618,9 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         }
         const r = await prepare(realm, 'login')
         if (isRefusal(r)) return r
-        if (r.ownership !== 'conductor-managed') return refuse('external-realm')
+        // This computer's own home only with the user's acknowledgement (the
+        // accounts service's in-place sign in again, design 9.2).
+        if (r.ownership !== 'conductor-managed' && input?.acknowledgeExternalRealm !== true) return refuse('external-realm')
         const browser = spec.op === 'login-browser'
         if (browser && browserRunning) return refuse('browser-busy')
         const release = holdRealm(r)

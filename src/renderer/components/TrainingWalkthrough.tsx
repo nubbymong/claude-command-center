@@ -5,9 +5,12 @@ import {
   trainingSteps,
   getNewSteps,
   currentTrainingVersion,
+  stepsForAssistants,
   SECTION_LABELS,
   type TrainingStep,
 } from '../training-steps'
+import { useSettingsStore } from '../stores/settingsStore'
+import { onlyAssistantInUse } from '../onboarding/provider-choice'
 import { DialogOverlay, DialogButton } from './ui/Dialog'
 
 // Vite glob import for training screenshots — automatically picks up all JPGs in the directory
@@ -77,9 +80,12 @@ const ICON_BTN_CLASS =
   'text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors'
 
 export default function TrainingWalkthrough({ onClose, showAll = false, mode = 'first-run' }: Props) {
-  const steps = showAll
-    ? trainingSteps
-    : getNewSteps(useAppMetaStore.getState().meta.lastTrainingVersion)
+  // The cards for the assistants in use (P4.11, row 14), as the Feature Guide shows them.
+  const only = useSettingsStore((s) => onlyAssistantInUse(s.settings))
+  const steps = stepsForAssistants(
+    showAll ? trainingSteps : getNewSteps(useAppMetaStore.getState().meta.lastTrainingVersion),
+    only,
+  )
 
   const [currentIndex, setCurrentIndex] = useState(0)
   const [imgBad, setImgBad] = useState<Set<number>>(new Set())
@@ -129,6 +135,19 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
       .update({ lastTrainingVersion: currentTrainingVersion() })
     onClose()
   }, [onClose])
+
+  // No card to draw (none new to this user for the assistants in use): close
+  // at once, stamping as a close does. Drawing nothing and staying open kept
+  // the training gate up over an empty screen, so nothing below it took a
+  // turn (#609: a gate the chain returns must render; PR 4 VM final, review
+  // P411-4).
+  const closedEmpty = useRef(false)
+  const empty = steps.length === 0
+  useEffect(() => {
+    if (!empty || closedEmpty.current) return
+    closedEmpty.current = true
+    handleClose()
+  }, [empty, handleClose])
 
   const handleNext = () => {
     if (isLast) {
@@ -464,22 +483,3 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
   )
 }
 
-/** Check if training walkthrough should be shown (new steps available) */
-export function shouldShowTraining(): boolean {
-  try {
-    const lastVer = useAppMetaStore.getState().meta.lastTrainingVersion
-    if (!lastVer) return true
-    return getNewSteps(lastVer).length > 0
-  } catch {
-    return false
-  }
-}
-
-/** Check if this is a first install (no training version recorded) */
-export function isFirstInstall(): boolean {
-  try {
-    return !useAppMetaStore.getState().meta.lastTrainingVersion
-  } catch {
-    return false
-  }
-}

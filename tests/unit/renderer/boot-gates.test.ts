@@ -16,6 +16,8 @@
  * release-notes surface, so a notes launch arrives here as `onboardingDue`.
  */
 import { describe, it, expect } from 'vitest'
+import * as fs from 'fs'
+import * as path from 'path'
 import { pickBootGate, type BootGateState } from '../../../src/renderer/utils/bootGates'
 
 function makeState(overrides: Partial<BootGateState> = {}): BootGateState {
@@ -31,7 +33,6 @@ function makeState(overrides: Partial<BootGateState> = {}): BootGateState {
     loggingConsentSeen: true,
     resumePending: false,
     whatsNewDue: false,
-    trainingDue: false,
     githubOnboardingDue: false,
     ...overrides,
   }
@@ -55,6 +56,11 @@ describe('pickBootGate — the tour and the first-config dialog own turns (#609)
     expect(pickBootGate(makeState({ showGuidedConfig: true, resumePending: true }))).toBe('guidedConfig')
   })
 
+  it('P3.12 round 2 (W9): a due conversation indexing notice comes before the first-config dialog, which launches a session', () => {
+    expect(pickBootGate(makeState({ showGuidedConfig: true, loggingConsentSeen: false }))).toBe('loggingConsent')
+    expect(pickBootGate(makeState({ showGuidedConfig: true, loggingConsentSeen: true }))).toBe('guidedConfig')
+  })
+
   it('the tour outranks the dialog it can open', () => {
     expect(pickBootGate(makeState({ tourActive: true, showGuidedConfig: true }))).toBe('guidedTour')
   })
@@ -67,7 +73,7 @@ describe('pickBootGate — the tour and the first-config dialog own turns (#609)
   it('neither is starved by a pending boot timer', () => {
     // They are opened by a user action that has ALREADY happened, so unlike the
     // one-time notices they must not wait on the *Due short-circuit.
-    expect(pickBootGate(makeState({ tourActive: true, whatsNewDue: true, trainingDue: true }))).toBe('guidedTour')
+    expect(pickBootGate(makeState({ tourActive: true, whatsNewDue: true }))).toBe('guidedTour')
     expect(pickBootGate(makeState({ showGuidedConfig: true, githubOnboardingDue: true }))).toBe('guidedConfig')
   })
 
@@ -88,7 +94,7 @@ describe('pickBootGate — the tour and the first-config dialog own turns (#609)
     const flags = [
       'onboardingDue', 'showTraining', 'showTrainingAll', 'tourActive', 'showGuidedConfig',
       'showGitHubOnboarding', 'codexReconfirmDue', 'loggingConsentSeen', 'resumePending',
-      'multiSpawnIntroDue', 'helloCodexOpen', 'whatsNewDue', 'trainingDue', 'githubOnboardingDue',
+      'multiSpawnIntroDue', 'helloCodexOpen', 'whatsNewDue', 'githubOnboardingDue',
     ] as const
     for (let mask = 0; mask < (1 << flags.length); mask++) {
       const over: Record<string, boolean> = {}
@@ -152,8 +158,28 @@ describe('pickBootGate', () => {
     // surface must not let resume paint for the few hundred ms before it opens
     // and then get swapped out from under the user mid-decision.
     expect(pickBootGate(makeState({ resumePending: true, whatsNewDue: true }))).toBeNull()
-    expect(pickBootGate(makeState({ resumePending: true, trainingDue: true }))).toBeNull()
     expect(pickBootGate(makeState({ resumePending: true, githubOnboardingDue: true }))).toBeNull()
+  })
+
+  // [host] PR 4 VM final: nothing opens the tour by itself any more (the
+  // onboarding page replaced its auto-open, ba6b0df9, 2026-08-21), so a tour
+  // card the user has not seen must hold no gate below it. It held them all
+  // (trainingDue in the *Due short-circuit): a boot whose tour version read as
+  // older than a card never showed the resume prompt, the consent notice, the
+  // Codex question, the Multi Spawn page or Hello Codex.
+  it('an unseen tour card holds nothing below it: every gate takes its turn', () => {
+    const unseen = { trainingDue: true } as unknown as Partial<BootGateState>
+    expect(pickBootGate(makeState({ ...unseen, resumePending: true }))).toBe('resume')
+    expect(pickBootGate(makeState({ ...unseen, loggingConsentSeen: false }))).toBe('loggingConsent')
+    expect(pickBootGate(makeState({ ...unseen, codexReconfirmDue: true }))).toBe('codexReconfirm')
+    expect(pickBootGate(makeState({ ...unseen, multiSpawnIntroDue: true }))).toBe('multiSpawnIntro')
+    expect(pickBootGate(makeState({ ...unseen, helloCodexOpen: true }))).toBe('helloCodex')
+  })
+
+  it('[host] App feeds the chain no tour-due input, and the GitHub page does not wait on the tour either', () => {
+    const app = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'src', 'renderer', 'App.tsx'), 'utf8')
+    expect(app).not.toMatch(/trainingDue/)
+    expect(app).not.toMatch(/shouldShowTraining\(\)|isFirstInstall\(\)/)
   })
 
   it('the one-time consent notice goes before the every-boot resume prompt', () => {
@@ -180,9 +206,6 @@ describe('pickBootGate', () => {
     expect(pickBootGate(makeState({ loggingConsentSeen: false, whatsNewDue: true }))).toBeNull()
   })
 
-  it('logging consent waits while the training tour is due but not yet open', () => {
-    expect(pickBootGate(makeState({ loggingConsentSeen: false, trainingDue: true }))).toBeNull()
-  })
 
   it('logging consent waits while GitHub onboarding is due but its 120ms timer has not fired yet', () => {
     expect(pickBootGate(makeState({ loggingConsentSeen: false, githubOnboardingDue: true }))).toBeNull()
@@ -255,7 +278,7 @@ describe('pickBootGate: the Codex introduction takeover', () => {
   })
 
   it('waits while a gate above it is still due but not yet up', () => {
-    for (const over of [{ whatsNewDue: true }, { trainingDue: true }, { githubOnboardingDue: true }] as Partial<BootGateState>[]) {
+    for (const over of [{ whatsNewDue: true }, { githubOnboardingDue: true }] as Partial<BootGateState>[]) {
       expect(pickBootGate(makeState({ helloCodexOpen: true, ...over })), JSON.stringify(over)).toBeNull()
     }
   })

@@ -9,10 +9,11 @@
  * requires identical verdicts.
  */
 import { describe, it, expect } from 'vitest'
-import { evaluateModels as gateEvaluate } from '../../scripts/release-gate.mjs'
-import { evaluateModelCoverage, type ModelRegistry, type ExpectedModelSet } from '../../src/shared/model-registry'
+import { evaluateModels as gateEvaluate, evaluateCodexModels as gateEvaluateCodex } from '../../scripts/release-gate.mjs'
+import { evaluateModelCoverage, evaluateCodexModelCoverage, type ModelRegistry, type ExpectedModelSet } from '../../src/shared/model-registry'
 import baselineJson from '../../resources/model-registry.json'
 import expectedJson from '../../resources/claude-code-model-configuration.json'
+import codexCatalogueJson from '../../resources/codex-model-catalogue.json'
 
 const shippedRegistry = baselineJson as unknown as ModelRegistry
 const shippedExpected = expectedJson as unknown as ExpectedModelSet
@@ -75,5 +76,89 @@ describe('release gate and shared model-coverage agree (#385)', () => {
       const covered = [...rows].some((id) => m.id === id || m.id.startsWith(`${id}-`))
       expect(covered, `${m.id} is not offered by the picker`).toBe(true)
     }
+  })
+})
+
+// P3.8 round 1 (G1): the Codex half. The gate carries its own copy of
+// evaluateCodexModelCoverage (the registry's pickable codex-family models
+// against resources/codex-model-catalogue.json, exact ids, overlay entries
+// never "extra", fail closed on an empty list); the same rule: identical
+// verdicts over the same inputs.
+const shippedCodexList = codexCatalogueJson as unknown as ExpectedModelSet
+const cx = (ids: string[], over: Record<string, unknown> = {}) =>
+  ids.map((id) => ({ id, patterns: [id], family: 'codex', label: id.toUpperCase(), ...over }))
+const reg = (models: unknown[]): ModelRegistry => ({ models, families: {}, effortLevels: [], dropdown: [] } as unknown as ModelRegistry)
+
+const CODEX_CASES: { name: string; registry: ModelRegistry; expected: ExpectedModelSet }[] = [
+  { name: 'the shipped pair', registry: shippedRegistry, expected: shippedCodexList },
+  { name: 'exact cover', registry: reg(cx(['gpt-5.5'])), expected: exp(['gpt-5.5']) },
+  { name: 'a missing model', registry: reg(cx(['gpt-5.5'])), expected: exp(['gpt-5.5', 'gpt-6-astra']) },
+  { name: 'an extra model', registry: reg(cx(['gpt-5.5', 'gpt-5.2'])), expected: exp(['gpt-5.5']) },
+  { name: 'no date-suffix cover for Codex ids', registry: reg(cx(['gpt-5.5'])), expected: exp(['gpt-5.5-20260101']) },
+  { name: 'a Claude-family entry with the id does not cover it', registry: reg([{ id: 'gpt-5.5', patterns: ['x'], family: 'opus', label: 'x' }]), expected: exp(['gpt-5.5']) },
+  { name: 'a non-pickable Codex entry neither covers nor is extra', registry: reg([...cx(['gpt-5.5']), ...cx(['codex-family'], { pickable: false })]), expected: exp(['gpt-5.5', 'codex-family']) },
+  { name: 'an overlay Codex entry covers but is never extra', registry: reg([...cx(['gpt-5.5']), ...cx(['gpt-7'], { provenance: { source: 'user', addedAt: '2026-09-29' } })]), expected: exp(['gpt-5.5']) },
+  { name: 'unusable registry entries are skipped', registry: reg([null, { family: 'codex' }, { id: '', family: 'codex' }, ...cx(['gpt-5.5'])]), expected: exp(['gpt-5.5']) },
+  { name: 'unusable list entries are skipped', registry: reg(cx(['gpt-5.5'])), expected: { models: [null, { id: '' }, { label: 'x' }, { id: 'gpt-5.5', label: 'GPT-5.5' }] } as unknown as ExpectedModelSet },
+  { name: 'empty list (fails closed)', registry: reg(cx(['gpt-5.5'])), expected: exp([]) },
+  { name: 'a list of only unusable entries (fails closed)', registry: reg(cx(['gpt-5.5'])), expected: { models: [{ id: '' }] } as unknown as ExpectedModelSet },
+  { name: 'everything missing', registry: reg([]), expected: exp(['gpt-5.5', 'gpt-6-astra']) },
+  // Round 2 (GS): an id listed twice in the registry covers nothing (the
+  // pickers would disagree about it), and an id the picker never offers
+  // (isCodexModelId) covers nothing; a malformed file fails closed.
+  { name: 'a duplicate id: a Claude-family copy first', registry: reg([{ id: 'gpt-6-astra', patterns: [], family: 'opus', label: 'Astra (Claude row)', articleExempt: true }, ...cx(['gpt-6-astra', 'gpt-5.5'])]), expected: exp(['gpt-6-astra', 'gpt-5.5']) },
+  { name: 'a duplicate id: two Codex copies', registry: reg([...cx(['gpt-5.5']), ...cx(['gpt-5.5'])]), expected: exp(['gpt-5.5']) },
+  { name: 'a duplicate Codex id the list does not name', registry: reg([...cx(['gpt-5.5']), ...cx(['gpt-7']), ...cx(['gpt-7'])]), expected: exp(['gpt-5.5']) },
+  { name: 'ids the picker never offers, in both files', registry: reg([...cx(['gpt-5.5']), ...cx(['gpt-7 x', 'g'.repeat(65), '-gpt-7'])]), expected: exp(['gpt-5.5', 'gpt-7 x', 'g'.repeat(65), '-gpt-7']) },
+  { name: 'a list whose models is not an array (fails closed)', registry: reg(cx(['gpt-5.5'])), expected: { models: { 0: { id: 'gpt-5.5' } } } as unknown as ExpectedModelSet },
+  { name: 'a registry whose models is not an array', registry: { models: { 0: { id: 'gpt-5.5', family: 'codex' } }, families: {}, effortLevels: [], dropdown: [] } as unknown as ModelRegistry, expected: exp(['gpt-5.5']) },
+]
+
+describe('release gate and shared Codex model coverage agree (P3.8 G1)', () => {
+  for (const c of CODEX_CASES) {
+    it(`identical verdict: ${c.name}`, () => {
+      const gate = gateEvaluateCodex({ registry: c.registry, expected: c.expected })
+      const shared = evaluateCodexModelCoverage(c.registry, c.expected)
+      expect(shared.ok).toBe(gate.ok)
+      expect(shared.missing.map((m) => m.id)).toEqual(gate.missing.map((m: { id: string }) => m.id))
+      expect(shared.extra.map((m) => m.id)).toEqual(gate.extra.map((m: { id: string }) => m.id))
+      expect(shared.covered.map((m) => `${m.id}<-${m.by}`))
+        .toEqual(gate.covered.map((m: { id: string; by: string }) => `${m.id}<-${m.by}`))
+      expect(shared.reason).toBe(gate.reason)
+      expect(shared.duplicates ?? []).toEqual(gate.duplicates ?? [])
+    })
+  }
+
+  it('the verdicts are the expected ones, not merely equal', () => {
+    const v = (c: string) => gateEvaluateCodex(CODEX_CASES.find((x) => x.name === c)!)
+    expect(v('exact cover').ok).toBe(true)
+    expect(v('a missing model').missing.map((m: { id: string }) => m.id)).toEqual(['gpt-6-astra'])
+    expect(v('an extra model').extra.map((m: { id: string }) => m.id)).toEqual(['gpt-5.2'])
+    expect(v('an extra model').ok).toBe(true)
+    expect(v('no date-suffix cover for Codex ids').ok).toBe(false)
+    expect(v('a Claude-family entry with the id does not cover it').ok).toBe(false)
+    expect(v('a non-pickable Codex entry neither covers nor is extra').missing.map((m: { id: string }) => m.id)).toEqual(['codex-family'])
+    expect(v('an overlay Codex entry covers but is never extra').extra).toEqual([])
+    expect(v('unusable list entries are skipped').ok).toBe(true)
+    expect(v('empty list (fails closed)').ok).toBe(false)
+    expect(v('a list of only unusable entries (fails closed)').ok).toBe(false)
+    expect(v('a duplicate id: a Claude-family copy first').missing.map((m: { id: string }) => m.id)).toEqual(['gpt-6-astra'])
+    expect(v('a duplicate id: a Claude-family copy first').duplicates).toEqual(['gpt-6-astra'])
+    expect(v('a duplicate id: two Codex copies').ok).toBe(false)
+    expect(v('a duplicate Codex id the list does not name').ok).toBe(false)
+    expect(v('a duplicate Codex id the list does not name').duplicates).toEqual(['gpt-7'])
+    expect(v('a duplicate Codex id the list does not name').extra).toEqual([])
+    expect(v('ids the picker never offers, in both files').missing.map((m: { id: string }) => m.id)).toEqual(['gpt-7 x', 'g'.repeat(65), '-gpt-7'])
+    expect(v('ids the picker never offers, in both files').extra).toEqual([])
+    expect(v('a list whose models is not an array (fails closed)').ok).toBe(false)
+    expect(v('a registry whose models is not an array').missing.map((m: { id: string }) => m.id)).toEqual(['gpt-5.5'])
+  })
+
+  it('the shipped registry satisfies the shipped Codex list', () => {
+    const gate = gateEvaluateCodex({ registry: shippedRegistry, expected: shippedCodexList })
+    expect(gate.missing).toEqual([])
+    expect(gate.extra).toEqual([])
+    expect(gate.ok).toBe(true)
+    expect(gate.covered).toHaveLength(shippedCodexList.models.length)
   })
 })

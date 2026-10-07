@@ -143,7 +143,7 @@ describe('useSwitchAccount', () => {
     expect(stored).toBeDefined()
     expect(stored!.profileId).toBe('profile-b')
     // Reused the Restart path: PTY killed + resume picker marked + clean remount.
-    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
+    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1', { restart: true })
     expect(markSessionForResumePickerMock).toHaveBeenCalledWith('sess-1')
     expect(stored!.status).toBe('idle')
   })
@@ -172,7 +172,7 @@ describe('useSwitchAccount', () => {
 
     const stored = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1')
     expect(stored!.profileId).toBeUndefined()
-    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
+    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1', { restart: true })
   })
 
   it('is a no-op when the target account is inactive (backstop)', () => {
@@ -219,7 +219,7 @@ describe('useSwitchAccount', () => {
 
     const stored = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1')
     expect(stored!.profileId).toBe('profile-b')
-    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
+    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1', { restart: true })
   })
 
   it('#447: refreshes the picked account’s usage snapshot on the switch, with noRefresh, BEFORE the respawn', () => {
@@ -243,7 +243,7 @@ describe('useSwitchAccount', () => {
     act(() => { captured!('sess-1', undefined) })
     expect(fetchOneMock).not.toHaveBeenCalled()
     // ...and the switch itself still happens.
-    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
+    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1', { restart: true })
   })
 
   it('#447: a failed usage fetch never blocks or fails the switch', () => {
@@ -254,7 +254,7 @@ describe('useSwitchAccount', () => {
     act(() => { captured!('sess-1', 'profile-b') })
     const stored = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1')
     expect(stored!.profileId).toBe('profile-b')
-    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
+    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1', { restart: true })
   })
 
   it('#447: a no-op switch (same account) does not fetch usage', () => {

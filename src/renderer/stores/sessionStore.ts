@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { ProviderId, CodexOptions, TerminalOptions, SshRuntime } from '../../shared/types'
 import type { IdentityColorKey } from '../../shared/identity-colors'
 import { sshAuthGiveUpMemory } from './sshAuthGiveUp'
+import { forgetSwitchOrigin } from '../utils/switchOrigin'
 
 export type SessionStatus = 'idle' | 'working' | 'complete' | 'error' | 'disconnected'
 export type SessionType = 'local' | 'ssh'
@@ -75,6 +76,8 @@ export interface Session {
     /** #605: which auto-retry checks are live for this session right now.
      *  Absent on states pushed by older main builds; treat as all-on. */
     checks?: { rateLimit: boolean; overload: boolean; safeguard: boolean }
+    /** P3.10: checks this session's CLI has no patterns for (off, not switchable). */
+    unavailable?: Array<'rateLimit' | 'overload' | 'safeguard'>
   }
   costUsd?: number
   modelName?: string
@@ -170,8 +173,11 @@ export interface Session {
    *  running (runningConfigCounts), so it blocks neither a launch nor a
    *  delete. Also set by the restore for a session whose provider cannot
    *  launch then (session-persistence), before its tab is first viewed.
-   *  Cleared as soon as a PTY starts, and by a Restart. Ephemeral, like
-   *  ptyExited: not persisted. */
+   *  A Restart keeps it (useRestartSession). TerminalView clears it at its
+   *  pre-spawn check once the launch passes the Multi Spawn rule, before the
+   *  PTY starts; it is set again if that start ends with nothing started
+   *  (settleOwnStart), and cleared when a PTY starts (markLive). Ephemeral,
+   *  like ptyExited: not persisted. */
   neverStarted?: boolean
   /** True only for an in-progress add-account login shell; drives the /login
    *  guidance banner. Cleared once the account is detected. */
@@ -209,6 +215,10 @@ export interface Session {
    *  here. Renderer-only, not persisted. */
   sshRemoteAccount?: string
   codexOptions?: CodexOptions
+  /** P3.8 round 3 (PB1): the permissions preset this Codex run launched
+   *  with, as main reported it at the spawn; per run and not persisted. The
+   *  command bar compares the choice for the next start with it. */
+  launchedCodexPreset?: CodexOptions['permissionsPreset']
   /** WP2: the provider account this Codex session runs under, copied from
    *  its config (an opaque registry id). Absent = the provider default. The
    *  per-launch acknowledgement an unverified sign-in needs is never kept
@@ -260,6 +270,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // A removed session's shimmer give-up memory must not outlive it (the id
       // would leak, and a reused id would inherit a stale "stay blank").
       sshAuthGiveUpMemory.clear(id)
+      // Nor a Switch account's origin (P3.6): a closed tab, or a restart, is
+      // never taken back by a later declined launch (utils/switchOrigin).
+      forgetSwitchOrigin(id)
       const sessions = state.sessions.filter((s) => s.id !== id)
       const activeSessionId =
         state.activeSessionId === id
@@ -300,11 +313,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   setRestoring: (restoring) => set({ isRestoring: restoring }),
 
+  // P3.5 (the C item "Resume replaces the tab list"): the resume prompt does
+  // not block the app, so tabs launched while it was open are running when
+  // the restore lands. They stay, after the restored ones, and a restored tab
+  // whose id is already open is not added again: the live one stays as it is.
+  // The restored active tab is focused, else the one focused already.
   restoreSessions: (sessions, activeId) =>
-    set({
-      sessions,
-      activeSessionId: activeId || sessions[0]?.id || null,
-      isRestoring: false
+    set((state) => {
+      const open = new Set(state.sessions.map((s) => s.id))
+      const merged = [...sessions.filter((s) => !open.has(s.id)), ...state.sessions]
+      const has = (id: string | null | undefined): id is string => !!id && merged.some((s) => s.id === id)
+      return {
+        sessions: merged,
+        activeSessionId: has(activeId) ? activeId : has(state.activeSessionId) ? state.activeSessionId : merged[0]?.id ?? null,
+        isRestoring: false,
+      }
     }),
 
   beginRename: (id) => set({ renamingSessionId: id }),

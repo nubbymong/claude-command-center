@@ -60,6 +60,27 @@ function preferenceOf(providerId: ProviderId): ProviderPreference {
   return providerPreferenceFromSettings(pkg?.enablement, settings)
 }
 
+/** Whether the provider is on now, for network work that only runs while a
+ *  provider is on (its status page, P3.4). Decided from ONE read of the
+ *  saved settings, which must be an ok read that says on by the package's
+ *  own enablement data (Claude Code: on unless turned off; Codex: only once
+ *  answered on); a missing settings file, an unreadable or unparseable one,
+ *  and not answered yet are all off (no answer is never a yes). The accounts
+ *  service must agree as well, so a switch-off made there and not yet saved
+ *  is off. A fresh first launch has no settings file, so nothing is read
+ *  until its first save; the refresh after that save picks the provider up. */
+export function providerOnNow(providerId: ProviderId): boolean {
+  try {
+    const r = readConfigChecked<Record<string, unknown>>('settings', { quarantineUnparseable: false })
+    if (r.outcome !== 'ok' || !r.value || typeof r.value !== 'object') return false
+    const pkg = listProviderPackages().find((p) => p.id === providerId)
+    if (providerPreferenceFromSettings(pkg?.enablement, r.value) !== 'on') return false
+    return !service || service.preferenceOf(providerId) === 'on'
+  } catch {
+    return false
+  }
+}
+
 /** Owner-enabled experimental capabilities: a provider-scoped allowlist in
  *  settings; anything malformed is ignored. */
 export function experimentalFromSettings(settings: Record<string, unknown> | null): ScopedCapabilityKey[] {
@@ -73,11 +94,16 @@ export function experimentalFromSettings(settings: Record<string, unknown> | nul
 }
 
 /** Build the service once the registry has been loaded (or failed to).
- *  `unleasedSessions` comes from the composition root (pty-manager), so this
- *  module imports no PTY code. */
-export function initProviderAccounts(opts: { unleasedSessions?: (providerId: ProviderId) => number } = {}): AccountsService {
+ *  `unleasedSessions` and `legacyRecordInUse` come from the composition
+ *  root (pty-manager, the Claude session identities), so this module imports
+ *  no PTY or provider session code. */
+export function initProviderAccounts(opts: {
+  unleasedSessions?: (providerId: ProviderId) => number
+  legacyRecordInUse?: (providerId: ProviderId, legacyId: string) => boolean
+} = {}): AccountsService {
   service = new AccountsService({
     ...(opts.unleasedSessions ? { unleasedSessions: opts.unleasedSessions } : {}),
+    ...(opts.legacyRecordInUse ? { legacyRecordInUse: opts.legacyRecordInUse } : {}),
     // Asked afresh each time: a resources-directory change re-creates it.
     store: () => getAccountRegistry(),
     // Once the load has run, a registry missing or unloaded (its load threw)
@@ -116,6 +142,13 @@ export async function runStartupProviderMigrations(): Promise<void> {
     await s.dropLeftoverExternalReservations()
   } catch (e) {
     logError(`[accounts] dropping unfinished checks of a provider's own sign-in threw: ${e instanceof Error ? e.message : String(e)}`)
+  }
+  // An old sign-in a sign in again left when the app closed is settled
+  // (P3.3 review round 1, Q2), by the same rule as after the switch.
+  try {
+    await s.settleLeftoverSignIns()
+  } catch (e) {
+    logError(`[accounts] settling an old sign-in left at start threw: ${e instanceof Error ? e.message : String(e)}`)
   }
   // A reviewer choice this platform can never use is cleared, and said so.
   try {

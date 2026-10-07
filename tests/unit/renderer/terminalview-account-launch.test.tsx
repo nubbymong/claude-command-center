@@ -19,6 +19,8 @@ import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -29,7 +31,7 @@ const H = vi.hoisted(() => {
     cols = 80
     rows = 24
     element: HTMLElement | null = null
-    buffer = { active: { type: 'normal', viewportY: 0, baseY: 0, length: 0, cursorY: 0 } }
+    buffer = { active: { type: 'normal', viewportY: 0, baseY: 0, length: 0, cursorY: 0, getLine: (_y: number) => undefined } }
     lines: string[] = []
     focus = () => {}
     scrollToBottom = () => {}
@@ -45,7 +47,8 @@ const H = vi.hoisted(() => {
     paste() {}
     clearSelection() {}
     getSelection() { return '' }
-    write() {}
+    // ED2 (erase the viewport), as xterm applies it: what was written goes.
+    write(s: unknown) { if (typeof s === 'string' && s.includes('\x1b[2J')) this.lines = [] }
     writeln(s: string) { this.lines.push(s) }
     dispose() {}
   }
@@ -60,7 +63,9 @@ const H = vi.hoisted(() => {
   const tokens = new Map<string, number>()
   const counter = { last: 0 }
   const cleared: string[] = []
-  return { MockTerminal, sessionState, updates, spawned, tokens, counter, cleared }
+  /** persistSessionProviderAccount calls: [sessionId, providerAccountId]. */
+  const persisted: unknown[][] = []
+  return { MockTerminal, sessionState, updates, spawned, tokens, counter, cleared, persisted }
 })
 
 vi.mock('@xterm/xterm/css/xterm.css', () => ({ default: {} }))
@@ -97,7 +102,10 @@ vi.mock('../../../src/renderer/stores/sessionStore', () => ({
   useSessionStore: Object.assign((sel: any) => sel(H.sessionState), { getState: () => H.sessionState }),
 }))
 vi.mock('../../../src/renderer/hooks/useRestartSession', () => ({ useRestartSession: () => ({ restart: () => {} }) }))
-vi.mock('../../../src/renderer/session-persistence', () => ({ persistLastUsedAccount: () => {} }))
+vi.mock('../../../src/renderer/session-persistence', () => ({
+  persistLastUsedAccount: () => {},
+  persistSessionProviderAccount: (...a: unknown[]) => { H.persisted.push(a); return Promise.resolve() },
+}))
 vi.mock('../../../src/renderer/stores/accountProfilesStore', () => {
   const st = { profiles: [] }
   return { useAccountProfilesStore: Object.assign((sel: any) => sel(st), { getState: () => st }) }
@@ -116,6 +124,17 @@ vi.mock('../../../src/renderer/components/SshFlowOverlay', async () => {
   return { default: () => R.createElement('div', { 'data-testid': 'ssh-flow-overlay' }) }
 })
 vi.mock('../../../src/renderer/utils/resumePicker', () => ({ shouldUseResumePicker: () => false }))
+// P3.8 round 1 (L2): the Plan mode wait, observed (its own behaviour is
+// tests/unit/renderer/codex-composer.test.ts).
+const planWait = vi.hoisted(() => ({ calls: [] as Array<{ id: string; cmd: string; opts: { timeoutMs: number; onGiveUp: (why: 'timeout' | 'interrupted' | 'not-sent') => void } }>, cancels: 0 }))
+vi.mock('../../../src/renderer/lib/codexComposer', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/renderer/lib/codexComposer')>()),
+  CODEX_PLAN_MODE_WAIT_MS: 120_000,
+  typeWhenCodexComposerReady: (id: string, cmd: string, opts: { timeoutMs: number; onGiveUp: (why: 'timeout' | 'interrupted' | 'not-sent') => void }) => {
+    planWait.calls.push({ id, cmd, opts })
+    return { cancel: () => { planWait.cancels++ } }
+  },
+}))
 vi.mock('../../../src/renderer/components/TerminalContextMenu', () => ({ default: () => null }))
 vi.mock('../../../src/renderer/stores/settingsStore', () => {
   // The user said they use Codex: its sessions launch (a test turns a provider off).
@@ -145,13 +164,15 @@ type Settle = { resolve: (v?: unknown) => void; reject: (e: unknown) => void }
 const settles: Settle[] = []
 const spawn = vi.fn((_id: string, _opts: Record<string, unknown>) => new Promise((resolve, reject) => { settles.push({ resolve, reject }) }))
 let fireExit: ((code: number) => void) | null = null
+/** The session's output, as main sends it to the view listening now. */
+let sendData: ((data: string) => void) | null = null
 ;(globalThis as any).window.electronAPI = {
   ...(globalThis as any).window.electronAPI,
   pty: {
     write: vi.fn(),
     resize: vi.fn(),
     spawn,
-    onData: vi.fn(() => () => {}),
+    onData: vi.fn((_id: string, cb: (data: string) => void) => { sendData = cb; return () => { if (sendData === cb) sendData = null } }),
     onExit: vi.fn((_id: string, cb: (code: number) => void) => { fireExit = cb; return () => { if (fireExit === cb) fireExit = null } }),
   },
   inputDebug: { enabled: vi.fn(async () => false), log: vi.fn() },
@@ -185,6 +206,7 @@ const { useLaunchAckStore, grantLaunchAcknowledgement, consumeLaunchAcknowledgem
 const { useAccountGateStore } = await import('../../../src/renderer/stores/accountGateStore')
 const { snapshot, provider, account } = await import('./accounts-snapshot-harness')
 const { forgetSpawnEnd } = await import('../../../src/renderer/utils/spawnEndNotice')
+const { noteSwitchOrigin, switchOrigin, forgetSwitchOrigin } = await import('../../../src/renderer/utils/switchOrigin')
 const { useConfigStore } = await import('../../../src/renderer/stores/configStore')
 
 let container: HTMLDivElement
@@ -215,6 +237,8 @@ const restartTo = async (session: Record<string, unknown>, key: string) => {
   await settle()
 }
 const termLines = () => (H.MockTerminal.last?.lines ?? []).join('\n')
+/** The switch note above the terminal (P3.6), or null when none. */
+const switchNote = () => container.querySelector('[data-testid="switch-note"] span')?.textContent ?? null
 const exitedMarks = () => H.updates.filter((u) => u.patch.ptyExited === true)
 const answer = async (yes: boolean) => {
   const q = useLaunchAckStore.getState().queue
@@ -228,11 +252,14 @@ beforeEach(() => {
   spawn.mockClear()
   settles.length = 0
   fireExit = null
+  sendData = null
   H.updates.length = 0
   H.spawned.clear()
   H.tokens.clear()
   forgetSpawnEnd('s-1')
   H.cleared.length = 0
+  H.persisted.length = 0
+  forgetSwitchOrigin('s-1')
   H.MockTerminal.last = null
   useProviderAccountsStore.setState({ snapshot: snapshot(), loaded: true })
   useLaunchAckStore.setState({ queue: [] })
@@ -263,14 +290,250 @@ describe("a Codex session's account reaches pty:spawn", () => {
     expect(spawn.mock.calls[0][1].providerAccountId).toBeUndefined()
   })
 
+  // P3.8 round 1 (L2): Plan mode is Claude's launch option; Codex has no
+  // launch flag for it, so a started Codex session on the Plan mode choice
+  // waits for its ready composer and types /plan, and says so if it cannot.
+  it('Plan mode: a started Codex session waits for its composer to type /plan; nothing for another choice or a start that started nothing', async () => {
+    planWait.calls.length = 0
+    mount(codexSession({ codexOptions: { permissionsPreset: 'plan' } }))
+    await settle()
+    expect(planWait.calls).toHaveLength(0)
+    await act(async () => { settles[0].resolve({ started: true }) })
+    await settle()
+    expect(planWait.calls.map((c) => [c.id, c.cmd, c.opts.timeoutMs])).toEqual([['s-1', '/plan', 120_000]])
+    // Round 2 (PM1): the note says Plan mode is not on and the session is read-only.
+    await act(async () => { planWait.calls[0].opts.onGiveUp('interrupted') })
+    const { planModeNote } = await import('../../../src/renderer/lib/codexComposer')
+    expect(switchNote()).toBe(planModeNote('interrupted'))
+    expect(switchNote()).toMatch(/Plan mode is not on.*read-only/)
+    await restartTo(codexSession({ codexOptions: { permissionsPreset: 'standard' } }), 'b')
+    await act(async () => { settles[1].resolve({ started: true }) })
+    await settle()
+    expect(planWait.calls).toHaveLength(1)
+    await restartTo(codexSession({ codexOptions: { permissionsPreset: 'plan' } }), 'c')
+    await act(async () => { settles[2].resolve({ started: false }) })
+    await settle()
+    expect(planWait.calls).toHaveLength(1)
+  })
+
+  // P3.8 round 3 (PB1): each run records the preset main says it launched
+  // with; the Plan mode wait follows it.
+  it('records the preset each Codex run launched with, as main reports it, and waits for /plan only on a Plan mode launch', async () => {
+    planWait.calls.length = 0
+    mount(codexSession({ codexOptions: { permissionsPreset: 'plan' } }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true, launched: { codexPreset: 'standard' } }) })
+    await settle()
+    expect(H.updates.filter((u) => 'launchedCodexPreset' in u.patch).map((u) => u.patch.launchedCodexPreset)).toEqual(['standard'])
+    expect(planWait.calls).toHaveLength(0)
+    await restartTo(codexSession({ codexOptions: { permissionsPreset: 'plan' } }), 'b')
+    await act(async () => { settles[1].resolve({ started: true, launched: { codexPreset: 'plan' } }) })
+    await settle()
+    expect(H.updates.filter((u) => 'launchedCodexPreset' in u.patch).map((u) => u.patch.launchedCodexPreset)).toEqual(['standard', 'plan'])
+    expect(planWait.calls).toHaveLength(1)
+    // Round 4 (L1): a launch that started nothing has no launched preset.
+    await restartTo(codexSession({ codexOptions: { permissionsPreset: 'plan' } }), 'c')
+    await act(async () => { settles[2].resolve({ started: false }) })
+    await settle()
+    expect(H.updates.filter((u) => 'launchedCodexPreset' in u.patch).map((u) => u.patch.launchedCodexPreset)).toEqual(['standard', 'plan', undefined])
+  })
+
+  it('Plan mode: the view going away cancels the wait', async () => {
+    planWait.calls.length = 0
+    planWait.cancels = 0
+    mount(codexSession({ codexOptions: { permissionsPreset: 'plan' } }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true }) })
+    await settle()
+    expect(planWait.calls).toHaveLength(1)
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    expect(planWait.cancels).toBeGreaterThanOrEqual(1)
+  })
+
+  it('registers the terminal\'s live screen for the Codex command gate, and removes it with the view', async () => {
+    const { readSessionScreen } = await import('../../../src/renderer/components/terminal/screenRegistry')
+    mount(codexSession())
+    await settle()
+    const screen = readSessionScreen('s-1')
+    expect(Array.isArray(screen)).toBe(true)
+    expect(screen).toHaveLength(24)
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    expect(readSessionScreen('s-1')).toBeNull()
+  })
+
   it('a Claude session never sends one', async () => {
     mount(codexSession({ provider: 'claude', providerAccountId: 'acc-work', codexOptions: undefined }))
     await settle()
     expect(spawn.mock.calls[0][1].providerAccountId).toBeUndefined()
   })
+
+  it('P3.6: a respawn on another account whose conversation did not come along whole says so once, above the terminal, from main\'s answer, cleaned as the terminal\'s lines are', async () => {
+    mount(codexSession({ providerAccountId: 'acc-personal' }))
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    const RLO = String.fromCharCode(0x202e)
+    await act(async () => { settles[0].resolve({ started: true, carry: { code: 'too-large', message: `Too large.${RLO}\u001b[2J`, resumed: false } }) })
+    await settle()
+    expect(switchNote()).toBe('Switched to Personal. Too large.  [2J This is a new conversation.')
+    expect(container.querySelectorAll('[data-testid="switch-note"]')).toHaveLength(1)
+    expect(termLines()).not.toContain('Switched to')
+    // Resumed from a copy already there: said as that, never a new conversation.
+    await restartTo(codexSession({ providerAccountId: 'acc-personal' }), 'b')
+    await act(async () => { settles[1].resolve({ started: true, carry: { code: 'conversation-differs', message: 'x', resumed: true } }) })
+    await settle()
+    expect(switchNote()).toContain('so the session carries on from that copy.')
+    expect(switchNote()).not.toContain('This is a new conversation.')
+    // Carried whole, or nothing to carry: nothing is said.
+    await restartTo(codexSession({ providerAccountId: 'acc-personal' }), 'c')
+    await act(async () => { settles[2].resolve(undefined) })
+    await settle()
+    expect(switchNote()).toBeNull()
+  })
+
+  // P3.6 VM finding V1: on Windows the new PTY's first output is ConPTY's
+  // first frame, which clears the screen; the note must outlive it.
+  it('P3.6: the note stays once the new session\'s first output clears the screen, until dismissed', async () => {
+    mount(codexSession({ providerAccountId: 'acc-personal' }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true, carry: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.', resumed: false } }) })
+    await settle()
+    const said = 'Switched to Personal. Another open session is on this conversation, so it was not carried over. This is a new conversation.'
+    await act(async () => { sendData?.('\x1b[?25l\x1b[2J\x1b[m\x1b[2;1Hthe session\'s first screen') })
+    await settle()
+    expect(`${switchNote() ?? ''}\n${termLines()}`).toContain(said)
+    // Dismissed: gone.
+    const dismiss = container.querySelector('[data-testid="switch-note"] button') as HTMLButtonElement
+    await act(async () => { dismiss.click() })
+    expect(switchNote()).toBeNull()
+  })
+
+  // P3.8 round 3 (CM): Codex's footer says how much context is LEFT; the
+  // meter shows how much is used (the VM capture of 0.155.1's raw bytes).
+  it("reads Codex's \"100% context left\" as none used", async () => {
+    mount(codexSession())
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true }) })
+    await settle()
+    const readings = () => H.updates.filter((u) => 'contextPercent' in u.patch).map((u) => u.patch.contextPercent)
+    await act(async () => { sendData?.('\x1b[2mtab to queue message\x1b[22m\x1b[145X\x1b[2m\x1b[145C100% context left\x1b[22m  \r\n') })
+    await act(async () => { await new Promise((r) => setTimeout(r, 400)) })
+    expect(readings()).toEqual([0])
+  })
+
+  // P3.6 VM finding V4: the note reads in the light theme too: the app's
+  // muted text on the panel surface, the pair token-contrast.test.ts holds
+  // to 4.5:1 in both themes.
+  it('P3.6: the note is the app\'s muted text on the panel surface', async () => {
+    mount(codexSession({ providerAccountId: 'acc-personal' }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true, carry: { code: 'too-large', message: 'Too large.', resumed: false } }) })
+    await settle()
+    const el = container.querySelector('[data-testid="switch-note"]') as HTMLElement
+    expect(el.style.color).toBe('var(--text-muted)')
+    expect(el.style.background).toBe('var(--surface-panel)')
+  })
+
+  // VM re-check W1: the GitHub button floats over the terminal's top-right
+  // corner (GitHubPanel's gh-fab: absolute top-2 right-2, an 18px icon in
+  // p-1.5 with a 1px border, so 32px wide from 8px in). The bar keeps pr-12
+  // (48px) clear there, so its dismiss is never under that button. jsdom
+  // cannot hit-test, so both halves of the rule are pinned.
+  it('P3.6: the note bar keeps the floating GitHub button\'s corner clear, so its dismiss is never under it', async () => {
+    mount(codexSession({ providerAccountId: 'acc-personal' }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true, carry: { code: 'too-large', message: 'Too large.', resumed: false } }) })
+    await settle()
+    const el = container.querySelector('[data-testid="switch-note"]') as HTMLElement
+    const classes = el.className.split(/\s+/)
+    expect(classes).toContain('pr-12')
+    expect(classes.filter((c) => /^(px|pr)-/.test(c))).toEqual(['pr-12'])
+    const gh = readFileSync(resolve(__dirname, '../../../src/renderer/components/github/GitHubPanel.tsx'), 'utf8')
+    // Each gh-fab button on its own: its place, its padding, no width of its
+    // own, and nothing inside it but its one 18px icon (no label).
+    const fabs = [...gh.matchAll(/<button\s+data-testid="gh-fab"([\s\S]*?)<\/button>/g)].map((m) => m[1])
+    expect(fabs.length).toBeGreaterThan(0)
+    for (const fab of fabs) {
+      const classes = (/className="(gh-fab [^"]*)"/.exec(fab)?.[1] ?? '').split(/\s+/)
+      expect(classes).toEqual(expect.arrayContaining(['absolute', 'top-2', 'right-2', 'p-1.5']))
+      expect(classes.filter((c) => /^(w|min-w|px|pl|pr)-/.test(c))).toEqual([])
+      const icons = fab.match(/<svg\b[\s\S]*?<\/svg>/g) ?? []
+      expect(icons).toHaveLength(1)
+      expect(icons[0]).toMatch(/^<svg width="18" height="18"/)
+      expect(fab.slice(0, fab.indexOf('<svg'))).toMatch(/>\s*$/)
+      expect(fab.slice(fab.indexOf('</svg>') + '</svg>'.length)).toMatch(/^\s*$/)
+    }
+  })
 })
 
 describe("a later launch on this computer's own sign-in asks first", () => {
+  // P3.6 VM finding V3: a Claude switch never asks at launch, so it has no
+  // such Cancel; a Codex switch declined there goes back to where it was.
+  it('a Switch account onto it, declined: the tab goes back to the account it was switched from, and says so; accepted or asked nothing, the origin is spent', async () => {
+    noteSwitchOrigin('s-1', 'acc-work', 'acc-local')
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    expect(useLaunchAckStore.getState().queue).toHaveLength(1)
+    await answer(false)
+    await settle()
+    expect(spawn).not.toHaveBeenCalled()
+    expect(H.persisted).toEqual([['s-1', 'acc-work']])
+    expect(termLines()).toMatch(/Not started: the launch was not confirmed, so the session is back on Work\. Restart the session to start it there\./)
+    expect(switchOrigin('s-1')).toBeNull()
+    // A declined launch that was no switch changes no account.
+    await restartTo(codexSession({ providerAccountId: 'acc-local' }), 'b')
+    await answer(false)
+    await settle()
+    expect(H.persisted).toHaveLength(1)
+    // Accepted: the switch stands, and the origin is spent.
+    noteSwitchOrigin('s-1', 'acc-work', 'acc-local')
+    await restartTo(codexSession({ providerAccountId: 'acc-local' }), 'c')
+    await answer(true)
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(switchOrigin('s-1')).toBeNull()
+    expect(H.persisted).toHaveLength(1)
+    // Onto an account that asks nothing: spent at once.
+    noteSwitchOrigin('s-1', 'acc-local', 'acc-work')
+    await restartTo(codexSession({ providerAccountId: 'acc-work' }), 'd')
+    expect(switchOrigin('s-1')).toBeNull()
+  })
+
+  // Review F1: an origin is honoured only by the launch its switch was to.
+  it('an origin left by a switch to another account: a declined launch here moves nothing, says the plain words, and spends it', async () => {
+    noteSwitchOrigin('s-1', 'acc-work', 'acc-personal')
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    await answer(false)
+    await settle()
+    expect(H.persisted).toEqual([])
+    expect(termLines()).toContain('Not started: the launch was not confirmed. Restart the session to be asked again.')
+    expect(termLines()).not.toContain('back on')
+    expect(switchOrigin('s-1')).toBeNull()
+  })
+
+  // Review F2: only an account that can still launch is gone back to.
+  it('declined, and the account it came from can no longer be used (inactive, blocked, archived, gone): the default account instead, in words that say so', async () => {
+    for (const [from, key] of [['acc-parked', 'p'], ['acc-old', 'o'], ['acc-gone', 'g'], ['acc-nope', 'n'], ['acc-claude-main', 'c']] as const) {
+      H.persisted.length = 0
+      noteSwitchOrigin('s-1', from, 'acc-local')
+      await restartTo(codexSession({ providerAccountId: 'acc-local' }), key)
+      await answer(false)
+      await settle()
+      expect(H.persisted, from).toEqual([['s-1', undefined]])
+      expect(termLines(), from).toContain('Not started: the launch was not confirmed. The account the session was on can no longer be used, so it is on the default account, Work, now. Restart the session to start it there.')
+    }
+    // It came from the provider default: that is where it goes back.
+    H.persisted.length = 0
+    noteSwitchOrigin('s-1', undefined, 'acc-local')
+    await restartTo(codexSession({ providerAccountId: 'acc-local' }), 'd')
+    await answer(false)
+    await settle()
+    expect(H.persisted).toEqual([['s-1', undefined]])
+    expect(termLines()).toContain('so the session is back on Work.')
+  })
+
   it('declined: nothing spawns, and the terminal says why', async () => {
     mount(codexSession({ providerAccountId: 'acc-local' }))
     await settle()
@@ -445,6 +708,19 @@ describe('the Restart pty:exit race', () => {
     act(() => { fireExit!(0) })
     expect(exitedMarks()).toHaveLength(1)
     expect(termLines()).toContain('[Process exited with code 0]')
+  })
+
+  // P3.15 round 1 (F3): under node-pty's bundled ConPTY a Codex session that
+  // quits by itself can end before its exit code is known (the VM printed
+  // "[Process exited with code undefined]"): the line then names no code.
+  it('an exit with no known code says the process exited, never "undefined"; a known code is said as before', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await act(async () => { settles[0].resolve(undefined) })
+    act(() => { fireExit!(undefined as unknown as number) })
+    expect(exitedMarks()).toHaveLength(1)
+    expect(termLines()).toContain('[Process exited]')
+    expect(termLines()).not.toMatch(/exited with code (undefined|null)/)
   })
 
   it('a view that remounts onto a running PTY applies exits as they arrive', async () => {
@@ -751,6 +1027,69 @@ describe('main refuses a launch because its provider is off', () => {
     expect(termLines()).toContain(CODEX_OFF_TAB)
     expect(exitedMarks()).toHaveLength(1)
     expect(removeSession).not.toHaveBeenCalled()
+  })
+
+  // P3.13 round 1 (M7): main enforces the one-at-a-time rule from the SAVED config; when the
+  // screen's toggle says Multi Spawn is on but the saved config says it is not (a save that did
+  // not land), the refusal says "turn on Allow Multi Spawn" beside a toggle that is already on.
+  describe('a copy main refused because the config is not Multi Spawn (already-running)', () => {
+    const REFUSED = (label: string) => ({ started: false, refused: { code: 'already-running', providerId: 'claude', message: `${label} is already running. It isn't a Multi Spawn config, so it runs one at a time. Close the other copy, or turn on Allow Multi Spawn for it.` } })
+    const cfg = { id: 'cfg-1', label: 'api-server', workingDirectory: 'C:/proj', color: '', sessionType: 'local', provider: 'claude', allowMultiSpawn: true }
+    let loadAll: ReturnType<typeof vi.fn>
+    const mountConfig = () => {
+      H.sessionState.sessions = [claudeSession()]
+      act(() => {
+        root.render(React.createElement(TerminalView as any, { key: 'a', sessionId: 's-1', configId: 'cfg-1', cwd: 'C:/proj', isActive: true, provider: 'claude' }))
+      })
+    }
+    const saved = (flag: unknown) => { loadAll = vi.fn(async () => ({ data: { configs: [{ ...cfg, allowMultiSpawn: flag }] }, needsMigration: false })); (window as any).electronAPI.config = { loadAll } }
+    afterEach(() => { (useConfigStore as any).setState({ configs: [] }); delete (window as any).electronAPI.config })
+
+    it('the tab says why, and a toggle the screen shows on is made the saved one', async () => {
+      ;(useConfigStore as any).setState({ configs: [{ ...cfg }] })
+      saved(false)
+      mountConfig()
+      await settle()
+      await act(async () => { settles[0].resolve(REFUSED('api-server')) })
+      await settle()
+      expect(termLines()).toContain("Not started. api-server is already running. It isn't a Multi Spawn config, so it runs one at a time. Close the other copy, or turn on Allow Multi Spawn for it, then Restart this tab.")
+      expect(loadAll).toHaveBeenCalledTimes(1)
+      expect((useConfigStore as any).getState().configs[0].allowMultiSpawn).toBe(false)
+      expect(exitedMarks()).toHaveLength(1)
+    })
+
+    it('a screen that already says it is not Multi Spawn reads nothing: the refusal is simply true', async () => {
+      ;(useConfigStore as any).setState({ configs: [{ ...cfg, allowMultiSpawn: false }] })
+      saved(false)
+      mountConfig()
+      await settle()
+      await act(async () => { settles[0].resolve(REFUSED('api-server')) })
+      await settle()
+      expect(loadAll).not.toHaveBeenCalled()
+      expect((useConfigStore as any).getState().configs[0].allowMultiSpawn).toBe(false)
+    })
+
+    it('a saved config that agrees with the screen changes nothing', async () => {
+      ;(useConfigStore as any).setState({ configs: [{ ...cfg }] })
+      saved(true)
+      mountConfig()
+      await settle()
+      await act(async () => { settles[0].resolve(REFUSED('api-server')) })
+      await settle()
+      expect(loadAll).toHaveBeenCalledTimes(1)
+      expect((useConfigStore as any).getState().configs[0].allowMultiSpawn).toBe(true)
+    })
+
+    it('a provider refusal is not this: nothing is re-read', async () => {
+      ;(useConfigStore as any).setState({ configs: [{ ...cfg }] })
+      saved(false)
+      mountConfig()
+      await settle()
+      await act(async () => { settles[0].resolve(claudeOff) })
+      await settle()
+      expect(loadAll).not.toHaveBeenCalled()
+      expect((useConfigStore as any).getState().configs[0].allowMultiSpawn).toBe(true)
+    })
   })
 
   it('a refused launch marks its tab as never started, so it does not count as running; a later start clears it', async () => {

@@ -30,7 +30,7 @@ export interface RealmEnvPolicy {
    *
    *  The ambient list is NOT implicitly settable. That union was the hole the
    *  round-2 review found: it let a Claude patch set `CLAUDE_CONFIG_DIR` (then
-   *  forbidden by D1; since ADR-023 the Claude package declares it as owned,
+   *  forbidden by D1; since ADR-024 the Claude package declares it as owned,
    *  for the macOS realm only) or re-add `ANTHROPIC_API_KEY` one line after
    *  the removal pass deleted it. A variable that must be both removed and
    *  re-set for a bound realm -- Codex's `CODEX_HOME` -- is declared in BOTH

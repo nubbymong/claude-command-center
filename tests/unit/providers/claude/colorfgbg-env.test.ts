@@ -12,7 +12,8 @@
  * default behavior, so dark mode is unchanged.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { buildClaudeLocalSpawn, resolveHostColorScheme } from '../../../../src/main/providers/claude/spawn'
+import { buildClaudeLocalSpawn } from '../../../../src/main/providers/claude/spawn'
+import { resolveHostColorScheme } from '../../../../src/main/providers/host-color-scheme'
 
 const BASE_OPTS = { sessionId: 'ses-1', cwd: '/work', cols: 80, rows: 24 }
 

@@ -12,7 +12,8 @@ import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/id
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useAccountProfilesStore } from '../../stores/accountProfilesStore'
 import { useSettingsStore } from '../../stores/settingsStore'
-import { resolveAccountNameByEmail, resolveAccountColourKey } from '../../../shared/account-chip-color'
+import { resolveAccountNameByEmail } from '../../../shared/account-chip-color'
+import { useProviderAccountChip, useEmailChipColourKey } from '../../hooks/useAccountChip'
 
 interface SessionRowProps {
   session: Session
@@ -60,11 +61,13 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const st = toSessionState(session.status, needsAttention)
   const pct = session.contextPercent ?? 0
 
-  // Sleeping (canvas "Session sleep indicator"): Watchdog-only source, Claude
-  // sessions only for now (owner calls, 2026-08-27). Attention outranks the
-  // moon inside isAsleep; the graceTick subscription re-derives when a dismiss
-  // grace window expires without any other store change.
-  const isClaudeSession = !session.shellOnly && (session.provider ?? 'claude') === 'claude'
+  // Sleeping (canvas "Session sleep indicator"): Watchdog-only source, agent
+  // sessions (owner calls, 2026-08-27; P3.10, row 46: a Codex session too,
+  // now that the Watchdog watches it). Attention outranks the moon inside
+  // isAsleep; the graceTick subscription re-derives when a dismiss grace
+  // window expires without any other store change.
+  const provider = session.provider ?? 'claude'
+  const isAgentSession = !session.shellOnly && (provider === 'claude' || provider === 'codex')
   const silentSince = useSleepStore((s) => s.silentSince[session.id])
   const dismissedAt = useSleepStore((s) => s.attentionDismissedAt[session.id])
   useSleepStore((s) => s.graceTick)
@@ -72,16 +75,16 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   // false before the passive effect stamps the grace, so the prop alone would
   // flash the moon for one frame between those two moments.
   const asleep =
-    isClaudeSession &&
+    isAgentSession &&
     isAsleep({ silentSince, dismissedAt, needsAttention: needsAttention || session.needsAttention === true, now: Date.now() })
   // Active (owner call, 2026-08-27): a subtle green sweep on the context bar
-  // while this Claude session's PTY output is moving — the inverse of the moon.
+  // while this agent session's PTY output is moving: the inverse of the moon.
   // Precedence ATTENTION > ACTIVE > SLEEP > idle: attention and sleep both
-  // suppress it (sleep can't co-occur anyway — moving vs. 120s silent). Claude
-  // only, like the moon.
+  // suppress it (sleep can't co-occur anyway: moving vs. 120s silent). Agent
+  // sessions only, like the moon (P3.10, row 46: Codex's too).
   const outputMoving = useActiveStore((s) => s.activeIds.has(session.id))
   const showActive =
-    isClaudeSession &&
+    isAgentSession &&
     outputMoving &&
     !asleep &&
     !(needsAttention || session.needsAttention === true)
@@ -98,16 +101,26 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
-  const accountEmail = session.accountEmail || session.sshRemoteAccount
-  const accountName = accountEmail
-    ? resolveAccountNameByEmail(accountEmail, profiles, accountAliases)
-    : null
-  const accountDot = accountEmail
-    ? resolveIdentityColor(
-        resolveAccountColourKey(accountEmail, accountColourOverrides, session.accountColour),
-        theme,
-      )
-    : null
+  // P3.6 (row 20): a session that runs under a registry account (Codex)
+  // carries that account's identity on this line too, as the strip does.
+  // Only the chip and its colour are read from the account list
+  // (hooks/useAccountChip): a change elsewhere in it re-renders no card.
+  const providerChip = useProviderAccountChip(session)
+  const accountEmail = providerChip ? undefined : (session.accountEmail || session.sshRemoteAccount)
+  // P3.6 (row 7): the colour is the account's identity's when the account
+  // list names it (utils/accountChip), else the email override as before.
+  const emailColourKey = useEmailChipColourKey(accountEmail, { profiles, overrides: accountColourOverrides }, session.accountColour)
+  const accountName = providerChip
+    ? providerChip.name
+    : accountEmail
+      ? resolveAccountNameByEmail(accountEmail, profiles, accountAliases)
+      : null
+  const accountDot = providerChip
+    ? resolveIdentityColor(providerChip.colourKey, theme)
+    : accountEmail
+      ? resolveIdentityColor(emailColourKey, theme)
+      : null
+  const accountTitle = providerChip ? providerChip.title : accountEmail
 
   // #398: when renaming, render a plain <div> (NOT a <button>) so the text input
   // is never nested inside interactive button content (invalid HTML / a11y).
@@ -158,6 +171,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
         isActive ? 'text-text' : 'text-subtext0 hover:text-text'
       } ${isFocused ? 'card-focus' : ''}`}
       style={selectedStyle}
+      data-attention={st === 'awaiting' ? 'true' : undefined}
       onMouseEnter={(e) => { if (!isActive && !isSelected) (e.currentTarget as HTMLElement).style.backgroundColor = identity + '12' }}
       onMouseLeave={(e) => { if (!isActive && !isSelected) (e.currentTarget as HTMLElement).style.backgroundColor = '' }}
     >
@@ -179,7 +193,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
         <span className="text-[13px] truncate" style={{ fontWeight: isActive ? 700 : 600, opacity: asleep ? 0.7 : undefined }} title={session.customName?.trim() ? `${session.customName.trim()} · ${session.label}` : session.label}>{session.customName?.trim() || session.label}</span>
         {ordinal !== undefined && (
           <span
-            className="shrink-0 text-[11px] tabular-nums text-[var(--text-muted)]"
+            className="session-ordinal shrink-0 text-[11px] tabular-nums text-[var(--text-muted)]"
             title={`Instance ${ordinal} of this config`}
             data-testid="session-row-ordinal"
           >
@@ -222,7 +236,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           {silentSince != null && <MoonBadge sinceMs={silentSince} />}
         </FadeSlot>
         <FadeSlot show={showActive}>
-          <WorkingBadge />
+          <WorkingBadge agent={provider === 'codex' ? 'Codex' : 'Claude'} />
         </FadeSlot>
         <SessionTypeBadge kind={session.shellOnly ? 'shell' : (session.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'} />
         <WatchdogBadge watchdog={session.watchdog} />
@@ -260,13 +274,14 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
 
       {/* Line 3: account on its own row, under the model (spans 1 / 3 so it aligns
           under the name/meta and never clips the way the cramped line-2 chip did).
-          Rendered only when accountEmail is set so accountless sessions stay 2 lines. */}
+          Rendered only when the account is known (an email, or a Codex session's
+          registry account) so accountless sessions stay 2 lines. */}
       {accountName && (
         <div className="relative z-10 row-start-3 flex items-center gap-1.5 min-w-0" style={{ gridColumn: '1 / 3', opacity: asleep ? 0.7 : undefined }} data-testid="card-line3">
           {accountDot && (
-            <span data-testid="account-dot" className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: accountDot }} role="img" aria-label={accountName ? `Account: ${accountName}` : 'Account'} title={accountEmail} />
+            <span data-testid="account-dot" className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: accountDot }} role="img" aria-label={accountName ? `Account: ${accountName}` : 'Account'} title={accountTitle} />
           )}
-          <span className="meta truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={accountEmail} data-testid="account-name">
+          <span className="meta truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={accountTitle} data-testid="account-name">
             {accountName}
           </span>
         </div>

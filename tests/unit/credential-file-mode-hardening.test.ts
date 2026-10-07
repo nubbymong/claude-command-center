@@ -116,17 +116,28 @@ describe('(C) ssh-shim remote setup script', () => {
 })
 
 describe('(D) insights kpis.json', () => {
-  // The two writers live deep in run-orchestration functions that are impractical
-  // to invoke in isolation, so pin the source: both go through the atomic helper
-  // with 0600, and no bare writeFileSync of kpis.json survives (fails-first).
+  // The writers live deep in run-orchestration functions that are impractical
+  // to invoke in isolation, so pin the source: each goes through the atomic
+  // helper with 0600, and no bare writeFileSync of kpis.json survives (fails-first).
   const src = readFileSync(join(__dirname, '../../src/main/insights-runner.ts'), 'utf8')
 
   it('has no bare writeFileSync of kpis.json', () => {
     expect(src).not.toMatch(/[^c]writeFileSync\(\s*join\(archiveDir, 'kpis\.json'\)/)
   })
 
-  it('writes kpis.json through the atomic helper with mode 0600 (both sites)', () => {
+  it('writes kpis.json through the atomic helper with mode 0600 (every site)', () => {
     const matches = src.match(/atomicWriteFileSync\(\s*join\(archiveDir, 'kpis\.json'\),[\s\S]*?\{ mode: 0o600 \}\)/g) ?? []
-    expect(matches.length).toBe(2)
+    // Claude's run, Claude's roll-up, and (WP2 PR 4, P4.7) a Codex report, a
+    // roll-up whose written analysis ran on Codex, and (fix pass 4) a roll-up
+    // whose comparison could not be marked off, kept as numbers only.
+    expect(matches.length).toBe(5)
+    expect((src.match(/join\(archiveDir, 'kpis\.json'\)/g) ?? []).length).toBe(matches.length)
+  })
+
+  it("P4.7: a Codex report's report.json goes through the atomic helper with mode 0600 too", () => {
+    const sites = src.match(/join\(archiveDir, 'report\.json'\)/g) ?? []
+    const atomic = src.match(/atomicWriteFileSync\(\s*join\(archiveDir, 'report\.json'\),[\s\S]*?\{ mode: 0o600 \}\)/g) ?? []
+    expect(sites.length).toBe(1)
+    expect(atomic.length).toBe(1)
   })
 })

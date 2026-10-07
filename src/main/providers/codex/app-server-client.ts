@@ -21,9 +21,13 @@
  * and both answers must match the schema excerpts
  * (tests/fixtures/codex/app-server/<version>/usage-schema.json): their required
  * fields present with their types, own plain properties only, anything extra
- * accepted and ignored. The allowance then goes through the same normaliser
- * a rollout's does (percentages clamped, reset times bounded, the plan from
- * the known list).
+ * accepted and ignored. The allowance and the credits count (the answer's own
+ * `rateLimits.credits`, ADR-023) then go through the same normaliser a
+ * rollout's does (percentages clamped, reset times bounded, the plan from the
+ * known list, the credits as three validated fields). The schema checks below
+ * do not look at credits: a credits object of the wrong shape is dropped by
+ * the normaliser, never a schema mismatch, so it can not make this CLI
+ * unsupported.
  *
  * The verdict, once, fails closed: `unsupported` (sticky for that CLI until it
  * changes; only an answer about the CLI's version or protocol: method not

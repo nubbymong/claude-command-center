@@ -2,7 +2,7 @@
 // and a plain shell on a realm account): the user types `claude` by hand, and
 // that bare name would be looked up on the INTERACTIVE shell's PATH (.zshrc
 // included), which can find another binary than the one the #172 verdict was
-// taken for (re-attack r3, MAJOR 1; ADR-023). So the shell's `claude` is
+// taken for (re-attack r3, MAJOR 1; ADR-024). So the shell's `claude` is
 // pinned to the verified binary for this shell with a function.
 //
 // THE PIN IS SEPARATE LINES, sent AFTER the session's own opening

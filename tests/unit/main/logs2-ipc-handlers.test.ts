@@ -30,12 +30,29 @@ const sidecar = vi.hoisted(() => ({
   forgetSessionName: vi.fn(),
   writeNameSidecar: vi.fn(),
   nodeNameSidecarDeps: {},
+  writeRealmNameSidecar: vi.fn(),
+  nodeRealmNameFs: {},
 }))
 vi.mock('../../../src/main/logging/session-name-sidecar', () => sidecar)
 
-import { registerLogs2Handlers } from '../../../src/main/ipc/logs2-handlers'
+// P3.12 (row 32): the Codex log binder a Codex session's rename is routed to.
+const codex = vi.hoisted(() => ({ binder: null as null | { knows: (sid: string) => boolean; exactRollout: (sid: string) => { path: string; sessionsDir: string } | null } }))
+vi.mock('../../../src/main/logging/codex-log-binder', () => ({ getCodexLogBinder: () => codex.binder }))
 
-const invoke = (ch: string, ...args: any[]) => handlers.get(ch)!({} as any, ...args)
+// P3.12 round 1: the first-run wipe's own work, never the real one.
+const wipe = vi.hoisted(() => ({
+  detectOldLogArtifacts: vi.fn(() => ({ present: false, totalBytes: 0, paths: [], settingsKeys: [] })),
+  executeWipe: vi.fn(() => ({ deletedPaths: [], freedBytes: 0, clearedKeys: [] })),
+}))
+vi.mock('../../../src/main/logging/logs-wipe', () => wipe)
+
+import { registerLogs2Handlers, registerLogsWipeHandlers } from '../../../src/main/ipc/logs2-handlers'
+
+// P3.12 round 1: the app's own window and its main frame, as the handlers
+// check; `invoke` sends from there.
+let trustedEvent: any = {}
+let runsAsCodex: (sid: string) => boolean = () => false
+const invoke = (ch: string, ...args: any[]) => handlers.get(ch)!(trustedEvent, ...args)
 
 describe('logs2 IPC handlers', () => {
   let sent: Array<{ channel: string; payload: unknown }>
@@ -52,13 +69,18 @@ describe('logs2 IPC handlers', () => {
     sidecar.rememberSessionName.mockReset()
     sidecar.forgetSessionName.mockReset()
     sidecar.writeNameSidecar.mockReset()
+    sidecar.writeRealmNameSidecar.mockReset()
+    codex.binder = null
     sent = []
     const win = {
       isDestroyed: () => false,
-      webContents: { send: (channel: string, payload: unknown) => sent.push({ channel, payload }) },
+      webContents: { send: (channel: string, payload: unknown) => sent.push({ channel, payload }), mainFrame: { name: 'main' } },
     }
     getWindow = () => win
-    registerLogs2Handlers(getWindow)
+    trustedEvent = { sender: win.webContents, senderFrame: win.webContents.mainFrame }
+    // Round 1 (Q1): the sessions the pty manager runs as Codex.
+    runsAsCodex = (sid) => sid.startsWith('cx')
+    registerLogs2Handlers(getWindow, (sid) => runsAsCodex(sid))
   })
 
   // -------------------------------------------------------------------------
@@ -246,7 +268,7 @@ describe('logs2 IPC handlers', () => {
     handlers.clear()
     onNewMessagesSpy.mockClear()
     supervisorPresent = false
-    registerLogs2Handlers(getWindow)
+    registerLogs2Handlers(getWindow, () => false)
     expect(onNewMessagesSpy).not.toHaveBeenCalled()
   })
 
@@ -282,5 +304,143 @@ describe('logs2 IPC handlers', () => {
     exactPathForRename = null
     await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 's4', configLabel: 'Config A' })
     expect(sidecar.rememberSessionName).toHaveBeenCalledWith('s4', 'Config A')
+  })
+
+  // -------------------------------------------------------------------------
+  // P3.12 (row 32): a Codex session's rename writes the name file next to its
+  // exactly claimed rollout, in its realm; else it is remembered
+  // -------------------------------------------------------------------------
+
+  const ROLLOUT = { path: 'C:\\r\\sessions\\2026\\09\\29\\rollout-2026-09-29T10-00-00-019dd000-0001-7000-8000-00000000000a.jsonl', sessionsDir: 'C:\\r\\sessions' }
+
+  it('P3.12: a Codex session exactly on a rollout: the name file is written there (the realm writer), the pending entry retired; never Claude\'s sidecar', async () => {
+    exactPathForRename = 'C:\\claude\\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl'
+    codex.binder = { knows: (sid) => sid === 'cx1', exactRollout: () => ROLLOUT }
+    await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 'cx1', configLabel: 'Codex A', customName: 'Auth Bug' })
+    expect(renameRunSpy).toHaveBeenCalledWith('cx1', 'Codex A')
+    expect(sidecar.writeRealmNameSidecar).toHaveBeenCalledWith(ROLLOUT.path, ROLLOUT.sessionsDir, 'Auth Bug', sidecar.nodeRealmNameFs)
+    expect(sidecar.forgetSessionName).toHaveBeenCalledWith('cx1')
+    expect(sidecar.writeNameSidecar).not.toHaveBeenCalled()
+    expect(sidecar.rememberSessionName).not.toHaveBeenCalled()
+  })
+
+  it('P3.12: a Codex session not yet exactly on a rollout: remembered for its exact claim, nothing written', async () => {
+    exactPathForRename = 'C:\\claude\\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl'
+    codex.binder = { knows: (sid) => sid === 'cx2', exactRollout: () => null }
+    await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 'cx2', configLabel: 'Codex A', customName: 'Docs' })
+    expect(sidecar.rememberSessionName).toHaveBeenCalledWith('cx2', 'Docs')
+    expect(sidecar.writeRealmNameSidecar).not.toHaveBeenCalled()
+    expect(sidecar.writeNameSidecar).not.toHaveBeenCalled()
+  })
+
+  it('P3.12: a session the Codex binder does not know takes Claude\'s path, as before', async () => {
+    exactPathForRename = 'C:\\p\\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl'
+    codex.binder = { knows: () => false, exactRollout: () => ROLLOUT }
+    await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 's9', configLabel: 'Config A', customName: 'X' })
+    expect(sidecar.writeNameSidecar).toHaveBeenCalledWith(exactPathForRename, 'X', sidecar.nodeNameSidecarDeps)
+    expect(sidecar.writeRealmNameSidecar).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P3.12 round 1: every logs2 channel answers only the app's own window (its
+// main frame), as the account handlers do (trusted-sender.ts); a request from
+// anywhere else is refused before the supervisor, the binders or the name
+// files are touched. And the rename reads the caller's own session (B4), on
+// Codex's path only for a Codex session (Q1).
+// ---------------------------------------------------------------------------
+
+describe('logs2 IPC handlers: the sender (P3.12 round 1)', () => {
+  let win: any
+  const CALLS: Array<[string, unknown[]]> = [
+    [IPC.LOGS2_LIST_SLOTS, []],
+    [IPC.LOGS2_READ_MESSAGES, [{ scope: { configId: 'c1' } }]],
+    [IPC.LOGS2_TURN_SUMMARY, [{ scope: { configId: 'c1' } }]],
+    [IPC.LOGS2_SEARCH, [{ query: 'needle' }]],
+    [IPC.LOGS2_DELETE_SLOT, [{ scope: { sessionId: 's' } }]],
+    [IPC.LOGS2_CLEAR_ALL, []],
+    [IPC.LOGS2_RENAME_SESSION, [{ sessionId: 'cx1', configLabel: 'A', customName: 'N' }]],
+    [IPC.LOGS2_INGEST_STATUS, [{ sessionId: 's' }]],
+    [IPC.LOGS2_SESSION_CONFIG, [{ sessionId: 's' }]],
+    [IPC.LOGS2_WIPE_DETECT, []],
+    [IPC.LOGS2_WIPE_CONFIRM, []],
+  ]
+  const knows = vi.fn((_sid: string) => true)
+  const exactRollout = vi.fn((_sid: string) => ({ path: 'C:\\r\\sessions\\2026\\09\\29\\rollout-x.jsonl', sessionsDir: 'C:\\r\\sessions' }))
+  const untouched = () => {
+    expect(querySpy).not.toHaveBeenCalled()
+    expect(renameRunSpy).not.toHaveBeenCalled()
+    expect(knows).not.toHaveBeenCalled()
+    expect(exactRollout).not.toHaveBeenCalled()
+    expect(sidecar.writeRealmNameSidecar).not.toHaveBeenCalled()
+    expect(sidecar.writeNameSidecar).not.toHaveBeenCalled()
+    expect(sidecar.rememberSessionName).not.toHaveBeenCalled()
+    expect(wipe.detectOldLogArtifacts).not.toHaveBeenCalled()
+    expect(wipe.executeWipe).not.toHaveBeenCalled()
+  }
+
+  beforeEach(() => {
+    handlers.clear()
+    querySpy.mockReset()
+    querySpy.mockResolvedValue([])
+    renameRunSpy.mockReset()
+    sidecar.rememberSessionName.mockReset()
+    sidecar.forgetSessionName.mockReset()
+    sidecar.writeNameSidecar.mockReset()
+    sidecar.writeRealmNameSidecar.mockReset()
+    wipe.detectOldLogArtifacts.mockClear()
+    wipe.executeWipe.mockClear()
+    knows.mockClear()
+    exactRollout.mockClear()
+    codex.binder = { knows, exactRollout }
+    supervisorPresent = true
+    exactPathForRename = null
+    let destroyed = false
+    win = { isDestroyed: () => destroyed, destroy: () => { destroyed = true }, webContents: { send: () => {}, mainFrame: { name: 'main' } } }
+    trustedEvent = { sender: win.webContents, senderFrame: win.webContents.mainFrame }
+    runsAsCodex = (sid) => sid.startsWith('cx')
+    registerLogs2Handlers(() => win, (sid) => runsAsCodex(sid))
+    registerLogsWipeHandlers(() => win)
+  })
+
+  it('from the app\'s window: every channel answers', async () => {
+    for (const [ch, args] of CALLS) await expect(handlers.get(ch)!(trustedEvent, ...args)).resolves.not.toThrow()
+    expect(querySpy).toHaveBeenCalled()
+    expect(wipe.executeWipe).toHaveBeenCalledTimes(1)
+  })
+
+  it('from another web contents: every channel refuses, nothing is touched', async () => {
+    const other = { sender: { send: () => {} }, senderFrame: win.webContents.mainFrame }
+    for (const [ch, args] of CALLS) await expect(Promise.resolve().then(() => handlers.get(ch)!(other, ...args)), ch).rejects.toThrow(/not accepted/)
+    untouched()
+  })
+
+  it('from a frame inside the window (not its main frame), or with no frame: refused', async () => {
+    for (const [ch, args] of CALLS) {
+      await expect(Promise.resolve().then(() => handlers.get(ch)!({ sender: win.webContents, senderFrame: { name: 'sub' } }, ...args)), ch).rejects.toThrow(/not accepted/)
+      await expect(Promise.resolve().then(() => handlers.get(ch)!({ sender: win.webContents, senderFrame: null }, ...args)), ch).rejects.toThrow(/not accepted/)
+    }
+    untouched()
+  })
+
+  it('with the window gone: refused', async () => {
+    win.destroy()
+    for (const [ch, args] of CALLS) await expect(Promise.resolve().then(() => handlers.get(ch)!(trustedEvent, ...args)), ch).rejects.toThrow(/not accepted/)
+    untouched()
+  })
+
+  it('B4: the rename asks the Codex binder about the caller\'s own session, and only it', async () => {
+    await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 'cx7', configLabel: 'A', customName: 'Named' })
+    expect(knows.mock.calls).toEqual([['cx7']])
+    expect(exactRollout.mock.calls).toEqual([['cx7']])
+    expect(sidecar.writeRealmNameSidecar).toHaveBeenCalledWith(expect.any(String), expect.any(String), 'Named', sidecar.nodeRealmNameFs)
+  })
+
+  it('Q1: a session the Codex binder still knows but that runs as Claude now takes Claude\'s path', async () => {
+    exactPathForRename = 'C:\\p\\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl'
+    await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 'k1', configLabel: 'A', customName: 'Named' })
+    expect(exactRollout).not.toHaveBeenCalled()
+    expect(sidecar.writeRealmNameSidecar).not.toHaveBeenCalled()
+    expect(sidecar.writeNameSidecar).toHaveBeenCalledWith(exactPathForRename, 'Named', sidecar.nodeNameSidecarDeps)
   })
 })

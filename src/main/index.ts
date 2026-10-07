@@ -1,18 +1,20 @@
 import { app, BrowserWindow, ipcMain, dialog, session, shell, powerMonitor } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
-import { existsSync, mkdirSync, readdirSync, realpathSync } from 'fs'
+import { mkdirSync, realpathSync } from 'fs'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY_MS, splashShownAt } from './splash-window'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine } from './pty-manager'
+import { warnAboutOrphanedSharedPartitions } from './account-web/orphan-partitions'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, writeCanvasMarkerLine, routeHookTranscriptPath, noteCodexHookEvent, isCodexPtySession, codexRolloutForSessionContext, applyLoggingSwitches } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
 import { buildAndSetAppMenu } from './app-menu'
 import { registerLogs2Handlers, registerLogsWipeHandlers } from './ipc/logs2-handlers'
+import { initIndexingGaps, flushIndexingGaps } from './logging/indexing-gaps'
 import { registerCanvasHandlers } from './ipc/canvas-handlers'
 import {
   registerCccUxSchemePrivileges,
@@ -22,18 +24,19 @@ import {
 } from './canvas/ccc-ux-protocol'
 
 import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, healGlobalStatusline } from './statusline-watcher'
-import { recordLiveUsageForSession, setClaudeAccountDataAllowed } from './usage/account-usage'
+import { recordLiveUsageForSession, setClaudeAccountDataAllowed, setLiveUsageTranscriptProfile } from './usage/account-usage'
 import { getProvider } from './providers'
-import { composeProviders, flushPendingProviderCliKills } from './providers/compose'
-import { initAccountRegistry, reconcileLegacyAccountStores } from './provider-account-registry'
-import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory, discoverProvidersAtStart } from './provider-accounts'
+import { composeProviders, flushPendingProviderCliKills, setMacRealmStatuslineProbe, claudeStatuslineNeedsMacRealmRedeploy } from './providers/compose'
+import { initAccountRegistry, reconcileLegacyAccountStores, getConsumerLeases } from './provider-account-registry'
+import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory, discoverProvidersAtStart, providerOnNow } from './provider-accounts'
 import { probeClaudeCliVersion, setClaudeCliProbeAllowed } from './claude-cli-version'
 import { providerProbeRefusal } from './provider-launch-gate'
 import { providerUseWithoutLease } from './provider-in-use'
-import { registerDebugHandlers } from './ipc/debug-handlers'
+import { registerDebugHandlers, registerAccountLogFolderHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
 import { adoptRenamedRepoIfLive } from './github-update'
+import { installClientCertificatePolicy } from './client-certificate'
 import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from './ipc/setup-handlers'
 // Direct from data-paths, not the handlers barrel: this runs at module scope
 // before app-ready, so it must not pull the IPC registration side of that module
@@ -47,6 +50,8 @@ import { closeAllWebviews } from './webview-manager'
 import { closeAllAccountPanes, closeAccountPanesForProfile } from './account-web/account-pane'
 import { onPartitionRevoked } from './account-web/partition-revocation'
 import { removeWebSession } from './account-web/session-store'
+// WP2 PR 4, P4.6 (row 58): a Codex account's chatgpt.com web session.
+import { wireCodexWebArchive, wireCodexWebSession } from './account-web/codex-web-wiring'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
@@ -56,15 +61,17 @@ import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredential
 import { setMacMultiAccountProbe } from './account-profiles'
 import { isMacMultiAccountEnabled } from './mac-multi-account'
 import { installMacRealmGuard } from './mac-realm-guard'
-import { setMacRealmStatuslineProbe, claudeStatuslineNeedsMacRealmRedeploy } from './statusline-watcher'
+import { secureOwnerOnlyFolders } from './owner-only-folders'
+import { startCodexHookFolders, codexHookFoldersSettingsChanged } from './codex-hook-folders'
+import { startCodexUserSkills, codexUserSkillsSettingsChanged } from './canvas/codex-user-skills'
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { initTokenomics, shutdownTokenomics, getTokenomicsSupervisor } from './tokenomics/tokenomics-service'
-import { createTranscriptAttribution } from './tokenomics/tk-attribution'
-import { getClaudeProfileId } from './claude-account-identity'
+import { createTranscriptAttribution, profileOfTranscript, type TkProfileFolders } from './tokenomics/tk-attribution'
+import { getClaudeProfileId, sessionsOnProfile } from './claude-account-identity'
 import { registerTokenomics2Handlers } from './ipc/tokenomics2-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
@@ -85,7 +92,7 @@ import { startCanvasMarkerQueue } from './canvas/canvas-marker-delivery'
 import { startAttentionSource } from './attention-source'
 import { startJankDetector } from './jank-detector'
 import { HooksGateway } from './hooks/hooks-gateway'
-import { setGateway, getGateway, isExactBindSourceActive } from './hooks'
+import { setGateway, getGateway } from './hooks'
 import { ServiceSupervisor } from './services/service-supervisor'
 import { forkHooksChild } from './services/fork-hooks-child'
 import { start as startLoopStallMonitor, stop as stopLoopStallMonitor } from './services/loop-stall-monitor'
@@ -95,14 +102,13 @@ import { cleanupStaleHookEntries, cleanupStaleMcpConfigs } from './hooks/boot-cl
 import { isSentinelEnabled } from '../shared/sentinel-enabled'
 import { resolveHooksPort } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics/tk-pricing'
-import { killAllAgents } from './cloud-agent-manager'
-import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus } from './service-status'
+import { killAllAgents, stopBackgroundAgentRuns } from './cloud-agent-manager'
+import { startServiceStatusPoller, stopServiceStatusPoller, registerServiceStatusHandlers, refreshServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
-import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
-import { createSessionDurability } from './session-durability'
-import { resolveResumeTargetFromTranscript } from './logging/transcript-discovery'
-import { getConfigDir, snapshotConfig, readConfig } from './config-manager'
+import { peekSessionState, hasSavedSessionState, SessionState } from './session-state'
+import { createAppSessionDurability } from './app-session-durability'
+import { getConfigDir, snapshotConfig, readConfig, readConfigChecked } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
 import { loadWindowState, clampToVisibleDisplay, saveWindowStateFor } from './window-state'
@@ -113,7 +119,7 @@ import { safeExternalHttpsHref } from '../shared/safe-url'
 import { CSP_POLICY } from '../shared/csp-policy'
 
 import { migrateRegistryKeys } from './registry'
-import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
+import { installGlobalErrorHandlers, logInfo, logWarn, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
 import { createCloseCoordinator, onAllWindowsClosed } from './window-close-coordinator'
 
 // Install global error handlers that log to file
@@ -124,23 +130,12 @@ installGlobalErrorHandlers()
 // saveEnriched — enriching each Claude session's exact resume target from the live
 // transcript binder — so EVERY persisted file is resumable, not only the graceful
 // close (Group 1), and the old autosave-clobber race dissolves. flushOnExit persists
-// the cached state on any non-graceful exit (Group 2); noteCleared drops the cache
-// on an intentional clear so the flush never resurrects a discarded set (F1). The
+// the cached state on any non-graceful exit (Group 2); `session:clear` goes through
+// the core's clear, which removes the saved file and drops the cache whatever the
+// removal did, so the flush never resurrects a discarded set (F1; fixer 11). The
 // binder is read lazily per call — it may init after this module loads.
-const sessionDurability = createSessionDurability({
-  enrichDeps: {
-    // #480: exact bind is the source of truth; the heuristic path is used only as
-    // the hooks-off fallback (gated by isExactBindSourceActive) so this main-side
-    // enrichment can never persist a cross-prone heuristic guess in the default
-    // (hooks-on) config — matching the resume-handlers IPC.
-    getExactResumeTarget: (id) => getTranscriptBinder()?.getExactResumeTarget(id) ?? null,
-    getLatestTranscriptPath: (id) => getTranscriptBinder()?.getLatestTranscriptPath(id) ?? null,
-    isExactBindSourceActive,
-    resolveResumeTargetFromTranscript,
-  },
-  save: saveSessionState,
-  log: logInfo,
-})
+// Composed from main's live sources in app-session-durability.ts (tested there).
+const sessionDurability = createAppSessionDurability()
 
 // Multi-instance (dev alongside prod): a dev build must NOT share prod's data
 // dir (CONFIG/sessions/transcripts/profiles). Point it at a dedicated dev root
@@ -179,41 +174,13 @@ if (devSessionDir) {
     // under a bare `npm run dev`. The failure mode here is invisible otherwise:
     // partitions just appear in the shared location and nothing says they did.
     logInfo(`[setup] Dev session data redirected to: ${devSessionDir}`)
-    warnAboutOrphanedSharedPartitions(devSessionDir)
+    // Both web-session partition prefixes (P4.6): account-web/orphan-partitions.ts.
+    warnAboutOrphanedSharedPartitions(() => app.getPath('userData'), devSessionDir)
   } catch (err) {
     // Not fatal: worst case partitions land in the default location, which is
     // exactly the pre-#261 behaviour. Say so rather than failing to boot.
     logError(`[setup] could not redirect dev sessionData to ${devSessionDir}: ${(err as Error)?.message ?? err}`)
   }
-}
-
-/**
- * Point out claude.ai partitions this dev instance left in the SHARED location
- * before the redirect existed (#261).
- *
- * WARN, NEVER DELETE. Those directories hold live `sessionKey` cookies and after
- * the redirect nothing references them: `ccc --clean` cannot reach them (wrong
- * root) and `sweepAbandonedProfiles` only walks `<dataDir>/account-web`. So they
- * would sit there forever, which is the very complaint the redirect is meant to
- * fix. But automatic removal is NOT safe: `ccc --seed-accounts` copies prod's
- * account profiles into dev, so a partition named for a dev profile id can be
- * the PROD install's live session. Deleting it would sign the user out of their
- * real account to tidy up a dev artifact. Naming the path and leaving the choice
- * to a human is the correct trade here.
- */
-function warnAboutOrphanedSharedPartitions(newLocation: string): void {
-  try {
-    const shared = join(app.getPath('userData'), 'Partitions')
-    if (shared === join(newLocation, 'Partitions') || !existsSync(shared)) return
-    const orphans = readdirSync(shared).filter((n) => n.startsWith('claude-web-'))
-    if (!orphans.length) return
-    logInfo(
-      `[setup] ${orphans.length} claude.ai web session partition(s) remain in the SHARED location `
-      + `and are no longer used by this dev instance: ${shared}. They hold live session cookies. `
-      + `Remove them by hand ONLY if you are sure they are not your production install's `
-      + `(see docs/dev-alongside-prod.md).`,
-    )
-  } catch { /* advisory only — never let a warning break boot */ }
 }
 
 // Migrate registry keys from old "Claude Conductor" → new "Claude Command Center"
@@ -312,17 +279,15 @@ function registerMainWindowIpc(): void {
   })
 
   ipcMain.handle('session:load', async () => {
-    return loadSessionState()
+    return sessionDurability.load()
   })
 
-  ipcMain.handle('session:clear', async () => {
-    const ok = clearSessionState()
-    // #397 F1: a successful clear is the user intentionally discarding the saved set
-    // (Don't-open / Close-without-saving). Drop the cache so the exit-time flush
-    // cannot resurrect it on the next launch.
-    if (ok) sessionDurability.noteCleared()
-    return ok
-  })
+  // #397 F1: a clear is the user intentionally discarding the saved set (Don't-open /
+  // Close-without-saving). The core removes the file and its .bak and drops its cache
+  // so the exit-time flush cannot resurrect the set on the next launch: whatever the
+  // removal did (fixer 11; before, a clear that failed kept the cache), and with
+  // nothing written in front of a copy of the set left on disk (fixer 10, ADR-009 C2).
+  ipcMain.handle('session:clear', async () => sessionDurability.clear())
 
   ipcMain.handle('session:hasSaved', async () => {
     return hasSavedSessionState()
@@ -465,6 +430,10 @@ if (!gotTheLock) {
     })
   }
 
+  // A main-process `net` request (the in-app browser's URL check) presents no
+  // client certificate, as on Electron 43; see client-certificate.ts.
+  installClientCertificatePolicy(app)
+
   app.whenReady().then(() => {
     // Refresh the help workspace at boot (#586), not only on Ask launch: the
     // installed helper skill's body POINTS at help/app-knowledge.md, so the
@@ -480,7 +449,12 @@ if (!gotTheLock) {
     // #397 Group 2: exit paths that skip app 'before-quit'. An OS shutdown/logoff
     // (powerMonitor; macOS/Linux) and SIGTERM (task-manager terminate / OS teardown)
     // can end the app without the window-close flow running. Persist sessions first.
-    powerMonitor.on('shutdown', () => sessionDurability.flushOnExit('powerMonitor shutdown'))
+    powerMonitor.on('shutdown', () => {
+      sessionDurability.flushOnExit('powerMonitor shutdown')
+      // P3.12 (K3): write only; this shutdown can be vetoed and the app run on,
+      // so it does not latch the windows open (quit and SIGTERM do).
+      try { flushIndexingGaps({ final: false }) } catch { /* best-effort */ }
+    })
     powerMonitor.on('suspend', () => sessionDurability.flushOnExit('powerMonitor suspend'))
     // Only SIGTERM. SIGINT is intentionally LEFT to Node's default so a console
     // Ctrl+C on a dev run still terminates in one press — a SIGINT handler here
@@ -489,6 +463,7 @@ if (!gotTheLock) {
     // vetoed by that same dialog, so a signal must not route through it.
     process.on('SIGTERM', () => {
       sessionDurability.flushOnExit('SIGTERM')
+      try { flushIndexingGaps() } catch { /* best-effort */ }
       app.exit(0)
     })
 
@@ -533,11 +508,21 @@ if (!gotTheLock) {
     // registry it reports the account list as unavailable. The one-time
     // adoption of a provider's own default sign-in runs after the legacy
     // reconcile, outside the registry lock.
+    // P4.6 (row 58): an archive clears what the account holds outside its
+    // sign-in FIRST, and a clear that fails refuses the archive. Registered
+    // before the service exists, so no archive can run without it.
+    wireCodexWebArchive()
     try {
       // A switch-off is refused while any of the provider runs: its sessions,
       // and (WP2) for Claude Code its cloud agents, Insights runs, Sentinel
       // runs and accepted SSH "Launch Claude"s too (provider-in-use.ts).
-      initProviderAccounts({ unleasedSessions: (id) => providerUseWithoutLease(id) })
+      initProviderAccounts({
+        unleasedSessions: (id) => providerUseWithoutLease(id),
+        // P3.2: a Claude profile a live session runs on is not made inactive
+        // or archived through the accounts service either (the sessions-only
+        // check the profile handlers' Make inactive makes).
+        legacyRecordInUse: (id, legacyId) => id === 'claude' && sessionsOnProfile(legacyId).length > 0,
+      })
       // A resources directory chosen after start (first-run setup) moves the
       // registry with it before anything reads or reconciles it.
       onResourcesDirectoryChanged((dir) => { void followResourcesDirectory(dir) })
@@ -585,6 +570,32 @@ if (!gotTheLock) {
       .then(() => getProvider('claude').deployResumePickerScript?.(getResourcesDirectory()))
       .then(() => getProvider('codex').deployResumePickerScript?.(getResourcesDirectory()))
       .catch((err) => console.warn('[main] Failed to deploy provider scripts:', err))
+      // P3.10 round 4 (P1): the folders the Codex hooks use, made this user's
+      // alone by the owner-only rule (one asynchronous call), only while Codex
+      // is on: after first paint, again when it is switched on, and before a
+      // local Codex launch (codex-hook-folders.ts).
+      .then(() => {
+        startCodexHookFolders({
+          providerOn: () => providerOnNow('codex'),
+          prepare: () => getProvider('codex').prepareHookFolders?.(getResourcesDirectory(), secureOwnerOnlyFolders) ?? Promise.resolve(false),
+          subscribe: (listener) => getAccountsService()?.subscribe(listener) ?? (() => {}),
+          log: (level, message) => (level === 'warn' ? logWarn(message) : logInfo(message)),
+        })
+        // WP2 PR 4 (section 10 question 5, answered C): the canvas skills the
+        // app copied into this computer's own Codex folder are removed when
+        // Codex or the built-in tools are turned off, and kept current while
+        // both are on (canvas/codex-user-skills.ts): once after first paint,
+        // then at every settings save and every change the accounts service
+        // announces. Settings that cannot be read do nothing.
+        startCodexUserSkills({
+          settings: () => {
+            const r = readConfigChecked<Record<string, unknown>>('settings', { quarantineUnparseable: false })
+            return r.outcome === 'ok' && r.value && typeof r.value === 'object' ? r.value : null
+          },
+          codexOn: () => providerOnNow('codex'),
+          subscribe: (listener) => getAccountsService()?.subscribe(listener) ?? (() => {}),
+        })
+      })
       // Resume-picker bug fix: backfill companion dirs so DIRECT-WORK
       // conversations (no subagent/workflow → no companion dir from the CLI) are
       // visible in the picker AND resumable via `claude --resume`. Idempotent,
@@ -664,14 +675,24 @@ if (!gotTheLock) {
     // here so it never has to import their heavy graphs. Both run synchronously.
     onPartitionRevoked(removeWebSession)
     onPartitionRevoked(closeAccountPanesForProfile)
+    // P4.6 (row 58): the same for a Codex account's chatgpt.com session: its
+    // own channels (the app window only, the registry checked; a pane only for
+    // a Codex session whose current launch is on the account, for as long as
+    // that launch lasts). Before its partition is wiped (sign-out, archive, an
+    // incomplete sign-in) its panes close, so nothing writes the session back;
+    // after the wipe its record goes (account-web/codex-web-wiring.ts).
+    wireCodexWebSession({ getWindow, isCodexPtySession, leases: getConsumerLeases })
     // #216: a crash or forced quit can leave a sign-in browser profile behind, and
     // each one holds a live claude.ai session. Sweep them at boot.
     try { sweepAbandonedProfiles(getDataDirectory()) } catch { /* best effort */ }
     registerResumeHandlers()
     // Ahead of initLogging + the register*() run below on purpose: nothing
     // between here and there may throw and skip the first-run wipe prompt.
-    registerLogsWipeHandlers()
+    registerLogsWipeHandlers(getWindow)
     registerDebugHandlers()
+    // WP2 PR 4, P4.4 (row 56): each account's own log folders, keyed by
+    // account id and folder kind; the folders come from the accounts service.
+    registerAccountLogFolderHandlers(getWindow, async () => (await getAccountsService()?.accountFolders()) ?? null)
     registerUpdateHandlers()
     // Pre-emptive repo-rename handling: if the app has been renamed on GitHub
     // (claude-command-center -> ai-code-conductor) adopt + persist the new repo
@@ -704,6 +725,22 @@ if (!gotTheLock) {
         try {
           if (claudeStatuslineNeedsMacRealmRedeploy()) void getProvider('claude').deployStatuslineScript?.(getResourcesDirectory())?.catch((err: unknown) => logError('[main] statusline redeploy failed:', err))
         } catch (err) { logError('[main] statusline redeploy failed:', err) }
+        // P3.4: a provider switched on has its status page read at once; one
+        // switched off leaves the title bar and is not read again.
+        void refreshServiceStatus().catch((err) => logError('[main] service status refresh failed:', err))
+        // P3.10 round 4 (P1): Codex switched on has its hook folders prepared.
+        try { codexHookFoldersSettingsChanged() } catch (err) { logError('[main] codex hook folders failed:', err) }
+        // Question 5, answered C: Codex or the built-in tools turned off takes
+        // the app's skills out of this computer's own Codex folder.
+        try { codexUserSkillsSettingsChanged() } catch (err) { logError('[main] codex user skills failed:', err) }
+        // P3.12 round 1 (V1): the logging switch turned off stops indexing the
+        // sessions already running, both assistants.
+        try { applyLoggingSwitches() } catch (err) { logError('[main] logging switches failed:', err) }
+      },
+      // P3.12 round 1 (V1): a config's own logging switch turned off stops
+      // indexing its running session.
+      onConfigsSaved: () => {
+        try { applyLoggingSwitches() } catch (err) { logError('[main] logging switches failed:', err) }
       },
     })
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->
@@ -715,7 +752,7 @@ if (!gotTheLock) {
       const ch = readConfig<{ updateChannel?: string }>('settings')?.updateChannel
       if (ch === 'beta') { setVerboseBaseline(true); logInfo('[boot] verbose logging enabled (beta channel)') }
     } catch { /* settings unreadable this early -- skip */ }
-    registerAccountProfilesHandlers()
+    registerAccountProfilesHandlers(getWindow)
     // SAFETY: snapshot the real Claude config before the multi-account feature
     // does anything, so the user's original login is always recoverable.
     try { backupRealClaudeOnce() } catch (e) { logInfo(`[backup] snapshot skipped: ${e}`) }
@@ -757,16 +794,36 @@ if (!gotTheLock) {
     startRulesEngine()
     registerCloudAgentHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
-    registerMemoryHandlers()
+    // WP2 PR 4, P4.4 (row 55): each account's own memories beside Claude's
+    // store, and every memory channel answering only the app window.
+    registerMemoryHandlers({ getWindow, accountFolders: async () => (await getAccountsService()?.accountFolders()) ?? null })
     // GitHub sidebar — reads/writes github-config.json + encrypted auth profiles
     // under the CONFIG dir alongside other app config. Session-level integration
     // state piggybacks on the existing session-state persistence helpers.
     registerGitHubHandlers({
       resourcesDir: getConfigDir(),
       getWindow,
-      loadSessions: async () => loadSessionState()?.sessions ?? [],
+      // PR 4: the sidebar's reads are pure reads (peekSessionState): they never
+      // set or reset the read-failure latch, so only session:load decides
+      // whether saves and clears are allowed. A read that fails gives the
+      // sidebar nothing, and a save whose read fails writes nothing.
+      loadSessions: async () => {
+        try {
+          return peekSessionState()?.sessions ?? []
+        } catch {
+          return []
+        }
+      },
+      // P3.12 (row 65): a Codex session's Session Context reads its own rollout.
+      codexRolloutFor: codexRolloutForSessionContext,
       saveSessions: async (sessions) => {
-        const existing = loadSessionState()
+        let existing: SessionState | null
+        try {
+          existing = peekSessionState()
+        } catch (err) {
+          logWarn(`[session-state] the GitHub sidebar's change was not saved: the saved sessions could not be read (${(err as Error)?.message ?? err})`)
+          return
+        }
         // Through the durability core, never saveSessionState directly: a
         // direct write leaves the exit-flush cache stale, so the flush on
         // quit would overwrite this very patch with the pre-patch state —
@@ -808,15 +865,24 @@ if (!gotTheLock) {
     // Usage track MP10: the same live transcript paths attribute each local
     // Claude session's usage to an account, for Tokenomics: the profile whose
     // config folder holds the transcript (the path decides) names it through
-    // its registry link. Independent of the binder, so it works with logging
-    // off; the profiles root and the usage index are resolved lazily too.
-    const attributeTranscript = createTranscriptAttribution({
-      isLocal: (sessionId) => getClaudeProfileId(sessionId) !== undefined,
+    // its registry link, when that is the profile the reporting session runs
+    // under now (captured at its latest spawn). Independent of the binder,
+    // so it works with logging off; the profiles root and the usage index are
+    // resolved lazily too.
+    // Where the profiles keep their transcripts: shared with the live usage
+    // recorder, which files a session's figure under a profile only when its
+    // transcript lies in that profile's folder (P3.2).
+    const profileFolders: TkProfileFolders = {
       profilesRoot: () => { try { return getProfilesRoot() } catch { return null } },
       isProfileId: (name) => isValidProfileId(name),
       // The layout comes from where profile homes are built: <home>/.claude/projects.
       projectsDirOf: (profileId) => join(getProfileConfigDir(profileId), '.claude', 'projects'),
       realRoot: (root) => { try { return realpathSync.native(root) } catch { return null } },
+    }
+    setLiveUsageTranscriptProfile((path) => profileOfTranscript(profileFolders, path))
+    const attributeTranscript = createTranscriptAttribution({
+      launchProfile: (sessionId) => getClaudeProfileId(sessionId),
+      ...profileFolders,
       accountOf: (profileId) => getAccountsService()?.accountIdForLegacy('claude', profileId, { ignoreCase: process.platform === 'win32' }) ?? null,
       record: (sessionId, accountKey) => {
         const tokenomics = getTokenomicsSupervisor()
@@ -829,8 +895,13 @@ if (!gotTheLock) {
     // POSTs into the binder. Resolved lazily — the binder is created later by
     // initLogging(), and is null when logging is disabled (then this is a no-op).
     const routeTranscriptPath = (sessionId: string, path: string) => {
-      attributeTranscript(sessionId, path)
-      getTranscriptBinder()?.notifyTranscriptPath(sessionId, path)
+      // P3.10: a Codex session's hook names the rollout it is on -- the exact
+      // claim of its conversation -- and never reaches a Claude sink
+      // (pty-manager routeHookTranscriptPath, tested there; round 1, B5).
+      routeHookTranscriptPath(sessionId, path, {
+        attribute: attributeTranscript,
+        bind: (sid, p) => { getTranscriptBinder()?.notifyTranscriptPath(sid, p) },
+      })
     }
     if (hooksEnabled) {
       // Supervised out-of-process gateway: a utilityProcess child runs the HooksGateway,
@@ -852,6 +923,9 @@ if (!gotTheLock) {
     // TODO(logs2 Phase 5): wipe the orphaned old byte-capture DB
     // (<dataDir>/logs.db) when the old stack is deleted — it is no longer
     // written or read by the live app.
+    // P3.12 (W4, X1): the Codex conversations written while not indexed,
+    // kept whether or not logging is on this run.
+    try { initIndexingGaps(join(getDataDirectory(), 'logging-gaps.json')) } catch (err) { logError('[logs] indexing gaps failed:', err) }
     try {
       initLogging({ emit: emitWithMerge, dbPath: join(getDataDirectory(), 'transcripts.db') })
     } catch (err) {
@@ -861,7 +935,7 @@ if (!gotTheLock) {
     // initLogging so the new-messages push can subscribe to the live supervisor;
     // the request/response handlers resolve the supervisor lazily per call and
     // reject cleanly when logging is disabled.
-    registerLogs2Handlers(getWindow)
+    registerLogs2Handlers(getWindow, isCodexPtySession)
     // Agent Canvas (2.2): renderer read surface + change push over the canvas
     // store. Serving itself is the ccc-ux:// protocol registered above.
     registerCanvasHandlers(getWindow)
@@ -878,16 +952,30 @@ if (!gotTheLock) {
     // Both ends are injected here so the canvas IPC module needs no static
     // import of pty-manager or the gateway (see canvas-marker-delivery.ts).
     startCanvasMarkerQueue({
-      // The same submit shape every other programmatic line into the Claude TUI
-      // uses (the watchdog retry, the command buttons, the launch line).
-      write: (sessionId, line) => writeSubmittedLine(sessionId, line),
+      // A Claude session's marker: the same submit shape every other
+      // programmatic line into the Claude TUI uses (the watchdog retry, the
+      // command buttons, the launch line). WP2 PR 4, P4.1: a Codex session's
+      // goes through the submit primitive (writeCanvasMarkerLine), which
+      // answers later whether it was delivered.
+      write: (sessionId, line) => writeCanvasMarkerLine(sessionId, line),
+      // P4.1: a Codex marker the primitive did not deliver is shown on the
+      // canvas, on the review it belongs to.
+      onUndelivered: (u) => {
+        const w = getWindow()
+        if (w && !w.isDestroyed()) w.webContents.send(IPC.CANVAS_AGENT_MARKER_UNDELIVERED, u)
+      },
       subscribe: (cb) => {
         const gw = getGateway()
         if (!gw) return
         gw.subscribe((e) => { if (e.sessionId) cb(e.sessionId, e.event) })
       },
     })
-    startAttentionSource()
+    // P3.10 (row 47): Codex sessions' own hook events map to attention too.
+    startAttentionSource({ isCodexSession: isCodexPtySession })
+    // P3.10 round 1 (B4): a conversation a Codex session's own Codex started
+    // (its SessionStart hook) proves another session's inferred claim of it
+    // wrong; the gateway hands the transcript path over before the event.
+    getGateway()?.subscribe((e) => { try { noteCodexHookEvent(e) } catch { /* a claim never breaks the feed */ } })
     startJankDetector()
     // Main-process event-loop jank monitor: feeds the "Jank m/c" main half on the
     // Conductor services pill (getMergedDiagnostics stamps stallsLastMin() onto
@@ -909,6 +997,9 @@ if (!gotTheLock) {
       send: (sessionId, text) => {
         writeSubmittedLine(sessionId, text)
       },
+      // P3.10: a Codex session's retry is typed, then submitted once the
+      // screen shows it (watchdog-manager submitCodex).
+      write: (sessionId, data) => writePty(sessionId, data),
       // Refresh the services view live when a watchdog state changes; routed
       // through the same merge so the push carries every source (#235).
       onHealthChange: () => pushDiagnostics(),
@@ -997,13 +1088,19 @@ if (!gotTheLock) {
     setStatuslineUsageSink(recordLiveUsageForSession)
     startStatuslineWatcher(getWindow)
 
-    // Start polling Anthropic service status
-    startServiceStatusPoller(getWindow)
+    // Start polling each provider's public status page, only while it is on;
+    // a switch made in the accounts service (not a settings save) reaches it
+    // through the service's change subscription.
+    startServiceStatusPoller(getWindow, {
+      providerOn: providerOnNow,
+      subscribe: (listener) => getAccountsService()?.subscribe(listener) ?? (() => {}),
+    })
     // Let a freshly-mounted renderer pull the cached status immediately, rather
     // than waiting up to a full poll interval for the next push (the title-bar
     // status pills were blank until the next poll because the immediate poll
-    // fired before the renderer subscribed, behind the startup splash).
-    ipcMain.handle(IPC.SERVICE_STATUS_GET, () => getLastServiceStatus())
+    // fired before the renderer subscribed, behind the startup splash). The
+    // app's own window, top frame only (P3.4, trusted-sender.ts).
+    registerServiceStatusHandlers(getWindow)
   }).catch((err) => {
     // A throw anywhere in the boot sequence above abandons every subsequent
     // subsystem registration (handlers, logging, hooks gateway, statusline,
@@ -1030,6 +1127,10 @@ if (!gotTheLock) {
     // #397 Group 2: persist sessions BEFORE the logging teardown below tears the
     // transcript binder down — flushing after that would lose the resume targets.
     sessionDurability.flushOnExit('before-quit')
+    // P3.12 (X3, Z2): the conversations written while not indexed, written now;
+    // a window still open stays open (Codex's last records land after the
+    // quit), and the next start closes it.
+    try { flushIndexingGaps() } catch { /* best-effort */ }
     // S5: mark the supervisor shutting-down BEFORE killAllPty() so a hooks-child
     // exit during teardown does NOT trigger a restart (race-free shutdown).
     try { _hooksSupervisor?.shutdown() } catch { /* never started / hooks disabled */ }
@@ -1045,6 +1146,9 @@ try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
     // Usage track MP8: a fresh usage read under way is stopped first, so the
     // flush below kills its helper too, and none starts again.
     try { getAccountsService()?.stopUsageReads() } catch { /* no accounts service */ }
+    // WP2 PR 4, P4.5: a Codex cloud agent still running is stopped here too,
+    // so the flush below ends its whole tree (as killAllAgents a Claude agent).
+    try { stopBackgroundAgentRuns() } catch { /* none running */ }
     // A headless CLI run stopped but still reading its process table would
     // otherwise leave its chain below cmd.exe running once the app is gone.
     try { flushPendingProviderCliKills() } catch { /* nothing pending */ }

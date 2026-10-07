@@ -6,6 +6,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { showcasesFor, ShowcasePage } from './showcase-pages'
 import { ShowcaseVignette } from './ShowcaseVignette'
 import { RenamePageView } from './RenamePage'
+import { usesClaude, usesCodex, claudeWasMissingAtSetup } from './provider-choice'
 
 declare const __APP_VERSION__: string
 
@@ -19,17 +20,33 @@ export interface WhatsNewItem {
   title: string
   /** ONE line. If it needs two sentences, it belongs in the Feature Guide. */
   desc: string
-  beta?: boolean
   /** #463: a line that only makes sense against a BEFORE (“the app was
    *  renamed”) — hidden from the fresh-install cohort, who have no before. */
   upgradeOnly?: boolean
   /** Id of a showcase page (showcase-pages.ts). Grows a "See it →" chip that
    *  jumps to that page; an id with no matching page renders no chip. */
   seeIt?: string
+  /** P3.4 (row 14): the line is about something that needs Claude Code in
+   *  this release, so it is hidden while Claude Code is off (as upgradeOnly
+   *  hides a line from a fresh install). The phase that brings the feature
+   *  to Codex lifts it (named in that phase's entry of
+   *  docs/wp2/completion-plan.md: Agent Canvas P4.1, Ask Conductor and the
+   *  guide line P4.3; P4.7 lifted it from Insights; P3.6 lifted it from Switch mid-session,
+   *  P3.10 from Session Watchdog). SSH Persistent and Remote Resumable keep it, as the
+   *  remote resume page does: the persistent remote session wraps the
+   *  remote claude command, and the only agent an SSH session runs in
+   *  this release is Claude Code. */
+  needsClaude?: boolean
 }
 
 export interface WhatsNewSection {
   heading: string
+  /** P3.10: the heading while Claude Code is off, for a section that names
+   *  Claude and keeps a line that works with Codex (the Watchdog's). */
+  headingWithoutClaude?: string
+  /** P4.11 (INT-7): the heading while Claude Code and Codex are both on, for
+   *  a section whose lines now work for both. */
+  headingWithCodex?: string
   items: WhatsNewItem[]
 }
 
@@ -57,7 +74,7 @@ const SECTIONS_20: WhatsNewSection[] = [
     heading: 'Tools',
     items: [
       { title: 'Built-in Tools, your call.', desc: 'Vision, code review, host screenshots and the Agent Canvas each get a real switch.' },
-      { title: 'Codex support.', desc: "Run OpenAI's Codex CLI beside Claude, with its own switch and sign-in.", beta: true },
+      { title: 'Codex support.', desc: "Run OpenAI's Codex CLI beside Claude, with a switch of its own." },
     ],
   },
   {
@@ -69,7 +86,7 @@ const SECTIONS_20: WhatsNewSection[] = [
   {
     heading: 'Under the hood',
     items: [
-      { title: 'A modern engine.', desc: 'Electron 43, React 19 and xterm.js 6 — fast, on a current security baseline.' },
+      { title: 'A modern engine.', desc: 'Electron 44, React 19 and xterm.js 6 — fast, on a current security baseline.' },
     ],
   },
 ]
@@ -78,19 +95,22 @@ const SECTIONS_21: WhatsNewSection[] = [
   {
     heading: 'Sessions',
     items: [
-      { title: 'SSH Persistent.', desc: 'A connection kind of its own — the remote session survives a dropped VPN.' },
-      { title: 'Partner terminal.', desc: 'A plain shell beside Claude, labelled so you always know which is which.' },
+      { title: 'SSH Persistent.', desc: 'A connection kind of its own — the remote session survives a dropped VPN.', needsClaude: true },
+      { title: 'Partner terminal.', desc: 'A plain shell beside your session, labelled so you always know which is which.' },
       { title: 'One row.', desc: 'The tools and your command buttons sit in a single row under the terminal.', seeIt: 'oneRow' },
       { title: 'Two-mode panel.', desc: 'Saved configs and Running sessions each get a tab, with Quick Start pins — and the panel resizes.', seeIt: 'panel' },
       { title: 'Multi Spawn.', desc: 'Mark a config to run several copies at once; everything else is safe from a stray double launch.', seeIt: 'multiSpawn' },
-      { title: 'Remote Resumable.', desc: 'A persistent SSH session you left running waits at the foot of Running, one click from where you were.', seeIt: 'remoteResume' },
+      { title: 'Remote Resumable.', desc: 'A persistent SSH session you left running waits at the foot of Running, one click from where you were.', seeIt: 'remoteResume', needsClaude: true },
       { title: 'Marks you can read.', desc: 'Plain SSH, persistent and container sessions each wear their own mark, everywhere they appear.', seeIt: 'sidebarMarks' },
     ],
   },
   {
     heading: 'Working with Claude',
+    headingWithoutClaude: 'Working with Codex',
+    headingWithCodex: 'Working with Claude and Codex',
     items: [
-      { title: 'Agent Canvas.', desc: "Claude draws a mockup in the app. Mark up what's wrong; it picks the notes up.", seeIt: 'canvas' },
+      // WP2 PR 4, P4.1 (row 51): the canvas works in Codex sessions too.
+      { title: 'Agent Canvas.', desc: "Your agent draws a mockup in the app. Mark up what's wrong; it picks the notes up.", seeIt: 'canvas' },
       { title: 'Session Watchdog.', desc: 'Waits out a rate limit and types the retry itself. Off by default.', seeIt: 'watchdog' },
       { title: 'Ask Conductor.', desc: 'A session that has read the docs — and can install a helper skill for the rest.', seeIt: 'askConductor' },
     ],
@@ -98,7 +118,12 @@ const SECTIONS_21: WhatsNewSection[] = [
   {
     heading: 'Accounts & usage',
     items: [
-      { title: 'Switch mid-session.', desc: 'Sign in to claude.ai in-app, change account without losing the session.', seeIt: 'accounts' },
+      // 2.1.1: Codex runs as a second assistant, with accounts of its own.
+      { title: 'Codex accounts.', desc: 'Codex runs beside Claude Code or alone, each account with its own sign-in.' },
+      // P3.6 (row 22): a Codex account switches mid-session too, keeping the
+      // conversation; the claude.ai sign-in the line also named stays Claude's.
+      { title: 'Switch mid-session.', desc: 'Change a running session\'s account without losing the conversation.', seeIt: 'accounts' },
+      { title: 'claude.ai in the app.', desc: 'Sign in to claude.ai in-app, for each account.', needsClaude: true },
       { title: 'Insights.', desc: 'Usage reports across every account at once, not one at a time.' },
     ],
   },
@@ -220,15 +245,27 @@ export function WhatsNewV2Step({
   // step is mounted must re-derive the prelude instead of stranding pageIx.
   const lastSeen = useAppMetaStore((s) => s.meta.lastSeenVersion)
   const channel = useSettingsStore((s) => s.settings.updateChannel)
+  // P3.4 (row 14): with Claude Code off (or setup found no Claude Code and
+  // the run goes on with Codex only, as the Welcome page reads it) a line or
+  // page about something that needs Claude Code is not shown.
+  const withClaude = useSettingsStore((s) => usesClaude(s.settings)) && !claudeWasMissingAtSetup()
+  const withCodex = useSettingsStore((s) => usesCodex(s.settings))
+  const headingFor = (s: WhatsNewSection): string =>
+    !withClaude ? s.headingWithoutClaude ?? s.heading : withCodex ? s.headingWithCodex ?? s.heading : s.heading
   const sections = sectionsFor(lastSeen, LINE_SOURCE)
-    .map((s) => (fresh ? { ...s, items: s.items.filter((it) => !it.upgradeOnly) } : s))
+    .map((s) => ({ ...s, heading: headingFor(s), items: s.items.filter((it) => !(fresh && it.upgradeOnly) && (withClaude || !it.needsClaude)) }))
     .filter((s) => s.items.length > 0)
   const count = sections.reduce((n, s) => n + s.items.length, 0)
   // The showcase (owner design 2026-08-24): the summary is page 0; each
   // flagship feature of the line gets a full page behind it. With no pages
   // authored for a line this collapses to exactly the old single-page step —
   // no dots, no skip, the harness CTA — so nothing regresses.
+  // P3.6: a page that shows with Claude Code off leaves out its points that
+  // need it. No point needs it in this release: P4.7 lifted the last one,
+  // the accounts page's Insights point, as Insights runs for Codex too.
   const showcases = showcasesFor(LINE_SOURCE)
+    .filter((p) => withClaude || !p.needsClaude)
+    .map((p) => (withClaude ? p : { ...p, points: p.points.filter((pt) => !pt.needsClaude) }))
   // #525: pre-rename upgraders AND fresh installs (owner call, canvas R1)
   // open on the rename/roadmap page — and beta-channel testers on any
   // prerelease build (owner call, canvas R2). Post-rename STABLE upgraders'
@@ -266,7 +303,6 @@ export function WhatsNewV2Step({
                       <div>
                         <span className="wn-t">{it.title}</span>{' '}
                         <span className="wn-d">{it.desc}</span>
-                        {it.beta && <span className="gh-tag">Beta</span>}
                         {it.seeIt && showcases.some((p) => p.id === it.seeIt) && (
                           <button
                             type="button"

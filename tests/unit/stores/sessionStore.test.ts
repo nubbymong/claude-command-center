@@ -270,6 +270,32 @@ describe('sessionStore', () => {
       expect(useSessionStore.getState().sessions).toHaveLength(0)
       expect(useSessionStore.getState().activeSessionId).toBeNull()
     })
+
+    // P3.5, the C item "Resume replaces the tab list": the resume prompt does
+    // not block the app, so a tab launched while it is open is running when
+    // Resume lands. It used to drop out of the list (its PTY still running),
+    // and a Refresh that re-read the autosaved file could bring it back as a
+    // second copy.
+    it('keeps a tab launched while the resume prompt was open, after the restored ones', () => {
+      useSessionStore.getState().addSession(makeSession({ id: 'new', label: 'launched meanwhile' }))
+      useSessionStore.getState().restoreSessions([makeSession({ id: 'a' }), makeSession({ id: 'b' })], 'a')
+      expect(useSessionStore.getState().sessions.map((s) => s.id)).toEqual(['a', 'b', 'new'])
+      expect(useSessionStore.getState().activeSessionId).toBe('a')
+    })
+
+    it('never adds a second copy of a tab already open: the live one stays as it is', () => {
+      useSessionStore.getState().addSession(makeSession({ id: 'x', label: 'live', status: 'working' }))
+      useSessionStore.getState().restoreSessions([makeSession({ id: 'a' }), makeSession({ id: 'x', label: 'saved copy', status: 'idle' })], null)
+      const sessions = useSessionStore.getState().sessions
+      expect(sessions.map((s) => s.id)).toEqual(['a', 'x'])
+      expect(sessions.find((s) => s.id === 'x')).toMatchObject({ label: 'live', status: 'working' })
+    })
+
+    it('with no restored tab to focus, the tab already focused stays focused', () => {
+      useSessionStore.getState().addSession(makeSession({ id: 'new' }))
+      useSessionStore.getState().restoreSessions([makeSession({ id: 'a' })], 'gone')
+      expect(useSessionStore.getState().activeSessionId).toBe('new')
+    })
   })
 
   describe('rename (customName)', () => {

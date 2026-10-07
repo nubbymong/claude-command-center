@@ -8,7 +8,7 @@ export function provider(over: Partial<ProviderInstallationView> & Pick<Provider
   const cap = { enabled: true, labelExperimental: false }
   return {
     enabled: true, preference: 'on', discoveryState: 'found', version: '0.155.1', compatibility: 'supported', managedAccounts: true,
-    signInMethods: { browser: cap, device: cap, apiKey: cap }, status: cap, logout: cap,
+    signInMethods: { browser: cap, device: cap, apiKey: cap }, status: cap, logout: cap, inUse: 0,
     ...over,
   }
 }

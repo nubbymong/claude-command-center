@@ -100,7 +100,23 @@ describe('the Claude card\'s add button', () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false, codexEnabled: true }, isLoaded: true })
     await render()
     expect(byTest('add-account-btn')).toBeNull()
-    expect(byTest('provider-off-note-claude')!.textContent).toBe('Turn Claude Code on to add an account.')
+    expect(byTest('provider-off-note-claude')!.textContent).toBe('Turn Claude Code on to manage its accounts.')
+  })
+
+  it('Claude Code off (P3.2, row 14): the accounts are listed, not managed, and nothing prompts a sign-in', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false, codexEnabled: true }, isLoaded: true })
+    const other: AccountProfile = { id: 'profile-work', name: 'Work', accountEmail: 'work@example.com', createdAt: 600_000 }
+    useAccountProfilesStore.setState({ profiles: [primary, other] })
+    ;(window as any).electronAPI.accountWeb.status.mockClear()
+    await render()
+    expect(byTest(`profile-row-${other.id}`)).not.toBeNull()
+    // No menu, no editor, no claude.ai sign-in, no account notes: one muted line.
+    expect(byTest(`profile-menu-btn-${other.id}`)).toBeNull()
+    expect(byTest(`profile-chip-${other.id}`)!.tagName).toBe('SPAN')
+    expect(container.querySelector('[data-testid^="account-web-session"]')).toBeNull()
+    expect((window as any).electronAPI.accountWeb.status).not.toHaveBeenCalled()
+    expect(byTest('accounts-claude-note')).toBeNull()
+    expect(byTest('provider-off-note-claude')).not.toBeNull()
   })
 
   it('Claude Code switched off in main: the same', async () => {

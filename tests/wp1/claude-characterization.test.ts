@@ -62,7 +62,8 @@ const canvasLink = await import('../../src/main/canvas/canvas-session-link')
 // pre-seed it (PATH dedupe, inherited CCC_SESSION_WORKTREE).
 let providerEnv: Record<string, string> = {}
 const fakeClaude = {
-  id: 'claude', displayName: 'Claude', resolveBinary: () => null,
+  // The local launch resolves Claude through the provider (WP2 PR 4).
+  id: 'claude', displayName: 'Claude', resolveBinary: () => ({ cmd: 'claude', args: [] }),
   buildSpawnCommand: () => ({ cmd: 'fake-shell', args: [], env: { ...providerEnv } }),
   detectUiRunning: () => false, ingestSessionTelemetry: () => ({ stop() {} }), listHistorySessions: async () => [],
   resumeCommand: () => ({ cmd: '', args: [] }), configureMcpServer: async () => {},
@@ -317,7 +318,20 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
   const serialised: string[] = []
   const state = { inUse: [] as boolean[], clearThrows: false, teardownThrows: false, kc: { ok: true } as { ok: true } | { ok: false; reason: string } }
   let store: Array<Record<string, unknown>> = []
-  const invoke = (ch: string, ...args: any[]) => ipcHandlers.get(ch)!({} as any, ...args)
+
+  // The app's own window, and an event from its top frame: the account-profile
+  // handlers answer nothing else (P3.2, trusted-sender.ts). An event object is
+  // stamped as coming from it (its sender becomes the window's webContents).
+  const appFrame = { frame: 'app' }
+  const appWindow: any = { isDestroyed: () => false, webContents: { mainFrame: appFrame } }
+  const getAppWindow = () => appWindow
+  function fromApp<T extends Record<string, any>>(ev: T = {} as T): T {
+    const wc = ev.sender ?? { mainFrame: appFrame }
+    if (!wc.mainFrame) wc.mainFrame = { frame: 'main' }
+    appWindow.webContents = wc
+    return Object.assign(ev, { sender: wc, senderFrame: wc.mainFrame })
+  }
+  const invoke = (ch: string, ...args: any[]) => ipcHandlers.get(ch)!(fromApp({} as any), ...args)
 
   beforeEach(async () => {
     order.length = 0; state.inUse = []; state.clearThrows = false; state.teardownThrows = false; state.kc = { ok: true }
@@ -336,6 +350,7 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
     vi.doMock('../../src/main/claude-account-identity', () => ({
       getAccountIdentity: vi.fn(), getDefaultAccountEmail: vi.fn(), getWatchedProfileId: vi.fn(), detectedNewAccountEmail: vi.fn(),
       isProfileInUseByLiveSession: () => { const v = state.inUse.shift() ?? false; order.push(`inUse:${v}`); return v },
+      sessionsOnProfile: () => [],
     }))
     vi.doMock('../../src/main/usage/account-usage', () => ({ fetchAllAccountsUsage: vi.fn(), fetchAllAccountsUsageStreaming: vi.fn(), fetchAccountUsage: vi.fn() }))
     vi.doMock('../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: () => [], readAllProfileAuthInfoAsync: async () => [] }))
@@ -345,7 +360,7 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
     vi.doMock('../../src/main/account-web/account-pane', () => ({ closeAccountPanesForProfile: (id: string) => { order.push(`closePanes:${id}`) } }))
     const { registerAccountProfilesHandlers } = await import('../../src/main/ipc/account-profiles-handlers')
     ipcHandlers.clear()
-    registerAccountProfilesHandlers()
+    registerAccountProfilesHandlers(getAppWindow)
   })
 
   it('rename trims and caps the name at 120 characters and refuses an invalid id', () => {

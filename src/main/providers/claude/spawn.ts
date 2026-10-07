@@ -4,16 +4,14 @@ import { execSync } from 'child_process'
 import { askPromptEnvValue } from '../../terminal-launch-line'
 import { resolveVersionBinary } from '../../legacy-version-manager'
 import { logInfo } from '../../debug-logger'
-import { defaultLoginShell } from '../../login-shell'
+import { localSessionShell } from '../../login-shell'
 import type { LegacyVersion } from '../../../shared/types'
 import type { SpawnOptions } from '../types'
 import { colorFgBgValue } from '../host-color-scheme'
 
 // The host light/dark scheme and its COLORFGBG encoding live in
 // ../host-color-scheme (shared by the local Claude env, the Codex env and the
-// SSH remote launch line -- book item 34). Re-exported here because callers
-// and tests import them from the Claude provider.
-export { resolveHostColorScheme, colorFgBgValue, colorFgBgEnvToken } from '../host-color-scheme'
+// SSH remote launch line -- book item 34); callers import them from there.
 
 export function resolveClaudeBinary(legacyVersion?: LegacyVersion): { cmd: string; args: string[] } {
   if (legacyVersion?.enabled && legacyVersion.version) {
@@ -151,7 +149,7 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
   // probe passes is a box the launch can spawn on. This used to hard-code
   // /bin/bash while the probes hard-coded /bin/zsh (final adversarial pass,
   // 2.1.1).
-  const shell = os.platform() === 'win32' ? 'powershell.exe' : defaultLoginShell(process.env, os.platform())
+  const shell = localSessionShell(process.env, os.platform())
   // POSIX: spawn a LOGIN shell (-l) so PATH picks up Homebrew/nvm/npm-global
   // entries from ~/.zprofile. A Finder/Dock-launched app inherits launchd's
   // minimal PATH, and a non-login zsh never sources ~/.zprofile, so without

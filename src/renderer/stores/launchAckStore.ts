@@ -48,6 +48,8 @@ export interface PendingLaunchAck {
   /** The account list could not be read, so the app cannot tell what this
    *  sign-in is: it asks anyway, and main still validates the account. */
   unknown: boolean
+  /** A Cloud Agent's Retry, not a session launch: the confirm says so (P4.11). */
+  retryAgent?: boolean
   resolve: (yes: boolean) => void
 }
 

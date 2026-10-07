@@ -115,7 +115,7 @@ per-model buckets come from the Account usage page. (4) Decisions recorded on ai
 CLAUDE_CONFIG_DIR allowed as the macOS realm mechanism (supersedes D1 for
 macOS), the limit lifted behind the setting (supersedes D2), setting-off
 refusal approved, and a GUARD: architecture/decisions/
-2026-10-07-adr-023-macos-claude-multi-account.md. The guard
+2026-10-07-adr-024-macos-claude-multi-account.md. The guard
 (src/main/mac-realm-guard.ts, cache in mac-realm-verdict.ts): before a
 non-primary realm launch, `claude auth status` runs under the same realm env
 with the CLI the launch runs and must report `configDirectory` equal to the
@@ -150,7 +150,12 @@ adversarial review: pass 3 findings (4 MAJOR on capture/refresh token
 handling and setting-off launches, 12 minor) fixed with regression tests,
 each shown to fail with its fix reverted; re-attack round 1 (4 MAJOR on the
 rollback ordering, concurrent captures and the toggle Retry; 8 minor) fixed
-the same way; round 2 PASS (no MAJOR) with 6 minor, fixed the same way. A macOS
+the same way; round 2 PASS (no MAJOR) with 6 minor, fixed the same way.
+Merged with beta 1a5e9de5 (WP2 PRs 3-4): the ADR is renumbered ADR-024 (beta
+owns ADR-023); beta's sign-in status / sign-out runner gets the verified
+binary on the realm (compose.ts claudeAuthExecutable, after the check); a
+realm profile's sign-out needs no computer-sign-in acknowledgement; with the
+setting off a non-primary macOS sign-out is refused like its sessions. A macOS
 run of the SSH live matrix (statusline.ts) is not yet run.
 
 **Mac check (2026-10-06, operator's Mac, manual CLI, not the app).** With

@@ -3,6 +3,8 @@ import * as path from 'path'
 import * as fs from 'fs'
 import { homedir } from 'os'
 import * as pty from 'node-pty'
+import { guardPtyIo } from '../pty-input-guard'
+import { stripSpoofableText } from '../../shared/safe-text'
 import { logInfo } from '../debug-logger'
 import { getInstallPath } from '../update-watcher'
 import { resolveClaudeForPty } from '../pty-manager'
@@ -187,6 +189,10 @@ export function registerSetupHandlers(): void {
         if (cliSetupPty) cliSetupPty.write(`${cmd}\r`)
       }, 500)
     }
+
+    // P3.15 round 4 (P2): an error on this terminal's input (the user types
+    // into it) or output never quits the app; it ends on its own exit.
+    guardPtyIo(cliSetupPty, (side, err) => logInfo(`[setup] CLI setup PTY ${side} failed (${stripSpoofableText(String(err?.code ?? err?.message ?? err), 120)})`))
 
     const win = BrowserWindow.fromWebContents(event.sender)
 

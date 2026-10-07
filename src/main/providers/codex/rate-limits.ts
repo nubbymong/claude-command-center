@@ -15,10 +15,22 @@
  * limit id must be a short plain identifier (never "__proto__" and the like)
  * and a limit name short and printable. Anything else is
  * dropped, never repaired, and fields this code does not use (account id,
- * credits, upsell, the fields later CLIs added) are never copied.
+ * upsell, the fields later CLIs added) are never copied.
+ *
+ * The one addition (P3.14, ADR-023): the account's credits count, three
+ * fields only and each validated: `hasCredits` and `unlimited` booleans (else
+ * the whole is dropped), `balance` a plain decimal string (else null). They
+ * are read from the rollout snapshot itself, or from the answer's own
+ * `rateLimits`; never from an entry of the per-limit map. Codex credits are a
+ * count, not money. They belong to the account-wide (default) limit's report,
+ * the one the main bars come from, and have three states: a figure; `null`,
+ * "none now" (the key is null, as an account without credits writes it, or it
+ * is present and unusable); and no statement (the key is absent, or the
+ * snapshot is a sub-limit's, whose credits are never read). A later report's
+ * null clears an earlier figure; no statement leaves it.
  */
 
-import type { AllowanceLimit, AllowanceReading, AllowanceWindow, UsageBucket } from '../../../shared/usage-types'
+import type { AllowanceCredits, AllowanceLimit, AllowanceReading, AllowanceWindow, UsageBucket } from '../../../shared/usage-types'
 import { planLabelFor } from '../../../shared/usage-types'
 import { windowLabel } from '../../../shared/usage-labels'
 
@@ -41,6 +53,10 @@ const MAX_DATE_MS = 8.64e15
  *  later reading. */
 const FUTURE_SKEW_MS = 5 * 60 * 1000
 const LIMIT_NAME_MAX = 40
+/** A credits balance as the CLI writes it: a plain non-negative decimal, at
+ *  most 13 integer and 12 fraction digits (the real one has 10 fraction
+ *  digits). ASCII digits only; no sign, exponent, space or separator. */
+const BALANCE_RE = /^\d{1,13}(\.\d{1,12})?$/
 // Control, format (bidi overrides and the like) and line/paragraph separators.
 const UNPRINTABLE_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u
 
@@ -63,6 +79,19 @@ const isLimitId = (v: unknown): v is string => typeof v === 'string' && LIMIT_ID
 /** An epoch-ms time a Date can hold, or null. */
 const dateMs = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= MAX_DATE_MS ? v : null)
 
+/** A date-time with a zone designator (Z or an offset), the form Codex writes:
+ *  the same rule as the transcript reader's (P3.12). A stamp with none is no
+ *  time, since Date.parse would read it as this machine's local time. */
+const ZONED_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})$/
+
+/** The epoch-ms time of a zoned date-time stamp, or null (not a string, no zone
+ *  designator, or not a date). Never throws. */
+export function zonedTimeMs(value: unknown): number | null {
+  if (typeof value !== 'string' || !ZONED_TIME_RE.test(value)) return null
+  const at = Date.parse(value)
+  return dateMs(at)
+}
+
 /** ISO text for an epoch-ms time, or '' for one a Date cannot hold (never throws). */
 export function isoFromEpochMs(ms: number | null): string {
   const v = dateMs(ms)
@@ -71,8 +100,8 @@ export function isoFromEpochMs(ms: number | null): string {
 
 /** The protocol's names for the fields this code reads, per source. */
 const NAMES = {
-  'rollout': { limitId: 'limit_id', limitName: 'limit_name', planType: 'plan_type', used: 'used_percent', minutes: 'window_minutes', resets: 'resets_at' },
-  'app-server': { limitId: 'limitId', limitName: 'limitName', planType: 'planType', used: 'usedPercent', minutes: 'windowDurationMins', resets: 'resetsAt' },
+  'rollout': { limitId: 'limit_id', limitName: 'limit_name', planType: 'plan_type', used: 'used_percent', minutes: 'window_minutes', resets: 'resets_at', has: 'has_credits' },
+  'app-server': { limitId: 'limitId', limitName: 'limitName', planType: 'planType', used: 'usedPercent', minutes: 'windowDurationMins', resets: 'resetsAt', has: 'hasCredits' },
 } as const
 
 type Names = (typeof NAMES)[CodexRateLimitSource]
@@ -102,7 +131,24 @@ function readLimitName(v: unknown): string | null {
   return t
 }
 
-interface Snapshot { limit: AllowanceLimit | null; planType: string | null }
+/** The account's credits count: the three validated fields, or null (null,
+ *  not a plain object, or a flag that is not a boolean). A balance that is not
+ *  a plain decimal is null, the flags kept (the regex bounds it to at most 25
+ *  digits, so the Number is always finite). Never throws and copies no other
+ *  key. */
+function readCredits(raw: unknown, n: Names): AllowanceCredits | null {
+  if (!isPlain(raw)) return null
+  const hasCredits = own(raw, n.has)
+  const unlimited = own(raw, 'unlimited')
+  if (typeof hasCredits !== 'boolean' || typeof unlimited !== 'boolean') return null
+  const text = own(raw, 'balance')
+  const balance = typeof text === 'string' && BALANCE_RE.test(text) ? Number(text) : null
+  return { hasCredits, unlimited, balance }
+}
+
+/** `credits`: see the header (a figure, null for "none now", undefined for no
+ *  statement). */
+interface Snapshot { limit: AllowanceLimit | null; planType: string | null; credits: AllowanceCredits | null | undefined }
 
 /** One snapshot; null when it cannot be trusted at all (not a plain object, or
  *  a limit id that is present but not a plain identifier). A snapshot with no
@@ -122,7 +168,11 @@ function readSnapshot(raw: unknown, n: Names, reference: number, readingAt: numb
   const limit = primary || secondary
     ? { limitId, limitName: readLimitName(own(raw, n.limitName)), readingAt, primary, secondary }
     : null
-  return { limit, planType }
+  // Only the default limit's snapshot speaks for the account's credits, and
+  // only when it has the key: a figure, or null (null, or unusable).
+  const rawCredits = own(raw, 'credits')
+  const credits = limitId === CODEX_DEFAULT_LIMIT_ID && rawCredits !== undefined ? readCredits(rawCredits, n) : undefined
+  return { limit, planType, credits }
 }
 
 /** The oldest time among limits, or null when none has one. */
@@ -194,30 +244,43 @@ export function normaliseCodexRateLimits(
   const planType = snapshots.find((s) => s.planType !== null)?.planType ?? null
   if (limits.length === 0 && planType === null) return null
   // Every limit here was read at the same moment: the reading is as old as it.
-  return { limits, planType, readingAt }
+  const out: AllowanceReading = { limits, planType, readingAt }
+  // The credits of the rollout's own snapshot or the answer's own `rateLimits`
+  // (the first snapshot of either): never an entry of the per-limit map. A
+  // figure, or null ("none now"); no key at all when it makes no statement.
+  const credits = snapshots[0].credits
+  if (credits !== undefined) out.credits = credits
+  return out
 }
 
 /**
  * Merge readings taken over time (a session's `token_count` events, oldest
  * first): each limit keeps its newest reading WITH its own time, the plan is
- * the newest one reported, and the reading as a whole is as old as its oldest
- * limit (so a default figure left behind by a switch to another model's limit
- * never looks fresh). Null when there is nothing.
+ * the newest one reported, the credits are the newest default-limit reading's
+ * (a null clears an older figure; a reading that makes no statement about
+ * them leaves it; the merged reading never carries null), and the reading as
+ * a whole is as old as its oldest limit (so a default figure left behind by a
+ * switch to another model's limit never looks fresh). Null when there is
+ * nothing.
  */
 export function mergeAllowanceReadings(readings: readonly (AllowanceReading | null)[]): AllowanceReading | null {
   const present = readings.filter((r): r is AllowanceReading => r !== null)
   if (present.length === 0) return null
   const limits: AllowanceLimit[] = []
   let planType: string | null = null
+  let credits: AllowanceCredits | null = null
   let readingAt: number | null = null
   for (const r of present) {
     limits.push(...r.limits)
     if (r.planType !== null) planType = r.planType
+    if (r.credits !== undefined) credits = r.credits
     if (r.readingAt !== null) readingAt = readingAt === null ? r.readingAt : Math.max(readingAt, r.readingAt)
   }
   // orderLimits keeps the LAST entry per id: the newest reading of each limit.
   const merged = orderLimits(limits)
-  return { limits: merged, planType, readingAt: merged.length > 0 ? oldestOf(merged) : readingAt }
+  const out: AllowanceReading = { limits: merged, planType, readingAt: merged.length > 0 ? oldestOf(merged) : readingAt }
+  if (credits) out.credits = credits
+  return out
 }
 
 /**

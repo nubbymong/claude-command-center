@@ -110,7 +110,7 @@ describe('Status Line tab, usage bar toggles (usage track MP6)', () => {
     expect(labelsOf('usage-bars-footer-codex')).toEqual(['5h', 'Weekly', 'Spark 5h'])
     expect(labelsOf('usage-bars-session')).toEqual(['5h', 'Weekly', 'Fable', 'Spark 5h'])
     expect(container.querySelector('[data-testid="statusline-codex-note"]')?.textContent).toBe(
-      'These settings apply to Codex sessions too. A Codex session does not report lines changed or session time yet, so those items do not show for it.',
+      'These settings apply to Codex sessions too.',
     )
     const codexWeekly = toggles('usage-bars-footer-codex')[1]
     await click(codexWeekly)

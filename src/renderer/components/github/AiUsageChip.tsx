@@ -1,4 +1,5 @@
-import React, { useState } from 'react'
+import React, { useCallback, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useGitHubStore } from '../../stores/githubStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { selectAiChip, selectUsagePool, formatCredits } from '../../lib/ai-usage-format'
@@ -8,6 +9,9 @@ import AiUsagePopover from '../AiUsagePopover'
 // U+26A0 WARNING SIGN. No \u{...} escapes in JSX (esbuild). Rendered via
 // String.fromCodePoint and interpolated into the label.
 const WARN_GLYPH = String.fromCodePoint(0x26a0)
+
+/** The popover's width in rem: AiUsagePopover's `w-80`. */
+const POPOVER_WIDTH_REM = 20
 
 // Per-model + totals tooltip for the AI-usage chip. Plain text (title attr) so
 // it works without a portal. When a plan cycle is set, the cycle's included-
@@ -68,6 +72,44 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: (tab?: 'github' | 's
   const aiUsageCycle = useGitHubStore((s) => s.aiUsageCycle)
   const cap = useSettingsStore((s) => s.settings.copilotIncludedCredits)
   const [popoverOpen, setPopoverOpen] = useState(false)
+  const [anchor, setAnchor] = useState<{ right: number; bottom: number } | null>(null)
+  const chipRef = useRef<HTMLButtonElement>(null)
+
+  // P3.16 final-head VM finding D2: the chip sits in the status strip's
+  // overflow-hidden telemetry zone at the bottom of the window, so the popover
+  // is portalled onto document.body and fixed off the chip's on-screen rect,
+  // opening upward (IdentityOverflow's formula, right-aligned to the chip).
+  // Outside the strip it is clipped by nothing, and the strip's region zoom
+  // (the Status bars scale) does not scale its offsets. Fixer 8b: `right` is
+  // clamped so the popover (20rem at the root font size the global UI scale
+  // sets) stays 8px inside the window's left edge, as IdentityOverflow clamps.
+  const togglePopover = () => {
+    if (popoverOpen) {
+      setPopoverOpen(false)
+      return
+    }
+    const r = chipRef.current?.getBoundingClientRect()
+    const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+    const maxRight = window.innerWidth - POPOVER_WIDTH_REM * remPx - 8
+    setAnchor(r ? {
+      right: Math.max(8, Math.min(window.innerWidth - r.right, maxRight)),
+      bottom: Math.max(8, window.innerHeight - r.top + 6),
+    } : null)
+    setPopoverOpen(true)
+  }
+  // Fixer 8b (IdentityOverflow's keyboard handling): Escape hands focus back
+  // to the chip; an outside click leaves it where the click put it.
+  const closePopover = useCallback((refocus?: boolean) => {
+    setPopoverOpen(false)
+    if (refocus) chipRef.current?.focus()
+  }, [])
+  // Fixer 8b: a Settings link closes the popover first. The sessions view
+  // stays mounted, hidden, under Settings, and the portalled popover would
+  // otherwise float over the Settings page.
+  const openSettings = useCallback((tab?: 'github' | 'statusline') => {
+    setPopoverOpen(false)
+    onOpenSettings?.(tab)
+  }, [onOpenSettings])
 
   // Feature off = invisible.
   if (!enabled) return null
@@ -128,11 +170,14 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: (tab?: 'github' | 's
   return (
     <span className="relative flex items-center shrink-0">
       <button
+        ref={chipRef}
         type="button"
         data-ai-usage-chip
         aria-label={ariaLabel}
+        aria-haspopup="dialog"
+        aria-expanded={popoverOpen}
         title={chip ? buildAiTooltip(aiUsage!, aiUsageCycle) : placeholderTooltip(aiUsageStatus)}
-        onClick={() => setPopoverOpen((v) => !v)}
+        onClick={togglePopover}
         className="flex items-center gap-1 rounded px-1.5 py-0.5 tabular-nums transition-colors duration-150 focus-ring"
         style={{
           color,
@@ -143,11 +188,15 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: (tab?: 'github' | 's
       >
         {content}
       </button>
-      <AiUsagePopover
-        open={popoverOpen}
-        onClose={() => setPopoverOpen(false)}
-        onOpenSettings={onOpenSettings}
-      />
+      {createPortal(
+        <AiUsagePopover
+          open={popoverOpen}
+          anchor={anchor}
+          onClose={closePopover}
+          onOpenSettings={openSettings}
+        />,
+        document.body,
+      )}
     </span>
   )
 }

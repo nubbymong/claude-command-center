@@ -13,7 +13,7 @@
 // user's home shortened to ~ and spoofable text stripped). No other part of
 // that path, and no environment value, crosses with it.
 import type { ProviderId } from '../types'
-import type { UsageBucket } from '../usage-types'
+import type { AllowanceCredits, UsageBucket } from '../usage-types'
 import type {
   AccountLifecycle, AuthMethod, KnownAuthState, OperationalState, IdentityAssurance, RealmLifecycle, DiscoveryState, Compatibility,
 } from './model'
@@ -50,6 +50,11 @@ export interface ProviderInstallationView {
   signInMethods: Readonly<Record<SignInMethod, CapabilityView>>
   status: CapabilityView
   logout: CapabilityView
+  /** How much of the provider runs now: everything holding its accounts and
+   *  what runs of it without an account lease. The count a switch-off is
+   *  refused with, read afresh for every snapshot; after such a refusal main
+   *  publishes a new snapshot each time it moves, until it is 0. */
+  inUse: number
   /** Present when this provider reviews for the other provider's sessions:
    *  whether a review could be prepared now on the account side, and on
    *  which account. The review switches and the Conductor tools switch
@@ -108,6 +113,16 @@ export interface AccountView {
    *  the profile id), so a surface that lists the provider's own accounts
    *  can show each one's registry state. */
   legacyId?: string
+  /** When it was archived; present only on an archived account. */
+  archivedAt?: number
+  /** A sign in again moved it to a new sign-in and the old one is still
+   *  there (design 9.2), and why: `kept` -- the app does not remove it yet
+   *  (not proven safe for the new one; archiving removes it); `unavailable`
+   *  -- the provider cannot sign it out now; `failed` -- a removal did not
+   *  finish, and a check of the sign-in tries again. Absent otherwise. */
+  oldSignInLeft?: 'kept' | 'unavailable' | 'failed'
+  /** A sign-in of this account runs now (its Sign in again). Absent otherwise. */
+  signingIn?: true
   /** Sessions running on this account now. */
   runningSessions: number
   /** Reviewer invocations running on this account now. */
@@ -146,6 +161,11 @@ export interface PendingSetupView {
   createdAt: number
   /** A sign-in for it is running now. */
   signingIn: boolean
+  /** Its Discard runs now (signing it out, removing its folder). Absent otherwise. */
+  discardRunning?: true
+  /** A sign in again of this account, not a new one: it is finished by that
+   *  sign in again, or discarded; never named as a new account. */
+  replacesAccountId?: string
 }
 
 /** A provider's own default sign-in on this computer (6.3; Codex's
@@ -205,6 +225,7 @@ export type AccountsFailureCode =
   | 'provider-state-unknown'   // the saved on/off could not be read: nothing that starts a process runs
   | 'last-provider'            // at least one provider stays enabled
   | 'consumers'                // sessions or operations hold it: `consumers` says how many
+  | 'in-use'                   // a live session the provider runs without a lease holds its own record (a Claude profile)
   | 'busy'                     // a sign-in or another change holds it
   | 'acknowledgement-required' // an external home's wider effect needs the user's yes
   | 'not-signed-in'
@@ -212,6 +233,7 @@ export type AccountsFailureCode =
   | 'sign-in-changed'          // the realm now holds another sign-in: reconcile it first (design 5.5)
   | 'review-unavailable'       // this account cannot run reviews here, or the app could not tell: the message says which
   | 'internal'                 // unexpected; the app log has the detail
+  | 'conversation-uncertain'   // P3.6: the session's conversation could have been another session's, so a switch did not carry it
   | AuthOperationCode
   | RealmFolderCode
 
@@ -224,7 +246,8 @@ export type AuthOperationCode =
 /** The realm folder codes the surface can see (mirrors the core contract). */
 export type RealmFolderCode =
   | 'not-managed' | 'resources-unavailable' | 'overlaps-external' | 'unsafe-path' | 'permissions' | 'credentials-present'
-  | 'not-empty' | 'unsafe-contents' | 'changed' | 'io-failed'
+  | 'not-empty' | 'unsafe-contents' | 'changed' | 'too-large' | 'cancelled' | 'io-failed'
+  | 'conversation-missing' | 'conversation-differs'
 
 export type AccountsFailure = {
   ok: false
@@ -232,8 +255,27 @@ export type AccountsFailure = {
   message: string
   /** With `consumers`: how many hold it. */
   consumers?: number
+  /** With `consumers` from a lifecycle change: the app sessions whose
+   *  sessions or reviews hold it (ids only), so the refusal can name them. */
+  sessions?: string[]
+  /** With `consumers` from a lifecycle change: how many holders belong to no
+   *  named session (sign-ins, operations), for "and N more". */
+  unnamed?: number
   /** The sign-in state the operation observed, when it read one. */
   state?: KnownAuthState
+}
+
+/**
+ * P3.6 (row 22): a respawn of a session under another account whose
+ * conversation did not come along whole (main's carry, pty:spawn): main's
+ * reason in its own words, and what the launch actually did -- resumed the
+ * conversation from a copy already in that account, or started a new one.
+ * Absent when the conversation was carried and resumed, or there was none.
+ */
+export interface ConversationCarryNotice {
+  code: AccountsFailureCode
+  message: string
+  resumed: boolean
 }
 
 export type AccountsResult<T extends object = object> = ({ ok: true } & T) | AccountsFailure
@@ -264,8 +306,9 @@ export interface InstallRecipeView {
 
 /** An account's allowance as the Account usage page shows it (usage track
  *  MP3; plan section 3). Views only: percentages, reset times, window labels,
- *  the time of the reading and the plan's name. Never a path, a file name, a
- *  process detail or a credential.
+ *  the time of the reading, the plan's name and, for an account that has
+ *  them, its credits count (three validated fields; ADR-023). Never a path, a
+ *  file name, a process detail or a credential.
  *  - `ok`: a reading is shown; `source` says where it came from.
  *  - `no-session-yet`: nothing has reported an allowance for this account.
  *  - `per-token`: an API-key account, billed per token: nothing is read.
@@ -291,6 +334,9 @@ export interface ProviderAccountUsageView {
   readingAt?: number
   /** The plan's display name ("Plus", "Pro"), when known. */
   planLabel?: string
+  /** The account's Codex credits, a count and not money, when the shown
+   *  reading carries them; the key is omitted when it does not. */
+  credits?: AllowanceCredits
 }
 
 /** A usage stream's answer: `off` streams nothing (D5); `accounts` is how
@@ -308,12 +354,27 @@ export const PROVIDER_USAGE_RESULT_RE = /^providerAccounts:usageResult:[0-9a-f]{
 export interface SignInOutputEvent {
   accountId: string
   text: string
+  /** Set when the run moved on to a step with no output of its own (text
+   *  is then empty): a sign in again carrying the account's earlier
+   *  conversations over to the new sign-in. */
+  phase?: SignInPhase
 }
+
+/** A step of a sign-in the dialog says in its status line. */
+export type SignInPhase = 'carrying-history'
+
+/** A sign in again's answer. `notCarriedOver`: earlier conversation files
+ *  left in the old folder (each has another name the app did not give it). */
+export type SignInAgainResult = { state: KnownAuthState; separateAccountId?: string; notCarriedOver?: number }
 
 // --- Requests (validated again in the main process; these are only types) ---
 
 export interface BeginSetupRequest { providerId: ProviderId; method: SignInMethod }
 export interface SignInRequest { accountId: string; method: SignInMethod; secretHandle?: string }
+/** Sign in again: `sameAccount` is the user's answer (design 9.2), required;
+ *  `acknowledgeExternal` their yes to signing in again this computer's own
+ *  sign-in in place. */
+export interface SignInAgainRequest extends SignInRequest { sameAccount: true; acknowledgeExternal?: true }
 export type SetupIdentityChoice =
   | { mode: 'new'; friendlyName?: string; colourKey: string; groupId?: string }
   | { mode: 'link'; identityId: string }

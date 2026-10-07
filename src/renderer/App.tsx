@@ -14,6 +14,7 @@ import { useWebviewStore } from './stores/webviewStore'
 import { usePaneOcclusionStore, useOccludesNativePanes } from './stores/paneOcclusionStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
 import { setupCanvasListener } from './stores/canvasStore'
+import { setupCodexMarkerNoticeListener } from './stores/codexMarkerNoticeStore'
 import { setupCanvasReviewListener } from './stores/canvasReviewStore'
 import { setupCanvasSnapshotHost } from './canvas/canvas-snapshot-host'
 import { useLogsStore } from './stores/useLogsStore'
@@ -34,7 +35,7 @@ import { grantLaunchAcknowledgement } from './stores/launchAckStore'
 import NewAccountPrompt from './components/NewAccountPrompt'
 import SentinelPanel from './components/sentinel/SentinelPanel'
 import { useAddAccount } from './hooks/useAddAccount'
-import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
+import TrainingWalkthrough from './components/TrainingWalkthrough'
 import SessionDialog from './components/SessionDialog'
 import GuidedTour from './components/GuidedTour'
 import FeatureGuidePage from './components/FeatureGuidePage'
@@ -94,15 +95,17 @@ import { setupSleepListeners } from './stores/sleepStore'
 import { setupActiveListeners } from './stores/activeStore'
 import LoggingConsentPrompt from './components/LoggingConsentPrompt'
 import LogsWipeModal from './components/LogsWipeModal'
-import { bootChain } from './utils/bootGates'
+import { bootChain, launchDialogsSuppressed } from './utils/bootGates'
 import ResumeSessionsPrompt from './components/ResumeSessionsPrompt'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import type { SessionState } from './types/electron'
-import { buildSessionState, buildSessionStateWithResumeTargets, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState, loadSavedStateAtStartup, closeWithNoSessions, discardAndClose, restoreSavedSessions } from './session-persistence'
+import { buildSessionState, buildSessionStateWithResumeTargets, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState, loadSavedStateAtStartup, closeWithNoSessions, discardAndClose, restoreSavedSessions, refreshRestoreOffer, setUnansweredRestore } from './session-persistence'
 import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
+import { listenGoToSession } from './lib/goToSession'
+import { loggingConsentDue } from './utils/logging-consent'
 
 import type { ViewType } from './types/views'
 
@@ -247,6 +250,11 @@ export default function App() {
     return () => window.removeEventListener('app:openAccountPane', onOpenAccountPane)
   }, [])
 
+  // Settings, Accounts "Go to <session>" (P3.2, design 5.3): a refused
+  // inactivate, archive or removal names the sessions holding the account;
+  // each one's button brings its tab forward. A stale id is a no-op.
+  useEffect(() => listenGoToSession(() => setView('sessions')), [])
+
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
   /** The provider card the first-config dialog opens on. Set only by Hello
    *  Codex's "Start a Codex session" (WP2 commit 6f); cleared when the
@@ -276,6 +284,10 @@ export default function App() {
   // this run. It is the whole saved set: a session whose provider cannot
   // launch is restored too and reopens as Not started (the prompt tags it).
   const [pendingRestore, setPendingRestore] = useState<SessionState | null>(null)
+  // P3.5 (a C item): while the prompt is unanswered, every write of the
+  // session file keeps the set it offers (session-persistence), so a tab
+  // launched meanwhile never overwrites it on disk.
+  useEffect(() => { setUnansweredRestore(pendingRestore) }, [pendingRestore])
   // What this start brought back, tallied once when the restore is decided
   // (Resume, Don't open, or nothing saved to ask about): the Allow Multi Spawn
   // grandfathering and its startup page count copies from it alone.
@@ -290,7 +302,9 @@ export default function App() {
   // Sidebar receives onShowFirstRun={() => setShowGuidedConfig(true)}, so we use the
   // same setter here to open the real create dialog from the stage empty state.
   const onCreateConfigFromStage = () => setShowGuidedConfig(true)
-  const loggingConsentSeen = useSettingsStore((s) => s.settings.loggingConsentSeen)
+  // P3.12 round 1 (B5): the conversation-indexing notice is due (never seen,
+  // or once more for a Codex user who saw only the earlier notice).
+  const loggingConsentDueNow = useSettingsStore((s) => loggingConsentDue(s.settings))
   // Whether "do you use Codex?" has been answered, live: an answer given
   // before the one-time page's turn (a setup screen's "Use Codex only") means
   // it never shows.
@@ -705,6 +719,9 @@ export default function App() {
       setupSleepListeners()
       setupActiveListeners()
       setupCanvasListener()
+      // WP2 PR 4, P4.1 (review A-1): canvas markers a Codex session did not get, kept
+      // while the canvas page is closed.
+      setupCodexMarkerNoticeListener()
       setupCanvasReviewListener()
       setupCanvasSnapshotHost()
       useGitHubStore.getState().loadConfig()
@@ -791,7 +808,9 @@ export default function App() {
     // onboarding completes.
     if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
     if (whatsNewOnly || showTraining || showTrainingAll) return
-    if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
+    // Not on the tour: nothing opens it by itself, so waiting on an unseen
+    // card would never arm this page and hold the boot chain (PR 4 VM final).
+    if (shouldShowWhatsNew()) return
     const t = setTimeout(() => setShowGitHubOnboarding(true), 120)
     return () => clearTimeout(t)
   }, [githubConfig, logsWipeBytes, whatsNewOnly, showTraining, showTrainingAll, needsCliSetup])
@@ -1119,9 +1138,14 @@ export default function App() {
                           another terminal, so a user who switched could be
                           typing into a plain shell believing it was Claude, with
                           the only cue a label change on one button in the command
-                          bar. This strip states it and carries the way back. */}
+                          bar. This strip states it and carries the way back.
+                          P3.7 (the C item "narrow-window overlap", row 64):
+                          pr-12 keeps the way back clear of the GitHub button
+                          floating over this corner (GitHubPanel gh-fab:
+                          absolute top-2 right-2, 32px), as the switch note
+                          does; the note wraps, the button never shrinks. */}
                       <div
-                        className="flex-none flex items-center gap-2 px-3 py-1 text-[11px] border-b"
+                        className="flex-none flex items-center gap-2 pl-3 pr-12 py-1 text-[11px] border-b"
                         style={{
                           background: 'color-mix(in srgb, var(--color-green) 12%, transparent)',
                           borderColor: 'color-mix(in srgb, var(--color-green) 28%, transparent)',
@@ -1133,10 +1157,10 @@ export default function App() {
                           <polyline points="4 17 10 11 4 5" />
                           <line x1="12" y1="19" x2="20" y2="19" />
                         </svg>
-                        <span>Partner terminal &mdash; a plain shell, not {agentName}</span>
+                        <span className="min-w-0">Partner terminal &mdash; a plain shell, not {agentName}</span>
                         <button
                           onClick={() => togglePartner(session.id)}
-                          className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded focus-ring transition-colors hover:bg-surface1"
+                          className="ml-auto shrink-0 whitespace-nowrap flex items-center gap-1 px-2 py-0.5 rounded focus-ring transition-colors hover:bg-surface1"
                           style={{ color: 'var(--color-text)' }}
                           title={`Back to the ${agentName} terminal`}
                         >
@@ -1297,13 +1321,12 @@ export default function App() {
     tourActive,
     showGuidedConfig,
     showGitHubOnboarding,
-    loggingConsentSeen: Boolean(loggingConsentSeen),
+    loggingConsentSeen: !loggingConsentDueNow,
     codexReconfirmDue: codexReconfirmDue({ armed: codexReconfirmArmed, shown: codexReconfirmShown, answered: codexAnsweredNow }),
     resumePending: pendingRestore !== null,
     multiSpawnIntroDue,
     helloCodexOpen: helloCodexTakeoverOpen,
     whatsNewDue: shouldShowWhatsNew(),
-    trainingDue: shouldShowTraining() || isFirstInstall(),
     githubOnboardingDue: isGitHubOnboardingDue(),
   }
   // bootChain: the gate that renders now, and for the Codex introduction
@@ -1443,11 +1466,15 @@ export default function App() {
               // the prompt, so a close before it lands keeps the saved file.
               restoreUnsettledRef.current = true
               setPendingRestore(null)
+              // P3.5: answered -- the file no longer keeps the offer (at once,
+              // before the restore's own write).
+              setUnansweredRestore(null)
               void restoreSavedSessions(saved, restoreUnsettledRef, { probeGoneSessions, pingAllDetachedHosts })
             }}
             onDontOpen={() => {
               const saved = pendingRestore
               setPendingRestore(null)
+              setUnansweredRestore(null)
               useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
               // Discard the saved cards so the next boot doesn't re-prompt; the
               // conversations themselves stay resumable from inside Claude.
@@ -1468,10 +1495,12 @@ export default function App() {
               // session restarted since launch shows up (#130). Keep the current
               // list on a transient empty read rather than dismissing the prompt.
               // Boot-only: a read that lands after the prompt was answered
-              // (prev is null by then) never brings it back.
+              // (prev is null by then) never brings it back. P3.5: a tab
+              // launched while the prompt was open is never offered again.
               try {
                 const saved = await window.electronAPI.session.load() as SessionState | null
-                setPendingRestore((prev) => (prev && saved && saved.sessions.length > 0 ? saved : prev))
+                const open = new Set(useSessionStore.getState().sessions.map((s) => s.id))
+                setPendingRestore((prev) => refreshRestoreOffer(prev, saved, open))
               } catch (err) {
                 console.error('[App] Resume refresh failed:', err)
               }
@@ -1618,17 +1647,19 @@ export default function App() {
             under on its first spawn (multi-account only). App-root so it
             overlays every view -- but NOT on top of a boot gate. Like
             SentinelPanel it owns no turn in the sequence, so it is suppressed
-            while any gate is up; unlike SentinelPanel it holds spawns awaiting
+            while a gate is up; unlike SentinelPanel it holds spawns awaiting
             a promise, and those simply keep waiting (no timeout on that path),
             so the queue surfaces intact once the chain clears. Without this a
             restore painted its per-session account pickers over the Multi Spawn
-            startup page, which by design comes AFTER resume. */}
-        <AccountLaunchGate suppressed={bootGate !== null} />
+            startup page, which by design comes AFTER resume. The resume offer
+            itself does not suppress it: a session launched while the offer is
+            up shows its dialog (launchDialogsSuppressed, P3.5 VM finding V1). */}
+        <AccountLaunchGate suppressed={launchDialogsSuppressed(bootGate)} />
         {/* WP2: the per-launch confirm for an unverified sign-in (a
             provider's own home shared with other apps on this computer).
             Same placement and the same suppression rule as the account gate
             above. */}
-        <LaunchAckConfirm suppressed={bootGate !== null} />
+        <LaunchAckConfirm suppressed={launchDialogsSuppressed(bootGate)} />
         {/* Sentinel findings panel: global overlay, driven by sentinelStore.
             Suppressed while ANY boot gate is up — it is not a gate itself (it
             owns no turn in the sequence and can arrive at any time), but it

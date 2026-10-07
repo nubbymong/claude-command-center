@@ -2,7 +2,7 @@
   "schema": "wp1-traceability/1",
   "phase": "gate0",
   "boundHead": null,
-  "note": "Gate 0 plan: every WP1.* item maps to the tests/evidence that will prove it and to the CURRENT base tests that protect the behaviour today. `status` flips to `evidenced` (with digest-bound evidenceRecords for docs/wp1/evidence artifacts) when the artifact exists; ./phase.ts derives the candidate phase and traceability.test.ts enforces completeness there. Non-automated items carry the reason automation is not safe or possible (design 16.1).",
+  "note": "Gate 0 plan: every WP1.* item maps to the tests/evidence that will prove it and to the CURRENT base tests that protect the behaviour today. `status` flips to `evidenced` (with digest-bound evidenceRecords for docs/wp1/evidence artifacts: artifact, sha256, head (the 40-hex commit the evidence was taken at, which the artifact names in its text; at the candidate phase every head must equal boundHead), actor, at, commands) when the artifact exists; ./phase.ts derives the candidate phase and traceability.test.ts enforces completeness there. Non-automated items carry the reason automation is not safe or possible (design 16.1).",
   "items": [
     {
       "id": "WP1.1",
@@ -26,7 +26,10 @@
       "tests": [
         "tests/wp1/mode-matrix.test.ts",
         "tests/wp1/launch-handoff.test.ts",
-        "tests/wp1/tokenomics-realm-discovery.test.ts"
+        "tests/wp1/tokenomics-realm-discovery.test.ts",
+        "tests/e2e/codex-real-launch.spec.ts",
+        "tests/e2e/onboarding-provider-select.spec.ts",
+        "tests/e2e/codex-session-creation.spec.ts"
       ],
       "evidence": [
         "docs/wp1/evidence/real-cli-matrix.md"
@@ -42,7 +45,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/mode-matrix.test.ts",
-        "tests/wp1/fault-isolation.test.ts"
+        "tests/wp1/fault-isolation.test.ts",
+        "tests/e2e/onboarding-provider-select.spec.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -232,7 +236,8 @@
       "tests": [
         "tests/wp1/account-lifecycle.test.ts",
         "tests/wp1/consumer-leases.test.ts",
-        "tests/unit/renderer/accounts-surface.test.tsx"
+        "tests/unit/renderer/accounts-surface.test.tsx",
+        "tests/wp1/conversation-carry-service.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -377,7 +382,8 @@
       "title": "Migration is atomic and idempotent at every injected interruption point",
       "kind": "automated",
       "tests": [
-        "tests/wp1/migration-interruption.test.ts"
+        "tests/wp1/migration-interruption.test.ts",
+        "tests/wp1/registry-fs-port.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -389,7 +395,6 @@
       "title": "Corrupt source or destination metadata fails closed without credential loss",
       "kind": "automated",
       "tests": [
-        "tests/wp1/migration-interruption.test.ts",
         "tests/wp1/registry-store.test.ts",
         "tests/wp1/registry-fs-port.test.ts"
       ],
@@ -629,7 +634,8 @@
       "tests": [
         "tests/wp1/launch-handoff.test.ts",
         "tests/wp1/provider-core.test.ts",
-        "tests/wp1/provider-ipc.test.ts"
+        "tests/wp1/provider-ipc.test.ts",
+        "tests/wp1/conversation-carry-service.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -762,12 +768,18 @@
       "title": "Managed re-authentication: subject match, mismatch-to-separate-account, unverifiable confirmation, old-realm retirement and recovery; in-place external re-auth rules",
       "kind": "automated",
       "tests": [
-        "tests/wp1/reauth-staging.test.ts"
+        "tests/wp1/reauth-staging.test.ts",
+        "tests/wp1/account-lifecycle.test.ts",
+        "tests/wp1/provider-ipc.test.ts",
+        "tests/wp1/codex-realm-folders.test.ts",
+        "tests/unit/renderer/accounts-surface.test.tsx",
+        "tests/unit/tokenomics/tokenomics-carried-history-once.test.ts"
       ],
       "evidence": [],
       "status": "planned",
       "currentTests": [],
-      "baseCoverage": "new capability, none on base"
+      "baseCoverage": "new capability, none on base",
+      "reason": "automated tests cover the staging, the decision, the switch, recovery and in-place re-authentication; owed before evidenced: the VM proof that signing out a retired realm never invalidates its replacement (real CLI 0.153.4 and 0.155.1, file and keyring stores), and the real-CLI replacement revalidation after that sign-out (the ADR-009 pass is done)"
     },
     {
       "id": "WP1.53",
@@ -871,7 +883,11 @@
       "title": "Full mode matrix passes fresh install, upgrade, restart, enable/disable and minimum launch smoke",
       "kind": "automated",
       "tests": [
-        "tests/wp1/mode-matrix.test.ts"
+        "tests/wp1/mode-matrix.test.ts",
+        "tests/e2e/codex-reconfirm-upgrade.spec.ts",
+        "tests/e2e/codex-mode-restart.spec.ts",
+        "tests/e2e/codex-mode-enable-disable.spec.ts",
+        "tests/e2e/codex-real-launch.spec.ts"
       ],
       "evidence": [
         "docs/wp1/evidence/mode-matrix.md"
@@ -1004,10 +1020,12 @@
       "title": "The fake CLI has a versioned oracle manifest from pinned docs/source and sanitised real observations; self-tests compare real/fake",
       "kind": "automated",
       "tests": [
-        "tests/wp1/fake-cli.test.ts"
+        "tests/wp1/fake-cli.test.ts",
+        "tests/wp1/fake-cli-oracle.test.ts"
       ],
       "evidence": [
-        "tests/wp1/fake-cli/oracle.json"
+        "tests/wp1/fake-cli/oracle.json",
+        "tests/wp1/fixtures/codex-cli-source.json"
       ],
       "status": "planned",
       "currentTests": [],
@@ -1024,7 +1042,8 @@
         "tests/wp1/traceability.json",
         "docs/wp2/plan.md",
         "docs/wp2/hello-codex-spec.md",
-        "docs/wp2/parity-checklist.md"
+        "docs/wp2/parity-checklist.md",
+        "docs/wp2/completion-plan.md"
       ],
       "status": "planned",
       "currentTests": [],
@@ -1036,7 +1055,9 @@
       "kind": "real-cli",
       "tests": [],
       "evidence": [
-        "docs/wp1/evidence/real-cli-matrix.md"
+        "docs/wp1/evidence/real-cli-matrix.md",
+        "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+        "docs/wp2/evidence/codex-artifacts-section-19-record.md"
       ],
       "status": "planned",
       "reason": "executing three CLI versions per OS needs the binaries installed on each runner; recorded per-OS run",

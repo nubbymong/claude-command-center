@@ -1,7 +1,7 @@
 // src/main/channel-rules.ts
 import { send } from './channel-bus'
 import { loadRules, saveRule } from './channel-rules-store'
-import { getGateway } from './hooks/index'
+import { onGateway } from './hooks/index'
 import { onInternal, type InternalEventMap } from './internal-events'
 import { getSessionsForDependentBranches, getSessionsForProject, getSessionMeta, type SessionMeta } from './session-registry'
 import { shouldFire, renderTemplate, type RuleEventContext } from './channel-rules-core'
@@ -88,17 +88,65 @@ export function startRulesEngine(): void {
   )
 
   // Attention Pulse rule consumes the CC-side Notification(idle_prompt) hook (filter-only).
-  const gw = getGateway()
-  if (gw) {
-    gw.subscribe((e) => {
-      if (e.event === 'Notification') {
-        const matcher = (e.payload as { notification_type?: string }).notification_type
-        fireMatching({
-          event: 'Notification',
-          matcher,
-          durationMs: Number((e.payload as { duration_ms?: number }).duration_ms ?? 0),
-        })
-      }
-    })
+  // P3.16a (N6): bound through onGateway, which hands the engine the Hooks gateway
+  // when src/main/index.ts sets it (after this engine starts) and each gateway set
+  // after it, so the turns and notifications are heard whichever starts first.
+  onGateway((gw) => gw.subscribe((e) => {
+    noteTurnEvent(e)
+    if (e.event === 'Notification') {
+      const p = e.payload as { notification_type?: unknown }
+      fireMatching(notificationRuleContext(p.notification_type, turnMsAt(e.sessionId, e.ts)))
+    }
+  }))
+
+  // P3.10 round 1 (S5): a Codex session has no Notification hook; its 60 s
+  // idle mark (attention-source) feeds the rules exactly what Claude Code's
+  // Notification idle_prompt feeds them, so a rule on it treats both alike.
+  onInternal('attention:idle-prompt', (p: InternalEventMap['attention:idle-prompt']) =>
+    fireMatching(notificationRuleContext('idle_prompt', turnMsAt(p?.sessionId, Date.now()))),
+  )
+}
+
+/**
+ * P3.16 (M3): each session's turn, for a rule's duration (the Attention Pulse:
+ * at least 120000 ms): from the session's UserPromptSubmit to its Stop, as the
+ * Hooks gateway received them (its `ts`). Both assistants send both events;
+ * neither Claude Code's Notification input nor either assistant's Stop input
+ * carries a duration. A turn still running counts to the moment asked.
+ */
+const turns = new Map<string, { promptAt: number; endedAt: number | null }>()
+const TURNS_KEPT = 1000
+
+function noteTurnEvent(e: { sessionId?: unknown; event?: unknown; ts?: unknown }): void {
+  if (typeof e.sessionId !== 'string' || !e.sessionId || typeof e.ts !== 'number' || !Number.isFinite(e.ts)) return
+  if (e.event === 'UserPromptSubmit') {
+    turns.delete(e.sessionId)
+    turns.set(e.sessionId, { promptAt: e.ts, endedAt: null })
+    while (turns.size > TURNS_KEPT) {
+      const oldest = turns.keys().next().value
+      if (oldest === undefined) break
+      turns.delete(oldest)
+    }
+  } else if (e.event === 'Stop' || e.event === 'StopFailure') {
+    const t = turns.get(e.sessionId)
+    if (t && t.endedAt === null) t.endedAt = Math.max(t.promptAt, e.ts)
   }
+}
+
+/** How long the session's last turn ran (0 when none was seen). A Notification
+ *  for a prompt whose UserPromptSubmit the gateway missed (the hooks restarted
+ *  mid-turn) reads the turn before it. Harmless: at most that one notification
+ *  is judged by the earlier turn's length, and the next prompt the gateway sees
+ *  starts a new turn. */
+function turnMsAt(sessionId: unknown, at: number): number {
+  const t = typeof sessionId === 'string' ? turns.get(sessionId) : undefined
+  if (!t) return 0
+  return Math.max(0, (t.endedAt ?? at) - t.promptAt)
+}
+
+/** The rule engine's input for a session waiting on the user: the
+ *  notification's type and how long the session's turn ran (P3.16, M3: the
+ *  gateway's times, above). One builder for both assistants (P3.10 round 1, S5). */
+export function notificationRuleContext(matcher: unknown, durationMs: unknown): RuleEventContext {
+  return { event: 'Notification', matcher: typeof matcher === 'string' ? matcher : undefined, durationMs: Number(durationMs ?? 0) }
 }

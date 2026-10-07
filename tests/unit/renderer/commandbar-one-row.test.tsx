@@ -388,11 +388,14 @@ describe('Core tools follow the capabilities matrix and the hide list (D3, D9, D
 })
 
 describe('the words come from the session, not from a hard-coded "Claude" (D2, D4)', () => {
-  it('a Codex session keeps its two select pills, says Codex on the agent mark and the chip, and dims Logs because Codex transcripts are not indexed', async () => {
+  it('a Codex session keeps its two pills, says Codex on the agent mark and the chip, and has Logs live, as a Claude session does', async () => {
     SESSIONS = [{ ...BASE_SESSION, provider: 'codex', codexOptions: { permissionsPreset: 'standard', model: 'gpt-5.5' } }]
     await render()
     const row = byTestId('command-row')!
-    expect(row.querySelectorAll('select')).toHaveLength(2)
+    // P3.8 round 1 (row 41): on a live session the model pill opens Codex's
+    // own picker (a button); the permissions pill stays a select.
+    expect(row.querySelectorAll('select')).toHaveLength(1)
+    expect(byTestId('codex-model-pill', row)).not.toBeNull()
     const agentMarks = allByTestId('command-cluster-agent')
     expect(agentMarks.length).toBeGreaterThan(0)
     for (const m of agentMarks) {
@@ -401,9 +404,13 @@ describe('the words come from the session, not from a hard-coded "Claude" (D2, D
     }
     expect(chipById('g1')?.title).toContain('runs in the Codex terminal')
     expect(chipById('g1')?.title).not.toContain('Claude')
-    const logs = dimmedLogs()
-    expect(logs).not.toBeNull()
-    expect(logs!.getAttribute('title')).toContain("Codex transcripts aren't indexed")
+    // P3.12 (d86fd80f, row 31): a local Codex session's conversation is
+    // indexed as a Claude session's is, so Logs is live on a Codex tab: not
+    // dimmed, no reason in its tooltip (it used to be dimmed as not indexed).
+    expect(logsButton()).not.toBeNull()
+    expect(dimmedLogs()).toBeNull()
+    expect(byTestId('core-tool-logs')!.querySelector('[data-dimmed]')).toBeNull()
+    expect(logsButton()!.title).toBe('Open session logs')
   })
 
   it('an SSH session badges the partner shell and the Partner tool "this PC", names the host on the agent mark, and dims Logs because the transcript lives on the host', async () => {

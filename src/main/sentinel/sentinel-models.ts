@@ -25,11 +25,18 @@
 // The RETIRED arm always uses the snapshot: it is human-verified, whereas a
 // thin HTML parse that silently stops matching would otherwise accuse every
 // model we ship of having been retired.
-import { evaluateModelCoverage, type ModelRegistry, type ExpectedModelSet } from '../../shared/model-registry'
+import { evaluateModelCoverage, evaluateCodexModelCoverage, type ModelRegistry, type ExpectedModelSet } from '../../shared/model-registry'
 import type { SentinelFinding } from '../../shared/sentinel-types'
 import expectedJson from '../../../resources/claude-code-model-configuration.json'
+import codexExpectedJson from '../../../resources/codex-model-catalogue.json'
 
 export const EXPECTED_MODEL_SET = expectedJson as unknown as ExpectedModelSet
+
+/** The models the supported Codex CLI lists in its own model picker, shipped
+ *  with this build (P3.8, row 39): the Codex half's reference, as the article
+ *  snapshot is the Claude half's. `cliVersions` names the CLIs it was read from. */
+export type CodexExpectedModelSet = ExpectedModelSet & { cliVersions?: string[] }
+export const CODEX_EXPECTED_MODEL_SET = codexExpectedJson as unknown as CodexExpectedModelSet
 
 /** How old the article snapshot may get before we say so. */
 export const FIXTURE_STALE_DAYS = 90
@@ -139,6 +146,132 @@ export function modelCoverageFindings(
     })
   }
 
+  return out
+}
+
+/**
+ * The Codex half (P3.8, row 39): the registry's Codex models against the list
+ * the supported Codex CLI offers, shipped with this build. Pure, as
+ * modelCoverageFindings; finding ids are stable and prefixed `models:codex-`.
+ *
+ * Two modes, as the Claude half (P3.9, row 39):
+ *
+ *   live      the installed CLI's own list, read from it just now
+ *             (`codex debug models --bundled`, see the Codex package's
+ *             model-catalogue.ts): both arms compare against it, since it is
+ *             the CLI's own strict JSON rather than a page parse, so a model
+ *             the installed version dropped (gpt-5.2 on 0.155.1) or added is
+ *             said, for that version;
+ *   snapshot  no live list (Codex not proven, a version this app cannot use,
+ *             or a read that failed): the list shipped with this build, whose
+ *             every finding names it and its date, and which says when it is
+ *             older than FIXTURE_STALE_DAYS.
+ *
+ * In snapshot mode both inputs ship with the build, so at runtime it reports
+ * only what an overlay changes and a stale list; a registry that disagrees
+ * with the shipped list is refused earlier, by the release gate
+ * (scripts/release-gate.mjs, check 3).
+ */
+export interface CodexLiveModelList {
+  /** The version that printed the list. */
+  version: string
+  models: ReadonlyArray<{ id: string; label: string }>
+}
+
+export function codexModelCoverageFindings(
+  registry: ModelRegistry,
+  expected: CodexExpectedModelSet | null | undefined,
+  now: number = Date.now(),
+  live: CodexLiveModelList | null = null,
+): SentinelFinding[] {
+  const out: SentinelFinding[] = []
+  // An empty live list is no list: the snapshot answers instead (fail closed).
+  const liveList = live && typeof live.version === 'string' && Array.isArray(live.models) && live.models.length > 0 ? live : null
+  const reference: ExpectedModelSet | null | undefined = liveList
+    ? { source: `the installed Codex ${liveList.version}`, models: liveList.models.map((m) => ({ id: m.id, label: m.label })) }
+    : expected
+  const result = evaluateCodexModelCoverage(registry, reference)
+  const duplicated = new Set(result.duplicates ?? [])
+  if (!result.ok && result.missing.length === 0 && duplicated.size === 0) {
+    out.push({
+      id: 'models:codex-list-unreadable',
+      kind: 'compat',
+      severity: 'warn',
+      title: 'The Codex model list could not be verified',
+      evidence: result.reason ?? 'the Codex model list is empty or missing',
+      badgeText: 'Codex model list unverified',
+      provider: 'codex',
+      status: 'open',
+      createdAt: now,
+    })
+    return out
+  }
+  const versions = Array.isArray(expected?.cliVersions) && expected!.cliVersions.length ? `Codex ${expected!.cliVersions.join(' and ')}, ` : ''
+  const shipped = liveList
+    ? `the model list of the installed Codex ${liveList.version}, read from it just now`
+    : `the Codex model list shipped with this build (${versions}${expected?.fetchedAt ?? 'undated'})`
+  // P3.8 round 2 (GS): an id the registry lists more than once covers
+  // nothing (the pickers would disagree about it); said as such.
+  for (const id of duplicated) {
+    out.push({
+      id: `models:codex-duplicate:${id}`,
+      kind: 'compat',
+      severity: 'warn',
+      title: `${id} is in the model registry more than once`,
+      evidence: `resources/model-registry.json (with any overlay) lists ${id} more than once, so which picker offers it is ambiguous; keep one entry, in the codex family.`,
+      affectedFeature: 'sessions',
+      badgeText: `Model listed twice: ${id}`,
+      provider: 'codex',
+      status: 'open',
+      createdAt: now,
+    })
+  }
+  for (const m of result.missing) {
+    if (duplicated.has(m.id)) continue
+    const name = m.label ?? m.id
+    out.push({
+      id: `models:codex-missing:${m.id}`,
+      kind: 'compat',
+      severity: 'warn',
+      title: `Codex offers ${name}, but it is not in the model picker`,
+      evidence: `${m.id} is in ${shipped}; resources/model-registry.json has no Codex entry for it.`,
+      affectedFeature: 'sessions',
+      badgeText: `New Codex model: ${name}`,
+      provider: 'codex',
+      status: 'open',
+      createdAt: now,
+    })
+  }
+  for (const m of result.extra) {
+    const name = m.label ?? m.id
+    out.push({
+      id: `models:codex-retired:${m.id}`,
+      kind: 'compat',
+      severity: 'warn',
+      title: liveList ? `${name} is still selectable but Codex ${liveList.version} no longer lists it` : `${name} is still selectable but Codex no longer lists it`,
+      evidence: `resources/model-registry.json carries ${m.id} as a Codex model; ${shipped} does not. Retired or renamed?`,
+      affectedFeature: 'sessions',
+      badgeText: `Possibly retired: ${name}`,
+      provider: 'codex',
+      status: 'open',
+      createdAt: now,
+    })
+  }
+  // The shipped list going stale matters only when it was relied on: a live
+  // read has just answered the question first-hand.
+  const age = fixtureAgeDays(expected?.fetchedAt, now)
+  if (!liveList && age !== null && age > FIXTURE_STALE_DAYS) {
+    out.push({
+      id: `models:codex-list-stale:${expected?.fetchedAt}`,
+      kind: 'info',
+      severity: 'info',
+      title: 'The Codex model list has not been re-checked in a while',
+      evidence: `resources/codex-model-catalogue.json was read ${age} days ago (${expected?.fetchedAt}). Read the model catalogue of the supported Codex CLI again and refresh it.`,
+      provider: 'codex',
+      status: 'open',
+      createdAt: now,
+    })
+  }
   return out
 }
 

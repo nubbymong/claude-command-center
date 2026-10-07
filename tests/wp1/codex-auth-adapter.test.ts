@@ -7,9 +7,10 @@
 // 9.2, 11, 12): the Codex sign-in, status and logout operations, through
 // injected ports (no process is started, no file is read). The real-process
 // counterpart is tests/wp1/fake-cli.test.ts (CI/VM).
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { parseCodexLoginStatus, createCodexAuthOperations, createCodexOutputRedactor, createCodexPackage, createCodexRealmLocks } from '../../src/main/providers/codex'
 import type { CodexAuthDeps, CodexDiscovery, CodexDiscoveryDeps, CodexCommand, CodexRunOptions, CodexRunResult, CodexRealmFsPort } from '../../src/main/providers/codex'
+import type { RealmUse } from '../../src/shared/providers'
 
 describe('codex login status', () => {
   it('classifies the pinned CLI outputs, on either stream', () => {
@@ -229,12 +230,12 @@ describe('Codex status (A7, D3)', () => {
     }
   })
 
-  it('a managed realm holding a .env is refused for status and sign-in (it can carry a key past the allowlist), not for logout', async () => {
+  it('a managed realm holding a .env is refused for status, sign-in and sign-out (the CLI loads it whatever it runs for; P3.3 review round 2)', async () => {
     const w = world({ envFilePresent: (home) => home === HOME_A })
     expect(await w.ops.status(MANAGED)).toMatchObject({ ok: false, state: 'error', code: 'realm-env-file', message: expect.stringMatching(/\.env/) })
     expect(await w.ops.login(MANAGED, 'browser')).toMatchObject({ ok: false, code: 'realm-env-file' })
+    expect(await w.ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'realm-env-file' })
     expect(w.runs).toEqual([])
-    expect(await w.ops.logout(MANAGED)).toMatchObject({ ok: true })
     // The external default home is the user's own; its .env is theirs.
     expect(await world({ envFilePresent: () => true }).ops.status(EXTERNAL)).toMatchObject({ ok: true })
   })
@@ -617,9 +618,40 @@ describe('Codex logout (WP1.23, WP1.24)', () => {
     expect(await world({}, { 'login status': () => ({ timedOut: true }) }).ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'timed-out' })
     expect(await world({}, { 'logout': () => ({ spawnError: 'EACCES' }) }).ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'not-started' })
   })
+
+  it('a failure after the CLI ran says so (ran), whatever the read-back gave; one before it never does (review round 3, C3)', async () => {
+    // The sign-out ran; its read-back could not start, ran out of time, or
+    // found the realm still signed in.
+    let after = false
+    const unread = world({}, { 'logout': () => { after = true; return { exitCode: 0 } }, 'login status': () => (after ? { spawnError: 'EAGAIN' } : { exitCode: 1, stderr: 'Not logged in\n' }) })
+    expect(await unread.ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'not-started', ran: true })
+    expect(await world({}, { 'login status': () => ({ timedOut: true }) }).ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'timed-out', ran: true })
+    expect(await world({}, { 'logout': () => ({ timedOut: true }) }).ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'timed-out', ran: true })
+    const stuck = world({}, { 'logout': () => ({ exitCode: 0 }) })
+    stuck.signedIn.set(HOME_A, 'chatgpt')
+    expect(await stuck.ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'still-signed-in', ran: true })
+    // The CLI never started: nothing says it ran.
+    const unstarted = await world({}, { 'logout': () => ({ spawnError: 'EACCES' }) }).ops.logout(MANAGED)
+    expect(unstarted).toMatchObject({ ok: false, code: 'not-started' })
+    expect(unstarted.ran).toBeUndefined()
+    const refused = await world().ops.logout(EXTERNAL)
+    expect(refused).toMatchObject({ ok: false, code: 'external-ack-required' })
+    expect(refused.ran).toBeUndefined()
+  })
 })
 
 describe('the package keeps its own proof and exposes auth only when wired (T13, T14)', () => {
+  // The package reads the process environment, and the test home guard points
+  // CODEX_HOME at its own temp folder (on Linux and macOS a POSIX path, which this
+  // simulated Windows world cannot use). These cases run with CODEX_HOME unset.
+  let savedCodexHome: string | undefined
+  beforeEach(() => {
+    savedCodexHome = process.env.CODEX_HOME
+    delete process.env.CODEX_HOME
+  })
+  afterEach(() => {
+    if (savedCodexHome !== undefined) process.env.CODEX_HOME = savedCodexHome
+  })
   const discoveryDeps = (gates: Array<() => Promise<Partial<CodexRunResult>>>) => {
     let n = 0
     return async (): Promise<CodexDiscoveryDeps> => ({
@@ -646,8 +678,8 @@ describe('the package keeps its own proof and exposes auth only when wired (T13,
     const { lookupRealm: _l, takeSecret: _t, proven: _p, ...ports } = w.deps
     // The registry's side: the record and the resources directory as configured.
     const source = {
-      lookup: async (r: { authRealmId: string }) => {
-        const f = await w.deps.lookupRealm(r)
+      lookup: async (r: { authRealmId: string }, use: RealmUse) => {
+        const f = await w.deps.lookupRealm(r, use)
         return f.ok ? { ok: true as const, realm: { ...f.realm, lifecycle: 'active' as const }, resourcesDir: f.roots.resourcesDir } : { ok: false as const }
       },
       mkdirSecure: () => {},
@@ -669,7 +701,7 @@ describe('the package keeps its own proof and exposes auth only when wired (T13,
     let rogue = 0
     let real = 0
     const pkg = createCodexPackage({
-      realms: { ...source, lookup: async (r) => { real++; return source.lookup(r) } },
+      realms: { ...source, lookup: async (r, use) => { real++; return source.lookup(r, use) } },
       realmFs: flatFs(),
       authPorts: {
         ...ports,
@@ -705,7 +737,7 @@ describe('the package keeps its own proof and exposes auth only when wired (T13,
   it('the package canonicalises the resources directory before it derives a CODEX_HOME (a SUBST or mapped drive)', async () => {
     const { source, ports, w } = authPorts()
     const pkg = createCodexPackage({
-      realms: { ...source, lookup: async (r) => { const f = await source.lookup(r); return f.ok ? { ...f, resourcesDir: 'S:\\res' } : f } },
+      realms: { ...source, lookup: async (r, use) => { const f = await source.lookup(r, use); return f.ok ? { ...f, resourcesDir: 'S:\\res' } : f } },
       realmFs: flatFs((p) => p.replace(/^S:\\res/i, 'C:\\res')),
       authPorts: ports,
       discoveryDeps: discoveryDeps([async () => ({ stdout: 'codex-cli 0.155.1\n' })]),

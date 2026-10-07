@@ -1,6 +1,8 @@
 // claude-headless.ts — Reusable headless `claude` process spawner.
 // Used by insights-runner and the Sentinel AI analysis runner.
 import { spawn, execSync } from 'child_process'
+import * as path from 'path'
+import { StringDecoder } from 'string_decoder'
 import { logInfo, logError } from './debug-logger'
 import { withProfileHome } from './pty-manager'
 import { gateManagedLaunch, peekGateVerdict } from './managed-launch-diagnostics'
@@ -78,6 +80,51 @@ export function assertSafeArgv(args: string[]): void {
   }
 }
 
+/** P3.9 round 2: a run's own working folder and environment switches.
+ *  `cwd` must be absolute (default: this process's own folder, as before).
+ *  `env` adds only Claude Code's own switches (CLAUDE_CODE_*, plain values):
+ *  set after the account's environment, so they hold for this run. */
+export interface HeadlessSpawnOptions {
+  cwd?: string
+  env?: Readonly<Record<string, string>>
+  /** P3.9 round 3: network settings (proxies, certificates) from the
+   *  account's settings file, for a run that loads no settings file. Upper-
+   *  case names; values with no NUL, CR or LF, at most 4096 characters. Set
+   *  after the account's environment and before `env`. */
+  transportEnv?: Readonly<Record<string, string>>
+  /** PR 4 (owner answers review): the run's stdout, each chunk as it
+   *  arrives, for a caller that reads the stream while the run goes on
+   *  (Sentinel's analysis). The result still carries the whole stdout; a
+   *  callback that throws never breaks the run. */
+  onStdout?: (chunk: string) => void
+}
+
+const HEADLESS_ENV_NAME = /^CLAUDE_CODE_[A-Z0-9_]+$/
+const HEADLESS_ENV_VALUE = /^[A-Za-z0-9._-]{0,64}$/
+const TRANSPORT_ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/
+
+/** Throws on options a headless run never takes (a programming error, as
+ *  assertSafeArgv's are): a relative folder, or a variable that is not one
+ *  of Claude Code's own switches with a plain value. */
+export function assertHeadlessOptions(opts: HeadlessSpawnOptions): void {
+  if (opts.cwd !== undefined && (typeof opts.cwd !== 'string' || !path.isAbsolute(opts.cwd))) {
+    throw new Error('[claude-headless] the working folder must be an absolute path')
+  }
+  for (const [k, v] of Object.entries(opts.env ?? {})) {
+    if (!HEADLESS_ENV_NAME.test(k) || typeof v !== 'string' || !HEADLESS_ENV_VALUE.test(v)) {
+      throw new Error(`[claude-headless] environment variable ${JSON.stringify(k)} is not one a headless run takes`)
+    }
+  }
+  for (const [k, v] of Object.entries(opts.transportEnv ?? {})) {
+    if (!TRANSPORT_ENV_NAME.test(k) || typeof v !== 'string' || v.length > 4096 || /[\0\r\n]/.test(v)) {
+      throw new Error(`[claude-headless] transport variable ${JSON.stringify(k)} is not one a headless run takes`)
+    }
+  }
+  if (opts.onStdout !== undefined && typeof opts.onStdout !== 'function') {
+    throw new Error('[claude-headless] the stdout callback must be a function')
+  }
+}
+
 /**
  * Spawn `claude` as a headless child process (shell:true so both claude.exe and
  * claude.cmd are found on PATH).  Returns stdout/stderr and the exit code.
@@ -90,15 +137,18 @@ export function assertSafeArgv(args: string[]): void {
  * @param timeoutMs   Kill and resolve with code 1 after this many ms (default 10 min)
  * @param stdinData   Optional data to pipe into stdin
  * @param home        Per-account fake HOME injected via withProfileHome; null = default
+ * @param opts        The run's own working folder and Claude Code switches (see HeadlessSpawnOptions)
  */
 export function spawnClaudeHeadless(
   args: string[],
   timeoutMs = 600000,
   stdinData?: string,
   home: string | null = null,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opts: HeadlessSpawnOptions = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   assertSafeArgv(args)
+  assertHeadlessOptions(opts)
   // #48/#49: a headless run under a profile home is a credential consumer like
   // any session, and this is the ONE place every such run passes through
   // (insights KPI extraction, the cross-account synthesis, Sentinel analysis).
@@ -126,7 +176,8 @@ export function spawnClaudeHeadless(
   // one after the reuse window) defers the spawn behind the gate -- the same
   // deferral shape as the refresh wait, for the same single-subprocess reason.
   const profileId = profileIdFromHome(home)
-  const cwd = process.cwd()
+  const cwd = opts.cwd ?? process.cwd()
+  const extraEnv = { ...(opts.transportEnv ?? {}), ...(opts.env ?? {}) }
   const release = profileId ? acquireProfileConsumer(profileId, { maxAgeMs: timeoutMs + HEADLESS_CONSUMER_GRACE_MS }) : null
   const pending = profileId ? pendingProfileRefresh(profileId) : null
   const cachedGate = profileId ? peekGateVerdict(cwd) : null
@@ -138,8 +189,8 @@ export function spawnClaudeHeadless(
     // 3): its verdict is then read by the choke point with no wait in between.
     ? (realmPending
       ? Promise.resolve(pending).then(() => cachedGate ?? gateManagedLaunch(cwd)).then((gate) => ensureMacRealmVerdict(home).then(() => gate))
-      : Promise.resolve(pending).then(() => cachedGate ?? gateManagedLaunch(cwd))).then((gate) => spawnNow(args, timeoutMs, stdinData, home, signal, cwd, gate))
-    : spawnNow(args, timeoutMs, stdinData, home, signal, cwd, cachedGate ?? null)
+      : Promise.resolve(pending).then(() => cachedGate ?? gateManagedLaunch(cwd))).then((gate) => spawnNow(args, timeoutMs, stdinData, home, signal, cwd, gate, extraEnv, opts.onStdout))
+    : spawnNow(args, timeoutMs, stdinData, home, signal, cwd, cachedGate ?? null, extraEnv, opts.onStdout)
   if (release) p.then(release, release)
   return p
 }
@@ -152,6 +203,8 @@ function spawnNow(
   signal: AbortSignal | undefined,
   cwd: string,
   projectGate: ProjectGateResult | null,
+  extraEnv: Record<string, string> = {},
+  onStdout?: (chunk: string) => void,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   // The environment is composed OUTSIDE the promise executor. withProfileHome
   // THROWS to refuse a managed launch (the project gate found an authority key
@@ -168,7 +221,7 @@ function spawnNow(
     // `headless` is the launch id the Accounts panel shows beside a finding:
     // these runs have no PTY session to name, and a report with no launch on
     // it is a report nobody can place.
-    env = withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'headless', cwd, probe: true, projectGate })
+    env = { ...withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'headless', cwd, probe: true, projectGate }), ...extraEnv }
   } catch (e) {
     const message = (e as Error)?.message ?? String(e)
     logError(`[claude-headless] Not spawning: ${message}`)
@@ -182,11 +235,12 @@ function spawnNow(
     // finds. Everywhere else: the bare name through the shell, as before.
     const realmBin = macRealmLaunchBinary(home)
     const proc = realmBin
-      ? spawn(realmBin, args, { shell: false, windowsHide: true, env })
+      ? spawn(realmBin, args, { shell: false, windowsHide: true, env, cwd })
       : spawn('claude', args, {
         shell: true,
         windowsHide: true,
         env,
+        cwd,
       })
 
     // Pipe prompt via stdin if provided
@@ -198,13 +252,19 @@ function spawnNow(
     let stdout = ''
     let stderr = ''
     let resolved = false
+    // PR 4 (owner answers review): stdout is decoded across chunks, so a
+    // character cut between two chunks arrives whole; bytes still held when
+    // the run settles are read as before (a cut character).
+    const decoder = new StringDecoder('utf8')
+    let flushed = false
+    const allStdout = () => { if (!flushed) { flushed = true; stdout += decoder.end() } return stdout }
 
     const timeout = setTimeout(() => {
       if (!resolved) {
         resolved = true
         logError(`[claude-headless] Timed out after ${timeoutMs / 1000}s`)
         killHeadlessTree(proc)
-        resolve({ code: 1, stdout, stderr: stderr + '\nTimed out after ' + (timeoutMs / 1000) + 's' })
+        resolve({ code: 1, stdout: allStdout(), stderr: stderr + '\nTimed out after ' + (timeoutMs / 1000) + 's' })
       }
     }, timeoutMs)
 
@@ -218,12 +278,16 @@ function spawnNow(
       clearTimeout(timeout)
       logInfo('[claude-headless] Aborted; killing process tree')
       killHeadlessTree(proc)
-      resolve({ code: 1, stdout, stderr: stderr + '\nAborted' })
+      resolve({ code: 1, stdout: allStdout(), stderr: stderr + '\nAborted' })
     }
     if (signal?.aborted) onAbort()
     else signal?.addEventListener('abort', onAbort, { once: true })
 
-    proc.stdout?.on('data', (data) => { stdout += data.toString() })
+    proc.stdout?.on('data', (data) => {
+      const chunk = typeof data === 'string' ? data : decoder.write(data)
+      stdout += chunk
+      if (onStdout) { try { onStdout(chunk) } catch { /* a callback never breaks the run */ } }
+    })
     proc.stderr?.on('data', (data) => { stderr += data.toString() })
 
     proc.on('error', (err) => {
@@ -231,7 +295,7 @@ function spawnNow(
         resolved = true
         clearTimeout(timeout)
         logError('[claude-headless] Spawn error:', err.message)
-        resolve({ code: 1, stdout, stderr: stderr + '\n' + err.message })
+        resolve({ code: 1, stdout: allStdout(), stderr: stderr + '\n' + err.message })
       }
     })
 
@@ -240,7 +304,7 @@ function spawnNow(
         resolved = true
         clearTimeout(timeout)
         logInfo(`[claude-headless] Process exited with code ${code}`)
-        resolve({ code: code ?? 1, stdout, stderr })
+        resolve({ code: code ?? 1, stdout: allStdout(), stderr })
       }
     })
   })

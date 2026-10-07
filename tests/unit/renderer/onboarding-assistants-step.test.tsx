@@ -3,7 +3,7 @@
  * WP2 commit 6e (canvas F1): "Which assistants will you use?".
  *
  * Verifies:
- *   - the three cards with the app's own provider marks, Beta on Codex only,
+ *   - the three cards with the app's own provider marks, no Beta label,
  *     Both selected by default, and the local-only line;
  *   - after first-run setup's "Use Codex only": Codex selected, Claude Code
  *     and Both disabled with "Claude Code is not installed";
@@ -77,13 +77,13 @@ async function continueWith(choice?: 'claude' | 'codex' | 'both') {
 }
 
 describe('the cards', () => {
-  it('three cards with the real provider marks, Beta on Codex only, Both selected by default', async () => {
+  it('three cards with the real provider marks, no Beta label (P4.11), Both selected by default', async () => {
     await render()
     expect(container.querySelector('h2')!.textContent).toBe('Which assistants will you use?')
     expect(card('claude').textContent).toContain('Claude Code')
     expect(card('claude').textContent).toContain("Anthropic's coding agent")
     expect(card('codex').textContent).toContain("OpenAI's coding agent")
-    expect(card('codex').textContent).toContain('Beta')
+    expect(card('codex').textContent).not.toContain('Beta')
     expect(card('claude').textContent).not.toContain('Beta')
     expect(card('both').textContent).not.toContain('Beta')
     expect(card('claude').querySelector('[data-testid="provider-mark-claude"]')).not.toBeNull()

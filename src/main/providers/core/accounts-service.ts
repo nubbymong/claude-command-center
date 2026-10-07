@@ -29,12 +29,14 @@
 // - An archived account, or one whose realm is no longer active, runs
 //   nothing: its record may name a home a live account now uses.
 import {
-  beginAccountSetup, abandonAccountSetup, commitAccountSetup, markSetupCredentialsWritten, createIdentity, updateIdentity,
-  createGroup, renameGroup, deleteGroup, linkAccountIdentity, unlinkAccountIdentity, setAccountLifecycle, setProviderDefault,
+  beginAccountSetup, abandonAccountSetup, commitAccountSetup, markSetupCredentialsWritten, markSetupDiscarding, createIdentity, updateIdentity,
+  createGroup, renameGroup, deleteGroup, linkAccountIdentity, unlinkAccountIdentity, setAccountLifecycle, restoreArchivedAccount, setProviderDefault,
   recordAuthCheck, recordAccountPlan, reconcileAccountSignIn, resolveIdentityConflict, setReviewerDefault, chooseReviewerAccount, chooseSessionAccount,
   recordProviderMigration, resolveLaunchBinding, findAccount, findRealm, findIdentity, isLegacyLinked,
+  beginAccountReauth, rebindAccountRealm, releaseReauthAsSetup, settleSupersededRealm, decideReauth, unsettledSupersededRealms, reauthJournalOf,
+  earlierManagedRealms,
   resolveCapability, makeOpaqueId, providerRealmKind, isIdentityColourKey,
-  MANAGED_PATH_REF_PREFIX, EXTERNAL_DEFAULT_PATH_REF, SIGN_IN_METHODS, SIGN_IN_CAPABILITY, providerOffMessage, providerStateUnknownMessage,
+  MANAGED_PATH_REF_PREFIX, CLAUDE_PROFILE_PATH_REF_PREFIX, EXTERNAL_DEFAULT_PATH_REF, SIGN_IN_METHODS, SIGN_IN_CAPABILITY, providerOffMessage, providerStateUnknownMessage,
   providerNotSetUpMessage,
 } from '../../../shared/providers'
 import type {
@@ -43,15 +45,20 @@ import type {
   AccountsFailureCode, AccountsResult, AccountView, ProviderInstallationView, CapabilityView, PendingSetupView, ExternalDefaultView,
   SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, CredentialClass,
   ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView, ProviderLaunchRefusal,
-  ProviderAccountUsageView, ProviderUsageStreamResult,
+  ProviderAccountUsageView, ProviderUsageStreamResult, AuthRealm, SignInAgainResult, SignInPhase, ProviderAccount,
 } from '../../../shared/providers'
-import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef, UsageReading, UsageReadOutcome } from './package'
+import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef, UsageReading, UsageReadOutcome, ModelCatalogueResult, ProviderAccountFolders } from './package'
 import type { AccountRegistryStore, StoreResult } from './account-registry-store'
 import type { ConsumerLeaseRegistry, AccountLease, LaunchLeaseKind } from './consumer-leases'
 import { LAUNCH_LEASE_KINDS } from './consumer-leases'
 import type { SecretHandleStore } from './secret-handles'
 import { realmEnvForProvider } from './registry'
 import { recipeRunLine } from './recipe-run-line'
+import { lowerAsciiLetters } from '../../../shared/profile-id'
+// P4.6 (row 58): what an account holds outside its sign-in is cleared before it
+// is archived, through a provider-neutral seam inside core (index.ts registers
+// the owners at start through core's entry point).
+import { prepareAccountArchive } from './archive-hooks'
 
 export interface AccountsServiceDeps {
   /** The registry of the app's CURRENT resources directory, asked afresh
@@ -79,6 +86,12 @@ export interface AccountsServiceDeps {
    *  switch-off refuses while any runs. A throw counts as running (fail
    *  closed). */
   unleasedSessions?: (providerId: ProviderId) => number
+  /** Whether a live session the provider runs without a lease holds the
+   *  provider's own record of an account (Claude: a profile a session runs
+   *  on). A mirrored account is then not made inactive or archived here,
+   *  as the provider's own surface refuses it (design 5.3, WP1.16). A
+   *  throw counts as in use (fail closed). */
+  legacyRecordInUse?: (providerId: ProviderId, legacyId: string) => boolean
   log?: (message: string) => void
   /** Usage track MP8: the fresh reads' clock and pacing. Absent: the
    *  shipped values (tests shorten them). */
@@ -191,6 +204,16 @@ function observedCredential(credential: AuthCredentialKind | undefined): Credent
   return credential === 'account' || credential === 'api-key' ? credential : undefined
 }
 
+/** The subject and authority a provider's status reported, as given: the
+ *  registry judges whether they are reliable (design 5.3). Neither when it
+ *  reported none, which is every provider today. */
+function subjectOf(r: AuthOperationResult): { providerSubject?: string; providerAuthorityId?: string } {
+  return {
+    ...(typeof r.providerSubject === 'string' ? { providerSubject: r.providerSubject } : {}),
+    ...(typeof r.providerAuthorityId === 'string' ? { providerAuthorityId: r.providerAuthorityId } : {}),
+  }
+}
+
 const FAIL_MESSAGES: Partial<Record<AccountsFailureCode, string>> = {
   'registry-unavailable': 'The account list is not available right now.',
   'unsupported': 'This provider does not offer that here.',
@@ -200,6 +223,7 @@ const FAIL_MESSAGES: Partial<Record<AccountsFailureCode, string>> = {
   'provider-state-unknown': 'This app could not read whether this provider is on, so nothing was started.',
   'last-provider': 'At least one provider must stay on.',
   'consumers': 'Sessions or operations are using this account.',
+  'in-use': 'This account is in use by an open session. Close its sessions and try again.',
   'busy': 'Something else is using this account right now; try again when it finishes.',
   'acknowledgement-required': 'This sign-in is shared with other apps on this computer; confirm to continue.',
   'not-signed-in': 'This account is not signed in.',
@@ -214,9 +238,17 @@ const FAIL_MESSAGES: Partial<Record<AccountsFailureCode, string>> = {
 /** A package's platform review rule for one realm (see reviewRefusalOf). */
 type PlatformReviewRule = { kind: 'allowed' } | { kind: 'refused'; message: string } | { kind: 'unknown' }
 
-function failure(code: AccountsFailureCode, message?: string, extra: { consumers?: number; state?: KnownAuthState } = {}): AccountsFailure {
+function failure(code: AccountsFailureCode, message?: string, extra: { consumers?: number; sessions?: string[]; unnamed?: number; state?: KnownAuthState } = {}): AccountsFailure {
   return { ok: false, code, message: message ?? FAIL_MESSAGES[code] ?? 'That did not work.', ...extra }
 }
+
+/** Each launch kind in a refusal's words (WP2 PR 4, P4.5: a background run,
+ *  a Cloud Agent, is named as one, never as a review). */
+const LAUNCH_KIND_WORDS: Readonly<Record<LaunchLeaseKind, string>> = Object.freeze({
+  session: 'a session',
+  review: 'a review',
+  background: 'a background run',
+})
 
 /** The launch kinds a package prepares, as it declares them; a declaration
  *  that is not a list of known kinds prepares nothing (fail closed). */
@@ -247,6 +279,41 @@ function methodFromCredential(credential: AuthCredentialKind | undefined, signed
 
 const EXTERNAL_IDENTITY_COLOUR = 'slate-blue'
 
+/** Refusals a sign-out gives before its CLI could run: they say nothing
+ *  about the realm, which is as it was. */
+const SIGN_OUT_NOT_RUN: ReadonlySet<string> = new Set(['realm-unavailable', 'external-overlap', 'cli-unavailable', 'realm-env-file', 'busy', 'external-ack-required', 'not-started'])
+
+/** A legacy record, live or archived: linked to its provider's own store now,
+ *  or on a home only a legacy record can own (a Claude profile's). The
+ *  registry's own rule (isLegacyRecord, shared/providers/registry.ts), which
+ *  it keeps module-private; restated here from the same two facts. Nothing
+ *  signs such an account out or checks it on the service's own initiative. */
+function legacyRecordOf(doc: ProviderRegistryDoc, account: ProviderAccount): boolean {
+  if (isLegacyLinked(doc, account.id)) return true
+  const ref = findRealm(doc, account.authRealmId)?.pathRef
+  return typeof ref === 'string' && ref.startsWith(CLAUDE_PROFILE_PATH_REF_PREFIX)
+}
+
+/** What a sign-out left, to record: the state it read back; else, once it
+ *  may have run, unknown (the account needs a check before it is trusted
+ *  again: review round 2, L2-1); nothing when it never ran. A sign-out whose
+ *  CLI ran (`ran`) may have changed the realm, whatever code its read-back
+ *  then gave (review round 3, C3). */
+function signOutLeft(out: AuthOperationResult): KnownAuthState | null {
+  if (out.state === 'signed-out' || out.state === 'signed-in') return out.state
+  if (out.ran === true) return 'unknown'
+  return out.code !== undefined && SIGN_OUT_NOT_RUN.has(out.code) ? null : 'unknown'
+}
+
+/** A sign in again cancelled before its switch. */
+const REAUTH_CANCELLED = 'The sign-in was cancelled. This account keeps its earlier sign-in.'
+
+/** Why this computer's own sign-in is not signed in again without a yes. */
+const EXTERNAL_REAUTH_ACK = 'Signing in again here signs this computer\'s sign-in out first, for every app that uses it; if the new sign-in does not finish, it stays signed out. Confirm to continue.'
+
+/** Why an old sign-in is still there (AccountView.oldSignInLeft). */
+type OldSignInRule = 'removable' | 'kept' | 'unavailable'
+
 interface SignInRun {
   controller: AbortController
   senderId: number
@@ -262,14 +329,29 @@ interface EnabledOverride {
   savedAtSet: ProviderPreference
 }
 
+/** How often main looks again at a provider's in-use count after it refused
+ *  to switch the provider off, until nothing holds it (watchInUse). */
+export const IN_USE_WATCH_MS = 1000
+
 export class AccountsService {
   private revision = 0
   private readonly listeners = new Set<() => void>()
+  /** Providers whose switch-off was refused while in use, with the count
+   *  last published for each; one timer follows them all (watchInUse). */
+  private readonly inUseWatched = new Map<ProviderId, number>()
+  /** Providers whose count reached 0 at a tick, until the next tick or a
+   *  snapshot carrying them above 0 (a run that started before it was
+   *  built), which watches the provider again (snapshot, inUseTick). */
+  private readonly inUseEnding = new Set<ProviderId>()
+  private inUseTimer: ReturnType<typeof setInterval> | null = null
   private readonly enabledOverride = new Map<ProviderId, EnabledOverride>()
   /** The last preference each provider's saved setting read as. */
   private readonly lastSaved = new Map<ProviderId, ProviderPreference>()
   private readonly installations = new Map<ProviderId, DiscoveryResult>()
   private readonly signIns = new Map<string, SignInRun>()
+  /** Setups whose Discard is running now: listed as running, never offered
+   *  Discard again meanwhile (VM round, V1). */
+  private readonly discardsRunning = new Set<string>()
   private readonly signedInWith = new Map<string, SignInMethod>()
   /** Reviewer choices cleared at start-up because they can never run here
    *  (clearUnusableReviewerDefaults); shown once, removed by a new choice. */
@@ -494,6 +576,11 @@ export class AccountsService {
       if (a.planLabel !== undefined) view.planLabel = a.planLabel
       if (a.lastAuthenticatedAt !== undefined) view.lastAuthenticatedAt = a.lastAuthenticatedAt
       if (a.lastValidatedAt !== undefined) view.lastValidatedAt = a.lastValidatedAt
+      if (a.lifecycle === 'archived' && a.archivedAt !== undefined) view.archivedAt = a.archivedAt
+      // An old sign-in a sign in again has not removed yet (design 9.2), and why.
+      const old = doc ? unsettledSupersededRealms(doc, a.id) : []
+      if (old.length > 0) view.oldSignInLeft = this.oldSignInView(this.pkg(a.providerId), old)
+      if (this.signIns.has(a.id)) view.signingIn = true
       const legacyId = doc?.legacyLinks.find((l) => l.accountId === a.id)?.legacyId
       if (legacyId !== undefined) view.legacyId = legacyId
       const refusal = doc ? this.reviewRefusalOf(doc, a, memo) : undefined
@@ -508,6 +595,8 @@ export class AccountsService {
       external: doc ? findRealm(doc, j.realmId)?.ownership === 'external-default' : false,
       createdAt: j.createdAt,
       signingIn: this.signIns.has(j.accountId),
+      ...(this.discardsRunning.has(j.accountId) ? { discardRunning: true as const } : {}),
+      ...(j.replacesAccountId !== undefined ? { replacesAccountId: j.replacesAccountId } : {}),
     }))
     const externalDefaults: ExternalDefaultView[] = packages.filter((p) => p.externalDefaultRealm).map((p) => {
       const m = doc?.migrations.find((x) => x.providerId === p.id && x.step === 'external-default')
@@ -519,14 +608,23 @@ export class AccountsService {
       if (typeof home === 'string' && home) view.home = home
       return view
     })
+    const providers = packages.map((p) => {
+      const view = this.installationView(p)
+      const review = this.reviewReadiness(p, doc, memo)
+      return review ? { ...view, review } : view
+    })
+    // A provider whose in-use count reached 0 at a tick is watched again when
+    // this snapshot carries it above 0 (a run started before this snapshot
+    // was built). A snapshot carrying 0 leaves it to the next tick, which
+    // lets it go or watches it again (inUseTick), so whichever snapshot is
+    // built first, the line never stays at a count nothing holds.
+    for (const p of providers) {
+      if (p.inUse > 0 && this.inUseEnding.has(p.providerId)) this.watchInUse(p.providerId, p.inUse)
+    }
     return {
       revision: this.revision,
       registry,
-      providers: packages.map((p) => {
-        const view = this.installationView(p)
-        const review = this.reviewReadiness(p, doc, memo)
-        return review ? { ...view, review } : view
-      }),
+      providers,
       identities: (doc?.identities ?? []).map((i) => ({ id: i.id, colourKey: i.colourKey, ...(i.friendlyName !== undefined ? { friendlyName: i.friendlyName } : {}), ...(i.groupId !== undefined ? { groupId: i.groupId } : {}) })),
       groups: (doc?.groups ?? []).map((g) => ({ id: g.id, name: g.name, order: g.order })),
       accounts,
@@ -560,6 +658,7 @@ export class AccountsService {
       signInMethods: { browser: cap('auth.browser'), device: cap('auth.device'), apiKey: cap('auth.apiKey') },
       status: cap('auth.status'),
       logout: cap('auth.logout'),
+      inUse: this.providerInUse(p.id),
     }
     if (d?.version !== undefined) view.version = d.version
     if (d?.checkedAt !== undefined) view.lastCheckedAt = d.checkedAt
@@ -639,11 +738,11 @@ export class AccountsService {
     return { store, doc }
   }
 
-  private fromStore(r: StoreResult, consumers?: number): AccountsFailure | null {
+  private fromStore(r: StoreResult, consumers?: number, sessions?: string[], unnamed?: number): AccountsFailure | null {
     if (r.ok) return null
     if (r.code === 'recovery') return failure('registry-unavailable')
     if (r.code === 'persist-failed') return failure('persist-failed', 'The change could not be saved.')
-    if (r.code === 'blocked-by-consumers') return failure('consumers', undefined, { consumers: consumers ?? 1 })
+    if (r.code === 'blocked-by-consumers') return failure('consumers', undefined, { consumers: consumers ?? 1, ...(sessions?.length ? { sessions } : {}), ...(unnamed ? { unnamed } : {}) })
     return failure(r.code, r.message)
   }
 
@@ -716,6 +815,31 @@ export class AccountsService {
     return { ok: true, installation: this.installationView(p) }
   }
 
+  /** The models the provider's installed CLI offers in its own picker, read
+   *  from the CLI (P3.9, row 39: Sentinel's live model check). Like every
+   *  CLI a provider runs, the launch rule decides first, and again after the
+   *  wait for its proof (a discovery in flight is joined); the package runs
+   *  only the executable discovery proved, in no account's folder. A package
+   *  without the read answers `unsupported`. Never throws. */
+  async readModelCatalogue(providerId: ProviderId, opts: { signal?: AbortSignal } = {}): Promise<AccountsResult<{ catalogue: ModelCatalogueResult }>> {
+    const p = this.pkg(providerId)
+    const setup = p?.setup
+    if (!p || !setup || typeof setup.modelCatalogue !== 'function') return failure('unsupported')
+    const refused = this.cliRefusal(p.id)
+    if (refused) return refused
+    try { await this.ensureDiscovered(p) } catch { /* the read below says there is no proof */ }
+    const notNow = this.cliRefusal(p.id)
+    if (notNow) return notNow
+    let catalogue: ModelCatalogueResult
+    try {
+      catalogue = await setup.modelCatalogue(opts)
+    } catch {
+      catalogue = { ok: false, code: 'failed', detail: 'the model list could not be read' }
+    }
+    if (!catalogue || typeof catalogue !== 'object') catalogue = { ok: false, code: 'failed', detail: 'the model list could not be read' }
+    return { ok: true, catalogue }
+  }
+
   /** Once at start, after the service is up: look for the CLI of every
    *  provider that is switched on and has a discovery step, so Settings,
    *  Accounts and the session dialog say whether it is installed without
@@ -753,10 +877,11 @@ export class AccountsService {
         this.enabledOverride.set(providerId, { enabled: true, savedAtSet: this.savedPreference(providerId).pref })
         return { ok: true }
       }
-      let unleased = 0
-      try { unleased = this.deps.unleasedSessions?.(providerId) ?? 0 } catch { unleased = 1 }
-      const running = this.deps.leases.countForProvider(providerId) + (Number.isSafeInteger(unleased) && unleased > 0 ? unleased : 0)
-      if (running > 0) return failure('consumers', undefined, { consumers: running })
+      const running = this.providerInUse(providerId)
+      if (running > 0) {
+        this.watchInUse(providerId, running)
+        return failure('consumers', undefined, { consumers: running })
+      }
       // Another provider that can launch: on, not merely "not off". One the
       // user has not answered for launches nothing (launchRefusal), so it
       // never lets the last provider that can be switched off.
@@ -773,6 +898,62 @@ export class AccountsService {
     if (r.ok && !enabled) this.stopChecks(providerId)
     if (r.ok) this.changed()
     return r
+  }
+
+  /** How much of a provider runs now: everything holding its accounts and
+   *  what runs of it without an account lease (a count that cannot be read
+   *  counts as one). The one count a switch-off is refused with and the
+   *  snapshot shows, so Settings never shows another. */
+  private providerInUse(providerId: ProviderId): number {
+    let unleased = 0
+    try { unleased = this.deps.unleasedSessions?.(providerId) ?? 0 } catch { unleased = 1 }
+    return this.deps.leases.countForProvider(providerId) + (Number.isSafeInteger(unleased) && unleased > 0 ? unleased : 0)
+  }
+
+  /** After a switch-off refused because the provider is in use: what runs
+   *  of it without an account lease publishes no change of its own when it
+   *  starts or ends, so its count is looked at again every IN_USE_WATCH_MS,
+   *  and each time it has moved (up or down) a new snapshot is published,
+   *  which Settings' in-use line follows. Once nothing holds a provider it
+   *  is looked at once more, at the next tick: let go if nothing holds it
+   *  then, watched again (and published) if something does; a snapshot that
+   *  carries it above 0 before that watches it again at once. The one timer
+   *  stops with the last provider let go. */
+  private watchInUse(providerId: ProviderId, count: number): void {
+    this.inUseEnding.delete(providerId)
+    this.inUseWatched.set(providerId, count)
+    if (this.inUseTimer) return
+    this.inUseTimer = setInterval(() => this.inUseTick(), IN_USE_WATCH_MS)
+    this.inUseTimer.unref?.()
+  }
+
+  private inUseTick(): void {
+    let moved = false
+    // Reached 0 at the last tick and carried above 0 by no snapshot since.
+    for (const providerId of [...this.inUseEnding]) {
+      this.inUseEnding.delete(providerId)
+      const now = this.providerInUse(providerId)
+      if (now > 0) {
+        this.inUseWatched.set(providerId, now)
+        moved = true
+      }
+    }
+    for (const [providerId, seen] of [...this.inUseWatched]) {
+      const now = this.providerInUse(providerId)
+      if (now === seen) continue
+      moved = true
+      if (now > 0) {
+        this.inUseWatched.set(providerId, now)
+      } else {
+        this.inUseWatched.delete(providerId)
+        this.inUseEnding.add(providerId)
+      }
+    }
+    if (this.inUseWatched.size === 0 && this.inUseEnding.size === 0 && this.inUseTimer) {
+      clearInterval(this.inUseTimer)
+      this.inUseTimer = null
+    }
+    if (moved) this.changed()
   }
 
   /** What to show and copy, and, only for a recipe main allows to run, the
@@ -848,6 +1029,8 @@ export class AccountsService {
     if (!p || !this.managesAccounts(p)) return failure('unsupported')
     if (existing && (existing.lifecycle === 'archived' || findRealm(ready.doc, existing.authRealmId)?.ownership !== 'conductor-managed')) return failure('unsupported')
     if (j && findRealm(ready.doc, j.realmId)?.ownership !== 'conductor-managed') return failure('unsupported')
+    // A staged sign in again takes its key through the account it replaces.
+    if (j?.replacesAccountId !== undefined) return failure('unsupported')
     // The key is for a sign-in, which runs the provider's CLI: taken only
     // when that sign-in could run (the add-account dialog records the yes
     // before the key is handed over).
@@ -909,6 +1092,10 @@ export class AccountsService {
     if ('ok' in ready) return refuse(ready)
     const j = ready.doc.journals.find((x) => x.accountId === input.accountId)
     if (!j) return refuse(failure('not-found'))
+    // A staged sign in again runs only inside its own sign in again: never
+    // as a plain setup's sign-in (it would sign in a replacement nobody
+    // decides about).
+    if (j.replacesAccountId !== undefined || j.state === 'discarding') return refuse(failure('unsupported'))
     const p = this.pkg(j.providerId)
     const realm = findRealm(ready.doc, j.realmId)
     if (!p || !this.managesAccounts(p) || realm?.ownership !== 'conductor-managed') return refuse(failure('unsupported'))
@@ -980,30 +1167,58 @@ export class AccountsService {
     return this.fromAuth(result)
   }
 
-  /** Sign an existing managed account in again, in its own realm (an
-   *  expired or signed-out sign-in). The provider's own login runs there,
-   *  then the realm is checked and recorded exactly as a status check
-   *  records it, so a different kind of sign-in blocks the account (design
-   *  5.5). Refused while anything uses the account, on an external home
-   *  (sign in there with the provider's own tools), and on a blocked account
-   *  (the user reconciles it first). */
+  /** Sign an existing managed account in again. Calling it is the user's
+   *  answer that this is the same account as before (the dialog asks first;
+   *  "different or unsure" adds a new account instead).
+   *
+   *  Recorded as signed in: STAGED (design 9.2, WP1.52). The provider's
+   *  login clears a realm's sign-in before it tries the new one, so the new
+   *  sign-in runs in a new, journalled replacement realm, verified there
+   *  while the account's own realm is untouched. Then who signed in is
+   *  decided (decideReauth): the same account switches to the replacement
+   *  atomically, and its old realm's sign-in is removed and the replacement
+   *  checked again (retired, or kept in recovery, visible); a reliable
+   *  mismatch becomes a separate account for the user to name
+   *  (`separateAccountId`); a subject another account holds is refused.
+   *  Anything that stops it before the switch removes the replacement and
+   *  leaves the account as it was.
+   *
+   *  Not signed in (expired, signed out, not checked): in its own realm, as
+   *  before -- there is nothing there to lose. The realm is then checked and
+   *  recorded exactly as a status check records it, so a different kind of
+   *  sign-in blocks the account (design 5.5).
+   *
+   *  Either way refused while anything uses the account, on an external
+   *  home (sign in there with the provider's own tools), and on a blocked
+   *  account (the user reconciles it first). An earlier staged sign-in of
+   *  the account that did not finish is discarded first. */
   async signInAgain(
-    input: { accountId: string; method: SignInMethod; secretHandle?: string },
+    input: { accountId: string; method: SignInMethod; secretHandle?: string; sameAccount?: boolean; acknowledgeExternal?: boolean },
     senderId: number,
     onOutput?: (text: string) => void,
-  ): Promise<AccountsResult<{ state: KnownAuthState }>> {
+    onPhase?: (phase: SignInPhase) => void,
+  ): Promise<AccountsResult<SignInAgainResult>> {
     const handle = input.secretHandle
     // Single-use, as for signIn: whatever this call decides, the handle does
     // not stay parked, unless a run already in flight is using it.
     const burn = () => { if (handle !== undefined) this.deps.secrets.discard(handle) }
     const refuse = (r: AccountsFailure) => { burn(); return r }
+    // The user's own answer, "the same account as before" (design 9.2),
+    // required here as at the IPC boundary: nothing is signed in again on a
+    // call that does not carry it ("different or unsure" adds a new account).
+    if (input.sameAccount !== true) return refuse(failure('not-confirmed', 'Say whether this is the same account as before.'))
     const ctx = this.accountContext(input.accountId)
     if ('ok' in ctx) return refuse(ctx)
     const a = findAccount(ctx.doc, input.accountId)!
-    const notRunnable = this.runnable(ctx, a, ['auth.status'])
+    const notRunnable = this.runnable(ctx, a, ctx.external ? ['auth.status', 'auth.logout'] : ['auth.status'])
     if (notRunnable) return refuse(notRunnable)
     const p = ctx.p!
-    if (!this.managesAccounts(p) || ctx.external || findRealm(ctx.doc, a.authRealmId)?.ownership !== 'conductor-managed') return refuse(failure('unsupported'))
+    if (!this.managesAccounts(p)) return refuse(failure('unsupported'))
+    if (ctx.external) {
+      // This computer's own sign-in (design 9.2, last paragraph): in place,
+      // only with the user's yes that it reaches every app using it.
+      if (input.acknowledgeExternal !== true) return refuse(failure('acknowledgement-required', EXTERNAL_REAUTH_ACK))
+    } else if (findRealm(ctx.doc, a.authRealmId)?.ownership !== 'conductor-managed') return refuse(failure('unsupported'))
     if (a.operationalState === 'blocked') return refuse(failure('sign-in-changed'))
     const refusedMethod = this.methodAllowed(p, input.method)
     if (refusedMethod) return refuse(refusedMethod)
@@ -1025,11 +1240,22 @@ export class AccountsService {
     let result: AuthOperationResult = { ok: false, code: 'not-started' }
     let recorded: StoreResult | null = null
     let observedClass: CredentialClass | undefined
+    let staged: AccountsResult<SignInAgainResult> | null = null
+    let inPlaceExternal: AccountsResult<{ state: KnownAuthState }> | null = null
     try {
+      // A staged sign-in of this account an earlier run left (the app
+      // closed during it): it is stale now, and is signed out and removed
+      // first, exactly as its Discard would. Nothing of the account's own
+      // realm is touched. Claimed above, so no second run starts meanwhile.
+      const leftover = reauthJournalOf(ctx.store.current() ?? ctx.doc, a.id)
+      if (leftover) {
+        const cleared = await this.abandonSetup({ accountId: leftover.accountId })
+        if (!cleared.ok) refusal = cleared
+      }
       // Usage track MP8 (#49): claimed above, so no fresh read starts on
       // the account; one under way is stopped and has ended first.
-      ;(await this.settleUsageRead(a.id))()
-      const leased = await ctx.store.exclusive((): { refused: AccountsFailure } | { added: ReturnType<ConsumerLeaseRegistry['add']> } => {
+      if (!refusal) (await this.settleUsageRead(a.id))()
+      const leased = refusal ? { refused: refusal } : await ctx.store.exclusive((): { refused: AccountsFailure } | { added: ReturnType<ConsumerLeaseRegistry['add']> } => {
         const notNow = this.cliRefusal(p.id)
         if (notNow) return { refused: notNow }
         // Nothing may be using the account while its sign-in is replaced.
@@ -1043,7 +1269,13 @@ export class AccountsService {
       else {
         lease = leased.added.lease
         if (run.controller.signal.aborted) result = { ok: false, code: 'cancelled' }
-        else {
+        else if (ctx.external) {
+          inPlaceExternal = await this.externalSignInAgain(ctx.store, p, a.id, a.authRealmId, input.method, handle, run, onOutput)
+        } else if (findAccount(ctx.store.current() ?? ctx.doc, a.id)?.lastKnownAuthState === 'signed-in') {
+          // Signed in now: staged, so a sign-in that fails or is someone
+          // else never costs the account the one it has.
+          staged = await this.stagedSignInAgain(ctx.store, p, a.id, input.method, handle, run, onOutput, onPhase)
+        } else {
           const ran = await this.loginUnderCliRule(p, { authRealmId: a.authRealmId }, input.method, {
             ...(handle !== undefined ? { secretHandle: handle } : {}),
             onOutput: (text) => { try { onOutput?.(text) } catch { /* display only */ } },
@@ -1084,6 +1316,8 @@ export class AccountsService {
       this.changed()
     }
     if (refusal) return refusal
+    if (staged) return staged
+    if (inPlaceExternal) return inPlaceExternal
     if (recorded) {
       const bad = this.fromStore(recorded)
       if (bad) {
@@ -1100,6 +1334,354 @@ export class AccountsService {
       return { ok: true, state: 'signed-in' }
     }
     return this.fromAuth(result)
+  }
+
+  /** The staged half of signInAgain (design 9.2), run while the caller holds
+   *  the account's sign-in lease (nothing launches on it meanwhile) and its
+   *  sign-in claim. The replacement realm is journalled and its folder made
+   *  before the provider's login runs there; its sign-in is verified in it;
+   *  who signed in is decided; only then does the account switch, in one
+   *  registry transition. Anything that stops it before the switch signs
+   *  the replacement out and removes it (abandonSetup), leaving the account
+   *  exactly as it was; if that cannot finish, the replacement stays listed
+   *  under the unfinished setups, where Discard finishes it. */
+  private async stagedSignInAgain(
+    store: AccountRegistryStore, p: ProviderPackage, accountId: string, method: SignInMethod,
+    secretHandle: string | undefined, run: SignInRun, onOutput?: (text: string) => void, onPhase?: (phase: SignInPhase) => void,
+  ): Promise<AccountsResult<SignInAgainResult>> {
+    if (!p.auth || !p.realmFolders) return failure('unsupported')
+    const stagedId = makeOpaqueId('account', this.deps.randomHex())
+    const realmId = makeOpaqueId('realm', this.deps.randomHex())
+    const begun = await store.mutate((d, t) => beginAccountReauth(d, { accountId: stagedId, realmId, replacesAccountId: accountId, method }, t))
+    const notBegun = this.fromStore(begun)
+    if (notBegun) return notBegun
+    // The run holds the replacement too: a Discard of it, or its
+    // completion as a setup, waits for this run to end.
+    this.signIns.set(stagedId, run)
+    let keep = false
+    // Only a folder this run made is signed out and removed; one it found
+    // there is never touched (only the reservation goes).
+    let made = false
+    const drop = async () => {
+      if (this.signIns.get(stagedId) === run) this.signIns.delete(stagedId)
+      if (!made) {
+        const dropped = await store.mutate((d) => (d.journals.some((j) => j.accountId === stagedId) ? abandonAccountSetup(d, stagedId) : { ok: true, doc: d }))
+        if (!dropped.ok) this.log(`a staged sign-in's reservation was not dropped (${dropped.code}); it stays listed`)
+        return
+      }
+      const dropped = await this.abandonSetup({ accountId: stagedId }).catch((): AccountsResult => failure('internal'))
+      if (!dropped.ok) this.log(`a staged sign-in's replacement was not removed (${dropped.code}); it stays listed`)
+    }
+    try {
+      const prepared = await p.realmFolders.prepare({ authRealmId: realmId }).catch(() => ({ ok: false as const, code: 'io-failed' as const, created: undefined }))
+      if (prepared.ok && prepared.created === true) made = true
+      if (!prepared.ok) {
+        await drop()
+        return failure((prepared.code ?? 'io-failed') as AccountsFailureCode, 'The account folder could not be prepared.')
+      }
+      // A folder that was already there is not this run's: never signed in
+      // to, adopted or removed here.
+      if (!made) {
+        await drop()
+        return failure('changed', 'The folder for the new sign-in already existed, so nothing was changed. Try again.')
+      }
+      const ran = await this.loginUnderCliRule(p, { authRealmId: realmId }, method, {
+        ...(secretHandle !== undefined ? { secretHandle } : {}),
+        onOutput: (text) => { try { onOutput?.(text) } catch { /* display only */ } },
+        signal: run.controller.signal,
+      })
+      if ('refused' in ran) { await drop(); return ran.refused }
+      const result = ran.result
+      // A sign-in this run did not perform (the folder was signed in before
+      // its login ran) is never adopted.
+      if (result.code === 'already-signed-in') {
+        await drop()
+        return failure('changed', 'The folder for the new sign-in was already signed in, so nothing was changed. Try again.')
+      }
+      // Signed in, also after a "failure" (a cancelled login may have
+      // finished in the browser anyway): verified in the replacement.
+      if (result.state !== 'signed-in') {
+        await drop()
+        return result.ok ? failure('not-signed-in', undefined, { state: result.state ?? 'unknown' }) : this.fromAuth(result)
+      }
+      // Credentials may exist from here: an interrupted run leaves a
+      // journal that says so, and Discard signs it out.
+      const marked = await store.mutate((d, t) => markSetupCredentialsWritten(d, stagedId, t))
+      if (!marked.ok) this.log(`could not mark a staged sign-in's credentials as written (${marked.code})`)
+      let observed: AuthOperationResult & { state: KnownAuthState } = { ...result, state: 'signed-in' }
+      // The kind of sign-in (and any subject) as the replacement's own status
+      // says, when the login did not say.
+      if (observed.credential !== 'account' && observed.credential !== 'api-key') {
+        const again = await p.auth.status({ authRealmId: realmId }).catch(() => null)
+        if (again?.ok && again.state === 'signed-in') observed = again
+      }
+      if (observed.credential !== 'account' && observed.credential !== 'api-key') observed = { ...observed, credential: method === 'apiKey' ? 'api-key' : 'account' }
+      const check = this.checkInput(observed)
+      // The provider's rule again, right before anything is decided or
+      // switched: switched off (or unanswered) meanwhile, nothing moves. The
+      // replacement is signed out and removed once the provider is back
+      // (it stays listed until then).
+      const lost = this.cliRefusal(p.id)
+      if (lost) { await drop(); return lost }
+      const doc = store.current()
+      const decided = doc ? decideReauth(doc, stagedId, check, true) : null
+      if (!decided || !decided.ok) { await drop(); return failure('registry-unavailable') }
+      if (decided.decision === 'conflict') {
+        await drop()
+        return failure('subject-conflict', 'That sign-in is already another account here. Nothing was changed.')
+      }
+      if (decided.decision === 'separate') {
+        // Someone else: never this account. The sign-in stays as a new
+        // account's, for the user to name; this account keeps its own.
+        const released = await store.mutate((d, t) => releaseReauthAsSetup(d, stagedId, t))
+        const bad = this.fromStore(released)
+        if (bad) { await drop(); return bad }
+        keep = true
+        this.signedInWith.set(stagedId, method)
+        return { ok: true, state: 'signed-in', separateAccountId: stagedId }
+      }
+      // The earlier conversations go with the account (parity with an
+      // in-place sign-in, which keeps them): its session transcripts and
+      // prompt history are carried into the replacement BEFORE the switch,
+      // while its own realm is still the one in use. A copy that cannot
+      // finish changes nothing: the replacement is removed and the account
+      // keeps its sign-in. A file with a name the app did not give it is
+      // left behind (logged), never carried over.
+      const account = store.current() ? findAccount(store.current()!, accountId) : undefined
+      if (!account) { await drop(); return failure('not-found') }
+      // Cancelled: nothing moves (final review round, F1). Asked again after
+      // the copy and inside the switch's lock.
+      const cancelled = (): AccountsFailure | null => (run.controller.signal.aborted ? failure('cancelled', REAUTH_CANCELLED) : null)
+      let notCarriedOver = 0
+      if (p.realmFolders.copyHistory) {
+        // The dialog says what the run is doing now: a long history takes a while.
+        try { onPhase?.('carrying-history') } catch { /* display only */ }
+        // The account's earlier realms: a file an earlier sign in again
+        // carried over has its name there too, and only there.
+        const earlier = earlierManagedRealms(store.current()!, accountId).map((r) => ({ authRealmId: r.id }))
+        const copied = await p.realmFolders.copyHistory({ authRealmId: account.authRealmId }, { authRealmId: realmId }, { earlier, signal: run.controller.signal })
+          .catch((): { ok: false; code: 'io-failed'; message?: string } => ({ ok: false, code: 'io-failed' }))
+        if (!copied.ok) {
+          await drop()
+          if (copied.code === 'cancelled') return failure('cancelled', REAUTH_CANCELLED)
+          // Too much to carry over: the bound, and the way that keeps them
+          // (signed out, a sign in again runs in the account's own folder).
+          const message = copied.code === 'too-large' && typeof copied.message === 'string'
+            ? `${copied.message} To keep them, sign out of this account first, then sign in again: it then signs in within the account's own folder, where they stay.`
+            : 'The earlier conversations could not be carried over to the new sign-in, so nothing was changed.'
+          return failure((copied.code ?? 'io-failed') as AccountsFailureCode, message)
+        }
+        if ('skipped' in copied && typeof copied.skipped === 'number' && copied.skipped > 0) {
+          notCarriedOver = copied.skipped
+          this.log(`a sign in again left ${copied.skipped} earlier conversation file(s) behind: each has another name the app did not give it`)
+        }
+      }
+      const stop = cancelled()
+      if (stop) { await drop(); return stop }
+      // The switch, under the registry lock, while this run's lease still
+      // holds the account: nothing uses it, and nothing can start. The
+      // provider's rule once more, inside that lock (review round 3, C2): a
+      // provider switched off while the history was carried over switches
+      // nothing; the replacement is removed once the provider is back.
+      const atSwitch: { refused: AccountsFailure | null } = { refused: null }
+      let switched = await store.mutate((d, t) => {
+        atSwitch.refused = this.cliRefusal(p.id) ?? cancelled()
+        return atSwitch.refused ? { ok: false, code: 'lifecycle', message: atSwitch.refused.message } : rebindAccountRealm(d, stagedId, check, t)
+      })
+      if (atSwitch.refused) { await drop(); return atSwitch.refused }
+      if (!switched.ok && switched.code === 'persist-failed') {
+        // The write may have reached the disk though it was reported as
+        // failed: what the disk says is what the next start reads, so the
+        // file is read again and decides (review round 2, L1-1).
+        const onDisk = await store.reread()
+        if (onDisk.ok && findAccount(onDisk.doc, accountId)?.authRealmId === realmId) {
+          switched = onDisk
+        } else if (onDisk.ok) {
+          // Not switched on disk either: the replacement is nobody's yet.
+          await drop()
+          return failure('persist-failed', 'The new sign-in could not be saved, so it was removed. This account keeps its earlier sign-in.')
+        } else {
+          // The disk cannot be read: the new sign-in is kept and listed,
+          // never signed out on a guess.
+          keep = true
+          return failure('persist-failed', 'The new sign-in could not be saved. It is kept under Unfinished setups; this account keeps its earlier sign-in for now.')
+        }
+      }
+      const notSwitched = this.fromStore(switched)
+      if (notSwitched) { await drop(); return notSwitched }
+      keep = true
+      this.unrecordedSignIns.delete(accountId)
+      this.changed()
+      // The old realm's sign-in removed, the replacement checked again.
+      await this.settleOldSignIns(store, p, accountId, { revalidate: true })
+      const now = store.current() ? findAccount(store.current()!, accountId) : undefined
+      if (now?.operationalState === 'blocked') return failure('sign-in-changed', undefined, { state: 'signed-in' })
+      // Files left behind are said, never only logged (final review round, F2).
+      return { ok: true, state: now?.lastKnownAuthState ?? 'signed-in', ...(notCarriedOver > 0 ? { notCarriedOver } : {}) }
+    } catch {
+      if (!keep) await drop()
+      return failure('internal')
+    } finally {
+      if (this.signIns.get(stagedId) === run) this.signIns.delete(stagedId)
+      this.deps.secrets.discardForAccount(stagedId)
+    }
+  }
+
+  /** Settle each realm an account moved off (a staged sign in again's old
+   *  realm, or one kept in recovery). Design 9.2: its sign-in is removed
+   *  only when that is proven never to invalidate the replacement, else it
+   *  stays in a visible recovery state (oldSignInRule says which). Removed
+   *  through the provider in that realm only; the realm is then retired and,
+   *  when asked, the account's own realm checked again and recorded (the
+   *  replacement revalidated after the cleanup). Not removed (kept, the
+   *  provider unable to run, or a status or sign-out that did not answer):
+   *  recovery, and the account keeps needing attention. At archive both
+   *  sign-ins go, so the proof is not needed there. The caller holds the
+   *  account (a lease or an exclusive hold). */
+  private async settleOldSignIns(store: AccountRegistryStore, p: ProviderPackage, accountId: string, opts: { revalidate: boolean; archiving?: boolean }): Promise<void> {
+    if (!p.auth) return
+    const doc = store.current()
+    // A legacy record signs in where it was created: nothing of it is
+    // settled automatically (WP2 PR 4 review, U2.1).
+    const self = doc ? findAccount(doc, accountId) : undefined
+    if (!doc || !self || legacyRecordOf(doc, self)) return
+    const old = unsettledSupersededRealms(doc, accountId)
+    if (old.length === 0) return
+    const rules = old.map((r) => this.oldSignInRule(p, r, opts.archiving === true))
+    if (rules.includes('removable')) await this.ensureDiscovered(p)
+    let anyCleaned = false
+    for (const [i, r] of old.entries()) {
+      let cleaned = false
+      if (rules[i] === 'removable' && this.oldSignInRule(p, r, opts.archiving === true) === 'removable') {
+        const status = await p.auth.status({ authRealmId: r.id }).catch(() => null)
+        if (status?.ok && status.state === 'signed-out') cleaned = true
+        else if (status?.ok) {
+          const out = await p.auth.logout({ authRealmId: r.id }).catch(() => null)
+          cleaned = out?.ok === true
+        }
+      }
+      anyCleaned = anyCleaned || cleaned
+      const settled = await store.mutate((d, t) => settleSupersededRealm(d, r.id, cleaned ? 'retired' : 'recovery', t))
+      if (!settled.ok) this.log(`an old sign-in's state was not saved (${settled.code})`)
+    }
+    if (!opts.revalidate || !anyCleaned) return
+    const account = store.current() ? findAccount(store.current()!, accountId) : undefined
+    if (!account) return
+    const again = await p.auth.status({ authRealmId: account.authRealmId }).catch(() => null)
+    if (!again?.ok) return
+    const recorded = await store.mutate((d, t) => recordAuthCheck(d, accountId, this.checkInput(again), t))
+    if (!recorded.ok) this.log(`a sign-in check after removing an old sign-in was not saved (${recorded.code})`)
+  }
+
+  /** Whether an old sign-in may be removed now: `kept` -- not proven safe
+   *  for the new one (the provider's `auth.retireReplaced` stays off until
+   *  evidence shows its sign-out there never signs the replacement out), or
+   *  its folder's credentials are not known to be its own file (a keyring or
+   *  automatic store could be shared); `unavailable` -- the provider cannot
+   *  run a status check and a sign-out now. At archive the proof is not
+   *  needed: both sign-ins go. */
+  private oldSignInRule(p: ProviderPackage, realm: AuthRealm, archiving: boolean): OldSignInRule {
+    if (!archiving && !(this.capability(p, 'auth.retireReplaced').enabled && realm.credentialStoreMode === 'file')) return 'kept'
+    if (this.cliRefusal(p.id) || !this.capability(p, 'auth.status').enabled || !this.capability(p, 'auth.logout').enabled) return 'unavailable'
+    return 'removable'
+  }
+
+  /** What the account's row says about its old sign-in: kept (the app does
+   *  not remove it yet), unavailable (it cannot now), or failed (a removal
+   *  did not finish; a check tries again). */
+  private oldSignInView(p: ProviderPackage | null, old: readonly AuthRealm[]): NonNullable<AccountView['oldSignInLeft']> {
+    if (!p?.auth) return 'unavailable'
+    const rules = old.map((r) => this.oldSignInRule(p, r, false))
+    if (rules.includes('kept')) return 'kept'
+    if (rules.includes('unavailable')) return 'unavailable'
+    return 'failed'
+  }
+
+  /** At start (review round 1, Q2): an old sign-in a sign in again left when
+   *  the app closed before it was settled is settled now, by the same rule
+   *  as after the switch, under an operation lease on its account. Refused
+   *  (the provider off, the account in use) it waits for the account's next
+   *  check. Never throws. */
+  async settleLeftoverSignIns(): Promise<void> {
+    const ready = this.ready()
+    if ('ok' in ready) return
+    for (const a of ready.doc.accounts) {
+      if (!ready.doc.realms.some((r) => r.ownerProviderAccountId === a.id && r.id !== a.authRealmId && r.lifecycle === 'retiring')) continue
+      const p = this.pkg(a.providerId)
+      if (!p?.auth) continue
+      const lease = await this.operationLease(ready.store, a.id, a.providerId).catch((): AccountsFailure => failure('internal'))
+      if ('ok' in lease) continue
+      try {
+        await this.settleOldSignIns(ready.store, p, a.id, { revalidate: true })
+      } catch (e) {
+        this.log(`an old sign-in was not settled at start (${e instanceof Error ? e.message : String(e)})`)
+      } finally {
+        lease.release()
+      }
+    }
+  }
+
+  /** This computer's own sign-in, signed in again in place (design 9.2, last
+   *  paragraph; WP1.52). The caller holds the account's sign-in lease
+   *  (nothing uses it, nothing starts on it) and the user has acknowledged
+   *  that it reaches every app using that sign-in. The home is checked first
+   *  (design 5.5: a sign-in that changed there blocks it); a signed-in home
+   *  is signed out first (the provider's login never runs over one); then
+   *  the login runs there. From the sign-out on, the record says what the
+   *  home now holds: a login that does not finish leaves it signed out,
+   *  needing attention. Never staged: this home is not the app's to replace. */
+  private async externalSignInAgain(
+    store: AccountRegistryStore, p: ProviderPackage, accountId: string, realmId: string, method: SignInMethod,
+    secretHandle: string | undefined, run: SignInRun, onOutput?: (text: string) => void,
+  ): Promise<AccountsResult<{ state: KnownAuthState }>> {
+    if (!p.auth) return failure('unsupported')
+    const changed = await this.externalStillMatches(store, p, accountId, realmId, { unansweredBlocks: true })
+    if (changed) return changed
+    const record = async (check: { state: KnownAuthState; observedCredential?: CredentialClass; providerSubject?: string; providerAuthorityId?: string }) => {
+      const r = await store.mutate((d, t) => recordAuthCheck(d, accountId, check, t))
+      if (!r.ok) this.log(`a sign-in state of this computer's own sign-in was not saved (${r.code})`)
+      return r
+    }
+    if (store.current() && findAccount(store.current()!, accountId)?.lastKnownAuthState !== 'signed-out') {
+      const out = await p.auth.logout({ authRealmId: realmId }, { acknowledgeExternalRealm: true }).catch((): AuthOperationResult => ({ ok: false, code: 'not-started' }))
+      // A sign-out whose result was not read back proves nothing: the home
+      // needs a check before it is trusted again (review round 2, L2-1).
+      const left = signOutLeft(out)
+      if (left) await record({ state: left })
+      // Still signed in: nothing was lost, and nothing more runs.
+      if (!out.ok) return this.fromAuth(out)
+    }
+    const ran = await this.loginUnderCliRule(p, { authRealmId: realmId }, method, {
+      ...(secretHandle !== undefined ? { secretHandle } : {}),
+      onOutput: (text) => { try { onOutput?.(text) } catch { /* display only */ } },
+      signal: run.controller.signal,
+      acknowledgeExternalRealm: true,
+    })
+    // Refused before the login ran: the home is as the sign-out above left
+    // it, signed out, and the record says so already.
+    if ('refused' in ran) return ran.refused
+    const result = ran.result
+    if (result.state === 'signed-in') {
+      let observed: AuthOperationResult & { state: KnownAuthState } = { ...result, state: 'signed-in' }
+      if (observed.credential !== 'account' && observed.credential !== 'api-key') {
+        const again = await p.auth.status({ authRealmId: realmId }).catch(() => null)
+        if (again?.ok && again.state === 'signed-in') observed = again
+      }
+      if (observed.credential !== 'account' && observed.credential !== 'api-key') observed = { ...observed, credential: method === 'apiKey' ? 'api-key' : 'account' }
+      const check = this.checkInput(observed)
+      const recorded = await record(check)
+      if (!recorded.ok) {
+        this.unrecordedSignIns.set(accountId, check.observedCredential)
+        this.changed()
+        return this.fromStore(recorded)!
+      }
+      this.unrecordedSignIns.delete(accountId)
+      if (findAccount(recorded.doc, accountId)?.operationalState === 'blocked') return failure('sign-in-changed', undefined, { state: 'signed-in' })
+      return { ok: true, state: 'signed-in' }
+    }
+    // Not signed in: the home is as the sign-out above left it, and the
+    // record says signed out (needing attention) already.
+    return result.ok ? failure('not-signed-in', undefined, { state: 'signed-out' }) : this.fromAuth({ ...result, state: 'signed-out' })
   }
 
   /** Cancel a sign-in this renderer started; nothing else. */
@@ -1123,6 +1705,11 @@ export class AccountsService {
     // (the user's "Use this sign-in"): its reservation, a check's or an
     // adoption's, running now or left by an earlier run, is never committed.
     if (findRealm(ready.doc, j.realmId)?.ownership !== 'conductor-managed' || this.externalReservations.has(j.accountId)) return failure('unsupported')
+    // A staged sign in again of an existing account is not a new account:
+    // it ends in its switch, or is discarded (a separate account is released
+    // as a plain setup first).
+    if (j.replacesAccountId !== undefined) return failure('unsupported', 'This sign-in belongs to a sign in again that did not finish: discard it, then sign in again.')
+    if (j.state === 'discarding') return failure('unsupported', 'This setup is being discarded: discard it again to finish.')
     const notNow = this.cliRefusal(p.id)
     if (notNow) return notNow
     if (!this.capability(p, 'auth.status').enabled) return failure('capability-disabled')
@@ -1146,7 +1733,9 @@ export class AccountsService {
       const authMethod = methodFromCredential(status.credential, this.signedInWith.get(j.accountId) ?? began)
       const committed = await ready.store.mutate((d, t) => chain(d, [
         ...(choice.mode === 'new' ? [(x: ProviderRegistryDoc) => createIdentity(x, { id: identityId, friendlyName: choice.friendlyName, colourKey: choice.colourKey, ...(choice.groupId !== undefined ? { groupId: choice.groupId } : {}) }, t)] : []),
-        (x) => commitAccountSetup(x, j.accountId, { identityId, authMethod, lastKnownAuthState: 'signed-in', identityAssurance: 'user-asserted' }, t),
+        // Any subject the provider's status reported is recorded now (design
+        // 9.3 step 4), so a later sign in again can be compared against it.
+        (x) => commitAccountSetup(x, j.accountId, { identityId, authMethod, lastKnownAuthState: 'signed-in', identityAssurance: 'user-asserted', ...subjectOf(status) }, t),
       ]))
       const bad = this.fromStore(committed)
       if (bad) return bad
@@ -1183,7 +1772,19 @@ export class AccountsService {
       return this.deps.leases.hold(j.accountId, j.providerId) ?? failure('busy')
     })
     if (typeof release !== 'function') return release
+    // Listed as running from here until it ends, whatever it ends with.
+    this.discardsRunning.add(j.accountId)
+    this.changed()
     try {
+      // Write-ahead (review round 2, L1-1): the registry says this setup is
+      // being discarded, on disk, before anything is signed out or removed.
+      // A write that did not land stops here with nothing touched; a Discard
+      // cut short afterwards is finished by the next one. The document it
+      // writes is the one this process holds, so a switch or a completion
+      // whose write was reported as failed is undone on disk first.
+      const marked = await ready.store.mutate((d, t) => markSetupDiscarding(d, j.accountId, t))
+      const notMarked = this.fromStore(marked)
+      if (notMarked) return notMarked
       if (runsCli && p?.auth && p.realmFolders) {
         await this.ensureDiscovered(p)
         const status = await p.auth.status({ authRealmId: j.realmId }).catch(() => null)
@@ -1191,7 +1792,10 @@ export class AccountsService {
           const out = await p.auth.logout({ authRealmId: j.realmId }).catch((): AuthOperationResult => ({ ok: false, code: 'not-started' }))
           if (!out.ok) return this.fromAuth(out)
         }
-        const removed = await p.realmFolders.remove({ authRealmId: j.realmId }, { contents: 'all' }).catch(() => ({ ok: false as const, code: 'io-failed' as const }))
+        // A sign in again's replacement may hold the history carried over
+        // into it: that bound, not the removal's own, applies to it.
+        const removed = await p.realmFolders.remove({ authRealmId: j.realmId }, { contents: 'all', ...(j.replacesAccountId !== undefined ? { holdsHistory: true } : {}) })
+          .catch(() => ({ ok: false as const, code: 'io-failed' as const }))
         if (!removed.ok) return failure((removed.code ?? 'io-failed') as AccountsFailureCode, 'The account folder could not be removed; the setup is kept.')
       }
       const dropped = await ready.store.mutate((d) => abandonAccountSetup(d, j.accountId))
@@ -1201,7 +1805,9 @@ export class AccountsService {
       this.deps.secrets.discardForAccount(j.accountId)
       return { ok: true }
     } finally {
+      this.discardsRunning.delete(j.accountId)
       release()
+      this.changed()
     }
   }
 
@@ -1209,7 +1815,7 @@ export class AccountsService {
   // Accounts (5.3, 11)
   // -------------------------------------------------------------------------
 
-  private accountContext(accountId: string): { store: AccountRegistryStore; doc: ProviderRegistryDoc; p: ProviderPackage | null; external: boolean; legacy: boolean; realmActive: boolean } | AccountsFailure {
+  private accountContext(accountId: string): { store: AccountRegistryStore; doc: ProviderRegistryDoc; p: ProviderPackage | null; external: boolean; legacy: boolean; legacyRecord: boolean; realmActive: boolean } | AccountsFailure {
     const ready = this.ready()
     if ('ok' in ready) return ready
     const a = findAccount(ready.doc, accountId)
@@ -1217,6 +1823,7 @@ export class AccountsService {
     const realm = findRealm(ready.doc, a.authRealmId)
     return {
       ...ready, p: this.pkg(a.providerId), external: realm?.ownership === 'external-default', legacy: isLegacyLinked(ready.doc, accountId),
+      legacyRecord: legacyRecordOf(ready.doc, a),
       realmActive: realm?.lifecycle === 'active' && realm.ownerProviderAccountId === accountId,
     }
   }
@@ -1290,6 +1897,10 @@ export class AccountsService {
     let status: AuthOperationResult & { state: KnownAuthState }
     try {
       await this.ensureDiscovered(ctx.p!)
+      // An old sign-in a sign in again left (kept in recovery, or the app
+      // closed before it was removed): removed first. This check of the
+      // account's own realm is then the replacement's revalidation.
+      await this.settleOldSignIns(ctx.store, ctx.p!, a.id, { revalidate: false })
       status = await ctx.p!.auth!.status({ authRealmId: a.authRealmId }).catch(() => ({ ok: false, code: 'not-started' as const, state: 'error' as const }))
     } finally {
       lease.release()
@@ -1335,10 +1946,13 @@ export class AccountsService {
     return { ok: true, state: status.state }
   }
 
-  /** What a status reported, as the registry records and compares it. */
-  private checkInput(status: AuthOperationResult & { state: KnownAuthState }): { state: KnownAuthState; observedCredential?: CredentialClass } {
+  /** What a status reported, as the registry records and compares it: the
+  *  state, the kind of credential, and any subject and authority the
+  *  provider reported (the registry judges whether they are reliable; no
+  *  provider reports one today). */
+  private checkInput(status: AuthOperationResult & { state: KnownAuthState }): { state: KnownAuthState; observedCredential?: CredentialClass; providerSubject?: string; providerAuthorityId?: string } {
     const c = status.state === 'signed-in' ? observedCredential(status.credential) : undefined
-    return { state: status.state, ...(c ? { observedCredential: c } : {}) }
+    return { state: status.state, ...(c ? { observedCredential: c } : {}), ...subjectOf(status) }
   }
 
   /** Design 5.5: before an operation that acts on an external home, check
@@ -1388,14 +2002,29 @@ export class AccountsService {
         if (changed) return changed
       }
       await this.ensureDiscovered(p)
-      const out = await p.auth!.logout({ authRealmId: a.authRealmId }, ctx.external ? { acknowledgeExternalRealm: true } : {})
+      // The user's acknowledgement goes with the sign-out whenever it was
+      // given (always, for an external home, by the check above): a provider
+      // may hold another account's realm to be this computer's own sign-in
+      // too (a Claude primary profile, and every Claude profile on macOS) and
+      // run its sign-out only with it (WP2 PR 4 review, A2-S1).
+      const acknowledged = input.acknowledgeExternal === true
+      const out = await p.auth!.logout({ authRealmId: a.authRealmId }, acknowledged ? { acknowledgeExternalRealm: true } : {})
         .catch((): AuthOperationResult => ({ ok: false, code: 'not-started' }))
-      if (out.state === 'signed-out' || out.state === 'signed-in') {
-        const state = out.state
+      if (!out.ok && out.code === 'external-ack-required' && !acknowledged) {
+        return failure('acknowledgement-required', typeof out.message === 'string' && out.message ? out.message : undefined)
+      }
+      // What the sign-out left, as far as it is known: a sign-out that may
+      // have run but whose result was not read back is not evidence of
+      // either state, so the account needs a check (review round 2, L2-1).
+      const state = signOutLeft(out)
+      if (state) {
         const recorded = await ctx.store.mutate((d, t) => recordAuthCheck(d, a.id, { state }, t))
         if (!recorded.ok) this.log(`a sign-out result was not saved (${recorded.code})`)
       }
       if (!out.ok) return this.fromAuth(out)
+      // Signed out: an old sign-in a sign in again left goes too (as at
+      // archive: nothing of the account stays signed in; review round 2, L1-2).
+      await this.settleOldSignIns(ctx.store, p, a.id, { revalidate: false, archiving: true })
       return { ok: true, state: 'signed-out' }
     } finally {
       release()
@@ -1424,22 +2053,59 @@ export class AccountsService {
     if ('ok' in ctx) return ctx
     const a = findAccount(ctx.doc, input.accountId)!
     const next = input.lifecycle
-    const apply = async (): Promise<AccountsResult> => {
+    if (a.lifecycle === 'archived' && next === 'inactive') {
+      // Restore (design 5.3): back to inactive, its realm live again, and
+      // nothing about its sign-in trusted until making it active checks it.
+      // Only while the provider is on: an account of a provider that is off
+      // is listed, never managed.
+      const notNow = this.cliRefusal(a.providerId)
+      if (notNow) return notNow
+      const r = await ctx.store.mutate((d, t) => restoreArchivedAccount(d, a.id, t))
+      return this.fromStore(r) ?? { ok: true }
+    }
+    const apply = async (opts: { archiveCleared?: boolean } = {}): Promise<AccountsResult> => {
       let consumers = 0
+      let sessions: string[] = []
+      let unnamed = 0
       let held = false
+      let inUse = false
+      let noop = false
+      let changedMeanwhile = false
       const r = await ctx.store.mutate((d, t) => {
+        noop = findAccount(d, a.id)?.lifecycle === next
         // Under the lock that applies it: a sign-out, archive or abandon
         // holding the account is never overtaken by a lifecycle change.
         if (this.deps.leases.isHeld(a.id)) { held = true; return { ok: false, code: 'blocked-by-consumers', message: 'held' } }
+        // P4.6: an archive commits only through a path that ran the archive
+        // hook first. A path chosen before this lock (the account then not
+        // inactive, so the registry was to name the rule) whose account has
+        // since become archivable is refused here, under the lock, and asked
+        // again.
+        if (next === 'archived' && !opts.archiveCleared && !ctx.legacyRecord && findAccount(d, a.id)?.lifecycle === 'inactive') {
+          changedMeanwhile = true
+          return { ok: false, code: 'blocked-by-consumers', message: 'changed' }
+        }
+        // A mirrored account's own record held by a session that takes no
+        // lease (a Claude profile): refused here as on the provider's own
+        // surface, whichever channel asks. Checked at the moment of the
+        // request: a UX rule, not an isolation boundary. Already at the
+        // requested state: a no-op, never refused (as the registry treats it).
+        if (next !== 'active' && !noop && this.legacyRecordInUse(d, a.id)) { inUse = true; return { ok: false, code: 'blocked-by-consumers', message: 'in use' } }
         consumers = this.deps.leases.count(a.id)
+        // Which sessions hold it, read with the count: the refusal names them.
+        sessions = this.deps.leases.sessionsHolding(a.id)
+        unnamed = this.deps.leases.unattributed(a.id)
         return setAccountLifecycle(d, a.id, next, { consumers }, t)
       })
       if (held) return failure('busy')
-      const bad = this.fromStore(r, consumers)
+      if (inUse) return failure('in-use')
+      if (changedMeanwhile) return failure('lifecycle', 'This account changed while it was being archived. Try again.')
+      const bad = this.fromStore(r, consumers, sessions, unnamed)
       if (bad) return bad
       // A mirrored account's lifecycle is the provider's own list's too:
-      // write it there now, not at the next start.
-      if (ctx.legacy) await this.writeThroughProviders([a.providerId])
+      // write it there now, not at the next start. A no-op changed nothing,
+      // so it writes nothing.
+      if (ctx.legacy && !noop) await this.writeThroughProviders([a.providerId])
       return { ok: true }
     }
     if (next === 'inactive') return apply()
@@ -1447,34 +2113,53 @@ export class AccountsService {
       // Re-activation checks the sign-in first (11): a signed-out account
       // comes back needing attention, never as ready -- so a check that
       // cannot run (capability off, provider off) refuses it.
-      if (ctx.p?.auth && !ctx.legacy && a.lifecycle === 'inactive') {
+      // A legacy record (a Claude profile, linked or not) comes back as its
+      // own store says, with no check run on its behalf (WP2 PR 4 review, U2.1).
+      if (ctx.p?.auth && !ctx.legacyRecord && a.lifecycle === 'inactive') {
         const checked = await this.refreshStatus({ accountId: a.id })
         if (!checked.ok) return checked
       }
       return apply()
     }
     if (next === 'archived') {
-      if (ctx.legacy) return apply() // the registry refuses: removed where it was created
+      // A legacy record, linked or not, is never signed out or checked here:
+      // the registry refuses it (removed where it was created) before anything
+      // runs (WP2 PR 4 review, U2.1).
+      if (ctx.legacyRecord) return apply()
       if (ctx.external) {
         // Credentials stay under the other client's control: say so first.
         if (input.acknowledgeExternal !== true) return failure('acknowledgement-required', 'Archiving only forgets this sign-in here; it stays signed in for other apps. Confirm to continue.')
-        if (!ctx.p?.auth || a.lifecycle !== 'inactive') return apply() // the registry names the rule
+        if (a.lifecycle !== 'inactive') return apply() // the registry names the rule
+        if (!ctx.p?.auth) return this.withArchiveCleared(a, () => apply({ archiveCleared: true }))
         const release = await this.exclusiveHold(ctx.store, a.id, a.providerId)
         if (typeof release !== 'function') return release
+        let cleared: (() => void) | null = null
         try {
+          // Held from here: no lifecycle change can land. The lifecycle read
+          // above came before the hold, so it is read again under it.
+          if (this.lifecycleNow(ctx, a.id) !== 'inactive') return failure('lifecycle', 'This account changed while it was being archived. Try again.')
           // Design 5.5: a home that now holds another sign-in is reconciled
           // first. Archiving changes nothing outside this app, so a check
           // that cannot run (the CLI gone) does not keep the record.
           const changed = await this.externalStillMatches(ctx.store, ctx.p, a.id, a.authRealmId, { unansweredBlocks: false })
           if (changed) return changed
+          // P4.6: what the account holds outside its sign-in is cleared after
+          // the read-only check and before anything changes; a clear that
+          // fails refuses the archive.
+          const c = await this.clearedForArchive(a)
+          if (typeof c !== 'function') return c
+          cleared = c
           // Held: the count is 0 and nothing new could start.
           const r = await ctx.store.mutate((d, t) => setAccountLifecycle(d, a.id, 'archived', { consumers: this.deps.leases.count(a.id) }, t))
-          return this.fromStore(r) ?? { ok: true }
+          const archived = this.fromStore(r)
+          if (!archived) this.forgetRealms(ctx.p, ctx.store.current() ?? ctx.doc, a.id, a.authRealmId)
+          return archived ?? { ok: true }
         } finally {
+          try { cleared?.() } catch { /* a release never fails the archive */ }
           release()
         }
       }
-      if (!ctx.p?.auth) return apply()
+      if (!ctx.p?.auth) return a.lifecycle === 'inactive' ? this.withArchiveCleared(a, () => apply({ archiveCleared: true })) : apply()
       // A managed archive leaves a credential-free tombstone: sign out first,
       // and a failed sign-out fails the archive (the account stays inactive).
       if (a.lifecycle !== 'inactive') return apply() // the registry names the rule
@@ -1482,24 +2167,96 @@ export class AccountsService {
       if (refused) return refused
       const release = await this.exclusiveHold(ctx.store, a.id, a.providerId)
       if (typeof release !== 'function') return release
+      let cleared: (() => void) | null = null
       try {
+        // Held from here: no lifecycle change can land. The lifecycle read
+        // above came before the hold, so it is read again under it.
+        if (this.lifecycleNow(ctx, a.id) !== 'inactive') return failure('lifecycle', 'This account changed while it was being archived. Try again.')
         await this.ensureDiscovered(ctx.p)
+        // The account's own folder answers first (a status run: the folder in
+        // place, no .env): nothing is signed out before the archive is known
+        // to be able to finish (review round 2, L2-3).
         const status = await ctx.p.auth.status({ authRealmId: a.authRealmId }).catch((): AuthOperationResult & { state: KnownAuthState } => ({ ok: false, code: 'not-started', state: 'error' }))
         if (!status.ok) return this.fromAuth(status)
+        // P4.6: what the account holds outside its sign-in (a Codex account's
+        // chatgpt.com web session) is cleared after the read-only check and
+        // before anything is signed out or removed; a clear that fails
+        // refuses the archive.
+        const c = await this.clearedForArchive(a)
+        if (typeof c !== 'function') return c
+        cleared = c
+        // Then an old sign-in a sign in again left: an archived account keeps
+        // none. One that still cannot be removed refuses the archive before
+        // this account's own sign-in is touched.
+        await this.settleOldSignIns(ctx.store, ctx.p, a.id, { revalidate: false, archiving: true })
+        if (unsettledSupersededRealms(ctx.store.current() ?? ctx.doc, a.id).length > 0) return failure('lifecycle', 'The old sign-in of this account could not be removed yet. Check its sign-in, then try again.')
         if (status.state !== 'signed-out') {
           const out = await ctx.p.auth.logout({ authRealmId: a.authRealmId }).catch((): AuthOperationResult => ({ ok: false, code: 'not-started' }))
-          if (!out.ok) return this.fromAuth(out)
+          if (!out.ok) {
+            // What the sign-out left, as a plain sign-out records it.
+            const left = signOutLeft(out)
+            if (left) {
+              const recorded = await ctx.store.mutate((d, t) => recordAuthCheck(d, a.id, { state: left }, t))
+              if (!recorded.ok) this.log(`a sign-out result was not saved (${recorded.code})`)
+            }
+            return this.fromAuth(out)
+          }
         }
         const signedOut = await ctx.store.mutate((d, t) => recordAuthCheck(d, a.id, { state: 'signed-out' }, t))
         if (!signedOut.ok) return this.fromStore(signedOut)!
         // Held: the count is 0 and nothing new could start.
         const r = await ctx.store.mutate((d, t) => setAccountLifecycle(d, a.id, 'archived', { consumers: this.deps.leases.count(a.id) }, t))
-        return this.fromStore(r) ?? { ok: true }
+        const archived = this.fromStore(r)
+        if (!archived) this.forgetRealms(ctx.p, ctx.store.current() ?? ctx.doc, a.id, a.authRealmId)
+        return archived ?? { ok: true }
       } finally {
+        try { cleared?.() } catch { /* a release never fails the archive */ }
         release()
       }
     }
     return failure('invalid-request')
+  }
+
+  /** The account's lifecycle in the registry as it stands now. */
+  private lifecycleNow(ctx: { store: AccountRegistryStore; doc: ProviderRegistryDoc }, accountId: string): AccountLifecycle | undefined {
+    return findAccount(ctx.store.current() ?? ctx.doc, accountId)?.lifecycle
+  }
+
+  /** P4.6 (row 58): before an account is archived, what it holds outside its
+   *  sign-in (a Codex account's chatgpt.com web session) is cleared, through
+   *  the provider-neutral archive seam (archive-hooks.ts). A clear
+   *  that fails refuses the archive, as Claude's account delete refuses when
+   *  its claude.ai session cannot be cleared. Resolves to the release to run
+   *  once the archive has settled, or the refusal. */
+  private async clearedForArchive(a: { id: string; providerId: ProviderId }): Promise<(() => void) | AccountsFailure> {
+    try {
+      return await prepareAccountArchive(a.id, a.providerId)
+    } catch (err) {
+      this.log(`an archive was refused: the account's web sign-in could not be cleared (${(err as Error)?.message ?? err})`)
+      return failure('lifecycle', 'This account\'s web sign-in could not be cleared, so it was not archived. Try again.')
+    }
+  }
+
+  /** Run an archive step with the account's web state cleared first. */
+  private async withArchiveCleared(a: { id: string; providerId: ProviderId }, run: () => Promise<AccountsResult>): Promise<AccountsResult> {
+    const cleared = await this.clearedForArchive(a)
+    if (typeof cleared !== 'function') return cleared
+    try {
+      return await run()
+    } finally {
+      try { cleared() } catch { /* a release never fails the archive */ }
+    }
+  }
+
+  /** An account was archived: the provider forgets what it kept about each
+   *  realm the account has had (its current one and every one a sign in again
+   *  moved it off) besides the folder (ADR-023: the carry marks). Never throws. */
+  private forgetRealms(p: ProviderPackage | null, doc: ProviderRegistryDoc, accountId: string, authRealmId: string): void {
+    const ids = new Set<string>([authRealmId])
+    try { for (const r of doc.realms) if (r.ownerProviderAccountId === accountId) ids.add(r.id) } catch { /* the current realm alone */ }
+    for (const id of ids) {
+      try { p?.realmFolders?.forget?.({ authRealmId: id }) } catch { /* a forgotten mark never fails the archive */ }
+    }
   }
 
   async setDefault(input: { accountId: string }): Promise<AccountsResult> {
@@ -1880,6 +2637,8 @@ export class AccountsService {
     providerAccountId?: string
     /** The session id or review id: one lease per owner. */
     ownerId: string
+    /** The app session the launch runs for (a review: the session that asked). */
+    sessionId?: string
     acknowledgeRealmOnly?: boolean
   }): Promise<LaunchLeaseResult> {
     if (!LAUNCH_LEASE_KINDS.includes(input.kind)) return failure('invalid-request')
@@ -1912,7 +2671,9 @@ export class AccountsService {
       if (this.unrecordedSignIns.has(b.binding.providerAccountId)) {
         return failure('sign-in-changed', 'This account signed in again, but the app could not record it. Check it in Accounts before using it.')
       }
-      const added = this.deps.leases.add(b.binding.providerAccountId, input.providerId, { kind: input.kind, ownerId: input.ownerId })
+      const added = this.deps.leases.add(b.binding.providerAccountId, input.providerId, {
+        kind: input.kind, ownerId: input.ownerId, ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+      })
       if (!added.ok) return added.code === 'held' ? failure('busy') : failure('invalid-request', 'That launch is already bound to another account.')
       return { ok: true, lease: added.lease, binding: b.binding, realmOnly: b.realmOnly, ...(reviewer ? { reviewer } : {}) }
     })
@@ -2063,6 +2824,9 @@ export class AccountsService {
         view.buckets = r.buckets
         if (typeof r.readingAt === 'number') view.readingAt = r.readingAt
         if (r.planLabel) view.planLabel = r.planLabel
+        // Codex credits (ADR-023): the three validated fields, from the live,
+        // read or last-seen reading alike; no key when the reading has none.
+        if (r.credits) view.credits = r.credits
       }
       if (!view.planLabel && a.planLabel) view.planLabel = a.planLabel
       return view
@@ -2435,10 +3199,16 @@ export class AccountsService {
   accountIdForLegacy(providerId: ProviderId, legacyId: string, opts: { ignoreCase?: boolean } = {}): string | null {
     const ready = this.ready()
     if ('ok' in ready) return null
-    // Without case where the file system ignores it (Windows): a profile id
-    // read back from a path may differ in case from the one on record.
-    const same = (a: string) => a === legacyId || (opts.ignoreCase === true && typeof legacyId === 'string' && a.toLowerCase() === legacyId.toLowerCase())
-    const link = ready.doc.legacyLinks.find((l) => l.providerId === providerId && same(l.legacyId))
+    const links = ready.doc.legacyLinks.filter((l) => l.providerId === providerId)
+    // A link spelled exactly as asked comes first. Then, without case where
+    // the file system ignores it (Windows): a profile id read back from a
+    // path may differ in case from the one on record. Only ASCII letters
+    // fold, as a profile id is ASCII.
+    let link = links.find((l) => l.legacyId === legacyId)
+    if (!link && opts.ignoreCase === true && typeof legacyId === 'string') {
+      const want = lowerAsciiLetters(legacyId)
+      link = links.find((l) => typeof l.legacyId === 'string' && lowerAsciiLetters(l.legacyId) === want)
+    }
     return link && findAccount(ready.doc, link.accountId) ? link.accountId : null
   }
 
@@ -2454,6 +3224,47 @@ export class AccountsService {
       let dir: string | null = null
       try { dir = await p.launch.sessionsDir({ authRealmId: realm.id }) } catch { dir = null }
       if (typeof dir === 'string' && dir && !out.includes(dir)) out.push(dir)
+    }
+    return out
+  }
+
+  /** WP2 PR 4, P4.4 (rows 55, 56): each account's own folders -- its log
+   *  folder, memories folder and settings file -- for every provider whose
+   *  package names them (ProviderLaunchOperations.accountFolders), with whose
+   *  they are: the account, and whether it is this computer's own home
+   *  (`external`). Only an account's current realm, and only while it is in
+   *  use (active); a realm that cannot be located now is left out. Paths and
+   *  opaque ids only, main only: the Memory page and the log-folder channels
+   *  ask afresh per request and send a renderer no path but the memory
+   *  listing's own. Null while the registry has not been read (as
+   *  sessionsRoots). */
+  async accountFolders(): Promise<Array<{ providerId: ProviderId; accountId: string; external: boolean; logDir: string; memoriesDir: string; configFile: string }> | null> {
+    const store = this.currentStore()
+    const status = store?.status()
+    if (!store || (status?.mode === 'recovery' && status.reason === 'unloaded')) {
+      let settled = false
+      try { settled = this.deps.registrySettled?.() === true } catch { settled = false }
+      return settled ? [] : null
+    }
+    const ready = this.ready()
+    if ('ok' in ready) return []
+    let packages: readonly ProviderPackage[]
+    try { packages = this.deps.packages() } catch { return [] }
+    const text = (v: unknown): v is string => typeof v === 'string' && v.length > 0
+    const out: Array<{ providerId: ProviderId; accountId: string; external: boolean; logDir: string; memoriesDir: string; configFile: string }> = []
+    for (const p of packages) {
+      const launch = p.launch
+      const port = launch && typeof launch.accountFolders === 'function' ? launch.accountFolders.bind(launch) : null
+      if (!port) continue
+      for (const realm of ready.doc.realms) {
+        if (realm.providerId !== p.id || realm.lifecycle !== 'active') continue
+        const account = findAccount(ready.doc, realm.ownerProviderAccountId)
+        if (!account || account.authRealmId !== realm.id || out.some((o) => o.accountId === account.id)) continue
+        let f: ProviderAccountFolders | null = null
+        try { f = await port({ authRealmId: realm.id }) } catch { f = null }
+        if (!f || !text(f.logDir) || !text(f.memoriesDir) || !text(f.configFile)) continue
+        out.push({ providerId: p.id, accountId: account.id, external: realm.ownership === 'external-default', logDir: f.logDir, memoriesDir: f.memoriesDir, configFile: f.configFile })
+      }
     }
     return out
   }
@@ -2476,6 +3287,8 @@ export class AccountsService {
     providerId: ProviderId
     providerAccountId?: string
     ownerId: string
+    /** The app session the launch runs for (a review: the session that asked). */
+    sessionId?: string
     acknowledgeRealmOnly?: boolean
     /** The launch would run on another machine (an SSH session). */
     remote?: boolean
@@ -2486,10 +3299,13 @@ export class AccountsService {
     // The package says which kinds it prepares (data, not a provider name): a
     // Claude session keeps its own launch path (A12), so only its reviews come
     // here. Refused before an account is chosen or leased.
-    if (!launchKindsOf(p).includes(input.kind)) return failure('unsupported', `${p.displayName} does not start a ${input.kind === 'session' ? 'session' : 'review'} this way.`)
+    if (!launchKindsOf(p).includes(input.kind)) return failure('unsupported', `${p.displayName} does not start ${LAUNCH_KIND_WORDS[input.kind]} this way.`)
     // A reviewer invocation always runs on this computer, beside the session
     // it serves.
     if (input.kind === 'review' && input.remote === true) return failure('unsupported', 'A review runs on this computer only.')
+    // So does a background run (a Cloud Agent, P4.5): it runs in a project
+    // folder on this computer.
+    if (input.kind === 'background' && input.remote === true) return failure('unsupported', 'A background run runs on this computer only.')
     if (input.remote === true) {
       const remote = this.remoteLaunchRefusal(p.id)
       if (remote) return remote
@@ -2526,6 +3342,7 @@ export class AccountsService {
     await this.ensureDiscovered(p)
     const leased = await this.acquireLaunchLease({
       kind: input.kind, providerId: p.id, providerAccountId: chosen.accountId, ownerId: input.ownerId,
+      ...(typeof input.sessionId === 'string' ? { sessionId: input.sessionId } : {}),
       ...(acknowledged ? { acknowledgeRealmOnly: true } : {}),
     })
     if (!leased.ok) return leased
@@ -2558,6 +3375,83 @@ export class AccountsService {
     return this.deps.leases.releaseOwner(kind, ownerId)
   }
 
+  /**
+   * A running session switched to another account of its provider (P3.6,
+   * row 22; parity with Claude's switch, which keeps the conversation): the
+   * conversation the session is on is carried into the account it moves to,
+   * and the respawn resumes it there by id.
+   *
+   * Called by main's respawn of that session only (pty:spawn, once the
+   * session's previous process has ended): `conversation` is main's own
+   * record of what that session is on and of the account it ran under
+   * (pty-manager), and `input` names the account the new launch was
+   * prepared on. Nothing here is the renderer's. Refused unless both
+   * accounts are the same provider's, the provider is on and its package
+   * copies conversations, and the destination is one a launch could run on
+   * now (active, not blocked, its realm locatable, no sign-in replacing it).
+   * The destination may be this computer's own sign-in: its conversations
+   * folder is written under the same rules as a managed one's, as every
+   * Claude profile shares one. Both accounts are leased under the registry
+   * lock for the whole copy (no sign-out, archive, inactivation or
+   * switch-off meanwhile), and the leases are released on every path.
+   * `none`: nothing to carry (the session is on no known conversation, or
+   * already on that account). `opts.current`: whether the respawn still
+   * wants the copy (it is superseded, closed or out of time when not),
+   * passed to the folder work (copyConversation), which asks it once the
+   * realm locks are held and before each step (`cancelled`).
+   */
+  async carryConversation(
+    input: { accountId: string },
+    conversation: { uuid: string; cwd: string; accountId: string } | undefined,
+    opts?: { current?: () => boolean },
+  ): Promise<AccountsResult<{ carried: 'copied' | 'present' | 'extended' | 'none' }>> {
+    const targetId = input && typeof input === 'object' ? (input as { accountId?: unknown }).accountId : undefined
+    if (typeof targetId !== 'string' || !targetId) return failure('invalid-request')
+    if (!conversation) return { ok: true, carried: 'none' }
+    if (typeof conversation.uuid !== 'string' || typeof conversation.accountId !== 'string' || typeof conversation.cwd !== 'string') return failure('invalid-request')
+    if (conversation.accountId === targetId) return { ok: true, carried: 'none' }
+    const ready = this.ready()
+    if ('ok' in ready) return ready
+    const target = findAccount(ready.doc, targetId)
+    const source = findAccount(ready.doc, conversation.accountId)
+    if (!target || !source) return failure('not-found')
+    if (target.providerId !== source.providerId) return failure('invalid-request', 'A session moves only to another account of its own provider.')
+    const p = this.pkg(target.providerId)
+    const folders = p?.realmFolders
+    if (!p || !folders || typeof folders.copyConversation !== 'function') return failure('unsupported')
+    const notNow = this.cliRefusal(p.id)
+    if (notNow) return notNow
+    const leases: AccountLease[] = []
+    try {
+      for (const accountId of [source.id, target.id]) {
+        const leased = await this.operationLease(ready.store, accountId, p.id)
+        if ('ok' in leased) return leased
+        leases.push(leased)
+      }
+      // Held now: the registry as it stands, the destination checked as a
+      // launch is (acquireLaunchLease), the source not archived.
+      const doc = ready.store.current()
+      if (!doc || ready.store.status().mode !== 'ready') return failure('registry-unavailable')
+      const s = findAccount(doc, source.id)
+      const t = findAccount(doc, target.id)
+      if (!s || !t) return failure('not-found')
+      if (s.lifecycle === 'archived') return failure('lifecycle', 'The account this session ran under is archived.')
+      const b = resolveLaunchBinding(doc, { providerId: p.id, providerAccountId: t.id })
+      if (!b.ok) return failure(b.code === 'realm-unavailable' ? 'realm-unavailable' : b.code === 'not-active' || b.code === 'blocked' ? 'lifecycle' : b.code === 'provider-mismatch' ? 'invalid-request' : b.code, b.message)
+      if (this.unrecordedSignIns.has(t.id)) return failure('sign-in-changed', 'This account signed in again, but the app could not record it. Check it in Accounts before using it.')
+      const current = opts?.current
+      const copied = await folders.copyConversation({ authRealmId: s.authRealmId }, { authRealmId: b.binding.authRealmId }, { id: conversation.uuid, cwd: conversation.cwd }, typeof current === 'function' ? { current } : undefined)
+        .catch((): { ok: false; code: 'io-failed'; message?: string; carried?: undefined } => ({ ok: false, code: 'io-failed' }))
+      if (!copied || copied.ok !== true) {
+        const code = (copied?.code ?? 'io-failed') as AccountsFailureCode
+        return failure(code, typeof copied?.message === 'string' ? copied.message : 'The conversation could not be copied into the other account, so it was not carried over.')
+      }
+      return { ok: true, carried: copied.carried === 'present' || copied.carried === 'extended' ? copied.carried : 'copied' }
+    } finally {
+      for (const l of leases) { try { l.release() } catch { /* idempotent */ } }
+    }
+  }
+
   /** A renderer went away: stop what it started, release what it held. */
   releaseRenderer(senderId: number): void {
     for (const run of this.signIns.values()) if (run.senderId === senderId) run.controller.abort()
@@ -2565,6 +3459,14 @@ export class AccountsService {
     // actually ended: its own finally releases that lease.
     this.deps.leases.releaseForRenderer(senderId, (lease) => lease.kind === 'sign-in' && this.signIns.get(lease.ownerId)?.senderId === senderId)
     this.deps.secrets.discardForRenderer(senderId)
+  }
+
+  /** The provider's own record of this account in use by a session that
+   *  takes no lease (legacyRecordInUse); a throw counts as in use. */
+  private legacyRecordInUse(doc: ProviderRegistryDoc, accountId: string): boolean {
+    const link = doc.legacyLinks.find((l) => l.accountId === accountId)
+    if (!link || !this.deps.legacyRecordInUse) return false
+    try { return this.deps.legacyRecordInUse(link.providerId, link.legacyId) } catch { return true }
   }
 
   /** For a message that names the blocker (design 10, 11). */
