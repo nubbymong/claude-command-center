@@ -129,6 +129,7 @@ describe('buildEffortRows (#385)', () => {
   it('enables everything for an unknown model or a model with no effort list', () => {
     expect(buildEffortRows(reg, 'who-knows').every((r) => r.supported)).toBe(true)
     expect(buildEffortRows(reg, 'claude-opus-5').every((r) => r.supported)).toBe(true)
+    expect(buildEffortRows(reg, 'claude-opus-5-5').every((r) => r.supported)).toBe(true)
     expect(buildEffortRows(reg, undefined).every((r) => r.supported)).toBe(true)
   })
 })
@@ -138,7 +139,9 @@ describe('shortModelName with a registry (footer pill shows the pinned name)', (
     expect(shortModelName('claude-opus-4-6', reg)).toBe('Opus 4.6')
     // The regex alone flattens this to "Opus 4.8" and loses the variant.
     expect(shortModelName('claude-opus-4-8-fast', reg)).toBe('Opus 4.8 Fast')
-    expect(shortModelName('opus', reg)).toBe('Opus 5')
+    expect(shortModelName('opus', reg)).toBe('Opus 5.5')
+    expect(shortModelName('claude-opus-5-5', reg)).toBe('Opus 5.5')
+    expect(shortModelName('claude-sonnet-5-5', reg)).toBe('Sonnet 5.5')
   })
 
   it('never uses a fuzzy pattern label (it would claim the wrong version)', () => {
@@ -170,7 +173,7 @@ describe('resolvePickedModelId (#385)', () => {
   })
 
   it('resolves aliases and exact ids too', () => {
-    expect(resolvePickedModelId(reg, 'opus')).toBe('claude-opus-5')
+    expect(resolvePickedModelId(reg, 'opus')).toBe('claude-opus-5-5')
     expect(resolvePickedModelId(reg, 'claude-sonnet-4-6')).toBe('claude-sonnet-4-6')
   })
 
@@ -398,15 +401,16 @@ describe('isModelActive with pinned rows (#385)', () => {
   })
 
   it('does not tick the family alias when a different version is pinned', () => {
-    // 'opus' means the newest Opus (5); a running 4.6 is not that.
+    // 'opus' means the newest Opus (5.5); a running 4.6, or 5, is not that.
     expect(isModelActive('opus', 'Opus 4.6', reg)).toBe(false)
-    expect(isModelActive('opus', 'Opus 5', reg)).toBe(true)
+    expect(isModelActive('opus', 'Opus 5', reg)).toBe(false)
+    expect(isModelActive('opus', 'Opus 5.5', reg)).toBe(true)
   })
 
   it('still separates the 1M variant from the 200k one', () => {
-    expect(isModelActive('opus[1m]', 'Opus 5 (1M context)', reg)).toBe(true)
-    expect(isModelActive('opus', 'Opus 5 (1M context)', reg)).toBe(false)
-    expect(isModelActive('opus[1m]', 'Opus 5', reg)).toBe(false)
+    expect(isModelActive('opus[1m]', 'Opus 5.5 (1M context)', reg)).toBe(true)
+    expect(isModelActive('opus', 'Opus 5.5 (1M context)', reg)).toBe(false)
+    expect(isModelActive('opus[1m]', 'Opus 5.5', reg)).toBe(false)
   })
 
   it('a bare family reading only ticks the alias row', () => {

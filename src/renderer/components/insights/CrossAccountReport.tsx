@@ -1,6 +1,7 @@
 import React from 'react'
 import { formatValue } from '../../utils/kpiTrends'
 import type { CrossAccountComparisonRow, CrossAccountInsights, InsightsRun } from '../../types/electron'
+import { ProviderMark } from '../sidebar/Badges'
 
 // Values here are rendered with the SAME formatter the main process uses to write
 // the synthesis prompt (shared/kpi-format), so a number the model quotes in its
@@ -11,6 +12,9 @@ interface Props {
   run: InsightsRun
   /** Resolve an account's display name (alias-aware). Falls back to the captured label. */
   nameForAccount?: (email?: string) => string | null
+  /** P4.7 (mockup C1 A): the assistant a member run reported on, from its own
+   *  record; absent reads every member as Claude Code's. */
+  providerOfRun?: (runId: string) => 'claude' | 'codex'
 }
 
 const ARROW_UP = String.fromCodePoint(0x25b2)
@@ -80,7 +84,7 @@ function ComparisonTable({
   columns,
 }: {
   rows: CrossAccountComparisonRow[]
-  columns: Array<{ key: string; label: string; span?: number }>
+  columns: Array<{ key: string; label: string; span?: number; provider?: 'claude' | 'codex' }>
 }) {
   if (rows.length === 0) {
     return (
@@ -107,7 +111,14 @@ function ComparisonTable({
             <th className="text-left font-semibold text-subtext0 px-3 py-2 whitespace-nowrap">Metric</th>
             {columns.map((c) => (
               <th key={c.key} className="text-right font-semibold text-subtext0 px-3 py-2 whitespace-nowrap">
-                {c.label}
+                {c.provider ? (
+                  <span className="inline-flex items-center gap-1">
+                    <ProviderMark providerId={c.provider} size={14} title={c.provider === 'codex' ? 'Codex' : 'Claude Code'} />
+                    {c.label}
+                  </span>
+                ) : (
+                  c.label
+                )}
                 {/* Window length under each account: a raw count from a 23-day
                     window sitting beside one from a 35-day window is only honest
                     if the reader can see the difference. */}
@@ -204,11 +215,20 @@ function ComparisonTable({
  * only artifact is the CrossAccountInsights JSON — so this view replaces the
  * parsed-HTML report rather than sitting beside it.
  */
-export default function CrossAccountReport({ data, run, nameForAccount }: Props) {
+export default function CrossAccountReport({ data, run, nameForAccount, providerOfRun }: Props) {
+  // P4.7: a Codex account is named by its captured label (it is not one of
+  // the Claude profiles nameForAccount resolves an email against), and each
+  // column carries its assistant's mark once the roll-up includes Codex; a
+  // Claude Code roll-up is drawn as it always was.
+  const providerOf = (a: { runId: string }) => providerOfRun?.(a.runId) ?? 'claude'
+  const mixed = data.accounts.some((a) => providerOf(a) === 'codex')
+  const accountLabel = (a: { runId: string; accountEmail?: string; label: string }) =>
+    providerOf(a) === 'codex' ? a.label : nameForAccount?.(a.accountEmail) || a.label
   const columns = data.accounts.map((a) => ({
     key: a.key,
-    label: nameForAccount?.(a.accountEmail) || a.label,
+    label: accountLabel(a),
     span: a.spanDays,
+    ...(mixed ? { provider: providerOf(a) } : {}),
   }))
   const failedMembers = (run.members || []).filter((m) => m.status !== 'complete' || m.kpisUnavailable)
   const summary = data.summary
@@ -220,7 +240,7 @@ export default function CrossAccountReport({ data, run, nameForAccount }: Props)
   const windowsComparable = data.windowsComparable !== false
   const uniqueByAccount = data.accounts.map((a) => ({
     account: a,
-    label: nameForAccount?.(a.accountEmail) || a.label,
+    label: accountLabel(a),
     metrics: uniqueMetrics.filter((u) => u.key === a.key),
   }))
 
@@ -389,8 +409,9 @@ export default function CrossAccountReport({ data, run, nameForAccount }: Props)
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {data.accounts.map((a) => (
               <div key={a.key} className="rounded-lg border border-surface0 bg-mantle/40 p-3">
-                <div className="text-xs font-semibold text-text truncate" title={a.accountEmail || a.label}>
-                  {nameForAccount?.(a.accountEmail) || a.label}
+                <div className="text-xs font-semibold text-text truncate flex items-center gap-1.5" title={a.accountEmail || a.label}>
+                  {mixed && <ProviderMark providerId={providerOf(a)} size={14} title={providerOf(a) === 'codex' ? 'Codex' : 'Claude Code'} />}
+                  {accountLabel(a)}
                 </div>
                 {a.period && (
                   <div className="text-[10px] text-overlay0 mt-0.5">

@@ -56,6 +56,14 @@ interface SessionContextMenuProps {
   onToggleWatchdogCheck?: (key: WatchdogCheckKey) => void
   /** P3.10: checks this session's CLI has no patterns for: shown off, not switchable. */
   watchdogUnavailable?: WatchdogCheckKey[]
+  /** WP2 PR 4, P4.6 (row 58): sign THIS Codex session's own account in to
+   *  chatgpt.com, in a sign-in window. Shown on a Codex row only. */
+  onCodexWebSignIn?: () => void
+  /** True when that account already holds a chatgpt.com web session. */
+  codexWebSignedIn?: boolean
+  /** Why the account's chatgpt.com sign-in is unavailable (its records were
+   *  written by a newer version of the app): shown instead of the item. */
+  codexWebUnavailable?: string | null
 }
 
 export default function SessionContextMenu({
@@ -64,12 +72,28 @@ export default function SessionContextMenu({
   canSwitchAccount, switchItems, onSwitchAccount,
   onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession, codeSignedIn, codeNotChecked,
   watchdogChecks, onToggleWatchdogCheck, watchdogUnavailable,
+  onCodexWebSignIn, codexWebSignedIn, codexWebUnavailable,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, onDismiss)
   const [accountOpen, setAccountOpen] = useState(false)
 
   const showSwitch = !!canSwitchAccount && !!switchItems && switchItems.length > 1 && !!onSwitchAccount
+
+  // WP2 PR 4, P4.6 (row 58): Claude's account items act on a Claude account's
+  // claude.ai session and Claude Code sign-in. In a Codex session they acted on
+  // ANOTHER account, the primary Claude profile (the #216 fallback; P3.6 V5),
+  // so a Codex row never shows them, whatever the caller passes. Open artifacts
+  // has no Codex replacement until the artifacts record (completion plan,
+  // P4.6, a section 19 record the owner signs) decides one: Codex has no
+  // artifacts equivalent on either supported version (P3.1 answer 11).
+  const claudeAccountItems = (session.provider ?? 'claude') === 'claude'
+  const openArtifactsItem = claudeAccountItems ? onOpenArtifacts : undefined
+  const authenticateWebItem = claudeAccountItems ? onAuthenticateWeb : undefined
+  const signInCodeItem = claudeAccountItems ? onSignInCode : undefined
+  // P4.6 (row 58): a Codex row's own web-session item, its account the one the
+  // session runs under. Never on a Claude row, whatever the caller passes.
+  const codexWebItem = session.provider === 'codex' ? onCodexWebSignIn : undefined
 
   // Keep the menu inside the window. This one is the tallest in the app and
   // still grows -- the #605 Watchdog block, and Switch Account expanding to one
@@ -224,12 +248,12 @@ export default function SessionContextMenu({
       {/* #216: account actions, reachable from the session itself. If artifacts
           will not open, the fix is the next item down rather than a trip to
           Settings — which is the whole reason these live here. */}
-      {(onOpenArtifacts || onAuthenticateWeb || onSignInCode) && (
+      {(openArtifactsItem || authenticateWebItem || signInCodeItem) && (
         <>
           <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
-          {onOpenArtifacts && (
+          {openArtifactsItem && (
             <button
-              onClick={() => { onOpenArtifacts(); onDismiss() }}
+              onClick={() => { openArtifactsItem(); onDismiss() }}
               disabled={!hasWebSession}
               title={hasWebSession ? 'Open this account’s artifacts on claude.ai' : 'Authenticate claude.ai first'}
               className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"
@@ -242,9 +266,9 @@ export default function SessionContextMenu({
               Open artifacts
             </button>
           )}
-          {onAuthenticateWeb && (
+          {authenticateWebItem && (
             <button
-              onClick={() => { onAuthenticateWeb(); onDismiss() }}
+              onClick={() => { authenticateWebItem(); onDismiss() }}
               className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
               style={{ color: 'var(--text-primary)' }}
             >
@@ -255,7 +279,7 @@ export default function SessionContextMenu({
               {hasWebSession ? 'Re-authenticate claude.ai...' : 'Authenticate claude.ai...'}
             </button>
           )}
-          {onSignInCode && codeNotChecked && (
+          {signInCodeItem && codeNotChecked && (
             <div
               className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 opacity-60"
               style={{ color: 'var(--text-primary)' }}
@@ -265,9 +289,9 @@ export default function SessionContextMenu({
               {codeNotChecked.label}
             </div>
           )}
-          {onSignInCode && !codeNotChecked && (
+          {signInCodeItem && !codeNotChecked && (
             <button
-              onClick={() => { if (codeSignedIn) return; onSignInCode(); onDismiss() }}
+              onClick={() => { if (codeSignedIn) return; signInCodeItem(); onDismiss() }}
               disabled={codeSignedIn}
               title={codeSignedIn ? 'Already signed in to Claude Code for this account' : 'Runs /login in this session’s terminal'}
               className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"
@@ -280,6 +304,33 @@ export default function SessionContextMenu({
               {codeSignedIn ? 'Signed in to Claude Code' : 'Sign in to Claude Code'}
             </button>
           )}
+        </>
+      )}
+
+      {codexWebItem && codexWebUnavailable && (
+        <>
+          <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
+          <div className="px-3 py-1.5 text-xs" style={{ color: 'var(--text-muted)' }} data-testid="session-ctx-codex-web-unavailable">
+            {`chatgpt.com: ${codexWebUnavailable}`}
+          </div>
+        </>
+      )}
+      {codexWebItem && !codexWebUnavailable && (
+        <>
+          <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
+          <button
+            onClick={() => { codexWebItem(); onDismiss() }}
+            title={codexWebSignedIn ? 'This account is signed in to chatgpt.com. To use a different chatgpt.com sign-in, sign out of chatgpt.com first (Settings, Accounts)' : 'Sign this account in to chatgpt.com, in a sign-in window'}
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
+            data-testid="session-ctx-codex-web"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
+              <circle cx="6" cy="6" r="4.5"/>
+              <path d="M1.5 6h9M6 1.5c1.5 1.6 1.5 7.4 0 9M6 1.5c-1.5 1.6-1.5 7.4 0 9" strokeLinecap="round"/>
+            </svg>
+            {codexWebSignedIn ? 'Sign in to chatgpt.com again...' : 'Sign in to chatgpt.com...'}
+          </button>
         </>
       )}
 

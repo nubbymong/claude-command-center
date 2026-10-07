@@ -126,7 +126,8 @@ export function codexHookCommand(scriptsDir: string, platform: NodeJS.Platform, 
 
 /** A TOML string holding `s`: a literal string (no escapes, no double quote)
  *  when `s` holds no single quote, else a basic string with `\` and `"`
- *  escaped. */
+ *  escaped. A hook command holds no control character (codexHookCommand
+ *  gives none for a path holding one). */
 function tomlString(s: string): string {
   if (!s.includes("'")) return `'${s}'`
   return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`

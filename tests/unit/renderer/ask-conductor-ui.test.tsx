@@ -23,9 +23,17 @@ vi.mock('../../../src/renderer/hooks/useThemeController', () => ({ useResolvedTh
 vi.mock('../../../src/renderer/hooks/useTypography', () => ({ useRegionTypography: () => ({}) }))
 vi.mock('../../../src/renderer/ptyTracker', () => ({ killSessionPty: vi.fn(), clearSpawned: vi.fn() }))
 
+vi.mock('../../../src/renderer/utils/config-saver', () => ({ saveConfigNow: vi.fn() }))
+
 const { default: TabBar } = await import('../../../src/renderer/components/TabBar')
 const { useSessionStore } = await import('../../../src/renderer/stores/sessionStore')
 const { useRestartSession } = await import('../../../src/renderer/hooks/useRestartSession')
+const { default: AskConductorDock } = await import('../../../src/renderer/components/sidebar/AskConductorDock')
+const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
+const { useTipsStore } = await import('../../../src/renderer/stores/tipsStore')
+const askConductor = await import('../../../src/renderer/lib/askConductor')
+const { default: SessionHeader } = await import('../../../src/renderer/components/SessionHeader')
+const { shouldUseResumePicker } = await import('../../../src/renderer/utils/resumePicker')
 import type { Session } from '../../../src/renderer/stores/sessionStore'
 
 function makeSession(over: Partial<Session> = {}): Session {
@@ -94,6 +102,127 @@ describe('TabBar -- the Ask Conductor tab glyph', () => {
   })
 })
 
+// [host] WP2 PR 4, P4.3: the dock row's type badge while both assistants are
+// on, and the carrier's one-line notices (main raises them; the dock draws
+// them and keeps the question a not-delivered one is about).
+describe('the Ask Conductor dock row (P4.3)', () => {
+  const BOTH = { claudeEnabled: true, codexEnabled: true, codexAnswered: true }
+  const q = (id: string) => container.querySelector(`[data-ux-id="${id}"]`)
+  let noticeCb: ((n: unknown) => void) | null = null
+  const handOff = vi.fn()
+
+  beforeEach(() => {
+    noticeCb = null
+    askConductor._resetAskNoticesForTest()
+    askConductor._resetAskLaunchForTest()
+    ;(globalThis as any).window.electronAPI = {
+      pty: { kill: vi.fn(), write: vi.fn() },
+      help: { workspace: () => Promise.resolve('C:/res/help') },
+      askConductor: { handOff, onNotice: (cb: (n: unknown) => void) => { noticeCb = cb; return () => { noticeCb = null } } },
+    }
+    useSessionStore.setState({ sessions: [], activeSessionId: null, renamingSessionId: null })
+    useTipsStore.setState({ currentTipId: null, silencedUntilRestart: false, isLoaded: true } as any)
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, showAskConductor: true } })
+  })
+  afterEach(() => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+    askConductor._resetAskNoticesForTest()
+  })
+
+  const renderDock = (collapsed = false) => act(() => {
+    root.render(<AskConductorDock onOpened={() => {}} isActive={false} collapsed={collapsed} />)
+  })
+  const badge = () => q('sidebar-ask-type-badge')
+
+  it('one assistant on: no badge, whichever it is', () => {
+    for (const on of [{}, { claudeEnabled: false, codexEnabled: true, codexAnswered: true }]) {
+      useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...on } })
+      renderDock()
+      expect(badge(), JSON.stringify(on)).toBeNull()
+    }
+  })
+
+  it('both on: the badge of the assistant the next start uses -- Claude Code by default, Codex when chosen', () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...BOTH } })
+    renderDock()
+    expect(badge()!.querySelector('[data-testid="type-badge-claude"]')).not.toBeNull()
+    act(() => { useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...BOTH, askConductorProvider: 'codex' } }) })
+    expect(badge()!.querySelector('[data-testid="type-badge-claude"]')).toBeNull()
+    expect(badge()!.querySelector('[data-testid="type-badge-codex"]')).not.toBeNull()
+  })
+
+  it('both on, Codex chosen, then Codex off: no badge, and the saved choice is not rewritten', () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...BOTH, askConductorProvider: 'codex', codexEnabled: false } })
+    renderDock()
+    expect(badge()).toBeNull()
+    expect(useSettingsStore.getState().settings.askConductorProvider).toBe('codex')
+  })
+
+  it('both on, an open tab: the badge is that tab\'s assistant (it keeps the one it started on)', () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...BOTH, askConductorProvider: 'codex' } })
+    useSessionStore.setState({ sessions: [{ id: 'ask', kind: 'ask', label: 'Ask Conductor', workingDirectory: 'C:/res/help', model: '', color: '', status: 'idle', createdAt: 1, sessionType: 'local', provider: 'claude' } as never] })
+    renderDock()
+    expect(badge()!.querySelector('[data-testid="type-badge-claude"]')).not.toBeNull()
+  })
+
+  it('Codex only: the row is live, not greyed, and says nothing about being off', () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false, codexEnabled: true, codexAnswered: true } })
+    renderDock()
+    expect(q('sidebar-ask-pill')!.getAttribute('aria-disabled')).toBeNull()
+    expect(q('sidebar-ask-off')).toBeNull()
+  })
+
+  it('neither on: the row is greyed and says why', () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false } })
+    renderDock()
+    expect(q('sidebar-ask-pill')!.getAttribute('aria-disabled')).toBe('true')
+    expect(q('sidebar-ask-off')!.textContent).toBe('Ask Conductor runs on Claude Code or Codex, and both are off. Turn one on in Settings, Accounts.')
+  })
+
+  it('the removal notice from main: one line saying how many were removed, and Dismiss', () => {
+    renderDock()
+    expect(noticeCb, 'the dock listens for main\'s notices').not.toBeNull()
+    act(() => { noticeCb!({ sessionId: 'ask', kind: 'removed', count: 2 }) })
+    expect(q('sidebar-ask-notice-line')!.textContent).toBe('Codex cannot take emoji or some rare characters typed into its prompt; 2 removed from your question.')
+    expect(q('sidebar-ask-notice-send')).toBeNull()
+    act(() => { (q('sidebar-ask-notice-dismiss') as HTMLButtonElement).click() })
+    expect(q('sidebar-ask-notice')).toBeNull()
+  })
+
+  it('not delivered: says it was not sent and why, KEEPS the question, and Send again hands it over again', async () => {
+    useSessionStore.setState({ sessions: [{ id: 'ask', kind: 'ask', label: 'Ask Conductor', workingDirectory: 'C:/res/help', model: '', color: '', status: 'idle', createdAt: 1, sessionType: 'local', provider: 'claude' } as never] })
+    renderDock()
+    await act(async () => { await askConductor.launchAskConductor('how do I hide tips?') })
+    const write = (globalThis as any).window.electronAPI.pty.write as ReturnType<typeof vi.fn>
+    write.mockClear()
+    act(() => { noticeCb!({ sessionId: 'ask', kind: 'not-delivered', reason: 'prompt-on-screen' }) })
+    expect(q('sidebar-ask-notice-line')!.textContent).toBe('Your question was not sent: Codex was showing a question of its own (folder trust, sandbox setup or an approval). Answer it in the Ask tab first.')
+    expect(q('sidebar-ask-notice-question')!.textContent).toBe('"how do I hide tips?"')
+    await act(async () => { (q('sidebar-ask-notice-send') as HTMLButtonElement).click() })
+    expect(write).toHaveBeenCalledWith('ask', 'how do I hide tips?\r')
+    expect(q('sidebar-ask-notice')).toBeNull()
+  })
+
+  it('a notice about another session, or one main could not have sent, keeps no question / is not drawn', () => {
+    renderDock()
+    act(() => { noticeCb!({ sessionId: 'other', kind: 'not-delivered', reason: 'too-tall' }) })
+    expect(q('sidebar-ask-notice-line')!.textContent).toContain('too long to check')
+    expect(q('sidebar-ask-notice-question')).toBeNull()
+    expect(q('sidebar-ask-notice-send')).toBeNull()
+    act(() => { askConductor.useAskNoticeStore.getState().dismiss() })
+    for (const bad of [null, 'x', { sessionId: 'a', kind: 'removed', count: 0 }, { sessionId: 'a', kind: 'removed', count: 1.5 }, { sessionId: 'a', kind: 'not-delivered', reason: 'toString' }, { sessionId: '', kind: 'removed', count: 1 }, { sessionId: 'a', kind: 'other' }]) {
+      act(() => { noticeCb!(bad) })
+      expect(q('sidebar-ask-notice'), JSON.stringify(bad)).toBeNull()
+    }
+  })
+
+  it('collapsed rail: the notice rides the pill\'s tooltip', () => {
+    renderDock(true)
+    act(() => { noticeCb!({ sessionId: 'ask', kind: 'removed', count: 1 }) })
+    expect(q('sidebar-ask-pill')!.getAttribute('title')).toContain('1 removed from your question.')
+  })
+})
+
 describe('useRestartSession -- the one-shot question', () => {
   function restartOf(session: Session) {
     let restart: () => void = () => {}
@@ -117,5 +246,97 @@ describe('useRestartSession -- the one-shot question', () => {
     expect(after!.askPrompt).toBeUndefined()
     // The session itself must survive the restart intact as an Ask session.
     expect(after!.kind).toBe('ask')
+  })
+})
+
+// [host] WP2 PR 4, P4.3 review (A2-1): Past discussions in an Ask tab's header
+// opens the resume picker on either assistant, as Claude's always has. A Codex
+// session's plain Restart carries on with its conversation (canvas F7), so the
+// button has to ask for the picker outright.
+describe('the Ask header\'s Past discussions (P4.3)', () => {
+  beforeEach(() => {
+    ;(globalThis as any).__APP_VERSION__ = '0.0.0-test'
+    ;(globalThis as any).window.electronAPI = {
+      pty: { kill: vi.fn() },
+      accountWeb: { status: vi.fn(async () => ({ ok: true, cli: { authenticated: false }, web: { status: 'none' } })) },
+    }
+  })
+
+  for (const provider of ['claude', 'codex'] as const) {
+    it(`on ${provider === 'codex' ? 'Codex' : 'Claude Code'}: marks the session for the resume picker`, () => {
+      const session = makeSession({
+        id: 'ask', kind: 'ask', label: 'Ask Conductor', configId: undefined, provider,
+        ...(provider === 'codex' ? { codexOptions: { permissionsPreset: 'read-only' as const } } : {}),
+      })
+      useSessionStore.setState({ sessions: [session], activeSessionId: 'ask', renamingSessionId: null })
+      act(() => { root.render(<SessionHeader session={session} />) })
+      shouldUseResumePicker('ask') // drop any mark an earlier case left
+      act(() => { (container.querySelector('[data-ux-id="ask-band-history"]') as HTMLButtonElement).click() })
+      expect(shouldUseResumePicker('ask')).toBe(true)
+      expect(useSessionStore.getState().sessions.find((s) => s.id === 'ask')?.provider).toBe(provider)
+    })
+  }
+})
+
+// [host] WP2 PR 4, P4.3 review (A2-7): a revive is a new start, so it clears
+// everything a restart clears from the previous run -- on the same assistant
+// and across a change of assistant (a Claude tab's usage limits must not stay
+// painted on the Codex run that revives it). The restart's list is read off
+// the restart itself, so a field added to it later is held here too.
+describe('a revive clears what a restart clears (P4.3)', () => {
+  /** The records `addSession` is given while `run` runs. */
+  async function recordAdds(run: () => void | Promise<unknown>): Promise<Session[]> {
+    const original = useSessionStore.getState().addSession
+    const seen: Session[] = []
+    useSessionStore.setState({ addSession: (s: Session) => { seen.push(s); original(s) } } as never)
+    try {
+      await run()
+    } finally {
+      useSessionStore.setState({ addSession: original } as never)
+    }
+    return seen
+  }
+  const STALE = {
+    contextPercent: 61, costUsd: 2.5, needsAttention: true, modelName: 'Opus 4.8', launchedCodexPreset: 'standard',
+    effortLive: 'high', fastMode: true, sshTmuxPersistent: true, linesAdded: 4, linesRemoved: 2,
+    inputTokens: 900, outputTokens: 300, totalDurationMs: 5000, rateLimitCurrent: 88, rateLimitCurrentResets: 'r1',
+    rateLimitWeekly: 40, rateLimitWeeklyResets: 'r2', rateLimitExtra: { used: 1 },
+    usageBuckets: [{ id: 'b' }], usageUnavailable: true, watchdog: { status: 'monitoring' },
+  } as unknown as Partial<Session>
+
+  beforeEach(() => {
+    askConductor._resetAskLaunchForTest()
+    ;(globalThis as any).window.electronAPI = { pty: { kill: vi.fn(), write: vi.fn() }, help: { workspace: () => Promise.resolve('C:/res/help') } }
+  })
+  afterEach(() => { useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } }) })
+
+  it('the fields a restart clears are cleared by a revive too, across a change of assistant and on the same one', async () => {
+    const live = makeSession({ id: 'ask', kind: 'ask', label: 'Ask Conductor', provider: 'claude', ...STALE })
+    useSessionStore.setState({ sessions: [live], activeSessionId: 'ask', renamingSessionId: null })
+    const [restarted] = await recordAdds(() => {
+      let restart: () => void = () => {}
+      function Harness() { restart = useRestartSession(live).restart; return null }
+      const c = document.createElement('div')
+      const r = createRoot(c)
+      act(() => { r.render(React.createElement(Harness)) })
+      act(() => { restart() })
+      act(() => { r.unmount() })
+    })
+    const cleared = Object.keys(restarted).filter((k) => (restarted as any)[k] === undefined && k !== 'askPrompt')
+    expect(cleared.length, 'the restart clears fields').toBeGreaterThan(10)
+
+    // Claude Code tab, Codex now the only one on (a change of assistant); then
+    // the same assistant.
+    for (const settings of [{ claudeEnabled: false, codexEnabled: true, codexAnswered: true }, {}]) {
+      useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...settings } as never })
+      askConductor._resetAskLaunchForTest()
+      useSessionStore.setState({ sessions: [{ ...live, ptyExited: true }], activeSessionId: null, renamingSessionId: null })
+      const [revived] = await recordAdds(() => askConductor.launchAskConductor('again?'))
+      const label = JSON.stringify(settings)
+      expect(revived, label).toBeDefined()
+      for (const k of cleared) expect((revived as any)[k], `${label} ${k}`).toBeUndefined()
+      expect(revived.needsAttention, label).toBe(false)
+      expect(revived.askPrompt, label).toBe('again?')
+    }
   })
 })

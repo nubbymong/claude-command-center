@@ -17,6 +17,7 @@ import type { ProviderReviewOperations, ReviewRunInput, ReviewRunResult, ReviewU
 import { reviewerEnv, finishReview, redactFailure as redact, redactHead, clip, WINDOW, MARGIN, MAX_MESSAGE, REVIEW_MAX_TEXT } from '../review-support'
 import { codexCommandLine, codexShellEnv, runCodexCli } from './cli-runner'
 import type { CodexRunDeps } from './cli-runner'
+import { ANALYSIS_UNREACHABLE_WORDS } from '../../../shared/sentinel-analysis-contract'
 
 /** stdout is read as it streams and stderr's tail is kept as it streams:
  *  the runner's own head-capped capture is not used. */
@@ -35,11 +36,39 @@ export interface CodexExecOutcome {
 /** The reply cap, kept exported here for the package's existing consumers. */
 export { REVIEW_MAX_TEXT }
 
+/** What a reader tells its caller as the stream arrives (WP2 PR 4, P4.5: a
+ *  Cloud Agent shows each reply as it completes). A hook that throws never
+ *  breaks the reader. */
+export interface CodexExecEventHooks {
+  /** Each completed agent message's text, in order. */
+  onAgentMessage?: (text: string) => void
+  /** PR 4: each error event's message, in order (Codex's reconnects among them). */
+  onError?: (message: string) => void
+  /** PR 4 (owner answers review): each completed turn, as it completes. */
+  onTurnCompleted?: () => void
+}
+
+/** PR 4 (owner answers, the Sentinel chase): Codex's own words once it has
+ *  given up reaching its model and waits for the network to come back. On
+ *  the Windows test VM (0.153.4 and 0.155.1, every proxy a dead port) it
+ *  reconnected five times over WebSockets, fell back to HTTPS, and from 33.8 s
+ *  said "Reconnecting... waiting for network (...)" every 20 s or so without
+ *  end. Its reconnects before that are not the signal: the HTTPS fallback
+ *  follows them, and may work where WebSockets do not. */
+export function codexWaitingForNetwork(message: string): boolean {
+  return /\bwaiting for network\b/i.test(message)
+}
+
+/** How an analysis that ended that way begins its message. Sentinel reads
+ *  ANALYSIS_UNREACHABLE_WORDS in it to report the failure as unreachable and
+ *  not try again, so the words come from that one shared source. */
+export const CODEX_UNREACHABLE_PREFIX = `Codex ${ANALYSIS_UNREACHABLE_WORDS} its model`
+
 /** Reads the pinned CLI's `exec --json` stream as it arrives. The last agent
  *  message is the review; usage is summed over completed turns; a failed
  *  turn or an error event is kept as the error. Lines that are not JSON, or
  *  not these events, are ignored. Memory is bounded by one event line. */
-export function createCodexExecEventReader(): { push(chunk: string): void; end(): CodexExecOutcome } {
+export function createCodexExecEventReader(hooks: CodexExecEventHooks = {}): { push(chunk: string): void; end(): CodexExecOutcome } {
   let text: string | null = null
   let usage: ReviewUsage | undefined
   let error: string | undefined
@@ -56,7 +85,10 @@ export function createCodexExecEventReader(): { push(chunk: string): void; end()
     const e = ev as Record<string, unknown>
     if (e.type === 'item.completed') {
       const item = e.item as Record<string, unknown> | undefined
-      if (item && item.type === 'agent_message' && typeof item.text === 'string') text = item.text
+      if (item && item.type === 'agent_message' && typeof item.text === 'string') {
+        text = item.text
+        if (hooks.onAgentMessage) { try { hooks.onAgentMessage(item.text) } catch { /* a hook never breaks the reader */ } }
+      }
     } else if (e.type === 'turn.completed') {
       const u = (e.usage ?? {}) as Record<string, unknown>
       usage = {
@@ -64,11 +96,15 @@ export function createCodexExecEventReader(): { push(chunk: string): void; end()
         cachedInputTokens: (usage?.cachedInputTokens ?? 0) + num(u.cached_input_tokens),
         outputTokens: (usage?.outputTokens ?? 0) + num(u.output_tokens),
       }
+      if (hooks.onTurnCompleted) { try { hooks.onTurnCompleted() } catch { /* a hook never breaks the reader */ } }
     } else if (e.type === 'turn.failed') {
       const err = e.error as Record<string, unknown> | undefined
       if (err && typeof err.message === 'string') error = err.message
     } else if (e.type === 'error') {
-      if (typeof e.message === 'string') error = e.message
+      if (typeof e.message === 'string') {
+        error = e.message
+        if (hooks.onError) { try { hooks.onError(e.message) } catch { /* a hook never breaks the reader */ } }
+      }
     }
   }
   return {
@@ -118,7 +154,22 @@ export function createCodexReviewOperations(deps: { platform?: NodeJS.Platform; 
       if (win32 && cmd.verbatim && /^[\\/]{2}/.test(input.cwd)) {
         return { ok: false, code: 'not-started', message: 'Codex review cannot run an npm-installed Codex in a project on a network path (cmd.exe would start it in the Windows folder, not the project). Use a project on a local drive, or the standalone Codex executable.' }
       }
-      const reader = createCodexExecEventReader()
+      // PR 4 (owner answers, the Sentinel chase): an analysis whose Codex says
+      // it is waiting for the network is stopped then (its run's tree, as a
+      // cancel), so Sentinel says so within a minute instead of at the
+      // deadline. A review keeps its deadline. Only while the run is still
+      // streaming and no turn has completed: a reply already finished is kept,
+      // and a line read after the run ended changes nothing.
+      const unreachable = input.purpose === 'analysis' ? { ac: new AbortController(), message: null as string | null, streaming: true, completed: false } : null
+      const reader = createCodexExecEventReader(unreachable ? {
+        onError: (m) => {
+          if (!unreachable.streaming || unreachable.completed || unreachable.message !== null || !codexWaitingForNetwork(m)) return
+          unreachable.message = m
+          unreachable.ac.abort()
+        },
+        onTurnCompleted: () => { unreachable.completed = true },
+      } : {})
+      const signal = unreachable ? (input.signal ? AbortSignal.any([input.signal, unreachable.ac.signal]) : unreachable.ac.signal) : input.signal
       let errTail = ''
       let errCut = false
       const onChunk = (t: string, stream: 'stdout' | 'stderr') => {
@@ -131,13 +182,17 @@ export function createCodexReviewOperations(deps: { platform?: NodeJS.Platform; 
         // P3.9 round 2: settle soon after codex exits, even while a process it
         // started still holds the output pipes, and a stop takes everything
         // below the root (an exec run starts no program of the user's).
-        { env, timeoutMs: input.timeoutMs, stdin: input.prompt, maxOutput: REVIEW_MAX_CAPTURE, onChunk, settleAfterExitMs: CODEX_EXEC_EXIT_SETTLE_MS, killScope: 'tree', ...(input.signal ? { signal: input.signal } : {}) },
+        { env, timeoutMs: input.timeoutMs, stdin: input.prompt, maxOutput: REVIEW_MAX_CAPTURE, onChunk, settleAfterExitMs: CODEX_EXEC_EXIT_SETTLE_MS, killScope: 'tree', ...(signal ? { signal } : {}) },
         ...(deps.runDeps ? [deps.runDeps()] : []),
       )
+      if (unreachable) unreachable.streaming = false
       const out = reader.end()
       const usage = out.usage ? { usage: out.usage } : {}
       // Only a stopped run can carry one: the lease is held until it ends.
       const kill = r.killSettled ? { killSettled: r.killSettled } : {}
+      if (unreachable?.message != null && !input.signal?.aborted) {
+        return { ok: false, code: 'failed', message: `${CODEX_UNREACHABLE_PREFIX}: ${clip(redactHead(unreachable.message, redact))}.`, ...usage, ...kill }
+      }
       if (r.stopped === 'cancel' || input.signal?.aborted) return { ok: false, code: 'cancelled', message: 'The review was cancelled.', ...usage, ...kill }
       if (r.timedOut || r.stopped === 'deadline') return { ok: false, code: 'timed-out', message: 'The review timed out.', ...usage, ...kill }
       if (r.spawnError) return { ok: false, code: 'not-started', message: `Codex could not be started: ${clip(redactHead(r.spawnError, redact))}.` }

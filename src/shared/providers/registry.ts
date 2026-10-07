@@ -1615,8 +1615,10 @@ type CleanSnapshot = LegacyAccountSnapshot & { friendlyName: string; colourKey: 
  *
  *  Existence follows the legacy store: a record new to the registry is migrated
  *  with deterministic ids; a linked record missing from the snapshot is
- *  archived (its history stays resolvable); an archived account whose record
- *  comes back is restored. A snapshot with NO usable record while accounts are
+ *  archived (its history stays resolvable); a linked record that is present
+ *  but cannot be stored changes nothing (its account, link and open conflicts
+ *  stay as they were); an archived account whose record comes back is
+ *  restored. A snapshot with NO usable record while accounts are
  *  linked is treated as an unreadable store and changes nothing -- one failed
  *  read must never archive every account. The provider default follows the
  *  legacy store's own default, which is always active. Other providers'
@@ -1636,10 +1638,14 @@ export function reconcileLegacyAccounts(
   // skipped with a warning, never half-applied.
   const records: CleanSnapshot[] = []
   const seen = new Set<string>()
+  // Every record with a valid id, stored or not: a linked one that is here but
+  // cannot be stored is not gone, so the archive pass below leaves it alone.
+  const present = new Set<string>()
   for (const raw of snapshot) {
     const id = raw?.legacyId
     if (!isLegacyId(id)) { warnings.push(`skipped a legacy record with an invalid id`); continue }
     if (seen.has(id)) { warnings.push(`skipped duplicate legacy record ${id}`); continue }
+    present.add(id)
     if ((raw.lifecycle !== 'active' && raw.lifecycle !== 'inactive') || !oneOf(AUTH_METHODS, raw.authMethod) || !oneOf(ASSURANCES, raw.identityAssurance)
       || !raw.realm || !oneOf(REALM_KINDS, raw.realm.kind) || !oneOf(OWNERSHIPS, raw.realm.ownership) || !isPathRef(raw.realm.pathRef)) {
       warnings.push(`skipped legacy record ${id}: unknown field value`)
@@ -1799,13 +1805,21 @@ export function reconcileLegacyAccounts(
     links.push({ providerId, legacyId: s.legacyId, accountId: existing.id, shadow })
   }
 
-  // Linked records gone from the legacy store: archive and retire, unless a
-  // running session still holds the account -- then keep everything as it is
-  // and retry next time.
+  // Linked records gone from the legacy store: archive and retire, unless the
+  // record is there but could not be stored, or a running session still holds
+  // the account -- then keep everything as it is and retry next time.
   for (const l of linkedHere) {
     if (seen.has(l.legacyId)) continue
     const a = accounts.find((x) => x.id === l.accountId)
     if (!a || a.lifecycle === 'archived') continue
+    // Here, but not in a form the registry can store: not removed, so kept
+    // exactly as it was until a read it can store.
+    if (present.has(l.legacyId)) {
+      links.push(l)
+      conflicts.push(...priorConflicts.filter((c) => c.legacyId === l.legacyId))
+      warnings.push(`legacy record ${l.legacyId} could not be read; left as it was`)
+      continue
+    }
     if (held(a.id)) {
       links.push(l)
       conflicts.push(...priorConflicts.filter((c) => c.legacyId === l.legacyId))

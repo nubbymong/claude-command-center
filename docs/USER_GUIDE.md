@@ -110,13 +110,14 @@ stored login exactly as it does in a normal terminal.
 ## Choosing your assistants (Claude Code and Codex)
 
 CCC can run two assistants, called *providers*: **Claude Code** and OpenAI's
-**Codex** (Beta). **Settings → Accounts** starts with a **Providers** card, one
+**Codex**. **Settings → Accounts** starts with a **Providers** card, one
 row per provider:
 
 - a switch that turns the provider on or off;
-- whether its CLI was found on this computer and which version, with **Check
-  now** or **Check again** when it has not been looked for yet, was not found,
-  or cannot be used as found;
+- whether its CLI was found on this computer and which version (on Windows,
+  Codex is the first `codex.exe` or `codex.cmd` in `PATH` order, as a terminal
+  finds it), with **Check now** or **Check again** when it has not been looked
+  for yet, was not found, or cannot be used as found;
 - when Codex is missing or too old, the commands to install or update it (see
   [Installing or updating Codex](#installing-or-updating-codex));
 - once you have said you use Codex (see below) and a Codex account you added
@@ -153,8 +154,8 @@ for Codex and says why.
 
 - At least one provider always stays on.
 - A provider cannot be turned off while anything of it is running: its
-  sessions, a code review, a sign-in in progress, a Sentinel check or
-  analysis, and for Claude Code also cloud agents and Insights. The row says so (for example
+  sessions, its cloud agents, a code review, a sign-in in progress, a Sentinel
+  check or analysis, or an Insights report. The row says so (for example
   *"Codex is in use (2)."*); close those and switch it off again.
 - Once a provider is off, nothing of it starts anywhere. Its saved configs say
   why instead of launching (*"Codex is off. Turn it on in Settings, Accounts to
@@ -162,8 +163,9 @@ for Codex and says why.
   *"Not started. Codex is off. Turn it on in Settings, Accounts, then Restart
   this tab."* The tab and its conversation are kept: turn the provider back
   on, then Restart the tab.
-- With Claude Code off, Ask Conductor, Cloud Agents and Insights are
-  unavailable and say so. **Terminal only** configs still run.
+- With Claude Code off, Insights runs for Codex accounts only, Ask Conductor runs on
+  Codex, and Cloud Agents runs Codex agents only. **Terminal only** configs still
+  run.
 
 ## Codex accounts
 
@@ -312,6 +314,26 @@ signed in a different way than before cannot be picked until you confirm it
 - A signed-out *This computer's Codex*: run `codex login` in a terminal, then
   **Check sign-in**.
 
+### chatgpt.com in the app
+
+A Codex account can also be signed in to chatgpt.com inside the app, as a
+Claude account can be to claude.ai:
+
+- **Sign in to chatgpt.com**, in the account's menu in Settings, Accounts or
+  in a Codex session's right-click menu, opens a sign-in window. It keeps the
+  sign-in in that account's own browser storage in the app, apart from every
+  other account, and nothing is copied from your own browser. The window
+  closes once the sign-in and your email are confirmed, and the row then
+  reads chatgpt.com: signed in as that email. A sign-in that does not finish
+  (the window closed, Cancel, or five minutes with no sign-in) is cleared.
+- A Codex session's browser pane offers **chatgpt.com** on its start page,
+  as the account the session runs under; you can sign in there too.
+- **Sign out of chatgpt.com** in the account's menu clears that storage.
+  Archiving the account clears it first; if that clear fails, the archive
+  is refused and the account stays. The Codex command-line tool's own
+  **Sign out** leaves the chatgpt.com sign-in alone, as Claude Code's
+  sign-out leaves claude.ai.
+
 ### Installing or updating Codex
 
 CCC needs Codex 0.153.4 or newer. A version newer than CCC was tested with
@@ -390,7 +412,40 @@ Linux may ask for administrator rights; CCC never elevates on its own.
   When Codex asks, choose *1. Set up default sandbox* (Codex says it needs
   administrator permission). With *2. Use non-admin sandbox*, or none, Codex
   asks before every edit on *Standard* and fails on *Auto*. Do not run CCC as
-  administrator.
+  administrator. A Codex cloud agent run with Auto is affected the same way: it
+  makes no edits until the sandbox has been set up for its account, and with the
+  non-admin sandbox its commands fail, because PowerShell does not start there.
+- **On the Auto preset, Codex refuses the app's own tools** other than the canvas
+  snapshot and review: the Agent Canvas render and its other tools, Vision, the
+  push to the in-app browser, the host screenshot fetch and the Claude review.
+  Auto starts Codex with no prompts, so it cannot ask before them. Use
+  *Standard*, where Codex asks before each one, or *Unrestricted*.
+- **CCC copies its three canvas skills into your own Codex skills folder** for
+  the sign-in already on this computer (`~/.codex/skills`, or `skills` in the
+  folder `CODEX_HOME` names), where Codex lists them for every session that
+  uses that folder, started in CCC or not. CCC rewrites or removes only the skill
+  folders it marked as its own, removes them when you turn Codex or the built-in
+  tools off, and never touches a skill of your own with the same name, or a
+  link of yours at that name: the session then uses yours, and the canvas page
+  names it. Rename yours, or run the session on a Codex account you added in
+  Settings, Accounts. A Codex skills folder that is itself a link is never
+  written into (the canvas page says the skills could not be put there). The
+  copies stay if you uninstall CCC: turn Codex or the built-in tools off
+  first, or delete the three folders afterwards.
+- **Ask Conductor on Codex cannot pass on emoji typed into Codex's prompt.**
+  When the question has to be typed into Codex's prompt, CCC removes the
+  characters it cannot take first, and the Ask Conductor row says how many. Say
+  it in words.
+- **Ask Conductor starts nothing when its documentation folder cannot be
+  rebuilt**, usually because a program a Codex Ask session started is still
+  running. End that program and open Ask Conductor again.
+- **The first Codex session in a new folder may not stay read-only.** In the
+  session in which Codex asks its first-launch questions (folder trust, and on
+  Windows its sandbox setup), Codex runs as on *Standard* even when the session
+  was started on *Read-only*: it can edit files in the folder, and commands you
+  approve can run outside its sandbox. Later sessions keep the preset. Once you
+  have answered those questions, Restart the session before relying on
+  *Read-only*.
 - **On Windows, a Codex session's tab can stay open after Codex quits** while a
   command Codex started in the background still runs. Close the tab: that ends
   the command too.
@@ -454,9 +509,13 @@ Tokenomics shows Claude Code and Codex apart once both have usage:
   range.
 - Codex usage belongs to the account whose folder it was written in, and
   Claude usage to the account profile a local session runs under, from this
-  version on. Older usage, SSH sessions, sessions run outside the app and
-  sessions with no account profile read *Not recorded*; usage cannot be
-  assigned by hand.
+  version on. A session resumed under another account profile counts toward
+  that one from then on; what it used before keeps its account.
+- Older usage, SSH sessions, sessions run outside the app and sessions with
+  no account profile read *Not recorded*, and usage cannot be assigned by
+  hand, with one exception: when a local session that reads *Not recorded*
+  is later resumed in the app under an account profile, its earlier usage
+  moves to that profile's account too.
 - A model with no price yet reads **no price** instead of costing $0, and a
   notice names it and its tokens; its cost is not in the totals.
 - The first start after updating sorts your earlier Codex history by account

@@ -19,7 +19,7 @@ import { makeObserver, type Observation } from './sentinel-observe'
 import { parseClaudeVersion, minVersionFindings, type ManifestEntry } from './sentinel-version'
 import { fetchChangelog, sliceChangelog } from './sentinel-changelog'
 import { fetchCodexReleaseNotes } from './sentinel-codex-changelog'
-import { runAnalysis, CLAUDE_ANALYSIS_ENV, type HeadlessRunner } from './sentinel-analysis'
+import { runAnalysis, CLAUDE_ANALYSIS_ENV, createClaudeRetryWatch, claudeAnalysisOutcome, claudeSettingsTransportEnv, type HeadlessRunner } from './sentinel-analysis'
 import { validateProposal } from './sentinel-apply'
 import { modelCoverageFindings, modelCheckFailedFinding, EXPECTED_MODEL_SET, codexModelCoverageFindings, CODEX_EXPECTED_MODEL_SET, type CodexLiveModelList } from './sentinel-models'
 import { codexVersionFindings, type SupportedVersions } from './sentinel-codex'
@@ -95,10 +95,12 @@ export function sentinelCodexRunsInFlight(): number {
  *  check and the count. `probe`: a check nobody asked for (the start-up
  *  check), which is not logged when skipped. Lazy for the same reason as
  *  headlessRunner (the accounts graph is heavy). */
-async function beginRun(provider: SentinelProvider, opts: { probe: boolean }): Promise<{ refused: string } | { end: () => void }> {
+async function beginRun(provider: SentinelProvider, opts: { probe: boolean }): Promise<{ refused: string; gate: true } | { end: () => void }> {
   const gate = await import('../provider-launch-gate')
   const refusal = opts.probe ? gate.providerProbeRefusal(provider) : gate.providerLaunchRefusal(provider)
-  if (refusal) return { refused: refusal.message }
+  // `gate` (owner answers review): the launch rule refused it (the provider
+  // is off or not set up), a refusal and not a failed analysis.
+  if (refusal) return { refused: refusal.message, gate: true }
   countRun(provider, 1)
   let ended = false
   return {
@@ -310,15 +312,18 @@ interface AnalysisRunner { run: HeadlessRunner; accountLabel: string | null; end
  *  home, counted as Claude Code in use while it runs. Round 2: in a fresh
  *  empty folder of its own in Sentinel's runs folder (never the app's own
  *  folder), with Claude Code's switches for the analysis
- *  (CLAUDE_ANALYSIS_ENV), the folder removed after. */
-async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner | { refused: string }> {
+ *  (CLAUDE_ANALYSIS_ENV), the folder removed after. PR 4 (owner answers
+ *  review): its stream is read as it arrives, and a run whose retries got no
+ *  answer from the service, CLAUDE_UNANSWERED_RETRIES_STOP in a row, is
+ *  stopped then (its tree, as a cancel) and said as unreachable. */
+async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner | RunnerRefusal> {
   const begun = await beginRun('claude', { probe: false })
   if ('refused' in begun) return begun
   let handedOver = false
   try {
     const { spawnClaudeHeadless } = await headlessRunner()
     const { home, accountLabel } = await analysisHome()
-    const transportEnv = await analysisTransportEnv(home)
+    const transportEnv = await claudeSettingsTransportEnv(home)
     const parent = analysisParent()
     let cwd: string
     try {
@@ -329,7 +334,14 @@ async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner
     }
     handedOver = true
     return {
-      run: (args, t, stdin) => spawnClaudeHeadless(args, t, stdin, home, signal, { cwd, env: CLAUDE_ANALYSIS_ENV, transportEnv }),
+      run: async (args, t, stdin) => {
+        const watch = createClaudeRetryWatch()
+        const stop = new AbortController()
+        const res = await spawnClaudeHeadless(args, t, stdin, home, AbortSignal.any([signal, stop.signal]), {
+          cwd, env: CLAUDE_ANALYSIS_ENV, transportEnv, onStdout: (chunk) => { if (watch.push(chunk)) stop.abort() },
+        })
+        return claudeAnalysisOutcome(res, watch.stopped())
+      },
       accountLabel,
       end: () => {
         // Only the folder this run made: its own prefix, in the runs folder.
@@ -339,31 +351,6 @@ async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner
     }
   } finally {
     if (!handedOver) begun.end()
-  }
-}
-
-/** The largest settings file read for its transport variables (the CLI's own cap). */
-const SETTINGS_READ_MAX_BYTES = 2 * 1024 * 1024
-
-/** P3.9 round 3: the analysis loads no settings file, so the network
- *  settings its account's settings file sets (proxies, certificates: only
- *  what the Claude package classifies as transport and keeps) are handed to
- *  it as variables. The account's own settings file: its profile home's, or
- *  the shared Claude folder for the default account. None when there is no
- *  such file, it is too large, or the package cannot say. Never throws. */
-async function analysisTransportEnv(home: string | null): Promise<Readonly<Record<string, string>>> {
-  try {
-    const { tryGetProviderPackage } = await import('../providers/core')
-    const pick = tryGetProviderPackage('claude')?.managedLaunch?.transportSettingsEnv
-    if (typeof pick !== 'function') return {}
-    const { sharedRoot } = await import('../account-profiles')
-    const dir = home ? path.join(home, '.claude') : sharedRoot()
-    const file = path.join(dir, 'settings.json')
-    const st = fs.statSync(file)
-    if (!st.isFile() || st.size > SETTINGS_READ_MAX_BYTES) return {}
-    return pick(fs.readFileSync(file, 'utf8'))
-  } catch {
-    return {}
   }
 }
 
@@ -464,7 +451,7 @@ function makeAnalysisFolder(parent: string, prefix: string = CODEX_ANALYSIS_DIR_
  * Counted as Codex in use while it runs; the lease and the folder go once
  * the run, and any kill still under way, has ended.
  */
-async function codexAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner | { refused: string }> {
+async function codexAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner | RunnerRefusal> {
   const begun = await beginRun('codex', { probe: false })
   if ('refused' in begun) return begun
   let handedOver = false
@@ -534,18 +521,22 @@ async function codexAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner 
   }
 }
 
+/** A runner that could not start: why, and (`gate`) whether the launch rule
+ *  refused it (the provider off or not set up) rather than a failure. */
+type RunnerRefusal = { refused: string; gate?: true }
+
 /** Each provider's analysis runner. */
-const RUNNERS: Record<SentinelProvider, (signal: AbortSignal) => Promise<AnalysisRunner | { refused: string }>> = {
+const RUNNERS: Record<SentinelProvider, (signal: AbortSignal) => Promise<AnalysisRunner | RunnerRefusal>> = {
   claude: claudeAnalysisRunner, codex: codexAnalysisRunner,
 }
 
 /** The runner for an analysis: Claude Code or Codex, whichever is on; with
  *  both on, the one Ask Conductor runs on (OD27 M4). */
-async function analysisRunner(signal: AbortSignal): Promise<AnalysisRunner | { refused: string }> {
+async function analysisRunner(signal: AbortSignal): Promise<AnalysisRunner | RunnerRefusal> {
   const claudeOff = await refusalOf('claude', true)
   const codexOff = await refusalOf('codex', true)
   const provider = sentinelAnalysisProvider(!claudeOff, !codexOff, await savedSettings())
-  if (!provider) return { refused: claudeOff ?? codexOff ?? 'No assistant is on to run the analysis.' }
+  if (!provider) return { refused: claudeOff ?? codexOff ?? 'No assistant is on to run the analysis.', gate: true }
   return RUNNERS[provider](signal)
 }
 
@@ -594,20 +585,23 @@ const SUBJECTS: Record<SentinelProvider, UpdateSubject> = { claude: CLAUDE_UPDAT
 
 /** One update's analysis: its changelog (Claude Code's) or release notes
  *  (Codex's) between the last version and this one, checked against that
- *  provider's surfaces on the runner that is on. */
-async function analyzeOne(u: Update, signal: AbortSignal): Promise<{ ok: true; findings: SentinelFinding[]; unverified: number; note: string | null } | { ok: false; error: string; note?: string | null }> {
+ *  provider's surfaces on the runner that is on. `failed` (owner answers
+ *  review): the analysis was attempted and did not complete (its notes
+ *  unreadable, its runner unable to start for a reason other than the launch
+ *  rule, or the run failed); a provider that is off is a refusal. */
+async function analyzeOne(u: Update, signal: AbortSignal): Promise<{ ok: true; findings: SentinelFinding[]; unverified: number; note: string | null } | { ok: false; error: string; failed: boolean; note?: string | null }> {
   const subject = SUBJECTS[u.provider]
   const notes = await subject.notes(u)
   // Analysis-unavailable is the degraded state, shown as a calm note -- not a
   // finding. Findings are reserved for actual severe breaking changes now.
-  if (!notes) return { ok: false, error: subject.unavailable }
-  if (signal.aborted) return { ok: false, error: '' }
+  if (!notes) return { ok: false, error: subject.unavailable, failed: true }
+  if (signal.aborted) return { ok: false, error: '', failed: false }
   // The update's own provider, switched off while its notes were fetched, is
   // not analysed.
   const off = await refusalOf(u.provider)
-  if (off) return { ok: false, error: off }
+  if (off) return { ok: false, error: off, failed: false }
   const runner = await analysisRunner(signal)
-  if ('refused' in runner) return { ok: false, error: runner.refused }
+  if ('refused' in runner) return { ok: false, error: runner.refused, failed: runner.gate !== true }
   try {
     const r = await runAnalysis({
       runner: runner.run,
@@ -615,7 +609,7 @@ async function analyzeOne(u: Update, signal: AbortSignal): Promise<{ ok: true; f
       from: u.last, to: u.version, accountLabel: runner.accountLabel, subject: u.provider,
     })
     // Round 2: what was cut is said whether or not the analysis completed.
-    return { ...r, note: notes.cut }
+    return r.ok ? { ...r, note: notes.cut } : { ...r, failed: true, note: notes.cut }
   } finally {
     runner.end()
   }
@@ -662,6 +656,10 @@ async function analyzeUpdates(updates: Update[], carried: string[] = [], opts: {
   currentAnalysis = ac
   const errors = [...carried]
   const notes: string[] = []
+  // Owner answers review: whether an analysis attempted here failed (the
+  // chip's "did not complete"), as against carried problems, refusals and
+  // unmatched findings.
+  let failed = false
   for (const u of updates) {
     if (ac.signal.aborted) break
     state.setAnalyzing(true, null, u.provider)
@@ -695,11 +693,12 @@ async function analyzeUpdates(updates: Update[], carried: string[] = [], opts: {
       }
     } else if (r.error) {
       errors.push(r.error)
+      if (r.failed) failed = true
     }
   }
   if (currentAnalysis === ac) currentAnalysis = null
   if (ac.signal.aborted) return
-  state.setAnalyzing(false, errors.length ? errors.join(' ') : null, null, notes.length ? notes.join(' ') : null)
+  state.setAnalyzing(false, errors.length ? errors.join(' ') : null, null, notes.length ? notes.join(' ') : null, failed)
 }
 
 /** Trigger B startup check (spec §5). Non-blocking — call fire-and-forget from bootstrap. */
@@ -730,7 +729,9 @@ export async function sentinelStartupCheck(): Promise<void> {
     if (updates.length) await analyzeUpdates(updates, carried)
     else if (carried.length) state.setAnalyzing(false, carried.join(' '))
   } catch (err) {
-    state?.setAnalyzing(false, (err as Error).message)         // fail-open, always
+    // Polish pass (E-S8): an unexpected error is a failed check (the chip says so).
+    // A thrown value that is not an Error carries its own text (final nits, E-Q15).
+    state?.setAnalyzing(false, String((err as Error)?.message ?? err), null, null, true)         // fail-open, always
   } finally {
     run?.end()
   }
@@ -881,7 +882,7 @@ export async function sentinelRerun(): Promise<void> {
     // version checked (the user's own act; sentinel-state.ts).
     await analyzeUpdates(updates, problems, { rerun: true })
   } catch (err) {
-    state?.setAnalyzing(false, (err as Error).message)
+    state?.setAnalyzing(false, String((err as Error)?.message ?? err), null, null, true)   // a failed check (E-S8, E-Q15)
   } finally {
     run?.end()
   }

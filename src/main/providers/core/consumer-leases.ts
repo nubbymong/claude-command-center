@@ -15,9 +15,12 @@
 // - A lease a renderer holds (a sign-in it started) is released when that
 //   renderer is destroyed; a session's or a reviewer's lease belongs to its
 //   process, not to a window, and is released when the process ends.
-// - Sessions and reviewer invocations are the two kinds of launch: both are
-//   bound through the account's own launch binding and both block every
-//   change that would pull the account out from under them.
+// - Sessions, reviewer invocations and background runs are the three kinds
+//   of launch: each is bound through the account's own launch binding and
+//   each blocks every change that would pull the account out from under it.
+//   A background run (a Cloud Agent or an Insights report, WP2 PR 4 P4.5 and
+//   P4.7) belongs to no session; a package prepares one only once it lists
+//   the kind in its launch kinds.
 // - An exclusive hold (a sign-out or archive in progress) refuses every new
 //   lease on that account until it is let go, and is only granted while the
 //   account has no consumers: the check and the change cannot interleave.
@@ -29,11 +32,12 @@
 // under the registry lock, and only then adds the lease here.
 import type { ProviderId } from '../../../shared/providers'
 
-export type LeaseKind = 'session' | 'review' | 'sign-in' | 'operation'
-/** The kinds a launch takes: an interactive session, or a one-shot,
- *  non-interactive reviewer process of the reviewing provider. */
-export type LaunchLeaseKind = Extract<LeaseKind, 'session' | 'review'>
-export const LAUNCH_LEASE_KINDS: readonly LaunchLeaseKind[] = ['session', 'review']
+export type LeaseKind = 'session' | 'review' | 'background' | 'sign-in' | 'operation'
+/** The kinds a launch takes: an interactive session, a one-shot,
+ *  non-interactive reviewer process of the reviewing provider, or a
+ *  headless background run that belongs to no session. */
+export type LaunchLeaseKind = Extract<LeaseKind, 'session' | 'review' | 'background'>
+export const LAUNCH_LEASE_KINDS: readonly LaunchLeaseKind[] = ['session', 'review', 'background']
 
 export interface LeaseOwner {
   kind: LeaseKind
@@ -110,7 +114,7 @@ export class ConsumerLeaseRegistry {
 
   /** Who holds the account, for a "blocked by" message. Kinds and counts only. */
   describe(accountId: string): Readonly<Record<LeaseKind, number>> {
-    const out: Record<LeaseKind, number> = { session: 0, review: 0, 'sign-in': 0, operation: 0 }
+    const out: Record<LeaseKind, number> = { session: 0, review: 0, background: 0, 'sign-in': 0, operation: 0 }
     for (const e of this.byKey.values()) if (e.lease.accountId === accountId) out[e.lease.kind]++
     return out
   }
@@ -125,6 +129,19 @@ export class ConsumerLeaseRegistry {
       if (e.lease.kind === 'session' || e.lease.kind === 'review') out.add(e.sessionId)
     }
     return [...out]
+  }
+
+  /** The account a session's CURRENT launch runs under: its newest
+   *  session-kind lease (a switch of account takes a new one before the old
+   *  launch has wound down), or null when it holds none. A review or a
+   *  background run the session started is not its launch. */
+  sessionLaunchAccount(sessionId: string): string | null {
+    let newest: AccountLease | null = null
+    for (const e of this.byKey.values()) {
+      if (e.lease.kind !== 'session' || e.sessionId !== sessionId) continue
+      if (!newest || e.lease.id > newest.id) newest = e.lease
+    }
+    return newest ? newest.accountId : null
   }
 
   /** How many leases on the account belong to no named session: sign-ins,

@@ -5,8 +5,9 @@
  * dialogs portal to document.body, so every query here is on the document.
  *
  * Verifies:
- *   - the Providers card: real marks, Beta on Codex only, the status line,
- *     the last-provider refusal and the in-use count under the switch;
+ *   - the Providers card: real marks, the Beta pill only for a beta descriptor, the status line,
+ *     the last-provider refusal and the in-use count under the switch, which
+ *     follows the count each snapshot carries;
  *   - Codex rows: labels (the external home named by its label, never by an
  *     identity name), badges, and the "..." menu for each account state,
  *     hiding what the registry always refuses; the menu is portalled and
@@ -34,6 +35,10 @@ import type { AccountProfile } from '../../../src/shared/account-types'
 import { useProviderAccountsStore, canOfferSignInAgain, signInPhaseText, notCarriedOverText } from '../../../src/renderer/stores/providerAccountsStore'
 import { useAccountProfilesStore } from '../../../src/renderer/stores/accountProfilesStore'
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../../src/renderer/stores/settingsStore'
+import { registerRendererProvider, _resetRendererProviderRegistryForTest } from '../../../src/renderer/providers/core'
+import { composeRendererProviders } from '../../../src/renderer/providers'
+import { claudeDescriptor } from '../../../src/renderer/providers/claude'
+import { codexDescriptor } from '../../../src/renderer/providers/codex'
 
 // The saved on/off the Providers switch writes after main agrees.
 const updateSettings = vi.fn(() => Promise.resolve())
@@ -109,7 +114,7 @@ function provider(over: Partial<ProviderInstallationView> & Pick<ProviderInstall
   const cap = { enabled: true, labelExperimental: false }
   return {
     enabled: true, preference: 'on', discoveryState: 'found', version: '1.0.0', compatibility: 'supported', managedAccounts: over.providerId === 'codex',
-    signInMethods: { browser: cap, device: cap, apiKey: cap }, status: cap, logout: cap,
+    signInMethods: { browser: cap, device: cap, apiKey: cap }, status: cap, logout: cap, inUse: 0,
     ...over,
   }
 }
@@ -261,13 +266,32 @@ afterEach(() => { unmountNow() })
 // Providers card
 
 describe('Providers card', () => {
-  it('shows each provider with its real mark, Beta on Codex only, and its status', () => {
+  it('shows each provider with its real mark, no Beta label, and its status', () => {
+    // [host] P4.11 (row 54): the Codex "Beta" labels come off in the release
+    // where parity lands; both registered descriptors are stable.
+    _resetRendererProviderRegistryForTest()
+    composeRendererProviders()
     render(snapshot())
     expect(q('provider-row-claude')!.querySelector('[data-testid="provider-mark-claude"]')).toBeTruthy()
     expect(q('provider-row-codex')!.querySelector('[data-testid="provider-mark-codex"]')).toBeTruthy()
-    expect(q('provider-beta-codex')?.textContent).toBe('Beta')
+    expect(q('provider-beta-codex')).toBeNull()
     expect(q('provider-beta-claude')).toBeNull()
     expect(q('provider-status-claude')?.textContent).toBe('Claude Code 2.1.281 - ready')
+  })
+
+  it('[host] the Beta pill still follows the descriptor\'s maturity (WP1.21: labelled with provider maturity)', () => {
+    _resetRendererProviderRegistryForTest()
+    registerRendererProvider(claudeDescriptor)
+    registerRendererProvider({ ...codexDescriptor, maturity: 'beta' })
+    try {
+      render(snapshot())
+      expect(q('provider-beta-codex')?.textContent).toBe('Beta')
+      expect(q('provider-beta-claude')).toBeNull()
+    } finally {
+      // The composed registry again, so a failure here costs no other case.
+      _resetRendererProviderRegistryForTest()
+      composeRendererProviders()
+    }
   })
 
   it('says "At least one provider stays on." under the switch when the last one is turned off', async () => {
@@ -332,6 +356,62 @@ describe('Providers card', () => {
     await act(async () => { (q('provider-row-codex')!.querySelector('[role="switch"]') as HTMLElement).click() })
     await flush()
     expect(q('provider-error-codex')?.textContent).toBe('Codex is in use (3).')
+  })
+
+  // [host] P4.7 fix pass 3: the line follows the count main publishes with
+  // each snapshot, on Claude Code's row and Codex's alike.
+  const inUseSnapshot = (revision: number, claude: number, codex: number) => snapshot({
+    revision,
+    providers: [
+      provider({ providerId: 'claude', displayName: 'Claude Code', version: '2.1.281', inUse: claude }),
+      provider({ providerId: 'codex', displayName: 'Codex', version: '0.155.1', inUse: codex }),
+    ],
+  })
+  async function refuseBothSwitches(): Promise<void> {
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'consumers', consumers: 1, message: 'Sessions or operations are using this account.' } as never)
+    for (const id of ['codex', 'claude']) {
+      await act(async () => { (q(`provider-row-${id}`)!.querySelector('[role="switch"]') as HTMLElement).click() })
+      await flush()
+    }
+    expect(q('provider-error-codex')?.textContent).toBe('Codex is in use (1).')
+    expect(q('provider-error-claude')?.textContent).toBe('Claude Code is in use (1).')
+  }
+
+  it('the in-use line follows the count each new snapshot carries, and goes once nothing holds the provider [host]', async () => {
+    // The snapshot from before the refusal carries no count yet.
+    render(snapshot())
+    await refuseBothSwitches()
+    act(() => { useProviderAccountsStore.getState().receive(inUseSnapshot(2, 1, 2)) })
+    expect(q('provider-error-codex')?.textContent).toBe('Codex is in use (2).')
+    expect(q('provider-error-claude')?.textContent).toBe('Claude Code is in use (1).')
+    act(() => { useProviderAccountsStore.getState().receive(inUseSnapshot(3, 1, 0)) })
+    expect(q('provider-error-codex')).toBeNull()
+    expect(q('provider-switch-text-codex')?.textContent).toBe('On')
+    expect(q('provider-error-claude')?.textContent).toBe('Claude Code is in use (1).')
+    act(() => { useProviderAccountsStore.getState().receive(inUseSnapshot(4, 0, 0)) })
+    expect(q('provider-error-claude')).toBeNull()
+  })
+
+  // [host] P4.7 fix pass 4: main pushes a new snapshot each time the count
+  // moves after a refusal (provider-in-use.test.ts); the row reads none of
+  // its own, however long the line shows.
+  it('while the line shows, the row reads no snapshot of its own; the next snapshot main pushes ends it [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      // The last snapshot already said 0; main's push after the refusal says it again.
+      render(inUseSnapshot(1, 0, 0))
+      await refuseBothSwitches()
+      pa.snapshot.mockClear()
+      await act(async () => { vi.advanceTimersByTime(10 * 60_000) })
+      expect(pa.snapshot).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+      expect(q('provider-error-codex')?.textContent).toBe('Codex is in use (1).')
+      act(() => { useProviderAccountsStore.getState().receive(inUseSnapshot(2, 0, 0)) })
+      expect(q('provider-error-codex')).toBeNull()
+      expect(q('provider-error-claude')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('says the change was not saved when the settings save does not land (it resolves false; it does not throw)', async () => {

@@ -446,6 +446,26 @@ describe('the account surface (#439/#475) — claude.ai as this session’s acco
     expect(byTest('browser-start-claudeai')).not.toBeNull()
   })
 
+  // [host] WP2 PR 4, P4.6 (row 58): a Codex session has no Claude account, and the
+  // primary fallback would have offered ANOTHER account's claude.ai (#216;
+  // P3.6 V5), as the session menu's items did.
+  it('a local Codex session never carries the claude.ai entry, whatever Claude profile is primary', async () => {
+    localSession()
+    SESSIONS = [{ id: 's1', configId: 'cfg1', sessionType: 'local', provider: 'codex' }, { id: 's2' }]
+    open()
+    render()
+    await flush()
+    expect(byTest('browser-start-claudeai')).toBeNull()
+    // The same session as Claude's gets it: the provider alone decides.
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    SESSIONS = [{ id: 's1', configId: 'cfg1', sessionType: 'local', provider: 'claude' }, { id: 's2' }]
+    open()
+    render()
+    await flush()
+    expect(byTest('browser-start-claudeai')).not.toBeNull()
+  })
+
   it('opening it swaps the pane to the account view: ordinary view closed, account view opened as the profile', async () => {
     localSession()
     act(() => { useWebviewStore.getState().navigate('s1', 'http://localhost:5173/') })
@@ -520,5 +540,184 @@ describe('the account surface (#439/#475) — claude.ai as this session’s acco
     await flush()
     expect(useWebviewStore.getState().bySessionId['s1'].accountPane).toBeNull()
     expect(byTest('browser-start')).not.toBeNull()
+  })
+})
+
+// [host] WP2 PR 4, P4.6 second half (row 58): a Codex session's own account on
+// chatgpt.com. The account is the one the session runs under (never a Claude
+// profile); the view opens through the Codex channel, which main gates.
+describe('the account surface for a Codex session: chatgpt.com as its own account', () => {
+  const ACCT = 'acct-0123456789abcdef'
+  let providerStore: any
+  let codexPaneOpen: ReturnType<typeof vi.fn>
+  const snapshotWith = (over: Record<string, unknown> = {}) => ({
+    revision: 1,
+    accounts: [{ id: ACCT, providerId: 'codex', identityId: 'idn-0123456789abcdef', lifecycle: 'active', isProviderDefault: true, external: false, ...over }],
+    identities: [{ id: 'idn-0123456789abcdef', friendlyName: 'Codex Work' }],
+  })
+  const codexSession = (over: Record<string, unknown> = {}) => {
+    SESSIONS = [{ id: 's1', configId: 'cfg1', sessionType: 'local', provider: 'codex', providerAccountId: ACCT, ...over }, { id: 's2' }]
+  }
+  beforeEach(async () => {
+    providerStore = (await import('../../../src/renderer/stores/providerAccountsStore')).useProviderAccountsStore
+    providerStore.setState({ snapshot: snapshotWith() })
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-aaa111', isPrimary: true, name: 'Work', accountEmail: 'w@x.y' } as never] })
+    codexPaneOpen = vi.fn(() => Promise.resolve({ ok: true }))
+    ;(window as any).electronAPI.codexWeb = { paneOpen: codexPaneOpen }
+    ;(await import('../../../src/renderer/stores/codexWebStore')).useCodexWebStore.setState({ byAccount: {} })
+  })
+  afterEach(() => {
+    delete (window as any).electronAPI.codexWeb
+    providerStore.setState({ snapshot: null })
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
+  it('a local Codex session gets the chatgpt.com entry, named for its own account; never the claude.ai one', async () => {
+    codexSession()
+    open()
+    render()
+    await flush()
+    expect(byTest('browser-start-chatgpt')).not.toBeNull()
+    expect(byTest('browser-start-chatgpt')!.textContent).toContain('As Codex Work')
+    expect(byTest('browser-start-claudeai')).toBeNull()
+  })
+
+  it('a Claude session never gets the chatgpt.com entry', async () => {
+    SESSIONS = [{ id: 's1', configId: 'cfg1', sessionType: 'local', provider: 'claude' }, { id: 's2' }]
+    open()
+    render()
+    await flush()
+    expect(byTest('browser-start-chatgpt')).toBeNull()
+    expect(byTest('browser-start-claudeai')).not.toBeNull()
+  })
+
+  it('no entry for an archived account, another provider\'s account, a shell-only or an SSH session', async () => {
+    const cases: Array<[Record<string, unknown>, Record<string, unknown>]> = [
+      [{}, { lifecycle: 'archived' }],
+      [{}, { providerId: 'claude' }],
+      [{ shellOnly: true }, {}],
+      [{ sessionType: 'ssh' }, {}],
+      [{ providerAccountId: 'acct-ffffffffffffffff' }, {}],
+    ]
+    for (const [sess, acc] of cases) {
+      act(() => { root.unmount() })
+      root = createRoot(container)
+      codexSession(sess)
+      providerStore.setState({ snapshot: snapshotWith(acc) })
+      open()
+      render()
+      await flush()
+      expect(byTest('browser-start-chatgpt'), JSON.stringify([sess, acc])).toBeNull()
+    }
+  })
+
+  it('while the account\'s records were written by a newer version of the app, the start page shows the reason instead of the entry', async () => {
+    ;(window as any).electronAPI.codexWeb = {
+      paneOpen: codexPaneOpen,
+      status: vi.fn(() => Promise.resolve({ ok: true, web: { accountId: ACCT, status: 'none', unavailable: "This account's chatgpt.com records were written by a newer version of the app." } })),
+    }
+    codexSession()
+    open()
+    render()
+    await flush()
+    await flush()
+    expect(byTest('browser-start-chatgpt')).toBeNull()
+    expect(byTest('browser-start-chatgpt-unavailable')!.textContent).toBe("chatgpt.com: This account's chatgpt.com records were written by a newer version of the app.")
+    expect(codexPaneOpen).not.toHaveBeenCalled()
+  })
+
+  it('a refused open (the session no longer runs under the account) says why on the start page', async () => {
+    codexSession()
+    codexPaneOpen.mockImplementationOnce(() => Promise.resolve({ ok: false, error: 'This session does not run under that account.' }))
+    open()
+    render()
+    await flush()
+    act(() => { byTest<HTMLButtonElement>('browser-start-chatgpt')!.click() })
+    await flush()
+    await flush()
+    expect(byTest('account-pane-service')).toBeNull()
+    expect(byTest('browser-start-chatgpt')).not.toBeNull()
+    const note = byTest('browser-start-chatgpt-error')
+    expect(note).not.toBeNull()
+    expect(note!.textContent).toContain('This session does not run under that account.')
+    expect(note!.getAttribute('role')).toBe('alert')
+    // A later open that works clears it.
+    act(() => { byTest<HTMLButtonElement>('browser-start-chatgpt')!.click() })
+    await flush()
+    expect(codexPaneOpen).toHaveBeenCalledTimes(2)
+  })
+
+  it('a view main closed with a reason (the session no longer runs under the account) says why on the start page', async () => {
+    let closed: ((e: { sessionId: string; reason?: string }) => void) | null = null
+    acct.onPaneClosed.mockImplementation((h: (e: { sessionId: string; reason?: string }) => void) => { closed = h; return () => {} })
+    try {
+      codexSession()
+      open()
+      render()
+      await flush()
+      act(() => { byTest<HTMLButtonElement>('browser-start-chatgpt')!.click() })
+      await flush()
+      expect(byTest('account-pane-service')!.textContent).toBe('chatgpt.com')
+      act(() => { closed!({ sessionId: 's1', reason: 'This session no longer runs under that account, so its chatgpt.com view closed.' }) })
+      await flush()
+      expect(byTest('account-pane-service')).toBeNull()
+      expect(byTest('browser-start-chatgpt-error')!.textContent).toContain('no longer runs under that account')
+    } finally {
+      acct.onPaneClosed.mockImplementation(() => () => {})
+    }
+  })
+
+  it('opening it opens the view through the Codex channel as the registry account, and the strip names chatgpt.com', async () => {
+    codexSession()
+    open()
+    render()
+    await flush()
+    act(() => { byTest<HTMLButtonElement>('browser-start-chatgpt')!.click() })
+    await flush()
+    expect(codexPaneOpen).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', accountId: ACCT }))
+    expect(acct.paneOpen).not.toHaveBeenCalled()
+    expect(byTest('account-pane-service')!.textContent).toBe('chatgpt.com')
+    expect(byTest('account-pane-auth')!.textContent).toContain('checking')
+  })
+
+  it('a Codex push updates the strip; a Claude push for the same session is ignored', async () => {
+    codexSession()
+    let push: ((st: any) => void) | null = null
+    acct.onPaneState.mockImplementation((h: (st: any) => void) => { push = h; return () => {} })
+    open()
+    render()
+    act(() => { useWebviewStore.getState().openCodexAccountPane('s1', ACCT) })
+    await flush()
+    act(() => { push!({ sessionId: 's1', profileId: 'profile-aaa111', authed: true, email: 'claude@x.y' }) })
+    act(() => { push!({ sessionId: 's1', service: 'codex', accountId: 'acct-ffffffffffffffff', authed: true, email: 'other@x.y' }) })
+    expect(byTest('account-pane-auth')!.textContent).toContain('checking')
+    act(() => { push!({ sessionId: 's1', service: 'codex', accountId: ACCT, authed: false, email: null }) })
+    expect(byTest('account-pane-auth')!.textContent).toContain('Sign in to chatgpt.com below')
+    act(() => { push!({ sessionId: 's1', service: 'codex', accountId: ACCT, authed: true, email: 'me@example.com' }) })
+    expect(byTest('account-pane-auth')!.textContent).toContain('signed in as me@example.com')
+  })
+
+  it('without the Codex bridge (an older preload) it falls back to the ordinary browser', async () => {
+    delete (window as any).electronAPI.codexWeb
+    codexSession()
+    open()
+    render()
+    act(() => { useWebviewStore.getState().openCodexAccountPane('s1', ACCT) })
+    await flush()
+    expect(useWebviewStore.getState().bySessionId['s1'].accountPane).toBeNull()
+    expect(acct.paneOpen).not.toHaveBeenCalled()
+  })
+
+  it('a Claude account view replaced by a Codex one re-opens through the Codex channel', async () => {
+    codexSession()
+    open()
+    render()
+    act(() => { useWebviewStore.getState().openAccountPane('s1', 'profile-aaa111') })
+    await flush()
+    expect(acct.paneOpen).toHaveBeenCalledTimes(1)
+    act(() => { useWebviewStore.getState().openCodexAccountPane('s1', ACCT) })
+    await flush()
+    expect(acct.paneClose).toHaveBeenCalledWith('s1')
+    expect(codexPaneOpen).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', accountId: ACCT }))
   })
 })

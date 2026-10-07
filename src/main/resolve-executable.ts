@@ -9,9 +9,9 @@
  *
  * IT MUST NOT RESOLVE MORE PERMISSIVELY THAN THE SHELL IT STANDS IN FOR.
  * The shell CCC starts for a shell button is `powershell.exe`, and PowerShell
- * does NOT run `.\foo.exe` for a bare `foo` -- the current directory is not on
- * its search path. An earlier version of this file searched the cwd first "as
- * Windows does", which is cmd.exe's rule and not PowerShell's, and the effect
+ * resolves a bare `foo` from its PATH folders alone, and so does this file. An
+ * earlier version of this file used cmd.exe's rule ("as Windows does") instead
+ * of PowerShell's, and the effect
  * was a real capability the typed path does not have: a repo containing its own
  * `bambu-studio.exe` would be the file main spawned, silently, while typing the
  * same line in the pane ran the copy on PATH. So: a bare name is resolved on
@@ -204,9 +204,9 @@ export async function resolveExecutable(token: string, opts: ResolveOptions): Pr
     return remember(await tryCandidates(base))
   }
 
-  // A BARE NAME: PATH only, never the current directory. See the header -- the
-  // cwd-first rule is cmd.exe's, and importing it here would give the capture
-  // path a reach that typing the same line does not have.
+  // A BARE NAME: resolved from the PATH folders alone, as PowerShell does. See
+  // the header -- cmd.exe's rule differs, and importing it here would give the
+  // capture path a reach that typing the same line does not have.
   const raw = opts.pathEnv ?? ''
   const sep = isWindows ? ';' : ':'
   for (const entry of raw.split(sep)) {

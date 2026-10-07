@@ -120,10 +120,10 @@ describe('resolveExecutable (Windows rules)', () => {
 
   // ---- MAJOR-4: never reach further than the shell it stands in for ---------
 
-  it('does NOT search the current directory for a bare name', async () => {
-    // PowerShell -- the shell CCC starts for shell buttons -- does not run
-    // `.\foo.exe` for a bare `foo`. Searching the cwd here (cmd.exe's rule)
-    // would give the capture path a reach the typed path does not have: a repo
+  it('resolves a bare name from the PATH folders alone', async () => {
+    // PowerShell -- the shell CCC starts for shell buttons -- resolves a bare
+    // `foo` from PATH alone. cmd.exe's rule here would give the capture path
+    // a reach the typed path does not have: a repo
     // that happens to contain its own bambu-studio.exe would be the file main
     // spawned, silently, under a remembered 'capture' policy.
     const opts = {
@@ -195,7 +195,7 @@ describe('resolveExecutable (POSIX rules)', () => {
     noCache: true,
   })
 
-  it('does not append extensions and does not search the current directory', async () => {
+  it('takes the name as given, with no extension added, from the PATH folders alone', async () => {
     const opts = {
       cwd: '/work',
       pathEnv: '/usr/bin:/bin',

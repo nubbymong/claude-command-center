@@ -576,6 +576,35 @@ const OWNED_FILES: ReadonlyArray<readonly [rel: string, bytes: Buffer]> = [
   ['skills/canvas-plan/SKILL.md', Buffer.from(PLAN_SKILL_MD, 'utf8')],
   ['skills/conductor-vision/SKILL.md', Buffer.from(VISION_SKILL_MD, 'utf8')],
 ]
+
+/** The plugin's skills, each by its folder name with its SKILL.md bytes: the
+ *  very Buffers the integrity check below demands, never a second copy.
+ *  WP2 PR 4, P4.1: the realm staging (codex-realm-skills.ts) writes and
+ *  verifies exactly these, and the instruction text (codex-guidance.ts)
+ *  names them. */
+export interface CanvasSkillFile {
+  name: string
+  bytes: Buffer
+  /** The skill's frontmatter description, folded to one line. */
+  description: string
+}
+
+/** The frontmatter `description: >` block of a SKILL.md, folded to one line. */
+function skillDescription(md: string): string {
+  const lines = md.split('\n')
+  const at = lines.findIndex((l) => /^description:\s*>?\s*$/.test(l))
+  if (at < 0) return ''
+  const out: string[] = []
+  for (let i = at + 1; i < lines.length && /^\s+\S/.test(lines[i]); i++) out.push(lines[i].trim())
+  return out.join(' ')
+}
+
+export function canvasSkillFiles(): ReadonlyArray<CanvasSkillFile> {
+  return OWNED_FILES
+    .filter(([rel]) => /^skills\/[^/]+\/SKILL\.md$/.test(rel))
+    .map(([rel, bytes]) => ({ name: rel.split('/')[1], bytes, description: skillDescription(bytes.toString('utf8')) }))
+}
+
 /** Every directory we create, parents first. `''` is the plugin root itself —
  *  it is in the list so the ROOT is verified to be a real directory too; a
  *  symlink swapped in at the root passes a `readdir`-only check happily. */

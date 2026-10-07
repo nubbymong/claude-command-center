@@ -97,6 +97,13 @@ export const IPC = {
   DEBUG_DISABLE: 'debug:disable',
   DEBUG_IS_ENABLED: 'debug:isEnabled',
   DEBUG_OPEN_FOLDER: 'debug:openFolder',
+  // WP2 PR 4 (P4.4, row 56): a provider account's own log folders, beside the
+  // app's "Open log folder". Keyed by account id: main resolves every folder
+  // (the account's log folder, and the one its settings name when they name
+  // one) and never takes a path from the renderer; replies name folder kinds,
+  // never paths.
+  DEBUG_ACCOUNT_LOG_FOLDERS: 'debug:accountLogFolders',       // renderer -> main: () -> AccountLogFolders[]
+  DEBUG_OPEN_ACCOUNT_LOG_FOLDER: 'debug:openAccountLogFolder', // renderer -> main: { accountId, folder } -> AccountLogFolderOpenResult
 
   // Usage
   USAGE_SESSION: 'usage:session',
@@ -236,6 +243,14 @@ export const IPC = {
 
   // Ask Command Center help workspace
   HELP_WORKSPACE: 'help:workspace',
+  // WP2 PR 4 (P4.3, row 53): Ask Conductor on a provider whose prompt takes a
+  // question only as text typed at its ready composer. HAND_OFF gives a live
+  // Ask tab its next question through main's submit primitive (P4.1), never
+  // as raw keystrokes and a carriage return; NOTICE is main's one-line report
+  // for the dock: the characters removed before typing (question 6, default
+  // A), or a question not delivered and why.
+  ASK_CONDUCTOR_HAND_OFF: 'askConductor:handOff', // renderer -> main: { sessionId, question } -> SubmitTextResult
+  ASK_CONDUCTOR_NOTICE: 'askConductor:notice',    // push: main -> renderer: AskConductorNotice
 
   // Tokenomics v2 — SQLite-backed summary/sessions/detail + index push
   TOKENOMICS2_SUMMARY: 'tokenomics2:summary',
@@ -378,6 +393,18 @@ export const IPC = {
   ACCOUNT_WEB_PANE_GET_STATE: 'accountWeb:paneGetState',
   ACCOUNT_WEB_PANE_STATE: 'accountWeb:paneState', // main → renderer: AccountPaneState
   ACCOUNT_WEB_PANE_CLOSED: 'accountWeb:paneClosed', // main → renderer: main force-closed the surface (sign-out/delete/crash)
+  // A Codex account's chatgpt.com web session (WP2 PR 4, P4.6, row 58), keyed
+  // by its registry account id. Every channel answers the app's own window
+  // only, takes the `account` id class only, and acts only for a known,
+  // non-archived Codex account. The pane's other controls (close, bounds,
+  // visible, reload, state, and the two pushes above) are session-keyed and
+  // shared with the claude.ai surface.
+  CODEX_WEB_STATUS: 'codexWeb:status',
+  CODEX_WEB_SIGN_IN: 'codexWeb:signIn',
+  CODEX_WEB_SIGN_IN_STATE: 'codexWeb:signInState',
+  CODEX_WEB_CANCEL: 'codexWeb:cancel',
+  CODEX_WEB_SIGN_OUT: 'codexWeb:signOut',
+  CODEX_WEB_PANE_OPEN: 'codexWeb:paneOpen',
 
   // Hooks gateway
   HOOKS_TOGGLE: 'hooks:toggle',
@@ -485,6 +512,8 @@ export const IPC = {
   CANVAS_REVIEW_SUBMIT: 'canvas:reviewSubmit',         // renderer -> main: freeze the draft (+ sketch PNG exports); carries the decision (approve/reject) — required
   CANVAS_VERSION_VERDICT: 'canvas:versionVerdict',     // renderer -> main: zero-note verdict on a version { sessionId, versionId?, state, note? }; approve/reject also settles that artefact's earlier rounds, approve auto-completes
   CANVAS_AGENT_MARKER: 'canvas:agentMarker',           // renderer -> main (#580): { sessionId, canvasId, line } -> the one chat line that TELLS the agent a verdict/review was filed; owner-only against the named canvas, control-stripped, queued while the agent's turn is open and flushed at the boundary, never written blind into a streaming TUI
+  CANVAS_AGENT_MARKER_UNDELIVERED: 'canvas:agentMarkerUndelivered', // push: main -> renderer (WP2 PR 4, P4.1): CanvasMarkerUndelivered -> a queued marker the submit primitive could not deliver (no ready prompt within the queue's bound, a prompt on screen, a write never drawn); the canvas shows it on the review it belongs to
+  CANVAS_SESSION_GUIDANCE: 'canvas:sessionGuidance',  // renderer -> main (WP2 PR 4, P4.1): { sessionId } -> CanvasSessionGuidance | null; whether that session's launch carried the canvas and vision skills' guidance with the tools, for the canvas page's one line. A pure read of the launch record
   CANVAS_VERSION_REOPEN: 'canvas:versionReopen',       // renderer -> main: C1 reopen a version for review (later ready versions -> withdrawn); wakes no round
   CANVAS_ANNOTATION_REOPEN: 'canvas:annotationReopen', // renderer -> main: the USER puts a closed note back in play
   CANVAS_REVIEW_REOPEN: 'canvas:reviewReopen',         // renderer -> main: { sessionId, canvasId, reviewId } -> the USER puts a whole settled ROUND back in play (the only other revival there is)

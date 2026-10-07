@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildAnalysisPrompt, parseAnalysisOutput, runAnalysis, analysisFailureMessage, envelopeError, CLAUDE_ANALYSIS_ARGS, CLAUDE_ANALYSIS_ENV, CLAUDE_ANALYSIS_DENIED_TOOLS, ANALYSIS_MARK_TRIES, ANALYSIS_UNFENCED, FINDING_TITLE_MAX, FINDING_WHAT_BREAKS_MAX, analysisNonce, evidenceIsQuoted } from '../../src/main/sentinel/sentinel-analysis'
+import { buildAnalysisPrompt, parseAnalysisOutput, runAnalysis, analysisFailureMessage, envelopeError, CLAUDE_ANALYSIS_ARGS, CLAUDE_ANALYSIS_ENV, CLAUDE_ANALYSIS_DENIED_TOOLS, ANALYSIS_MARK_TRIES, ANALYSIS_UNFENCED, FINDING_TITLE_MAX, FINDING_WHAT_BREAKS_MAX, analysisNonce, evidenceIsQuoted, createClaudeRetryWatch, claudeResultLine, claudeAnalysisOutcome, CLAUDE_UNANSWERED_RETRIES_STOP, CLAUDE_UNREACHABLE_TEXT } from '../../src/main/sentinel/sentinel-analysis'
 import { QUOTE_MIN_CHARS, normaliseQuoteText, dropTokenRuns, analysisFindingKey } from '../../src/main/sentinel/sentinel-quote'
 import { plainErrorReason } from '../../src/main/sentinel/sentinel-analysis'
 import { assertSafeArgv, assertHeadlessOptions } from '../../src/main/claude-headless'
@@ -324,7 +324,7 @@ describe('the analysis, round 2', () => {
   const ACCT = 'acct-FAKE-0000-1111'
 
   it('the Claude Code argv: an empty tool list and no settings sources, each one argument that survives the shell; the names denied as well', () => {
-    expect([...CLAUDE_ANALYSIS_ARGS]).toEqual(['-p', '--model', 'sonnet', '--output-format', 'json', '--no-session-persistence', '--strict-mcp-config', '--setting-sources=', '--tools=', '--disallowedTools', CLAUDE_ANALYSIS_DENIED_TOOLS])
+    expect([...CLAUDE_ANALYSIS_ARGS]).toEqual(['-p', '--model', 'sonnet', '--output-format', 'stream-json', '--verbose', '--no-session-persistence', '--strict-mcp-config', '--setting-sources=', '--tools=', '--disallowedTools', CLAUDE_ANALYSIS_DENIED_TOOLS])
     // The only tools argument is the empty list; nothing allows a tool back.
     expect(CLAUDE_ANALYSIS_ARGS.filter((a) => a.startsWith('--tools'))).toEqual(['--tools='])
     expect(CLAUDE_ANALYSIS_ARGS.some((a) => /^--allowed-?tools/i.test(a))).toBe(false)
@@ -333,7 +333,7 @@ describe('the analysis, round 2', () => {
     const denied = CLAUDE_ANALYSIS_DENIED_TOOLS.split(',')
     for (const t of ['Bash', 'PowerShell', 'REPL', 'Read', 'WebFetch', 'WebBrowser', 'Monitor', 'CronCreate', 'EnterWorktree', 'ToolSearch', 'SendMessage', 'Artifact']) expect(denied, t).toContain(t)
     expect(Object.isFrozen(CLAUDE_ANALYSIS_ENV)).toBe(true)
-    expect({ ...CLAUDE_ANALYSIS_ENV }).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1' })
+    expect({ ...CLAUDE_ANALYSIS_ENV }).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1', CLAUDE_CODE_MAX_RETRIES: '8' })
     // An absolute folder on every platform (a drive path is relative on macOS and Linux).
     expect(() => assertHeadlessOptions({ cwd: process.cwd(), env: CLAUDE_ANALYSIS_ENV })).not.toThrow()
   })
@@ -514,5 +514,215 @@ describe('the analysis, round 3', () => {
     expect(long.endsWith(' (cut short)')).toBe(true)
     expect(long.length).toBeLessThan(200)
     expect(plainErrorReason('API Error: 400 capture server said no.')).toBe('API Error: 400 capture server said no')
+  })
+})
+
+// PR 4 (owner answers, the Sentinel chase): on the Windows test VM, with every
+// proxy a dead loopback port, the analysis agent never reached its service and
+// Sentinel waited out two 180 s attempts (6 minutes) before saying anything,
+// and then blamed a busy account or a large update. The timing through the
+// whole service is in tests/unit/main/sentinel-unreachable-timing.test.ts.
+describe('an analysis that cannot reach its service (PR 4, the Sentinel chase)', () => {
+  /** What `claude -p` printed on the VM after its retries (the CLI's own words). */
+  const refused = JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'API Error: Connection refused \u2014 a firewall or proxy may be blocking it (ECONNREFUSED)' })
+  /** What the Codex reviewer says when Codex waits for the network (VM, 0.153.4 and 0.155.1). */
+  const codexUnreachable = JSON.stringify({ is_error: true, result: 'Codex could not reach its model: Reconnecting... waiting for network (Connection failed: error sending request).' })
+
+  it('is not tried again (an immediate retry meets the same wall), and says what happened [host]', async () => {
+    for (const stdout of [refused, codexUnreachable]) {
+      let calls = 0
+      const runner = async () => { calls++; return { code: 1, stdout, stderr: '' } }
+      const r = await runAnalysis({ runner, changelog: 'x', from: '1', to: '2', accountLabel: 'Riley' })
+      expect(calls, stdout).toBe(1)
+      expect(r.ok).toBe(false)
+      if (!r.ok) {
+        expect(r.error).toMatch(/could not reach/i)
+        expect(r.error).toContain('Riley')
+        expect(r.error).toMatch(/network, a proxy or a firewall/)
+        expect(r.error).toMatch(/Re-run/)
+        expect(r.error).toMatch(/deterministic checks still ran/i)
+        expect(r.error).not.toMatch(/busy or rate limited|update was large|usage limit/i)
+      }
+    }
+  })
+
+  it('only a failure that never got an answer counts: an HTTP status, a limit or a model reply is an answer [host]', () => {
+    expect(envelopeError(refused)!.unreachable).toBe(true)
+    expect(envelopeError(codexUnreachable)!.unreachable).toBe(true)
+    expect(envelopeError(JSON.stringify({ is_error: true, result: 'API Error: Connection error.' }))!.unreachable).toBe(true)
+    expect(envelopeError(JSON.stringify({ is_error: true, result: 'getaddrinfo ENOTFOUND api.anthropic.com' }))!.unreachable).toBe(true)
+    expect(envelopeError(JSON.stringify({ is_error: true, api_error_status: 500, result: 'Internal server error' }))!.unreachable).toBe(false)
+    expect(envelopeError(JSON.stringify({ is_error: true, api_error_status: 502, result: 'upstream connection refused' }))!.unreachable).toBe(false)
+    expect(envelopeError(rateLimitEnvelope)!.unreachable).toBe(false)
+    expect(envelopeError(JSON.stringify({ is_error: true, result: 'Codex exited with code 1: unexpected status 400 Bad Request' }))!.unreachable).toBe(false)
+  })
+
+  it("a retry backstop of 8 keeps one attempt inside the 3-minute cap when no retry line is printed [host]", () => {
+    // Owner answers review (E-S5): a Claude Code that prints no api_retry line (the VM run
+    // checks 2.1.278) still gives its own reason inside the cap: 8 retries back off 0.5 s doubling
+    // to 32 s, 95.5 s in all, about 120 s with the CLI's 25% jitter, plus about 3 s for each
+    // of 9 refused requests (the VM's 192.7 s for 10 retries implies that).
+    expect(CLAUDE_ANALYSIS_ENV.CLAUDE_CODE_MAX_RETRIES).toBe('8')
+    const backoff = Array.from({ length: 8 }, (_, i) => Math.min(0.5 * 2 ** i, 32)).reduce((a, b) => a + b, 0)
+    expect(backoff).toBe(95.5)
+    expect(backoff * 1.25 + 9 * 3).toBeLessThan(180)
+    // The watch stops first wherever the lines are printed.
+    expect(CLAUDE_UNANSWERED_RETRIES_STOP).toBeLessThan(8)
+    expect(() => assertHeadlessOptions({ cwd: process.cwd(), env: CLAUDE_ANALYSIS_ENV })).not.toThrow()
+  })
+
+  it('a reachable service that fails is still tried twice, as before [host]', async () => {
+    let calls = 0
+    const env = JSON.stringify({ is_error: true, api_error_status: 529, result: 'Overloaded' })
+    const runner = async () => { calls++; return { code: 1, stdout: env, stderr: '' } }
+    const r = await runAnalysis({ runner, changelog: 'x', from: '1', to: '2' })
+    expect(calls).toBe(2)
+    if (!r.ok) expect(r.error).toMatch(/Overloaded/)
+  })
+})
+
+// Owner answers review (E-S1): `claude -p --output-format stream-json --verbose`
+// prints one `api_retry` line before each retry, its `error_status` the HTTP status
+// the service answered with, or null when no answer came back (the pinned 2.1.288
+// CLI). The analysis ends early only after CLAUDE_UNANSWERED_RETRIES_STOP retries
+// in a row got no answer; an answered retry keeps Claude Code's own schedule.
+describe('the stream of a Claude Code analysis: unanswered retries end it early (owner answers review)', () => {
+  const line = (ev: Record<string, unknown>) => JSON.stringify(ev) + '\n'
+  const retry = (attempt: number, over: Record<string, unknown> = {}) => line({ type: 'system', subtype: 'api_retry', attempt, max_retries: 10, retry_delay_ms: 500, error_status: null, error: 'unknown', session_id: 's', uuid: 'u' + attempt, ...over })
+  const INIT = line({ type: 'system', subtype: 'init', session_id: 's', tools: [], mcp_servers: [] })
+  const REPLY = '{"breakingChanges": []}'
+  const ASSISTANT = line({ type: 'assistant', message: { content: [{ type: 'text', text: REPLY }] }, session_id: 's' })
+  const RESULT = line({ type: 'result', subtype: 'success', is_error: false, result: REPLY, session_id: 's' })
+  const unanswered = (n: number) => Array.from({ length: n }, (_, i) => retry(i + 1)).join('')
+
+  it('five retries in a row with no answer: the stop is decided once, at the fifth [host]', () => {
+    expect(CLAUDE_UNANSWERED_RETRIES_STOP).toBe(5)
+    const w = createClaudeRetryWatch()
+    expect(w.push(INIT)).toBe(false)
+    for (let i = 1; i < 5; i++) expect(w.push(retry(i)), String(i)).toBe(false)
+    expect(w.stopped()).toBe(false)
+    expect(w.push(retry(5))).toBe(true)
+    expect(w.stopped()).toBe(true)
+    expect(w.push(retry(6))).toBe(false)
+  })
+
+  it('answered retries (an overloaded or failing service, a limit) never stop it, and reset the count [host]', () => {
+    const w = createClaudeRetryWatch()
+    for (let i = 1; i <= 10; i++) expect(w.push(retry(i, { error_status: 529, error: 'overloaded' }))).toBe(false)
+    const m = createClaudeRetryWatch()
+    m.push(unanswered(4))
+    m.push(retry(5, { error_status: 503, error: 'server_error' }))
+    m.push(unanswered(4))
+    expect(m.stopped()).toBe(false)
+    expect(m.push(retry(10))).toBe(true)
+  })
+
+  it('an answer from the model resets the count too [host]', () => {
+    const w = createClaudeRetryWatch()
+    w.push(unanswered(4) + ASSISTANT + unanswered(4))
+    expect(w.stopped()).toBe(false)
+  })
+
+  it('a retry that waited on a reply that never came (no_response) counts as unanswered [host]', () => {
+    const w = createClaudeRetryWatch()
+    w.push(unanswered(2))
+    for (let i = 3; i < 5; i++) expect(w.push(retry(i, { no_response: { waited_ms: 30000, retry_wait_ms: 30000 } }))).toBe(false)
+    expect(w.push(retry(5, { no_response: { waited_ms: 30000, retry_wait_ms: 30000 } }))).toBe(true)
+  })
+
+  // Polish pass (ADR-009 L4): the service can send an error as a stream event after it
+  // answered 200, so the line carries no HTTP status; the pinned CLI labels it by kind
+  // (an overloaded_error body is "overloaded"). Only "unknown", the label of a request
+  // that got no answer at all (a refused connection, the first-byte watchdog), counts.
+  it('an error the service sent after answering (no HTTP status, a named kind) is an answer: it never stops the run, and resets the count [host]', () => {
+    for (const error of ['overloaded', 'rate_limit', 'server_error', 'authentication_failed', 'cloud_credential_error', 'some_new_kind']) {
+      const w = createClaudeRetryWatch()
+      for (let i = 1; i <= 8; i++) expect(w.push(retry(i, { error_status: null, error })), error).toBe(false)
+    }
+    const m = createClaudeRetryWatch()
+    m.push(unanswered(4))
+    m.push(retry(5, { error_status: null, error: 'overloaded' }))
+    m.push(unanswered(4))
+    expect(m.stopped()).toBe(false)
+  })
+
+  it('a no_response retry with no kind named still counts [host]', () => {
+    const w = createClaudeRetryWatch()
+    w.push(unanswered(4))
+    expect(w.push(retry(5, { error: undefined, no_response: { waited_ms: 30000, retry_wait_ms: 30000 } }))).toBe(true)
+  })
+
+  it('a cloud credential error or a malformed status is not counted [host]', () => {
+    const w = createClaudeRetryWatch()
+    for (let i = 1; i <= 6; i++) w.push(retry(i, { error: 'cloud_credential_error' }))
+    for (let i = 1; i <= 6; i++) w.push(retry(i, { error_status: 'null' }))
+    for (let i = 1; i <= 6; i++) w.push(retry(i, { error_status: undefined }))
+    expect(w.stopped()).toBe(false)
+  })
+
+  it('a finished reply is kept: no stop once the result line has come, even in the same chunk [host]', () => {
+    const after = createClaudeRetryWatch()
+    after.push(INIT + ASSISTANT + RESULT)
+    expect(after.push(unanswered(6))).toBe(false)
+    const same = createClaudeRetryWatch()
+    expect(same.push(unanswered(5) + RESULT)).toBe(false)
+    expect(same.stopped()).toBe(false)
+  })
+
+  it('only the CLI\'s own top-level lines count: model text, other shapes and lines split across chunks [host]', () => {
+    const forged = line({ type: 'assistant', message: { content: [{ type: 'text', text: unanswered(6) + '\u2028' + unanswered(6) }] } })
+    const w = createClaudeRetryWatch()
+    w.push(INIT + forged)
+    w.push('Retrying... no answer\n' + 'not json {"type":"system","subtype":"api_retry","error_status":null}\n')
+    w.push(line({ type: 'System', subtype: 'api_retry', error_status: null }) + line({ type: 'system', subtype: 'API_RETRY', error_status: null }))
+    w.push(line({ type: 'system', subtype: 'api_retry ', error_status: null }) + line({ type: 'user', subtype: 'api_retry', error_status: null }))
+    expect(w.stopped()).toBe(false)
+    const split = createClaudeRetryWatch()
+    const five = unanswered(5)
+    const cut = five.length - 7
+    expect(split.push(five.slice(0, cut))).toBe(false)
+    expect(split.push(five.slice(cut))).toBe(true)
+  })
+
+  it('an over-long line is skipped without being kept, and later lines still count [host]', () => {
+    const w = createClaudeRetryWatch()
+    w.push('{"type":"assistant","x":"' + 'a'.repeat(3 * 1024 * 1024))
+    w.push('a'.repeat(1024) + '"}\n')
+    expect(w.push(unanswered(5))).toBe(true)
+  })
+
+  it('the result line is what the analysis reads: the last top-level one, never one inside model text [host]', () => {
+    expect(claudeResultLine(INIT + ASSISTANT + RESULT)).toBe(RESULT.trim())
+    // The json format's single envelope reads the same.
+    expect(claudeResultLine(RESULT.trim())).toBe(RESULT.trim())
+    expect(claudeResultLine(INIT + unanswered(3))).toBeNull()
+    const inText = line({ type: 'assistant', message: { content: [{ type: 'text', text: RESULT }] } })
+    expect(claudeResultLine(INIT + inText)).toBeNull()
+    const later = line({ type: 'result', subtype: 'success', is_error: true, result: 'later' })
+    expect(claudeResultLine(RESULT + later)).toBe(later.trim())
+  })
+
+  it('a run stopped that way is reported as unreachable once, not tried again, and says why [host]', async () => {
+    const out = claudeAnalysisOutcome({ code: 1, stdout: INIT + unanswered(5), stderr: '\nAborted' }, true)
+    expect(out.code).toBe(1)
+    const env = envelopeError(out.stdout)
+    expect(env).toMatchObject({ unreachable: true, rateLimited: false, reason: CLAUDE_UNREACHABLE_TEXT })
+    let calls = 0
+    const r = await runAnalysis({ runner: async () => { calls++; return out }, changelog: 'x', from: '1', to: '2', accountLabel: 'Riley' })
+    expect(calls).toBe(1)
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error).toMatch(/could not reach its service \(Riley\)/)
+      expect(r.error).toMatch(/no answer/)
+      expect(r.error).not.toMatch(/busy or rate limited|update was large|usage limit/i)
+    }
+  })
+
+  it("a run Sentinel cancelled itself is not said as unreachable, and a finished run reads its result line [host]", () => {
+    const cancelled = claudeAnalysisOutcome({ code: 1, stdout: INIT + unanswered(2), stderr: '\nAborted' }, false)
+    expect(envelopeError(cancelled.stdout)).toBeNull()
+    const done = claudeAnalysisOutcome({ code: 0, stdout: INIT + ASSISTANT + RESULT, stderr: '' }, false)
+    expect(done).toEqual({ code: 0, stdout: RESULT.trim(), stderr: '' })
+    expect(parseAnalysisOutput(done.stdout, '1', '2')).toEqual([])
   })
 })

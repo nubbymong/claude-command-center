@@ -13,10 +13,18 @@
 //
 // Codex, besides its sessions and what an account lease covers (reviews,
 // sign-ins, operations), runs as Sentinel's version check, model list read
-// and an analysis on Codex (P3.9), counted the same way.
+// and an analysis on Codex (P3.9), counted the same way, and as cloud agents
+// (WP2 PR 4, P4.5): counted here from the dispatch past the launch gate until
+// the agent's lease is held, and through that lease from then on, so a
+// running agent counts once. An Insights report on a Codex account (P4.7,
+// row 68) counts the same way: here from its launch check until its
+// account's lease is held, and through the lease from then on; a
+// cross-account roll-up that runs Codex counts here for its length.
+// Claude Code's Insights count (countInsightsRunsInFlight) never includes a
+// Codex report.
 import { countUnleasedAgentSessions } from './pty-manager'
-import { countClaudeAgentsInUse } from './cloud-agent-manager'
-import { countInsightsRunsInFlight } from './insights-runner'
+import { countClaudeAgentsInUse, countCodexAgentsInUse } from './cloud-agent-manager'
+import { countInsightsRunsInFlight, countCodexInsightsRunsUnleased } from './insights-runner'
 import { sentinelClaudeRunsInFlight, sentinelCodexRunsInFlight } from './sentinel/index'
 import { countSshClaudeLaunches } from './ipc/pty-handlers'
 import { countCliSetupInUse } from './ipc/setup-handlers'
@@ -25,7 +33,7 @@ import type { ProviderId } from '../shared/providers'
 /** Each provider's CLI in use outside its sessions, by what runs it. */
 const OUTSIDE_SESSIONS: Partial<Record<ProviderId, ReadonlyArray<() => number>>> = {
   claude: [countClaudeAgentsInUse, countInsightsRunsInFlight, sentinelClaudeRunsInFlight, countSshClaudeLaunches, countCliSetupInUse],
-  codex: [sentinelCodexRunsInFlight],
+  codex: [sentinelCodexRunsInFlight, countCodexAgentsInUse, countCodexInsightsRunsUnleased],
 }
 
 /** How much of a provider runs without an account lease. A counter that

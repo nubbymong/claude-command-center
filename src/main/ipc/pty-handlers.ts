@@ -1,7 +1,11 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, app } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, isSessionLiveOrStarting, SSHOptions, SshEndTarget, getKeptCodexConversation, getKeptCodexConversationSource, codexRunEnded, codexConversationHeldElsewhere } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, isSessionLiveOrStarting, SSHOptions, SshEndTarget, getKeptCodexConversation, getKeptCodexConversationSource, codexRunEnded, codexConversationHeldElsewhere, endAgentRunsInFolder } from '../pty-manager'
 import type { CodexLaunch } from '../pty-manager'
+import { handOffAskQuestion } from '../pty-manager'
+import { ensureHelpWorkspace, helpWorkspaceDir } from '../help-workspace'
+import { ASK_HELP_FOLDER_FAILED } from '../../shared/ask-conductor-provider'
+import { getResourcesDirectory } from './setup-handlers'
 import { getAccountsService } from '../provider-accounts'
 import { awaitCodexHookFolders } from '../codex-hook-folders'
 import { getGateway } from '../hooks'
@@ -22,11 +26,13 @@ import { logWarn } from '../debug-logger'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
-import type { SshRuntime, DetachedRemoteLiveness, HostPingResult, DetachedRemote, SshEndRemoteResult } from '../../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness, HostPingResult, DetachedRemote, SshEndRemoteResult, SubmitTextResult } from '../../shared/types'
 import { detachedDestinationAgrees, type SshDestinationSource } from '../../shared/detached-destination'
 import { readDetachedRemotesRegistry } from '../session-state'
 import { pingHost } from '../host-ping'
 import { noteSessionSpawnForCanvas } from '../canvas/canvas-session-link'
+import { codexSessionGuidance } from '../canvas/codex-guidance'
+import { appWindowSender } from './trusted-sender'
 import { getRegistry } from '../model-registry-service'
 import { codexEffortRuns } from '../../shared/model-registry'
 import {
@@ -139,6 +145,11 @@ let codexLaunchSeq = 0
  *  carried: what a process still running writes after the copy would be
  *  lost. */
 export const CODEX_CARRY_EXIT_WAIT_MS = 5_000
+
+/** ADR-009 round 1 (PR 4): how long an Ask spawn waits for the runs working
+ *  in the help folder to end before it is rebuilt. Past it, with one still
+ *  running, the spawn starts nothing (fails closed). */
+export const ASK_HELP_RUNS_END_WAIT_MS = 5_000
 
 /** P3.6 (ADR-009 round 1, A6): how long a respawn waits for the copy itself.
  *  A copy of the largest rollout takes well under a second on a local disk;
@@ -670,7 +681,53 @@ function endTargetFromSavedConfig(configId: string, sessionId: string): SshEndTa
   }
 }
 
+/** P4.1 review A-2: the realm ownership of the account a launch prepared, from
+ *  the accounts snapshot (its `external` flag is the realm's ownership);
+ *  undefined when it cannot be told. */
+function codexAccountOwnership(service: AccountsService, accountId: string): 'conductor-managed' | 'external-default' | undefined {
+  try {
+    const account = service.snapshot().accounts.find((a) => a.id === accountId)
+    return account ? (account.external ? 'external-default' : 'conductor-managed') : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** WP2 PR 4, P4.1: `canvas:sessionGuidance`'s payload: one session id. */
+const sessionGuidanceSchema = z.object({ sessionId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/) }).strict()
+
+/** WP2 PR 4, P4.3: `askConductor:handOff`'s payload: the Ask session and the
+ *  question, bounded as the pty:spawn schema bounds askPrompt. */
+const askHandOffSchema = z.object({
+  sessionId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  question: z.string().min(1).max(8000),
+}).strict()
+
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {
+  // WP2 PR 4, P4.1 (row 51): whether a Codex session's launch carried the
+  // canvas and vision skills' guidance with the tools, for the canvas page's
+  // one line. A pure read of main's own launch record; the app's window only.
+  const fromApp = appWindowSender(getWindow)
+  ipcMain.handle(IPC.CANVAS_SESSION_GUIDANCE, (e, args: unknown) => {
+    if (!fromApp(e)) return null
+    const parsed = sessionGuidanceSchema.safeParse(args)
+    if (!parsed.success) return null
+    return codexSessionGuidance(parsed.data.sessionId)
+  })
+
+  // WP2 PR 4, P4.3 (row 53): a question for a LIVE Ask session on Codex,
+  // typed through the run's pane and its submit primitive (pty-manager
+  // handOffAskQuestion), never the raw question and Enter. Only a running
+  // Codex session that launched as Ask takes one; the app's window only.
+  ipcMain.handle(IPC.ASK_CONDUCTOR_HAND_OFF, async (e, args: unknown): Promise<SubmitTextResult> => {
+    if (!fromApp(e)) return { delivered: false, reason: 'session-gone' }
+    const parsed = askHandOffSchema.safeParse(args)
+    if (!parsed.success) return { delivered: false, reason: 'refused-text' }
+    const win = getWindow()
+    if (!win || win.isDestroyed()) return { delivered: false, reason: 'session-gone' }
+    return handOffAskQuestion(win, parsed.data.sessionId, parsed.data.question)
+  })
+
   // The body of pty:spawn. `claim` holds the one-at-a-time gate's ticket for this
   // call (P3.13), and whether the call reached pty-manager's spawn: the handler
   // registered below discards the ticket when the call ends, so a spawn that
@@ -694,6 +751,8 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     configLabel?: string
     /** Ask Conductor's opening question (see spawnOptionsSchema.askPrompt). */
     askPrompt?: string
+    /** An Ask Conductor session (session.kind === 'ask'; spawnOptionsSchema.isAsk). */
+    isAsk?: boolean
     loggingEnabled?: boolean
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
@@ -799,7 +858,12 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // The legacy pin is a Claude Code CLI: installed only for a Claude launch
     // the gate above let through, never for a shell or a Codex session.
     const legacyInstall = launchProvider === 'claude' && !!(options?.legacyVersion?.enabled && options.legacyVersion.version && !isVersionInstalled(options.legacyVersion.version))
-    const preparation = codexSession || legacyInstall ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
+    // ADR-009 round 1 (PR 4): an Ask spawn waits too, for the runs in the help
+    // folder to end before it is rebuilt (below); while it waits, the end of
+    // the tab's own previous run is this spawn's to supersede, as a prepared
+    // Codex spawn's is.
+    const askSpawn = options?.isAsk === true && !options.shellOnly
+    const preparation = codexSession || legacyInstall || askSpawn ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
     // PR-level ADR-009 round 1 (B1): once that preparation is cancelled or
     // superseded, this spawn's ticket stops counting as one under way.
     if (preparation) noteConfigLaunchPreparation(configClaim.ticket, () => preparation.current)
@@ -831,6 +895,14 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       let resolvedOptions: typeof options = options ? { ...options, terminalSecret: undefined, commandSecrets: undefined } : options
       if (resolvedOptions) {
         for (const mainInternal of MAIN_INTERNAL_SPAWN_FIELDS) delete (resolvedOptions as Record<string, unknown>)[mainInternal]
+        // Review R-3: an opening question rides only a launch made as Ask
+        // Conductor, on either assistant (each branch of pty-manager holds
+        // the same rule); on any other it is dropped here, and the log says
+        // so in a fixed sentence, never the question.
+        if (resolvedOptions.askPrompt !== undefined && resolvedOptions.isAsk !== true) {
+          logWarn(`[pty] Session ${sessionId}: an opening question on a launch that is not Ask Conductor's is dropped`)
+          delete (resolvedOptions as Record<string, unknown>).askPrompt
+        }
       }
       // An SSH block is bound to the config it names, ON DISK: the request must be
       // that config's own (host/port/username/remotePath/postCommand) or the spawn
@@ -919,7 +991,14 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         codexLease = prepared.lease
         resolvedOptions = {
           ...resolvedOptions,
-          codexLaunch: { lease: prepared.lease, executable: prepared.executable, env: prepared.env, sessionsDir: prepared.sessionsDir },
+          codexLaunch: {
+            lease: prepared.lease, executable: prepared.executable, env: prepared.env, sessionsDir: prepared.sessionsDir,
+            // WP2 PR 4, P4.1: the account's Codex folder, for the launch's
+            // canvas skills (question 5).
+            home: prepared.home,
+            // Review A-2: app-managed or this computer's own sign-in.
+            ownership: codexAccountOwnership(service, prepared.lease.accountId),
+          },
         }
         // P3.6 (row 22): a respawn of this session on another account
         // carries the conversation it is on into that account first, once
@@ -994,6 +1073,50 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         })
       }
 
+      // WP2 PR 4, P4.3 (row 53): every Ask Conductor launch reads the help
+      // folder as exactly the app's own files. A Codex session may write there
+      // (Codex grants its sandbox the working folder, and the session that
+      // answers its first-launch screens holds no preset: PB8, 9.6 items 21
+      // and 22), so the folder is rebuilt here, in main, before EVERY Ask
+      // spawn of either assistant -- a first launch, a revive, a Restart,
+      // Past discussions, an account switch's remount, a restored tab -- and
+      // nothing a session wrote reaches the next. Fails closed: no rebuild, no
+      // launch. Last before the spawn, after every wait above.
+      if (askSpawn) {
+        const resourcesDir = getResourcesDirectory()
+        // ADR-009 round 1 (PR 4): first every run still working in the help
+        // folder (either assistant, the tab's own previous run included) is
+        // ended and its end waited for, bounded, so nothing writes there once
+        // it is rebuilt. One still running at the bound: nothing starts, with
+        // the same fixed sentence.
+        let ended = false
+        try { ended = await endAgentRunsInFolder(helpWorkspaceDir(resourcesDir), ASK_HELP_RUNS_END_WAIT_MS) } catch { ended = false }
+        if (preparation && !preparation.current) {
+          logInfo(`[pty] Session ${sessionId}: closed or superseded while the help folder's runs ended -- not spawning`)
+          codexLease?.release()
+          preparation.abandon()
+          return { started: false as const }
+        }
+        if (!ended) {
+          logWarn(`[pty] Session ${sessionId}: a run in the help folder did not end in time; Ask Conductor does not start`)
+          throw new Error(ASK_HELP_FOLDER_FAILED)
+        }
+        let helpDir: string
+        try {
+          helpDir = ensureHelpWorkspace(resourcesDir, { appVersion: app.getVersion() })
+        } catch {
+          // A fixed sentence (review RASK-2): ensureHelpWorkspace has logged
+          // the cause by its code; the error's own message never reaches the
+          // tab or the log.
+          throw new Error(ASK_HELP_FOLDER_FAILED)
+        }
+        // Review RASK-1: and it starts in the folder just rebuilt, whatever
+        // folder the tab kept (a Restart, Past discussions, a remount or a
+        // restored tab reuse the one it was opened in, which a move of the
+        // resources folder leaves behind, unrebuilt, or gone). pty-manager
+        // holds a resumed conversation to it too (askLaunchFolderHolds).
+        resolvedOptions = { ...resolvedOptions, cwd: helpDir }
+      }
       claim.spawnCalled = true
       if (preparation) preparation.spawn(resolvedOptions)
       else spawnPty(win, sessionId, resolvedOptions)

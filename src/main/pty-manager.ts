@@ -19,7 +19,11 @@ import {
   isProvableContainerEntry, parseEntrySentinels, buildEntryGuardCommand, readContainerName,
 } from '../shared/container-command'
 import { SSH_ENTRY, type SshEntryFailureReason } from '../shared/ssh-entry'
-import type { SshRuntime, DetachedRemoteLiveness, SshEndRemoteOutcome, SshEndRemoteResult } from '../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness, SshEndRemoteOutcome, SshEndRemoteResult, SubmitTextResult, AskConductorNotice } from '../shared/types'
+import type { RealmOwnership } from '../shared/providers'
+import { IPC } from '../shared/ipc-channels'
+import { codexPromptKeeps } from '../shared/codex-screen'
+import { askConductorProjectDocMaxBytes } from './help-workspace'
 import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
 import { buildTmuxStageCommand, type TmuxStageTarget } from './ssh-tmux-stage'
 import { buildTmuxPushCommand, buildArchProbeCommandBracketed, parseArchProbeSentinel, PUSH_ACCUMULATOR_VAR } from './ssh-tmux-push'
@@ -41,17 +45,15 @@ import { bundledConptyChoice, bundledConptyFailed, SYSTEM_CONPTY_OPTIONS, BUNDLE
 import { guardPtyIo, type PtyIoSide } from './pty-input-guard'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { TMUX_WHEEL_EXIT_KEY } from '../shared/tmux-wheel'
-import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, parseEndSudoSentinel, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort, issueMcpSessionToken } from './conductor-mcp-server'
 import { buildSshArgs, buildSshExecArgs } from './ssh-args'
 import { getRemoteMcpPort } from './ssh-remote-port'
-import { resolveClaudeBinary, resolveHostColorScheme, colorFgBgEnvToken } from './providers/claude/spawn'
+import { resolveHostColorScheme, colorFgBgEnvToken } from './providers/host-color-scheme'
 import { legacyCliPin } from './legacy-version-manager'
-import { detectClaudeUi, lastPromptLineForClaude, looksLikeShellPromptTail } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
-import type { TelemetrySource } from './providers/types'
+import type { TelemetrySource, SessionRunScreen, SpawnOptions, SshCapableProvider } from './providers/types'
 import { resolveCwd, isHomeOrAncestor } from './path-utils'
 import { buildTerminalLaunchLine } from './terminal-launch-line'
 import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
@@ -66,12 +68,16 @@ import {
   removeLocalSessionMcpConfig,
   removeLocalSessionStatusUrl,
 } from './hooks/per-session-settings'
-import { registerCodexReviewSession, registerClaudeReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
+import { registerCodexReviewSession, registerClaudeReviewSession, unregisterCodexReviewSession, releaseMcpSessionProvider } from './conductor-mcp-server'
 import { ensureCanvasPlugin } from './canvas/canvas-plugin'
 import { registerCanvasUatRoot, revokeCanvasUatRoots, designateCanvasWorktreeRoot, canvasRootRefusalReason, describeCanvasRootRefusal, setCanvasRootRefusal } from './canvas/canvas-store'
 import { designatedWorktreeDir } from './canvas/canvas-worktree'
-import { forgetSessionForCanvas } from './canvas/canvas-session-link'
+import { forgetSessionForCanvas, setCanvasCodexConversationLookup } from './canvas/canvas-session-link'
 import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
+import { MARKER_FALLBACK_FLUSH_MS } from './canvas/canvas-marker-queue'
+import { prepareCodexCanvasLaunch } from './canvas/codex-canvas-launch'
+import { registerCodexCanvasRoots } from './canvas/codex-canvas-roots'
+import { noteCodexSessionGuidance, forgetCodexSessionGuidance } from './canvas/codex-guidance'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
 export { withProfileHome } from './account-profiles'
@@ -83,8 +89,9 @@ import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consume
 import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessionGone } from './session-registry'
 import { readConfig, getConfigDir } from './config-manager'
 import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
-import { getWatchdogManager } from './watchdog/watchdog-manager'
+import { getWatchdogManager, clampAnsiChunk } from './watchdog/watchdog-manager'
 import { clearCodexIdleAttention } from './codex-idle-attention'
+import { createColorQueryResponder, terminalReplyColors } from './terminal-query-responder'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -308,6 +315,13 @@ export interface CodexLaunch {
    *  onto another account from a conversation whose claim was not certain
    *  starts a new one there (pty-handlers carryForRespawn). */
   freshConversation?: boolean
+  /** WP2 PR 4, P4.1: the account's Codex folder as the launch prepared it
+   *  (for the canvas skills). */
+  home?: string
+  /** P4.1 review A-2: the account's realm, app-managed or this computer's own
+   *  sign-in, so the canvas skills follow the account, not a path compared
+   *  against the resources folder's spelling. */
+  ownership?: RealmOwnership
 }
 
 // WP2 (plan A10): the account lease of each running Codex session, so a
@@ -486,6 +500,11 @@ export const KEPT_CODEX_CONVERSATIONS_MAX = 512
 // session (a tab that declined Codex's review sends none, whatever another
 // tab of the same account chose).
 const keptCodexConversations = new Map<string, { uuid: string; cwd: string; accountId?: string; inferred?: boolean; hooksHeard?: boolean }>()
+/** WP2 PR 4, P4.1: the conversation a Codex session is on, for its canvas
+ *  link (canvas-session-link.ts, which keeps no import of this module): set
+ *  once, here (review A-8). */
+const codexConversationForCanvas = (sessionId: string): string | undefined => keptCodexConversations.get(sessionId)?.uuid
+setCanvasCodexConversationLookup(codexConversationForCanvas)
 
 // P3.12 (row 65): the rollout each Codex session's watcher holds (claimed, or
 // read beside another tab), for its GitHub Session Context, as Claude's reads
@@ -940,6 +959,140 @@ export function isCodexPtySession(sessionId: string): boolean {
   return ptySessions.get(sessionId)?.agent === 'codex'
 }
 
+/** WP2 PR 4, P4.1: the Codex package's pane of each run and its submit
+ *  primitive (providers/codex/session-screen.ts), from the registered
+ *  provider: this module reaches a provider package only through the
+ *  registry, never by importing it. Undefined when none is registered. */
+function codexRunScreen(): SessionRunScreen | undefined {
+  try { return getProvider('codex').runScreen } catch { return undefined }
+}
+
+/** WP2 PR 4, P4.3: the Codex sessions running as Ask Conductor (launched with
+ *  isAsk), the only ones a question is handed to (handOffAskQuestion). */
+const codexAskSessions = new Set<string>()
+
+/** A folder as spelled, with its separators normalised (on Windows `/` is
+ *  `\`; a run of them is one, a UNC path keeps its leading pair) and no
+ *  trailing separator. Nothing else is changed: no case folding, no `.` or
+ *  `..` resolved, no link followed. */
+function folderSpelling(p: string, platform: NodeJS.Platform = process.platform): string {
+  const win = platform === 'win32'
+  const sep = win ? '\\' : '/'
+  let s = win ? p.replace(/\//g, '\\') : p
+  const lead = s.startsWith(sep + sep) && win ? sep + sep : s.startsWith(sep) ? sep : ''
+  s = lead + s.slice(lead.length).split(sep).filter((part, i, all) => part !== '' || i === all.length - 1).join(sep)
+  while (s.length > lead.length && s.endsWith(sep) && !(win && /^[A-Za-z]:\\$/.test(s))) s = s.slice(0, -1)
+  return s
+}
+
+/**
+ * WP2 PR 4, P4.3 review RASK-1: an Ask launch runs in the help folder main has
+ * just rebuilt (pty:spawn makes it the launch's folder), on either assistant,
+ * never in a conversation's own folder elsewhere. Whether `folder` (where a
+ * resumed conversation ran) is that folder: both are read as the volume
+ * names them (the native real path), then compared by their exact spelling
+ * (folderSpelling, never case-folded). On a case-insensitive volume a folder
+ * named in other letters comes back in its on-disk case and holds (the PR 4
+ * final VM run: a resources setting spelled in other letters); on a
+ * case-sensitive one such a folder is another folder (ADR-009 round 1,
+ * U4.11). A real path that cannot be read holds nothing. A conversation of
+ * any other folder is not resumed: the launch starts fresh in the help folder.
+ */
+function askLaunchFolderHolds(folder: string | undefined, launchFolder: string): boolean {
+  if (typeof folder !== 'string' || !folder) return false
+  let ran: string
+  let launch: string
+  try {
+    ran = fs.realpathSync.native(folder)
+    launch = fs.realpathSync.native(launchFolder)
+  } catch {
+    return false
+  }
+  return folderSpelling(ran) === folderSpelling(launch)
+}
+
+/** ADR-009 round 1 (PR 4): the folder each local agent process was started
+ *  in, by process, until its exit is reported (a killed process stays here
+ *  while it winds down), and that exit. */
+const agentRunFolders = new Map<pty.IPty, { sessionId: string; folder: string; ended: Promise<void> }>()
+
+function noteAgentRunFolder(proc: pty.IPty, sessionId: string, folder: string): void {
+  let ended!: () => void
+  const done = new Promise<void>((resolve) => { ended = resolve })
+  agentRunFolders.set(proc, { sessionId, folder, ended: done })
+  try {
+    proc.onExit(() => { agentRunFolders.delete(proc); ended() })
+  } catch {
+    agentRunFolders.delete(proc)
+    ended()
+  }
+}
+
+/** Whether no process has this id any more (its exit may simply not have
+ *  been reported). Signal 0 only asks; an id that exists, or one that cannot
+ *  be asked about, is not gone. */
+function processGone(pid: unknown): boolean {
+  if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code === 'ESRCH'
+  }
+}
+
+/** For ending runs, the same folder however it is spelled: by the real path
+ *  when it exists, case-folded where names are (Windows, macOS). Ending one
+ *  run too many is the safe side. */
+function sameFolderForEnding(folder: string, target: string): boolean {
+  const canon = (p: string): string => {
+    let out: string
+    try { out = fs.realpathSync.native(p) } catch { out = path.resolve(p) }
+    return process.platform === 'win32' || process.platform === 'darwin' ? out.toLowerCase() : out
+  }
+  const f = canon(folder)
+  const t = canon(target)
+  return f === t || f.startsWith(t.endsWith(path.sep) ? t : t + path.sep)
+}
+
+/**
+ * ADR-009 round 1 (PR 4): before the help folder is rebuilt for an Ask launch,
+ * every local agent run (either assistant) started in it, or in a folder
+ * inside it, is ended -- the tab's own previous run included -- with the
+ * session's own kill (endLiveRun, as killPty ends a run, without cancelling a
+ * spawn the session is preparing), and its exit is waited for: nothing that
+ * is still running writes into the folder after it is rebuilt. A run already
+ * killed (a Restart's kill does not wait) is waited for too. True when every
+ * such run has ended within `timeoutMs` (one whose process id is gone by then
+ * counts as ended: its exit was not reported); false when one is still
+ * running, and then the caller starts nothing.
+ */
+export async function endAgentRunsInFolder(folder: string, timeoutMs: number): Promise<boolean> {
+  const runs: Array<[pty.IPty, { ended: Promise<void> }]> = []
+  for (const [proc, run] of [...agentRunFolders]) {
+    if (!sameFolderForEnding(run.folder, folder)) continue
+    if (ptySessions.get(run.sessionId)?.ptyProcess === proc) {
+      logInfo(`[pty] Session ${run.sessionId} runs in the help folder; it is ended before the folder is rebuilt`)
+      endLiveRun(run.sessionId)
+    }
+    runs.push([proc, run])
+  }
+  if (runs.length === 0) return true
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs)) })
+  let allEnded: boolean
+  try {
+    allEnded = await Promise.race([Promise.all(runs.map(([, run]) => run.ended)).then(() => true), late])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+  if (allEnded) return true
+  const running = runs.filter(([proc]) => agentRunFolders.has(proc) && !processGone(proc.pid))
+  for (const [proc] of runs) if (!running.some(([p]) => p === proc)) agentRunFolders.delete(proc)
+  if (running.length > 0) logWarn(`[pty] ${running.length} run(s) in the help folder did not end within ${timeoutMs} ms`)
+  return running.length === 0
+}
+
 /** P3.10: a session's own hook named conversation `uuid`: P3.6's doubt
  *  about it goes -- unless a live launch resumed it by id (round 1, S4:
  *  this tab's or another's). That was the app's own choice from a record
@@ -1286,6 +1439,17 @@ const END_REMOTE_SUDO_PROMPT_RE = /^password:\s*$/
 const END_REMOTE_SSH_PROMPT_RE = /password[:?]\s*$/i
 /** Output kept for the sudo sentinel: the End exec prints a handful of lines. */
 const END_REMOTE_OUTPUT_CAP = 64 * 1024
+
+/** The Claude package's SSH surface, from the registry: the dependency
+ *  boundary lets this module reach the package only that way (WP2 PR 4).
+ *  Throws while it is not registered or not SSH-capable, as the SSH spawn
+ *  path does. */
+function claudeSshSurface(): SshCapableProvider {
+  const provider = getProvider('claude')
+  if (!isSshCapable(provider)) throw new Error('Claude provider must be SSH-capable')
+  return provider
+}
+
 export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): Promise<SshEndRemoteOutcome> {
   return endSshRemoteDetailed(sessionId, fallbackTarget).then((r) => r.outcome)
 }
@@ -1309,12 +1473,13 @@ export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndT
   // A rootful container with no saved sudo password: the kill segment probes
   // sudo and prints this End's sentinel when it cannot elevate (see above).
   const sudoProbeNonce = target.runtime?.sudo && !hasSudoPassword ? randomId() : undefined
-  const containerKill = buildContainerKillCommand(sessionId, target.runtime, { hasSudoPassword, sudoProbeNonce })
+  const claudeSsh = claudeSshSurface()
+  const containerKill = claudeSsh.containerKillCommand(sessionId, target.runtime, { hasSudoPassword, sudoProbeNonce })
   const probing = Boolean(containerKill && sudoProbeNonce)
   /** The result for a finished exec: its own outcome, unless this End's sudo
    *  sentinel is in what it printed. */
   const settle = (outcome: 'completed' | 'failed', output: string): SshEndRemoteResult => {
-    if (probing && target.runtime && parseEndSudoSentinel(output, sudoProbeNonce!)) {
+    if (probing && target.runtime && claudeSsh.parseEndSudoSentinel(output, sudoProbeNonce!)) {
       logWarn(`[ssh] ${sessionId}: end-remote may not have stopped Claude inside the container: sudo needs a password and End holds none for this session`)
       return {
         outcome: 'container-needs-sudo',
@@ -1325,8 +1490,8 @@ export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndT
   }
   // Container kill FIRST, then the host tmux kill + sidecar cleanup.
   const remoteCommand = containerKill
-    ? `${containerKill}; ${buildRemoteTmuxKillCommand(sessionId)}`
-    : buildRemoteTmuxKillCommand(sessionId)
+    ? `${containerKill}; ${claudeSsh.remoteTmuxKillCommand(sessionId)}`
+    : claudeSsh.remoteTmuxKillCommand(sessionId)
   // A rootful container whose sudo password we hold is the ONLY case that adds
   // a second prompt; `sudo -n` (no saved password) never prompts at all.
   const needsSudoPrompt = Boolean(containerKill && target.runtime?.sudo && hasSudoPassword)
@@ -1640,7 +1805,12 @@ function extractSshOscSentinels(sessionId: string, chunk: string): string {
  * Otherwise checks for native CLI (claude.exe) first, then npm wrapper (claude.cmd).
  */
 export function resolveClaudeForPty(legacyVersion?: { enabled: boolean; version: string }): { cmd: string; args: string[] } {
-  return resolveClaudeBinary(legacyVersion)
+  // Through the registered provider (WP2 PR 4), whose resolveBinary is
+  // resolveClaudeBinary and never answers null; a provider that did would be
+  // a defect, said here rather than passed on as a missing command.
+  const resolved = getProvider('claude').resolveBinary(legacyVersion)
+  if (!resolved) throw new Error('the Claude provider resolved no executable')
+  return resolved
 }
 
 /**
@@ -2925,7 +3095,7 @@ function spawnPtyResolved(
           // or claude crashed) — surface it as failed instead of latching
           // claude-running. Conservative detector: never mis-flags a running
           // claude (whose UI uses ❯/box drawing, not a bare $/#).
-          if (looksLikeShellPromptTail(recentSshTail)) {
+          if (claudeProvider.looksLikeShellPromptTail(recentSshTail)) {
             logError(`[ssh] ${sessionId}: idle after claudeCmd but pane is a bare shell → claude exited (not latching claude-running)`)
             setFlowState('failed', 'claude exited to shell')
             return
@@ -3021,7 +3191,7 @@ function spawnPtyResolved(
     const claudeCmd = isWindowsRemote
       // item 3: cmd.exe launch (set X=Y&& claude --settings "%USERPROFILE%\.claude\..."). No
       // tmux wrap ever (Windows has none); writeClaudeCmd appends --continue on reconnect.
-      ? buildWindowsClaudeCommand({ sessionId, envPrefixVars: claudeEnvVars, extraFlags: claudeCommonFlags, continueFlag: '' })
+      ? claudeProvider.windowsLaunchCommand({ sessionId, envPrefixVars: claudeEnvVars, extraFlags: claudeCommonFlags, continueFlag: '' })
       : [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
     const password = ssh.password
     // Item e (structured Runtime): the app composes the container command from
@@ -3165,7 +3335,7 @@ function spawnPtyResolved(
           // item 3: Windows uses the PowerShell-delivered setup (no POSIX
           // base64/stty, no tmux); auto/unix keep the POSIX path unchanged.
           const setupCmd = isWindowsRemote
-            ? getWindowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
+            ? claudeProvider.windowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
             : claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, setupOpts, sshNonce)
           ptyProcess.write(setupCmd + '\r')
         } catch (err) {
@@ -3360,7 +3530,7 @@ function spawnPtyResolved(
           // item 3: Windows uses the PowerShell-delivered setup (no POSIX
           // base64/stty, no tmux); auto/unix keep the POSIX path unchanged.
           const setupCmd = isWindowsRemote
-            ? getWindowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
+            ? claudeProvider.windowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
             : claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, setupOpts, sshNonce)
           ptyProcess.write(setupCmd + '\r')
         } catch (err) {
@@ -3584,7 +3754,7 @@ function spawnPtyResolved(
       // reattach the transcript's own text used to be judged before the UI that
       // accompanied it. Any chunk carrying claude's UI closes the window for
       // good.
-      if (detectClaudeUi(data, claudeSent)) { tmuxLaunchWatchUntil = 0; return }
+      if (claudeProvider.detectUiRunning(data, claudeSent)) { tmuxLaunchWatchUntil = 0; return }
       const m = data.match(TMUX_LAUNCH_FAILED_UNAMBIGUOUS_RE) ?? data.match(TMUX_LAUNCH_FAILED_GENERIC_RE)
       if (!m) return
       tmuxLaunchFellBack = true
@@ -4323,7 +4493,7 @@ function spawnPtyResolved(
       //   prompt (which would have already triggered state advance
       //   earlier).
       if (!claudeRunning) {
-        if (detectClaudeUi(data, claudeSent)) {
+        if (claudeProvider.detectUiRunning(data, claudeSent)) {
           claudeRunning = true
           if (setupTimeoutHandle) {
             clearTimeout(setupTimeoutHandle)
@@ -4477,7 +4647,7 @@ function spawnPtyResolved(
             // launch that follows -- the statusline degrading is strictly
             // better than the session never launching at all.
             try {
-              ptyProcess.write(buildTmuxBinPatchCommand(sessionId) + '\r')
+              ptyProcess.write(claudeProvider.tmuxBinPatchCommand(sessionId) + '\r')
             } catch (err) {
               logError(`[ssh] ${sessionId}: tmux CCC_TMUX_BIN settings patch failed to send (statusline may not reflect tmux): ${(err as Error)?.message ?? err}`)
             }
@@ -4524,7 +4694,7 @@ function spawnPtyResolved(
             // #242 finding F3: same CCC_TMUX_BIN patch as the tier-3 ok
             // branch above -- see that branch's comment.
             try {
-              ptyProcess.write(buildTmuxBinPatchCommand(sessionId) + '\r')
+              ptyProcess.write(claudeProvider.tmuxBinPatchCommand(sessionId) + '\r')
             } catch (err) {
               logError(`[ssh] ${sessionId}: tmux CCC_TMUX_BIN settings patch failed to send (statusline may not reflect tmux): ${(err as Error)?.message ?? err}`)
             }
@@ -4543,7 +4713,7 @@ function spawnPtyResolved(
       // guard; a chunk whose last line strips to '' (a bare \r\n ack, a pure
       // control-sequence repaint) does not clear it — the prompt is still on
       // screen through those.
-      const promptLineNow = lastPromptLineForClaude(data)
+      const promptLineNow = claudeProvider.lastPromptLine(data)
       if (promptLineNow !== '') lastPromptLineSeen = promptLineNow
       // rc.14 review F1 round 2: remember the HOST shell's prompt while we are
       // still on the host, so the entry watch below can recognise it coming
@@ -4932,8 +5102,34 @@ function spawnPtyResolved(
       // realm, checks the id again, and says where the CLI starts.
       // P3.6: a respawn onto another account from a conversation whose claim
       // was not certain resumes none (`freshConversation`, main only).
-      const resumeTarget = options?.resume ?? (options?.useResumePicker || launch.freshConversation === true ? undefined : keptCodexConversations.get(sessionId))
-      const built = provider.buildSpawnCommand({
+      let resumeTarget = options?.resume ?? (options?.useResumePicker || launch.freshConversation === true ? undefined : keptCodexConversations.get(sessionId))
+      // P4.3 review RASK-1: an Ask launch resumes only a conversation of the
+      // help folder it starts in, and starts the CLI there (askLaunchFolderHolds).
+      if (options?.isAsk === true && resumeTarget) {
+        const held = askLaunchFolderHolds(resumeTarget.cwd, resolvedCwd)
+        if (!held) logInfo(`[pty-manager] Ask ${sessionId}: its conversation ran in another folder; started afresh in the help folder`)
+        resumeTarget = held ? { uuid: resumeTarget.uuid, cwd: resolvedCwd } : undefined
+      }
+      // ADR-009 round 1 (PR 4): an opening question is honoured only on a
+      // launch made as Ask Conductor; on any other it is ignored, and the log
+      // says so in a fixed sentence (never the question).
+      const askQuestion = options?.isAsk === true ? options?.askPrompt : undefined
+      if (options?.askPrompt && options?.isAsk !== true) logWarn(`[pty-manager] Codex ${sessionId}: an opening question on a launch that is not Ask Conductor's is ignored`)
+      // WP2 PR 4, P4.1 (row 51): the Agent Canvas for this launch, as a Claude
+      // session has it (canvas/codex-canvas-launch.ts): the worktree CCC
+      // designates from the CONFIGURED folder, and the skills in the account's
+      // own skills folder (a managed realm's, or this computer's own Codex
+      // folder: question 5, answered C), which every route lists.
+      const codexToolsOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false && getConductorMcpPort() > 0
+      const codexCanvas = prepareCodexCanvasLaunch({
+        sessionId,
+        configuredCwd: resolvedCwd,
+        home: launch.home ?? launch.env.CODEX_HOME ?? '',
+        managedSkillsDirFor: (home, resourcesDir) => provider.stagedSkillsDir?.(home, resourcesDir) ?? null,
+        toolsOn: codexToolsOn,
+        ...(launch.ownership ? { ownership: launch.ownership } : {}),
+      })
+      const codexSpawnOptions: SpawnOptions = {
         sessionId,
         provider: 'codex',
         // The configured directory, resolved: where an exact resume falls
@@ -4953,7 +5149,14 @@ function spawnPtyResolved(
         ...(hookFile ? { codexHooks: { hookFile: hookFile.hookFile } } : {}),
         // Round 1 (V2): for the picker, the conversations other tabs are on.
         ...(options?.useResumePicker ? { codexOpenElsewhere: codexConversationsOpenElsewhere(sessionId, launch.lease.accountId) } : {}),
-      })
+        // WP2 PR 4, P4.3 (row 53): Ask Conductor's opening question (argv
+        // after `--` on the direct route's fresh launch; otherwise typed
+        // through the pane below), and on every Ask launch the scope of the
+        // help folder's AGENTS.md (its byte bound, no parent folder's).
+        ...(askQuestion ? { askPrompt: askQuestion } : {}),
+        ...(options?.isAsk === true ? { askProjectDocMaxBytes: askConductorProjectDocMaxBytes() } : {}),
+      }
+      const built = provider.buildSpawnCommand(codexSpawnOptions)
       const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv, commandLine } = built
       // P3.10: a hook file the launch did not use goes at once; one it uses
       // goes with the session's resources. Round 1 (B2): a token nothing will
@@ -4997,10 +5200,15 @@ function spawnPtyResolved(
       const conpty = bundledConptyChoice()
       const conptyNote = conpty.kind === 'bundled' ? ` conpty=bundled (${describePathForLog(conpty.dir)})`
         : conpty.kind === 'system' ? ` conpty=system (${describePathForLog(conpty.reason)})` : ''
-      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${commandLine ?? spawnArgs.join(' ')} cwd=${describePathForLog(codexCwd)} (resume=${built.resumeId ?? 'none'})${conptyNote}`)
-      // Codex sessions never designate a canvas worktree; drop any inherited
-      // hint, in every spelling (Windows names are case-insensitive).
+      // The builder's log line (long or private values named by length); a
+      // builder that gives none: no argument is logged.
+      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${built.logLine ?? '(arguments not logged)'} cwd=${describePathForLog(codexCwd)} (resume=${built.resumeId ?? 'none'})${conptyNote}`)
+      // WP2 PR 4, P4.1: the worktree CCC designates for the session, told to
+      // its guard as a Claude session's is (ADR-016). Any inherited hint goes
+      // first, in every spelling (Windows names are case-insensitive), and
+      // none is set when the session designates none.
       for (const k of Object.keys(spawnEnv)) if (k.toUpperCase() === 'CCC_SESSION_WORKTREE') delete (spawnEnv as Record<string, string>)[k]
+      if (codexCanvas.designatedWorktree) (spawnEnv as Record<string, string>).CCC_SESSION_WORKTREE = codexCanvas.designatedWorktree
       // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
       const codexSpawnTimestamp = Date.now()
       codexLaunchedAt = codexSpawnTimestamp
@@ -5040,15 +5248,48 @@ function spawnPtyResolved(
         logInfo(`[pty-manager] Codex PTY for ${sessionId}: the bundled ConPTY failed to start; started on the system ConPTY`)
       }
       if (onBundledConpty) watchBundledConptyEarlyExit(sessionId, started)
-      ptyProcess.onData((data) => {
+      // ADR-009 round 1 (PR 4): where this run works, until it has ended.
+      noteAgentRunFolder(started, sessionId, codexCwd)
+      // WP2 PR 4, P4.1: main's own reading of this run's screen, for the
+      // submit primitive (the package's runScreen), fed below through the
+      // Watchdog's CSI clamp.
+      const codexRun = started
+      const runScreen = provider.runScreen
+      if (codexRun && runScreen) runScreen.open(sessionId, { cols, rows, write: (data) => codexRun.write(data), current: () => ptySessions.get(sessionId)?.ptyProcess === codexRun, clamp: clampAnsiChunk })
+      // Codex's colour query (OSC 10/11 `?`), answered here in main the moment
+      // the PTY emits it and kept from the renderer, so xterm.js does not answer
+      // it a second time (terminal-query-responder.ts). Codex waits 100 ms for
+      // the answer and reads a later one as typed text in its composer; the
+      // renderer's answer can be later than that while it is busy drawing.
+      // Only this branch: Claude sessions, plain terminals and SSH sessions keep
+      // xterm.js's own answers.
+      const colorQueries = createColorQueryResponder({
+        colors: () => terminalReplyColors(readConfig('settings'), nativeTheme.shouldUseDarkColors),
+        reply: (bytes) => {
+          try { codexRun.write(bytes) } catch (err) { logWarn(`[pty-manager] Codex ${sessionId}: the terminal colour answer could not be written: ${(err as Error)?.message ?? err}`) }
+        },
+      })
+      ptyProcess.onData((rawData) => {
         if (win.isDestroyed()) return
         if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return // rc.15 review R9
+        const data = colorQueries.filter(rawData)
+        if (data === '') return
         getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
         // P3.10 (rows 43, 46): the Watchdog's pane and silence clock, as a
         // Claude session's; a no-op until the session arms one (off by default).
         getWatchdogManager()?.feedData(sessionId, data)
+        runScreen?.feed(sessionId, data)
         win.webContents.send(`pty:data:${sessionId}`, data)
       })
+      // WP2 PR 4, P4.3 (row 53): an Ask session takes later questions through
+      // the pane (handOffAskQuestion). A question this launch did not carry
+      // on argv (the npm .cmd route, an exact resume, the picker, a question
+      // argv may not hold) is typed there at Codex's first ready, empty
+      // composer, never into its trust or sandbox screens; scheduled for once
+      // spawnPty has registered this run (below the provider branches).
+      if (options?.isAsk === true) codexAskSessions.add(sessionId)
+      else codexAskSessions.delete(sessionId)
+      if (askQuestion && !built.askPromptOnArgv) setImmediate(() => { void deliverAskQuestion(win, sessionId, askQuestion) })
       // P3.12 (row 31): whatever an earlier launch of this session claimed is
       // not this run's; this launch's claims are held until its run is
       // recorded (a resume claims at once, inside ingestSessionTelemetry).
@@ -5147,9 +5388,21 @@ function spawnPtyResolved(
       } else {
         registerClaudeReviewSession(sessionId, resolvedCwd)
       }
+      // WP2 PR 4, P4.1 (row 51): the Agent Canvas serving roots, by the
+      // Claude branch's rule (canvas/codex-canvas-roots.ts): the configured
+      // project directory and the designated worktree, never `codexCwd` or any
+      // folder a rollout recorded. killPty's revoke (run before every spawn)
+      // and the session's cleanup clear them. And what this launch carried of
+      // the skills, for the canvas page's line (whatever route the builder
+      // took: every route lists the account's own skills folder).
+      registerCodexCanvasRoots(sessionId, resolvedCwd, codexCanvas.designatedWorktree)
+      if (codexCanvas.guidance) noteCodexSessionGuidance(sessionId, codexCanvas.guidance)
+      else forgetCodexSessionGuidance(sessionId)
     } catch (err) {
       // P3.10: a launch that failed keeps no hook file or hooked mark, and
       // (round 1, B2) no gateway token it minted.
+      codexRunScreen()?.close(sessionId)
+      codexAskSessions.delete(sessionId)
       if (hookFile) { try { hookFile.dispose() } catch { /* best-effort */ } }
       forgetCodexHooks(sessionId)
       if (tokenMinted) dropGatewayToken(sessionId)
@@ -5183,6 +5436,11 @@ function spawnPtyResolved(
       claudeSpawnSettings?.theme,
       nativeTheme.shouldUseDarkColors,
     )
+    // Review R-3: as the Codex branch, an opening question is honoured only on
+    // a launch made as Ask Conductor (pty:spawn drops it first); on any other
+    // it is ignored, and the log says so in a fixed sentence.
+    const claudeAskPrompt = options?.isAsk === true ? options?.askPrompt : undefined
+    if (options?.askPrompt && options?.isAsk !== true) logWarn(`[pty-manager] Claude ${sessionId}: an opening question on a launch that is not Ask Conductor's is ignored`)
     const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
       sessionId,
       cwd: options?.cwd,
@@ -5202,7 +5460,7 @@ function spawnPtyResolved(
       clickableQuestions,
       disableBackgroundTasks,
       hostColorScheme,
-      askPrompt: options?.askPrompt,
+      askPrompt: claudeAskPrompt,
     })
     const wantProfileId = options?.profileId
     // Validate before the join. This is the FOURTH site with the resolver shape,
@@ -5532,6 +5790,21 @@ function spawnPtyResolved(
         }
       }
 
+      // P4.3 review RASK-1: an Ask launch runs in the help folder just
+      // rebuilt; a conversation that ran in another folder is not resumed
+      // (claude --resume finds a conversation only from its own folder).
+      // Checked for every resume, the same spelling included (PR 4 final VM
+      // run): the folder holds by its real path, as the Codex branch's does.
+      if (options?.isAsk === true && (resumeUuid !== undefined || claudeCwd !== resolvedCwd)) {
+        if (resumeUuid !== undefined && !askLaunchFolderHolds(claudeCwd, resolvedCwd)) {
+          logInfo(`[pty] Ask ${sessionId}: its conversation ran in another folder; started afresh in the help folder`)
+          resumeUuid = undefined
+          resumeUuidForBind = null
+        }
+        claudeCwd = resolvedCwd
+        effectiveLaunchCwd = resolvedCwd
+      }
+
       // The directory the CLI will actually run in, after the resume decision.
       assertGatedDirectory(options, claudeCwd, 'resume directory', recordUnverifiedDirectory)
       logInfo(`[pty-manager] Launching Claude via shell in PTY: ${spawnCmd} -> ${cmd} cwd=${describePathForLog(claudeCwd)} (resumePicker=${!!options?.useResumePicker}, resume=${resumeUuid ?? 'none'})`)
@@ -5546,6 +5819,8 @@ function spawnPtyResolved(
         useConpty: true
       })
       localStarted = ptyProcess
+      // ADR-009 round 1 (PR 4): where this run works, until it has ended.
+      noteAgentRunFolder(ptyProcess, sessionId, claudeCwd)
 
       // B3: capture identity ONLY after the spawn succeeds — if pty.spawn throws,
       // no map entry is created (no leak), and shell-only sessions never reach
@@ -6262,6 +6537,76 @@ function isSubmittedPayload(data: string): boolean {
 }
 
 /**
+ * WP2 PR 4, P4.1: an Agent Canvas marker line into a session. A Codex
+ * session's goes through the submit primitive (providers/codex/
+ * composer-submit.ts), which types it only at Codex's ready, empty composer
+ * (waiting, within the marker queue's own fallback bound, while a turn runs
+ * or a prompt is up), submits it once it is confirmed on screen, and answers
+ * whether it was delivered: Codex never submits one write of a line and its
+ * Enter (PB3). Claude's keep writeSubmittedLine.
+ */
+export function writeCanvasMarkerLine(sessionId: string, line: string): void | Promise<SubmitTextResult> {
+  if (isCodexPtySession(sessionId)) {
+    // The primitive answers a session with no pane itself (review A-8).
+    const screen = codexRunScreen()
+    if (!screen) return Promise.resolve({ delivered: false, reason: 'session-gone' })
+    return screen.submit(sessionId, line, { readyWaitMs: MARKER_FALLBACK_FLUSH_MS })
+  }
+  writeSubmittedLine(sessionId, line)
+}
+
+/** WP2 PR 4, P4.3: how long an Ask question waits for Codex's ready, empty
+ *  composer. A first Ask in a fresh account folder shows folder trust and the
+ *  sandbox setup first, which the user answers (PB4), and a live tab may be
+ *  mid-answer. Past it the question is not sent, and the dock says so and
+ *  keeps it. */
+export const ASK_READY_WAIT_MS = 300_000
+
+/** One of Ask Conductor's notice lines, to the dock (askConductor:notice). */
+function sendAskNotice(win: BrowserWindow, notice: AskConductorNotice): void {
+  try { if (!win.isDestroyed()) win.webContents.send(IPC.ASK_CONDUCTOR_NOTICE, notice) } catch { /* the window is going */ }
+}
+
+/**
+ * WP2 PR 4, P4.3 (row 53): type an Ask question into a Codex session through
+ * the run's pane and its submit primitive, never as the raw question and
+ * Enter (Codex submits no such write, PB3). The characters Codex's prompt
+ * would drop are removed first and the dock told how many (section 10
+ * question 6, default A); a question that is not sent is said, with why, and
+ * the dock keeps it. The log names the question by its length only. Never
+ * rejects.
+ */
+async function deliverAskQuestion(win: BrowserWindow, sessionId: string, question: string): Promise<SubmitTextResult> {
+  let result: SubmitTextResult
+  try {
+    const screen = codexRunScreen()
+    if (!screen?.has(sessionId)) {
+      result = { delivered: false, reason: 'session-gone' }
+    } else {
+      const { text, removed } = codexPromptKeeps(question)
+      if (removed > 0) sendAskNotice(win, { sessionId, kind: 'removed', count: removed })
+      result = text.trim() ? await screen.submit(sessionId, text, { readyWaitMs: ASK_READY_WAIT_MS }) : { delivered: false, reason: 'refused-text' }
+    }
+  } catch {
+    result = { delivered: false, reason: 'session-gone' }
+  }
+  logInfo(`[codex-ask] ${sessionId}: a question of ${[...question].length} characters ${result.delivered ? 'typed into Codex\'s prompt' : `not delivered (${result.reason})`}`)
+  if (!result.delivered) sendAskNotice(win, { sessionId, kind: 'not-delivered', reason: result.reason })
+  return result
+}
+
+/**
+ * WP2 PR 4, P4.3: a question for a LIVE Ask session on Codex
+ * (askConductor:handOff), through the same door as the launch's. Only a
+ * running Codex session that launched as Ask takes one; anything else is the
+ * session gone, and nothing is typed.
+ */
+export function handOffAskQuestion(win: BrowserWindow, sessionId: string, question: string): Promise<SubmitTextResult> {
+  if (!isCodexPtySession(sessionId) || !codexAskSessions.has(sessionId)) return Promise.resolve({ delivered: false, reason: 'session-gone' })
+  return deliverAskQuestion(win, sessionId, question)
+}
+
+/**
  * #85 — submit a programmatic LINE into a session (the watchdog's retry, the
  * canvas marker queue), leaving tmux copy-mode first when the session is
  * tmux-wrapped.
@@ -6360,6 +6705,8 @@ export function resizePty(sessionId: string, cols: number, rows: number): void {
     getPtyIntegrityMonitor()?.recordResizeApplied(sessionId, cols, rows)
     // Keep the watchdog's rendered pane wrapping like the real one (#266).
     getWatchdogManager()?.noteResize(sessionId, cols, rows)
+    // WP2 PR 4, P4.1: and the submit primitive's pane of a Codex session.
+    codexRunScreen()?.resize(sessionId, cols, rows)
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException)?.code
     if (code === 'EPIPE' || code === 'EIO') {
@@ -6483,6 +6830,10 @@ function cleanupSessionResources(sessionId: string): void {
   // otherwise defeat the home-dir refusal and the "SSH never registers"
   // invariant. Idempotent: a no-op when the session was never registered.
   unregisterCodexReviewSession(sessionId)
+  // #628 review: the record of which assistant this session's MCP credential
+  // went to is per launch too, so a session id relaunched on another assistant
+  // (an Ask tab revived on Claude after Codex) is served that assistant's tools.
+  releaseMcpSessionProvider(sessionId)
   // SECURITY (adversarial review, 2026-08-15 — BLOCKER 1): the canvas serving
   // allowlist dies with the session, for the identical reason. The first cut
   // had NO production revocation at all — a root registered by any local spawn
@@ -6515,6 +6866,12 @@ function cleanupSessionResources(sessionId: string): void {
   // no static import of pty-manager (its PTY end is injected at boot from
   // index.ts), so importing it here introduces no cycle.
   forgetCanvasMarkers(sessionId)
+  // WP2 PR 4, P4.1: the submit primitive's pane of a Codex run goes with it
+  // (a submission still waiting on it reports the session gone, and types
+  // nothing into the next run), and so does the launch's guidance record.
+  codexRunScreen()?.close(sessionId)
+  codexAskSessions.delete(sessionId)
+  forgetCodexSessionGuidance(sessionId)
   // SECURITY (adversarial review, FINDING 1): tear the session watchdog down
   // here too, for the identical per-spawn isolation invariant. This runs from
   // BOTH killPty (restart / deliberate close) and the natural-exit cleanup, and
@@ -6578,6 +6935,13 @@ export function killPty(sessionId: string, opts: KillPtyOptions = {}): void {
       waiting.win.webContents.send(`pty:exit:${sessionId}`, -1)
     }
   }
+  endLiveRun(sessionId, opts)
+}
+
+/** The part of killPty that ends the session's running process and drops
+ *  what it held, leaving a spawn the session is preparing in place (ADR-009
+ *  round 1: endAgentRunsInFolder ends a run while its own respawn waits). */
+function endLiveRun(sessionId: string, opts: KillPtyOptions = {}): void {
   const entry = ptySessions.get(sessionId)
   // WP2: a killed Codex PTY keeps its account lease until its process has
   // ended (see releaseCodexLeaseOnExit); cleanupSessionResources below then
@@ -6627,7 +6991,7 @@ export function killPty(sessionId: string, opts: KillPtyOptions = {}): void {
       // them) or be removed by the End-remote exec (which does its own rm). So we
       // write nothing and just detach (adversarial review, 2026-08-18).
       const proc = entry.ptyProcess
-      try { proc.write(buildRemoteSessionCleanupCommand(sessionId)) } catch { /* best-effort */ }
+      try { proc.write(claudeSshSurface().remoteSessionCleanupCommand(sessionId)) } catch { /* best-effort */ }
       setTimeout(() => { try { proc.kill() } catch { /* already gone */ } }, REMOTE_CLEANUP_GRACE_MS)
     } else {
       // Non-SSH, or a tmux-persistent SSH session (killing the local PTY detaches

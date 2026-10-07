@@ -1,8 +1,9 @@
 import React from 'react'
 import { useTipsStore, countUnseenTips } from '../stores/tipsStore'
 import type { ViewType } from '../types/views'
-import { resolveBody, resolveFocusHint } from '../tips-library'
+import { resolveBody, resolveFocusHint, TIP_PROVIDER_NAMES } from '../tips-library'
 import { BrandMark } from './BrandMark'
+import { ProviderMark } from './sidebar/Badges'
 import { LightbulbMark } from './ui/LightbulbMark'
 import { launchAskConductor } from '../lib/askConductor'
 import { ASK_CLAUDE_OFF, useAskConductorBlocked } from '../lib/askConductorGate'
@@ -341,6 +342,13 @@ export default function TipCard({ onClose, onNavigate, sidebarCollapsed }: Props
             {unseen > 0 && <span data-testid="tip-card-unseen"> · {unseen} new</span>}
           </p>
           <h2 id="tip-card-title" className="text-[13.5px] font-semibold leading-snug">
+            {/* A tip about one assistant alone carries that assistant's mark
+                (the owner's 2026-10-04 answer: a mark, not a filter). */}
+            {tip.provider && (
+              <span className="inline-block align-[-2px] mr-1.5">
+                <ProviderMark providerId={tip.provider} size={15} title={TIP_PROVIDER_NAMES[tip.provider]} />
+              </span>
+            )}
             {content.title}
           </h2>
         </div>

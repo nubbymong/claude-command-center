@@ -52,6 +52,7 @@ import type {
 } from '../core'
 import { redactSecrets } from '../../hooks/hook-payload-redactor'
 import { redactTokens } from '../../github/security/token-redactor'
+import { foldPathCase } from '../../utils/path-validator'
 import { parseCodexLoginStatus, classifyCodexVersion } from './cli-contract'
 import {
   createAppServerUsageClient, APP_SERVER_READ_DEADLINE_MS, APP_SERVER_INITIALIZE_TIMEOUT_MS, APP_SERVER_EXIT_GRACE_MS, APP_SERVER_MAX_LINE,
@@ -192,6 +193,7 @@ export interface CodexUsageReadOptions {
 export type CodexAuthOperations = ProviderAuthOperations & {
   prepareLaunch(realm: RealmRef): Promise<LaunchPreparation | Refusal>
   usageSessionsDir(realm: RealmRef): Promise<string | null>
+  accountFolders(realm: RealmRef): Promise<{ logDir: string; memoriesDir: string; configFile: string } | null>
   readUsage(realm: RealmRef, opts?: CodexUsageReadOptions): Promise<CodexUsageRead>
 }
 
@@ -199,8 +201,11 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
   const platform = deps.executablePorts.platform
   const pathApi = platform === 'win32' ? path.win32 : path.posix
   const caseless = platform === 'win32' || platform === 'darwin'
+  // Case folded as the account-folder checks fold it (foldPathCase: how
+  // Windows compares names), so the realm home this accepts and the folders
+  // named in it are held to one rule.
   const samePath = (a: string, b: string) => {
-    const norm = (p: string) => { const s = p.replace(/[\\/]+$/, ''); return caseless ? s.toLowerCase() : s }
+    const norm = (p: string) => { const s = p.replace(/[\\/]+$/, ''); return caseless ? foldPathCase(s) : s }
     return norm(a) === norm(b)
   }
   const locks = deps.locks ?? createCodexRealmLocks()
@@ -429,6 +434,33 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         try { fsid = deps.realmIdentity(where.home) } catch { return null }
         if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !samePath(fsid.canonical, where.home)) return null
         return pathApi.join(where.home, 'sessions')
+      } catch {
+        return null
+      }
+    },
+
+    /** WP2 PR 4, P4.4 (rows 55, 56): the realm's own log folder (`log/`,
+     *  where codex-login.log always lands, and codex-tui.log unless log_dir
+     *  moves it), memories folder (`memories/`) and settings file
+     *  (`config.toml`, whose root-level log_dir may name another log
+     *  folder), for the Memory page and the log folders in Settings, Debug
+     *  Logging. Located exactly as usageSessionsDir locates the sessions
+     *  folder, and held to the same canonical-home check, so nothing is shown
+     *  from a home a launch would refuse. Paths only: nothing inside is read,
+     *  made or checked here; each reader checks what it reads (no link, no
+     *  `.git`, a local folder). No CLI. Null when refused. */
+    async accountFolders(realm: RealmRef): Promise<{ logDir: string; memoriesDir: string; configFile: string } | null> {
+      try {
+        const where = await locate(realm, 'sessions')
+        if (isRefusal(where)) return null
+        let fsid: CodexRealmIdentity
+        try { fsid = deps.realmIdentity(where.home) } catch { return null }
+        if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !samePath(fsid.canonical, where.home)) return null
+        return {
+          logDir: pathApi.join(where.home, 'log'),
+          memoriesDir: pathApi.join(where.home, 'memories'),
+          configFile: pathApi.join(where.home, 'config.toml'),
+        }
       } catch {
         return null
       }

@@ -1,13 +1,14 @@
 import { app, BrowserWindow, ipcMain, dialog, session, shell, powerMonitor } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
-import { existsSync, mkdirSync, readdirSync, realpathSync } from 'fs'
+import { mkdirSync, realpathSync } from 'fs'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY_MS, splashShownAt } from './splash-window'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, routeHookTranscriptPath, noteCodexHookEvent, isCodexPtySession, codexRolloutForSessionContext, applyLoggingSwitches } from './pty-manager'
+import { warnAboutOrphanedSharedPartitions } from './account-web/orphan-partitions'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, writeCanvasMarkerLine, routeHookTranscriptPath, noteCodexHookEvent, isCodexPtySession, codexRolloutForSessionContext, applyLoggingSwitches } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
@@ -26,15 +27,16 @@ import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, 
 import { recordLiveUsageForSession, setClaudeAccountDataAllowed, setLiveUsageTranscriptProfile } from './usage/account-usage'
 import { getProvider } from './providers'
 import { composeProviders, flushPendingProviderCliKills } from './providers/compose'
-import { initAccountRegistry, reconcileLegacyAccountStores } from './provider-account-registry'
+import { initAccountRegistry, reconcileLegacyAccountStores, getConsumerLeases } from './provider-account-registry'
 import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory, discoverProvidersAtStart, providerOnNow } from './provider-accounts'
 import { probeClaudeCliVersion, setClaudeCliProbeAllowed } from './claude-cli-version'
 import { providerProbeRefusal } from './provider-launch-gate'
 import { providerUseWithoutLease } from './provider-in-use'
-import { registerDebugHandlers } from './ipc/debug-handlers'
+import { registerDebugHandlers, registerAccountLogFolderHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
 import { adoptRenamedRepoIfLive } from './github-update'
+import { installClientCertificatePolicy } from './client-certificate'
 import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from './ipc/setup-handlers'
 // Direct from data-paths, not the handlers barrel: this runs at module scope
 // before app-ready, so it must not pull the IPC registration side of that module
@@ -48,6 +50,8 @@ import { closeAllWebviews } from './webview-manager'
 import { closeAllAccountPanes, closeAccountPanesForProfile } from './account-web/account-pane'
 import { onPartitionRevoked } from './account-web/partition-revocation'
 import { removeWebSession } from './account-web/session-store'
+// WP2 PR 4, P4.6 (row 58): a Codex account's chatgpt.com web session.
+import { wireCodexWebArchive, wireCodexWebSession } from './account-web/codex-web-wiring'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
@@ -56,6 +60,7 @@ import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers
 import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, getProfilesRoot, getProfileConfigDir, isValidProfileId } from './account-profiles'
 import { secureOwnerOnlyFolders } from './owner-only-folders'
 import { startCodexHookFolders, codexHookFoldersSettingsChanged } from './codex-hook-folders'
+import { startCodexUserSkills, codexUserSkillsSettingsChanged } from './canvas/codex-user-skills'
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
@@ -94,13 +99,13 @@ import { cleanupStaleHookEntries, cleanupStaleMcpConfigs } from './hooks/boot-cl
 import { isSentinelEnabled } from '../shared/sentinel-enabled'
 import { resolveHooksPort } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics/tk-pricing'
-import { killAllAgents } from './cloud-agent-manager'
+import { killAllAgents, stopBackgroundAgentRuns } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller, registerServiceStatusHandlers, refreshServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
-import { loadSessionState, hasSavedSessionState, SessionState } from './session-state'
+import { peekSessionState, hasSavedSessionState, SessionState } from './session-state'
 import { createAppSessionDurability } from './app-session-durability'
-import { getConfigDir, snapshotConfig, readConfig } from './config-manager'
+import { getConfigDir, snapshotConfig, readConfig, readConfigChecked } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
 import { loadWindowState, clampToVisibleDisplay, saveWindowStateFor } from './window-state'
@@ -166,41 +171,13 @@ if (devSessionDir) {
     // under a bare `npm run dev`. The failure mode here is invisible otherwise:
     // partitions just appear in the shared location and nothing says they did.
     logInfo(`[setup] Dev session data redirected to: ${devSessionDir}`)
-    warnAboutOrphanedSharedPartitions(devSessionDir)
+    // Both web-session partition prefixes (P4.6): account-web/orphan-partitions.ts.
+    warnAboutOrphanedSharedPartitions(() => app.getPath('userData'), devSessionDir)
   } catch (err) {
     // Not fatal: worst case partitions land in the default location, which is
     // exactly the pre-#261 behaviour. Say so rather than failing to boot.
     logError(`[setup] could not redirect dev sessionData to ${devSessionDir}: ${(err as Error)?.message ?? err}`)
   }
-}
-
-/**
- * Point out claude.ai partitions this dev instance left in the SHARED location
- * before the redirect existed (#261).
- *
- * WARN, NEVER DELETE. Those directories hold live `sessionKey` cookies and after
- * the redirect nothing references them: `ccc --clean` cannot reach them (wrong
- * root) and `sweepAbandonedProfiles` only walks `<dataDir>/account-web`. So they
- * would sit there forever, which is the very complaint the redirect is meant to
- * fix. But automatic removal is NOT safe: `ccc --seed-accounts` copies prod's
- * account profiles into dev, so a partition named for a dev profile id can be
- * the PROD install's live session. Deleting it would sign the user out of their
- * real account to tidy up a dev artifact. Naming the path and leaving the choice
- * to a human is the correct trade here.
- */
-function warnAboutOrphanedSharedPartitions(newLocation: string): void {
-  try {
-    const shared = join(app.getPath('userData'), 'Partitions')
-    if (shared === join(newLocation, 'Partitions') || !existsSync(shared)) return
-    const orphans = readdirSync(shared).filter((n) => n.startsWith('claude-web-'))
-    if (!orphans.length) return
-    logInfo(
-      `[setup] ${orphans.length} claude.ai web session partition(s) remain in the SHARED location `
-      + `and are no longer used by this dev instance: ${shared}. They hold live session cookies. `
-      + `Remove them by hand ONLY if you are sure they are not your production install's `
-      + `(see docs/dev-alongside-prod.md).`,
-    )
-  } catch { /* advisory only — never let a warning break boot */ }
 }
 
 // Migrate registry keys from old "Claude Conductor" → new "Claude Command Center"
@@ -450,6 +427,10 @@ if (!gotTheLock) {
     })
   }
 
+  // A main-process `net` request (the in-app browser's URL check) presents no
+  // client certificate, as on Electron 43; see client-certificate.ts.
+  installClientCertificatePolicy(app)
+
   app.whenReady().then(() => {
     // Refresh the help workspace at boot (#586), not only on Ask launch: the
     // installed helper skill's body POINTS at help/app-knowledge.md, so the
@@ -516,6 +497,10 @@ if (!gotTheLock) {
     // registry it reports the account list as unavailable. The one-time
     // adoption of a provider's own default sign-in runs after the legacy
     // reconcile, outside the registry lock.
+    // P4.6 (row 58): an archive clears what the account holds outside its
+    // sign-in FIRST, and a clear that fails refuses the archive. Registered
+    // before the service exists, so no archive can run without it.
+    wireCodexWebArchive()
     try {
       // A switch-off is refused while any of the provider runs: its sessions,
       // and (WP2) for Claude Code its cloud agents, Insights runs, Sentinel
@@ -584,6 +569,20 @@ if (!gotTheLock) {
           prepare: () => getProvider('codex').prepareHookFolders?.(getResourcesDirectory(), secureOwnerOnlyFolders) ?? Promise.resolve(false),
           subscribe: (listener) => getAccountsService()?.subscribe(listener) ?? (() => {}),
           log: (level, message) => (level === 'warn' ? logWarn(message) : logInfo(message)),
+        })
+        // WP2 PR 4 (section 10 question 5, answered C): the canvas skills the
+        // app copied into this computer's own Codex folder are removed when
+        // Codex or the built-in tools are turned off, and kept current while
+        // both are on (canvas/codex-user-skills.ts): once after first paint,
+        // then at every settings save and every change the accounts service
+        // announces. Settings that cannot be read do nothing.
+        startCodexUserSkills({
+          settings: () => {
+            const r = readConfigChecked<Record<string, unknown>>('settings', { quarantineUnparseable: false })
+            return r.outcome === 'ok' && r.value && typeof r.value === 'object' ? r.value : null
+          },
+          codexOn: () => providerOnNow('codex'),
+          subscribe: (listener) => getAccountsService()?.subscribe(listener) ?? (() => {}),
         })
       })
       // Resume-picker bug fix: backfill companion dirs so DIRECT-WORK
@@ -665,6 +664,13 @@ if (!gotTheLock) {
     // here so it never has to import their heavy graphs. Both run synchronously.
     onPartitionRevoked(removeWebSession)
     onPartitionRevoked(closeAccountPanesForProfile)
+    // P4.6 (row 58): the same for a Codex account's chatgpt.com session: its
+    // own channels (the app window only, the registry checked; a pane only for
+    // a Codex session whose current launch is on the account, for as long as
+    // that launch lasts). Before its partition is wiped (sign-out, archive, an
+    // incomplete sign-in) its panes close, so nothing writes the session back;
+    // after the wipe its record goes (account-web/codex-web-wiring.ts).
+    wireCodexWebSession({ getWindow, isCodexPtySession, leases: getConsumerLeases })
     // #216: a crash or forced quit can leave a sign-in browser profile behind, and
     // each one holds a live claude.ai session. Sweep them at boot.
     try { sweepAbandonedProfiles(getDataDirectory()) } catch { /* best effort */ }
@@ -673,6 +679,9 @@ if (!gotTheLock) {
     // between here and there may throw and skip the first-run wipe prompt.
     registerLogsWipeHandlers(getWindow)
     registerDebugHandlers()
+    // WP2 PR 4, P4.4 (row 56): each account's own log folders, keyed by
+    // account id and folder kind; the folders come from the accounts service.
+    registerAccountLogFolderHandlers(getWindow, async () => (await getAccountsService()?.accountFolders()) ?? null)
     registerUpdateHandlers()
     // Pre-emptive repo-rename handling: if the app has been renamed on GitHub
     // (claude-command-center -> ai-code-conductor) adopt + persist the new repo
@@ -705,6 +714,9 @@ if (!gotTheLock) {
         void refreshServiceStatus().catch((err) => logError('[main] service status refresh failed:', err))
         // P3.10 round 4 (P1): Codex switched on has its hook folders prepared.
         try { codexHookFoldersSettingsChanged() } catch (err) { logError('[main] codex hook folders failed:', err) }
+        // Question 5, answered C: Codex or the built-in tools turned off takes
+        // the app's skills out of this computer's own Codex folder.
+        try { codexUserSkillsSettingsChanged() } catch (err) { logError('[main] codex user skills failed:', err) }
         // P3.12 round 1 (V1): the logging switch turned off stops indexing the
         // sessions already running, both assistants.
         try { applyLoggingSwitches() } catch (err) { logError('[main] logging switches failed:', err) }
@@ -766,18 +778,36 @@ if (!gotTheLock) {
     startRulesEngine()
     registerCloudAgentHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
-    registerMemoryHandlers()
+    // WP2 PR 4, P4.4 (row 55): each account's own memories beside Claude's
+    // store, and every memory channel answering only the app window.
+    registerMemoryHandlers({ getWindow, accountFolders: async () => (await getAccountsService()?.accountFolders()) ?? null })
     // GitHub sidebar — reads/writes github-config.json + encrypted auth profiles
     // under the CONFIG dir alongside other app config. Session-level integration
     // state piggybacks on the existing session-state persistence helpers.
     registerGitHubHandlers({
       resourcesDir: getConfigDir(),
       getWindow,
-      loadSessions: async () => loadSessionState()?.sessions ?? [],
+      // PR 4: the sidebar's reads are pure reads (peekSessionState): they never
+      // set or reset the read-failure latch, so only session:load decides
+      // whether saves and clears are allowed. A read that fails gives the
+      // sidebar nothing, and a save whose read fails writes nothing.
+      loadSessions: async () => {
+        try {
+          return peekSessionState()?.sessions ?? []
+        } catch {
+          return []
+        }
+      },
       // P3.12 (row 65): a Codex session's Session Context reads its own rollout.
       codexRolloutFor: codexRolloutForSessionContext,
       saveSessions: async (sessions) => {
-        const existing = loadSessionState()
+        let existing: SessionState | null
+        try {
+          existing = peekSessionState()
+        } catch (err) {
+          logWarn(`[session-state] the GitHub sidebar's change was not saved: the saved sessions could not be read (${(err as Error)?.message ?? err})`)
+          return
+        }
         // Through the durability core, never saveSessionState directly: a
         // direct write leaves the exit-flush cache stale, so the flush on
         // quit would overwrite this very patch with the pre-patch state —
@@ -819,8 +849,10 @@ if (!gotTheLock) {
     // Usage track MP10: the same live transcript paths attribute each local
     // Claude session's usage to an account, for Tokenomics: the profile whose
     // config folder holds the transcript (the path decides) names it through
-    // its registry link. Independent of the binder, so it works with logging
-    // off; the profiles root and the usage index are resolved lazily too.
+    // its registry link, when that is the profile the reporting session runs
+    // under now (captured at its latest spawn). Independent of the binder,
+    // so it works with logging off; the profiles root and the usage index are
+    // resolved lazily too.
     // Where the profiles keep their transcripts: shared with the live usage
     // recorder, which files a session's figure under a profile only when its
     // transcript lies in that profile's folder (P3.2).
@@ -833,7 +865,7 @@ if (!gotTheLock) {
     }
     setLiveUsageTranscriptProfile((path) => profileOfTranscript(profileFolders, path))
     const attributeTranscript = createTranscriptAttribution({
-      isLocal: (sessionId) => getClaudeProfileId(sessionId) !== undefined,
+      launchProfile: (sessionId) => getClaudeProfileId(sessionId),
       ...profileFolders,
       accountOf: (profileId) => getAccountsService()?.accountIdForLegacy('claude', profileId, { ignoreCase: process.platform === 'win32' }) ?? null,
       record: (sessionId, accountKey) => {
@@ -904,9 +936,18 @@ if (!gotTheLock) {
     // Both ends are injected here so the canvas IPC module needs no static
     // import of pty-manager or the gateway (see canvas-marker-delivery.ts).
     startCanvasMarkerQueue({
-      // The same submit shape every other programmatic line into the Claude TUI
-      // uses (the watchdog retry, the command buttons, the launch line).
-      write: (sessionId, line) => writeSubmittedLine(sessionId, line),
+      // A Claude session's marker: the same submit shape every other
+      // programmatic line into the Claude TUI uses (the watchdog retry, the
+      // command buttons, the launch line). WP2 PR 4, P4.1: a Codex session's
+      // goes through the submit primitive (writeCanvasMarkerLine), which
+      // answers later whether it was delivered.
+      write: (sessionId, line) => writeCanvasMarkerLine(sessionId, line),
+      // P4.1: a Codex marker the primitive did not deliver is shown on the
+      // canvas, on the review it belongs to.
+      onUndelivered: (u) => {
+        const w = getWindow()
+        if (w && !w.isDestroyed()) w.webContents.send(IPC.CANVAS_AGENT_MARKER_UNDELIVERED, u)
+      },
       subscribe: (cb) => {
         const gw = getGateway()
         if (!gw) return
@@ -1089,6 +1130,9 @@ try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
     // Usage track MP8: a fresh usage read under way is stopped first, so the
     // flush below kills its helper too, and none starts again.
     try { getAccountsService()?.stopUsageReads() } catch { /* no accounts service */ }
+    // WP2 PR 4, P4.5: a Codex cloud agent still running is stopped here too,
+    // so the flush below ends its whole tree (as killAllAgents a Claude agent).
+    try { stopBackgroundAgentRuns() } catch { /* none running */ }
     // A headless CLI run stopped but still reading its process table would
     // otherwise leave its chain below cmd.exe running once the app is gone.
     try { flushPendingProviderCliKills() } catch { /* nothing pending */ }

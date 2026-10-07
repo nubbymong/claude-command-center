@@ -1075,8 +1075,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             // the same reason `resume` is: it is one-shot launch state, not
             // configuration. Consumed immediately below so a later in-session
             // Restart (which re-runs this spawn) never re-submits it. Only ever
-            // set on a local, non-shell Claude session -- the SSH path does not
-            // set CCC_ASK_PROMPT and Codex ignores it.
+            // set on a local, non-shell session (the SSH path does not set
+            // CCC_ASK_PROMPT). WP2 PR 4, P4.3: a Codex Ask session takes it too --
+            // main carries it on argv after `--` on the direct route, or types it
+            // through its submit primitive at Codex's first ready prompt.
             const askPrompt = !shellOnly ? session?.askPrompt : undefined
             if (askPrompt) updateSession(sessionId, { askPrompt: undefined })
             // A transient tab's command (commandTerminal: an install the user

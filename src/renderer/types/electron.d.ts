@@ -34,9 +34,18 @@ import type {
   InsightsData,
   KpiData,
   CloudAgent,
+  ProviderId,
+  SubmitTextResult,
+  AskConductorNotice,
+  CanvasMarkerUndelivered,
+  CanvasSessionGuidance,
+  AccountLogFolders,
+  AccountLogFolderKind,
+  AccountLogFolderOpenResult,
 } from '../../shared/types'
 import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 export type { HookEvent, HookEventKind, HooksGatewayStatus } from '../../shared/hook-types'
+import type { AccountPaneStateView, CodexWebSessionView, CodexWebSignInState } from '../../shared/account-web-session'
 import type { ModelRegistry } from '../../shared/model-registry'
 export type { ModelRegistry } from '../../shared/model-registry'
 import type {
@@ -345,6 +354,11 @@ export interface ElectronAPI {
     disable: () => Promise<boolean>
     isEnabled: () => Promise<boolean>
     openFolder: () => Promise<string>
+    /** WP2 PR 4 (P4.4): each provider account's log folders, by kind; never paths. */
+    accountLogFolders: () => Promise<AccountLogFolders[]>
+    /** WP2 PR 4 (P4.4): open one of them. Main resolves the folder from the
+     *  account id; the renderer never names a path. */
+    openAccountLogFolder: (args: { accountId: string; folder: AccountLogFolderKind }) => Promise<AccountLogFolderOpenResult>
   }
   usage: {
     getSessionUsage: (sessionId: string) => Promise<any>
@@ -454,9 +468,20 @@ export interface ElectronAPI {
     paneBounds: (args: { sessionId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean }>
     paneVisible: (args: { sessionId: string; visible: boolean }) => Promise<{ ok: boolean }>
     paneReload: (sessionId: string) => Promise<{ ok: boolean }>
-    paneGetState: (sessionId: string) => Promise<{ ok: true; state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null } | null } | { ok: false; error: string }>
-    onPaneState: (cb: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void) => () => void
-    onPaneClosed: (cb: (e: { sessionId: string }) => void) => () => void
+    paneGetState: (sessionId: string) => Promise<{ ok: true; state: AccountPaneStateView | null } | { ok: false; error: string }>
+    onPaneState: (cb: (state: AccountPaneStateView) => void) => () => void
+    onPaneClosed: (cb: (e: { sessionId: string; reason?: string }) => void) => () => void
+  }
+  /** A Codex account's chatgpt.com web session (WP2 PR 4, P4.6), keyed by its
+   *  registry account id. The pane's other controls (close, bounds, visible,
+   *  reload, state) are accountWeb's, which are session-keyed. */
+  codexWeb: {
+    status: (accountId: string) => Promise<{ ok: true; web: CodexWebSessionView } | { ok: false; error: string }>
+    signIn: (accountId: string) => Promise<{ ok: true; state: CodexWebSignInState } | { ok: false; error: string }>
+    signInState: () => Promise<{ ok: true; state: CodexWebSignInState } | { ok: false; error: string }>
+    cancel: (accountId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    signOut: (accountId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    paneOpen: (args: { sessionId: string; accountId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean; error?: string }>
   }
   /** Agent Canvas — session review-surface state; content loads over ccc-ux://. */
   canvas: {
@@ -546,6 +571,12 @@ export interface ElectronAPI {
     reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision: 'approve' | 'reject' }) => Promise<CanvasReviewState>
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
     agentMarker: (args: { sessionId: string; canvasId: string; line: string }) => Promise<{ delivery: 'sent' | 'queued' | 'unwired' | 'refused'; reason?: string }>
+    /** WP2 PR 4 (P4.1): a queued marker the submit primitive could not deliver,
+     *  for the review it belongs to. */
+    onAgentMarkerUndelivered: (cb: (e: CanvasMarkerUndelivered) => void) => () => void
+    /** WP2 PR 4 (P4.1): whether this session's launch carried the canvas and
+     *  vision skills' guidance with the tools, for the canvas page's one line. */
+    sessionGuidance: (args: { sessionId: string }) => Promise<CanvasSessionGuidance | null>
     versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
     /** The user puts a closed note back in play. With `reviewReopen`, one of the
      *  only two writes that may revive a settled round. */
@@ -666,9 +697,13 @@ export interface ElectronAPI {
     gracefulExit: () => Promise<boolean>
   }
   insights: {
-    run: (opts?: { profileId?: string }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
-    /** Cross-account roll-up: runs every targeted account, then synthesizes one report. */
-    runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
+    /** `provider` (WP2 PR 4, P4.7): the assistant the run reports on; absent means Claude Code.
+     *  A Codex run names its Codex account in `profileId`, and `acknowledgeRealmOnly` is that
+     *  run's own confirmation for exactly that account (mockup D12). A request main does not
+     *  take is answered `{ rejected }` (not the app window, or not a request it reads). */
+    run: (opts?: { profileId?: string; provider?: ProviderId; acknowledgeRealmOnly?: true }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused | import('../../shared/types').CloudAgentRequestRejected>
+    /** Cross-account roll-up: runs every targeted account (both assistants', mockup C1 A), then synthesizes one report. */
+    runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused | import('../../shared/types').CloudAgentRequestRejected>
     getCatalogue: () => Promise<InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<KpiData | null>
@@ -709,11 +744,15 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent | import('../../shared/providers').ProviderLaunchRefused>
+    /** `provider` (WP2 PR 4, P4.5): the assistant the agent runs on; absent
+     *  means Claude Code. Main holds the request to a strict schema: only that
+     *  provider's own fields. */
+    dispatch: (agent: import('../../shared/types').CloudAgentDispatchParams) => Promise<CloudAgent | import('../../shared/providers').ProviderLaunchRefused | import('../../shared/types').CloudAgentRequestRejected>
     cancel: (id: string) => Promise<boolean>
     /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
     remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
-    retry: (id: string) => Promise<CloudAgent | null | import('../../shared/providers').ProviderLaunchRefused>
+    /** `opts` (P4.5): this one retry may use the agent's unverified sign-in. */
+    retry: (id: string, opts?: import('../../shared/types').CloudAgentRetryOptions) => Promise<CloudAgent | null | import('../../shared/providers').ProviderLaunchRefused | import('../../shared/types').CloudAgentRequestRejected>
     list: () => Promise<CloudAgent[]>
     getOutput: (id: string) => Promise<string>
     /** #371: `ok:false` means nothing was cleared — do not filter the list. */
@@ -737,6 +776,15 @@ export interface ElectronAPI {
   }
   help: {
     workspace: () => Promise<string | null>
+  }
+  /** WP2 PR 4 (P4.3): Ask Conductor on a provider whose prompt takes a
+   *  question only as text typed at its ready composer. */
+  askConductor: {
+    /** Give a live Ask tab its next question through main's submit primitive
+     *  (never raw keystrokes and a carriage return). */
+    handOff: (args: { sessionId: string; question: string }) => Promise<SubmitTextResult>
+    /** Main's one-line notices for the dock: characters removed, or a question not delivered. */
+    onNotice: (cb: (notice: AskConductorNotice) => void) => () => void
   }
   tokenomics: {
     summary: (filter?: import('../../shared/types').TkSummaryFilter) => Promise<import('../../shared/types').TkSummary | null>

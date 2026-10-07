@@ -10,7 +10,7 @@
 // PURE: every filesystem call goes to an in-memory fake with Windows and POSIX
 // semantics. No file is written, no process started. The real-filesystem
 // counterpart is tests/wp1/codex-realm-isolation.test.ts (CI/VM only).
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import path from 'node:path'
 import {
   createCodexRealmFolders, createCodexRealmLocks, codexRealmLockKey, resolveCodexRealmRoots, codexRealmHome, codexExternalHomeCandidate,
@@ -1320,6 +1320,17 @@ function conflicted2(w: ReturnType<typeof world>) {
 }
 
 describe('the package exposes folder operations only when wired, sharing one lock with sign-in', () => {
+  // The package reads the process environment, and the test home guard points
+  // CODEX_HOME at its own temp folder (on Linux and macOS a POSIX path, which this
+  // simulated Windows world cannot use). These cases run with CODEX_HOME unset.
+  let savedCodexHome: string | undefined
+  beforeEach(() => {
+    savedCodexHome = process.env.CODEX_HOME
+    delete process.env.CODEX_HOME
+  })
+  afterEach(() => {
+    if (savedCodexHome !== undefined) process.env.CODEX_HOME = savedCodexHome
+  })
   const source = (w: ReturnType<typeof world>) => ({
     lookup: async (ref: { authRealmId: string }) => {
       const realm = w.realms.get(ref.authRealmId)

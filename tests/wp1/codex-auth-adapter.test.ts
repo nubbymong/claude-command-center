@@ -7,7 +7,7 @@
 // 9.2, 11, 12): the Codex sign-in, status and logout operations, through
 // injected ports (no process is started, no file is read). The real-process
 // counterpart is tests/wp1/fake-cli.test.ts (CI/VM).
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { parseCodexLoginStatus, createCodexAuthOperations, createCodexOutputRedactor, createCodexPackage, createCodexRealmLocks } from '../../src/main/providers/codex'
 import type { CodexAuthDeps, CodexDiscovery, CodexDiscoveryDeps, CodexCommand, CodexRunOptions, CodexRunResult, CodexRealmFsPort } from '../../src/main/providers/codex'
 import type { RealmUse } from '../../src/shared/providers'
@@ -641,6 +641,17 @@ describe('Codex logout (WP1.23, WP1.24)', () => {
 })
 
 describe('the package keeps its own proof and exposes auth only when wired (T13, T14)', () => {
+  // The package reads the process environment, and the test home guard points
+  // CODEX_HOME at its own temp folder (on Linux and macOS a POSIX path, which this
+  // simulated Windows world cannot use). These cases run with CODEX_HOME unset.
+  let savedCodexHome: string | undefined
+  beforeEach(() => {
+    savedCodexHome = process.env.CODEX_HOME
+    delete process.env.CODEX_HOME
+  })
+  afterEach(() => {
+    if (savedCodexHome !== undefined) process.env.CODEX_HOME = savedCodexHome
+  })
   const discoveryDeps = (gates: Array<() => Promise<Partial<CodexRunResult>>>) => {
     let n = 0
     return async (): Promise<CodexDiscoveryDeps> => ({

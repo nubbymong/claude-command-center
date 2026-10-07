@@ -47,7 +47,7 @@ describe('account lifecycle (WP1.15, WP1.16, WP1.50)', () => {
     for (const s of ['s1', 's2']) expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: s })).ok).toBe(true)
     expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })).toMatchObject({ ok: false, code: 'consumers', consumers: 2 })
     expect(await h.service.logout({ accountId: a })).toMatchObject({ ok: false, code: 'consumers', consumers: 2 })
-    expect(h.service.consumersOf(a)).toEqual({ session: 2, review: 0, 'sign-in': 0, operation: 0 })
+    expect(h.service.consumersOf(a)).toEqual({ session: 2, review: 0, background: 0, 'sign-in': 0, operation: 0 })
     h.service.releaseLaunch('session', 's1')
     h.service.releaseLaunch('session', 's2')
     expect((await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })).ok).toBe(true)
@@ -882,7 +882,7 @@ describe('signing an existing account in again (WP2 6b)', () => {
     // It is still the same account, in the same realm: no new setup, no new account.
     expect(h.doc().accounts.filter((x) => x.providerId === 'codex')).toHaveLength(1)
     expect(h.doc().journals).toEqual([])
-    expect(h.service.consumersOf(a)).toEqual({ session: 0, review: 0, 'sign-in': 0, operation: 0 })
+    expect(h.service.consumersOf(a)).toEqual({ session: 0, review: 0, background: 0, 'sign-in': 0, operation: 0 })
   })
 
   it('a different kind of sign-in blocks the account until the user reconciles it', async () => {

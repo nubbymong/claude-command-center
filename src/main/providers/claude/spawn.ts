@@ -11,9 +11,7 @@ import { colorFgBgValue } from '../host-color-scheme'
 
 // The host light/dark scheme and its COLORFGBG encoding live in
 // ../host-color-scheme (shared by the local Claude env, the Codex env and the
-// SSH remote launch line -- book item 34). Re-exported here because callers
-// and tests import them from the Claude provider.
-export { resolveHostColorScheme, colorFgBgValue, colorFgBgEnvToken } from '../host-color-scheme'
+// SSH remote launch line -- book item 34); callers import them from there.
 
 export function resolveClaudeBinary(legacyVersion?: LegacyVersion): { cmd: string; args: string[] } {
   if (legacyVersion?.enabled && legacyVersion.version) {

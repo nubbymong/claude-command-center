@@ -2,9 +2,10 @@ import { useMemo, useRef, useState } from 'react'
 import PageFrame from './PageFrame'
 import CanvasExplainedPage from './CanvasExplainedPage'
 import { APP_KNOWLEDGE_SECTIONS } from '../../shared/app-knowledge'
-import { trainingSteps, SECTION_LABELS, type TrainingStep, type TrainingSection } from '../training-steps'
+import { trainingSteps, stepsForAssistants, SECTION_LABELS, type TrainingStep, type TrainingSection } from '../training-steps'
 import { launchAskConductor } from '../lib/askConductor'
-import { ASK_CLAUDE_OFF, useAskConductorBlocked } from '../lib/askConductorGate'
+import { ASK_CLAUDE_OFF, useAskConductorBlocked, useAskConductorProvider } from '../lib/askConductorGate'
+import type { AskConductorProvider } from '../../shared/ask-conductor-provider'
 import { changelog } from '../changelog'
 import { WhatsNewEntries } from './WhatsNewEntries'
 import { showHelloCodexReplay, codexSetUp } from '../onboarding/hello-codex'
@@ -16,8 +17,9 @@ import { onlyAssistantInUse, type OnlyAssistant } from '../onboarding/provider-c
 // createPortal modal that floated over every other page. It renders the same
 // owner-approved catalogue the tour uses (trainingSteps), grouped by section in
 // a PageFrame left rail, plus the curated prose (APP_KNOWLEDGE_SECTIONS) as an
-// Overview + Reference, and keeps "Ask the Conductor" — a real Claude session
-// staged with the app knowledge — as a page action.
+// Overview + Reference, and keeps "Ask the Conductor" — a real session, on the
+// assistant Ask runs on, staged with the app knowledge — as a page action. The
+// cards follow the assistants in use (stepsForAssistants, P4.11, row 14).
 
 // Same platform-aware screenshot resolution the tour uses, so cards show the
 // existing training captures without a second asset set.
@@ -72,9 +74,13 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
   const [query, setQuery] = useState('')
   const [question, setQuestion] = useState('')
   const [launching, setLaunching] = useState(false)
-  // Ask is a Claude session: with Claude Code off the Ask button is disabled
-  // and says why (launchAskConductor refuses as well).
+  // Ask runs on the assistant in use: with neither on the Ask button is
+  // disabled and says why (launchAskConductor refuses as well).
   const askOff = useAskConductorBlocked()
+  const askProvider = useAskConductorProvider()
+  // The cards for the assistants in use, with their copy for that mode.
+  const only = useSettingsStore((s) => onlyAssistantInUse(s.settings))
+  const steps = useMemo(() => stepsForAssistants(trainingSteps, only), [only])
   // The Canvas Explained page, embedded (owner request): the front-page card
   // only exists inside an open session's canvas pane, so the guide — which
   // works with zero sessions open — carries the alternate route. Local state,
@@ -85,20 +91,20 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
   const stepsBySection = useMemo(() => {
     const map = new Map<TrainingSection, TrainingStep[]>()
     for (const s of SECTION_ORDER) map.set(s, [])
-    for (const step of trainingSteps) {
+    for (const step of steps) {
       if (step.section) map.get(step.section)?.push(step)
     }
     return map
-  }, [])
+  }, [steps])
 
   const q = query.trim().toLowerCase()
   const matchedSteps = useMemo(() => {
     if (!q) return []
-    return trainingSteps.filter((s) => {
+    return steps.filter((s) => {
       const hay = [s.title, s.summary ?? '', ...(s.highlights ?? []), ...(s.bullets ?? [])].join(' ').toLowerCase()
       return hay.includes(q)
     })
-  }, [q])
+  }, [q, steps])
   const matchedKnowledge = useMemo(() => {
     if (!q) return []
     return APP_KNOWLEDGE_SECTIONS.filter((s) => s.title.toLowerCase().includes(q) || s.body.toLowerCase().includes(q))
@@ -230,6 +236,7 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
               onAsk={ask}
               launching={launching}
               askOff={askOff}
+              askProvider={askProvider}
               onStartTour={onStartTour}
               onGo={(id) => setActive(id)}
             />
@@ -395,16 +402,29 @@ function SectionHero({ eyebrow, title, blurb }: { eyebrow: string; title: string
 }
 
 // ── Overview landing ─────────────────────────────────────────────────────────
+/** The assistant's name in the Ask card's lead. */
+const ASK_SESSION_NAME: Readonly<Record<AskConductorProvider, string>> = { claude: 'Claude', codex: 'Codex' }
+
+/** The Ask card's lead: the assistant Ask runs on now (P4.3), named. */
+function askCardLead(provider: AskConductorProvider | null): string {
+  const name = provider ? ASK_SESSION_NAME[provider] : ''
+  return name
+    ? `Opens a ${name} session already primed with this guide, so it can answer questions about the app itself. Uses your normal ${name} usage.`
+    : 'Opens a session already primed with this guide, so it can answer questions about the app itself.'
+}
+
 function Overview({
-  question, setQuestion, askInputRef, onAsk, launching, askOff = false, onStartTour, onGo,
+  question, setQuestion, askInputRef, onAsk, launching, askOff = false, askProvider = null, onStartTour, onGo,
 }: {
   question: string
   setQuestion: (v: string) => void
   askInputRef: React.RefObject<HTMLInputElement | null>
   onAsk: () => void
   launching: boolean
-  /** Claude Code is off: Ask cannot open, and the card says why. */
+  /** Neither assistant is on: Ask cannot open, and the card says why. */
   askOff?: boolean
+  /** The assistant Ask runs on now (null: it cannot open). */
+  askProvider?: AskConductorProvider | null
   onStartTour: () => void
   onGo: (id: GuideSectionId) => void
 }) {
@@ -440,7 +460,7 @@ function Overview({
           </span>
           <div>
             <h3 className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>Ask the Conductor</h3>
-            <p className="text-[12.5px]" style={{ color: 'var(--text-secondary)' }}>Opens a Claude session already primed with this guide, so it can answer questions about the app itself. Uses your normal Claude usage.</p>
+            <p className="text-[12.5px]" style={{ color: 'var(--text-secondary)' }}>{askCardLead(askProvider)}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">

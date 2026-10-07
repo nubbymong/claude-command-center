@@ -164,9 +164,11 @@ export class SentinelState {
   }
   /** `provider` (P3.9): whose update the analysis starting now is about.
    *  `note` (round 1): what to say beside a completed analysis that did not
-   *  read everything in full; cleared when a new one starts. */
-  setAnalyzing(analyzing: boolean, error: string | null = null, provider: SentinelProvider | null = null, note: string | null = null): void {
-    this.state = { ...this.state, analyzing, analyzingProvider: analyzing ? provider : null, lastAnalysisError: error, lastAnalysisNote: analyzing ? null : note, lastAnalysisAt: analyzing ? this.state.lastAnalysisAt : Date.now() }
+   *  read everything in full; cleared when a new one starts. `failed` (PR 4,
+   *  owner answers review): the error is a failed analysis (the title-bar
+   *  chip says the analysis did not complete); cleared when a new one starts. */
+  setAnalyzing(analyzing: boolean, error: string | null = null, provider: SentinelProvider | null = null, note: string | null = null, failed = false): void {
+    this.state = { ...this.state, analyzing, analyzingProvider: analyzing ? provider : null, lastAnalysisError: error, lastAnalysisFailed: analyzing ? false : failed, lastAnalysisNote: analyzing ? null : note, lastAnalysisAt: analyzing ? this.state.lastAnalysisAt : Date.now() }
     this.persist()
   }
 }

@@ -77,7 +77,7 @@ function state(over: Partial<BootGateState> = {}): BootGateState {
   return {
     configLoaded: true, logsWipeBytes: 0, onboardingDue: false, showTraining: false, showTrainingAll: false,
     tourActive: false, showGuidedConfig: false, showGitHubOnboarding: false, loggingConsentSeen: true,
-    resumePending: false, whatsNewDue: false, trainingDue: false, githubOnboardingDue: false,
+    resumePending: false, whatsNewDue: false, githubOnboardingDue: false,
     ...over,
   }
 }
@@ -88,7 +88,7 @@ describe('its turn in the boot chain', () => {
   })
 
   it('after the release notes and the upgrade harness: it waits while they are due, and they outrank it when up', () => {
-    for (const over of [{ whatsNewDue: true }, { trainingDue: true }, { githubOnboardingDue: true }] as Partial<BootGateState>[]) {
+    for (const over of [{ whatsNewDue: true }, { githubOnboardingDue: true }] as Partial<BootGateState>[]) {
       expect(pickBootGate(state({ codexReconfirmDue: true, ...over })), JSON.stringify(over)).toBeNull()
     }
     expect(pickBootGate(state({ codexReconfirmDue: true, onboardingDue: true }))).toBe('onboarding')

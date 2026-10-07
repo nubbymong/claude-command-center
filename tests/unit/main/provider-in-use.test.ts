@@ -36,10 +36,16 @@ vi.mock('../../../src/main/provider-account-registry', async () => {
     initAccountRegistry: vi.fn(), reconcileLegacyAccountStore: vi.fn(async () => {}), reconcileLegacyAccountStores: vi.fn(async () => {}), sameDirectory: () => false,
   }
 })
-const n = vi.hoisted(() => ({ sessions: { claude: 0, codex: 0 } as Record<string, number>, agents: 0, insights: 0, sentinel: 0, sentinelCodex: 0, ssh: 0, setup: 0, throws: false }))
+const n = vi.hoisted(() => ({ sessions: { claude: 0, codex: 0 } as Record<string, number>, agents: 0, codexAgents: 0, insights: 0, codexInsights: 0, sentinel: 0, sentinelCodex: 0, ssh: 0, setup: 0, throws: false, codexThrows: false, codexInsightsThrows: false }))
 vi.mock('../../../src/main/pty-manager', () => ({ countUnleasedAgentSessions: (id: string) => n.sessions[id] ?? 0 }))
-vi.mock('../../../src/main/cloud-agent-manager', () => ({ countClaudeAgentsInUse: () => { if (n.throws) throw new Error('boom'); return n.agents } }))
-vi.mock('../../../src/main/insights-runner', () => ({ countInsightsRunsInFlight: () => n.insights }))
+vi.mock('../../../src/main/cloud-agent-manager', () => ({
+  countClaudeAgentsInUse: () => { if (n.throws) throw new Error('boom'); return n.agents },
+  countCodexAgentsInUse: () => { if (n.codexThrows) throw new Error('boom'); return n.codexAgents },
+}))
+vi.mock('../../../src/main/insights-runner', () => ({
+  countInsightsRunsInFlight: () => n.insights,
+  countCodexInsightsRunsUnleased: () => { if (n.codexInsightsThrows) throw new Error('boom'); return n.codexInsights },
+}))
 vi.mock('../../../src/main/sentinel/index', () => ({ sentinelClaudeRunsInFlight: () => n.sentinel, sentinelCodexRunsInFlight: () => n.sentinelCodex }))
 vi.mock('../../../src/main/ipc/pty-handlers', () => ({ countSshClaudeLaunches: () => n.ssh }))
 vi.mock('../../../src/main/ipc/setup-handlers', () => ({ countCliSetupInUse: () => n.setup }))
@@ -49,7 +55,7 @@ const { initProviderAccounts, _resetProviderAccountsForTest } = await import('..
 
 beforeEach(() => {
   _resetProviderAccountsForTest()
-  Object.assign(n, { sessions: { claude: 0, codex: 0 }, agents: 0, insights: 0, sentinel: 0, sentinelCodex: 0, ssh: 0, setup: 0, throws: false })
+  Object.assign(n, { sessions: { claude: 0, codex: 0 }, agents: 0, codexAgents: 0, insights: 0, codexInsights: 0, sentinel: 0, sentinelCodex: 0, ssh: 0, setup: 0, throws: false, codexThrows: false, codexInsightsThrows: false })
 })
 
 // What main composes at start (index.ts).
@@ -108,5 +114,273 @@ describe('Codex in use, for the switch-off rule (P3.9)', () => {
     n.sentinelCodex = 2
     expect(providerUseWithoutLease('claude')).toBe(0)
     expect(await service().setProviderEnabled('claude', false)).toEqual({ ok: true })
+  })
+})
+
+// [host] WP2 PR 4, P4.5 (row 57): a Codex cloud agent is Codex in use from
+// its dispatch past the launch gate until its record ends (besides the lease
+// it holds while it runs), and never Claude Code's.
+describe('Codex cloud agents, for the switch-off rule (P4.5)', () => {
+  it('a Codex agent dispatching, pending or running: switching Codex off is refused, as in use', async () => {
+    n.codexAgents = 1
+    expect(providerUseWithoutLease('codex')).toBe(1)
+    expect(await service().setProviderEnabled('codex', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+  })
+
+  it('Codex agents do not hold Claude Code, and Claude Code agents do not hold Codex', async () => {
+    n.codexAgents = 2
+    expect(providerUseWithoutLease('claude')).toBe(0)
+    expect(await service().setProviderEnabled('claude', false)).toEqual({ ok: true })
+    n.codexAgents = 0
+    n.agents = 3
+    expect(providerUseWithoutLease('codex')).toBe(0)
+  })
+
+  it('a Codex agent counter that cannot answer counts as in use (fail closed)', () => {
+    n.codexThrows = true
+    expect(providerUseWithoutLease('codex')).toBe(1)
+  })
+})
+
+// [host] WP2 PR 4, P4.7 (row 68): an Insights report on a Codex account is
+// Codex in use from its launch check until its account's lease is held
+// (then the lease counts it), and a roll-up that runs Codex for its length;
+// never Claude Code's (mockup screen 8, D11).
+describe('Codex Insights reports, for the switch-off rule (P4.7)', () => {
+  it('a Codex report before its lease, or a roll-up running Codex: switching Codex off is refused, as in use', async () => {
+    n.codexInsights = 1
+    expect(providerUseWithoutLease('codex')).toBe(1)
+    expect(await service().setProviderEnabled('codex', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+  })
+
+  it('a Codex report does not hold Claude Code, and a Claude Code report does not hold Codex', async () => {
+    n.codexInsights = 2
+    expect(providerUseWithoutLease('claude')).toBe(0)
+    expect(await service().setProviderEnabled('claude', false)).toEqual({ ok: true })
+    n.codexInsights = 0
+    n.insights = 3
+    expect(providerUseWithoutLease('codex')).toBe(0)
+  })
+
+  it('a Codex report counter that cannot answer counts as in use (fail closed)', () => {
+    n.codexInsightsThrows = true
+    expect(providerUseWithoutLease('codex')).toBe(1)
+  })
+})
+
+// [host] WP2 PR 4, P4.7 fix pass 3: Settings, Accounts shows how much of a
+// provider is in use from the count each snapshot carries, the same count a
+// switch-off is refused with, so its in-use line follows that count as it
+// changes, for Claude Code and Codex alike.
+describe('the in-use count each snapshot carries', () => {
+  it('each provider carries the count a switch-off is refused with, read afresh for every snapshot [host]', async () => {
+    const svc = service()
+    const inUse = (id: string) => svc.snapshot().providers.find((p) => p.providerId === id)?.inUse
+    n.codexInsights = 1
+    expect(await svc.setProviderEnabled('codex', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+    expect(inUse('codex')).toBe(1)
+    expect(inUse('claude')).toBe(0)
+    n.codexInsights = 0
+    expect(inUse('codex')).toBe(0)
+    n.sessions.claude = 2
+    n.insights = 1
+    expect(inUse('claude')).toBe(3)
+    expect(await svc.setProviderEnabled('claude', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 3 })
+    // A counter that cannot answer counts as one here too.
+    n.throws = true
+    expect(inUse('claude')).toBe(4)
+  })
+})
+
+// [host] WP2 PR 4, P4.7 fix pass 4: what runs a provider without an account
+// lease sends no change of its own when it starts or ends, so once main has
+// refused a switch-off it publishes a new snapshot each time that provider's
+// in-use count moves, up or down, until nothing holds the provider. The
+// renderer follows those snapshots and reads none of its own.
+describe('main publishes the in-use count as it moves after a refused switch-off', () => {
+  it('a count that rises or drops is pushed as a new snapshot; once nothing holds the provider the watch ends [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const svc = service()
+      let pushes = 0
+      svc.subscribe(() => { pushes++ })
+      const inUse = (id: string) => svc.snapshot().providers.find((p) => p.providerId === id)?.inUse
+      expect(vi.getTimerCount()).toBe(0)
+      n.codexInsights = 1
+      expect(await svc.setProviderEnabled('codex', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+      const revision = svc.snapshot().revision
+      vi.advanceTimersByTime(10_000)
+      expect(pushes).toBe(0)
+      n.codexInsights = 2
+      vi.advanceTimersByTime(5_000)
+      expect(pushes).toBe(1)
+      expect(inUse('codex')).toBe(2)
+      n.codexInsights = 0
+      vi.advanceTimersByTime(5_000)
+      expect(pushes).toBe(2)
+      expect(svc.snapshot().revision).toBeGreaterThan(revision)
+      expect(inUse('codex')).toBe(0)
+      expect(vi.getTimerCount()).toBe(0)
+      // Nothing is watched now: a count that moves again pushes nothing.
+      n.codexInsights = 3
+      vi.advanceTimersByTime(10_000)
+      expect(pushes).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('both providers refused: each is followed until it is free; a second refusal of the same provider adds no second watch [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const svc = service()
+      let pushes = 0
+      svc.subscribe(() => { pushes++ })
+      n.codexInsights = 1
+      n.insights = 1
+      expect(await svc.setProviderEnabled('codex', false)).toMatchObject({ ok: false, code: 'consumers' })
+      expect(await svc.setProviderEnabled('codex', false)).toMatchObject({ ok: false, code: 'consumers' })
+      expect(await svc.setProviderEnabled('claude', false)).toMatchObject({ ok: false, code: 'consumers' })
+      expect(vi.getTimerCount()).toBe(1)
+      n.insights = 0
+      vi.advanceTimersByTime(5_000)
+      expect(pushes).toBe(1)
+      expect(vi.getTimerCount()).toBe(1)
+      n.codexInsights = 0
+      vi.advanceTimersByTime(5_000)
+      expect(pushes).toBe(2)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /** The Claude Code counts main's push publishes, in order. */
+  const publishLikeMain = (svc: ReturnType<typeof service>): number[] => {
+    const published: number[] = []
+    // As main's push (provider-accounts-handlers): coalesced, the snapshot
+    // built on the next turn of the loop.
+    let pending = false
+    svc.subscribe(() => {
+      if (pending) return
+      pending = true
+      setImmediate(() => { pending = false; published.push(svc.snapshot().providers.find((p) => p.providerId === 'claude')!.inUse) })
+    })
+    return published
+  }
+  const nextTurn = () => new Promise<void>((r) => setImmediate(r))
+  const claudeInUse = (svc: ReturnType<typeof service>) => svc.snapshot().providers.find((p) => p.providerId === 'claude')!.inUse
+
+  // [host] P4.7 fix pass 6: main's push builds its snapshot on the next turn
+  // of the loop, so a run can start between the tick that sees the count
+  // reach 0 and the snapshot that carries it. A snapshot that carries a
+  // count above 0 follows that count again, so the line never stays at a
+  // count nothing holds.
+  it('a run that starts as the count reaches 0, before that snapshot is built, is followed until it ends; the watch then ends [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const svc = service()
+      const published = publishLikeMain(svc)
+      n.sessions.claude = 1
+      expect(await svc.setProviderEnabled('claude', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+      n.sessions.claude = 0
+      vi.advanceTimersByTime(1_000)
+      // A session starts before the snapshot of that change is built.
+      n.sessions.claude = 1
+      await nextTurn()
+      expect(published).toEqual([1])
+      // It ends: the snapshot that follows carries 0, and the next look, with
+      // nothing holding the provider, ends the watch.
+      n.sessions.claude = 0
+      vi.advanceTimersByTime(1_000)
+      await nextTurn()
+      expect(published).toEqual([1, 0])
+      vi.advanceTimersByTime(1_000)
+      expect(vi.getTimerCount()).toBe(0)
+      // Nothing is watched now: a count that moves again pushes nothing, and
+      // a snapshot read while nothing was refused starts no watch.
+      n.sessions.claude = 2
+      vi.advanceTimersByTime(10_000)
+      await nextTurn()
+      expect(published).toEqual([1, 0])
+      expect(claudeInUse(svc)).toBe(2)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // [host] P4.7 fix pass 7: other parts of main read snapshots too (a
+  // roll-up reads one before its run is counted). Only a snapshot carrying
+  // the provider above 0 hands the watch on; one carrying 0 leaves the
+  // provider to the next look, which lets it go if nothing holds it then and
+  // follows its count again if something does. Whichever snapshot is built
+  // first, the last count published is 0 and no timer is left.
+  it('a snapshot read at 0 before the published one, then a run that starts, is followed until it ends; the last count published is 0 [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const svc = service()
+      const published = publishLikeMain(svc)
+      n.sessions.claude = 1
+      expect(await svc.setProviderEnabled('claude', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+      n.sessions.claude = 0
+      vi.advanceTimersByTime(1_000)
+      // Another reader builds a snapshot in the same turn, at 0, and only
+      // then is its run counted.
+      expect(claudeInUse(svc)).toBe(0)
+      n.sessions.claude = 1
+      await nextTurn()
+      expect(published).toEqual([1])
+      n.sessions.claude = 0
+      vi.advanceTimersByTime(600_000)
+      await nextTurn()
+      expect(published).toEqual([1, 0])
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a run that starts after the snapshot carrying 0 is published, before the next look, is followed until it ends [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const svc = service()
+      const published = publishLikeMain(svc)
+      n.sessions.claude = 1
+      expect(await svc.setProviderEnabled('claude', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+      n.sessions.claude = 0
+      vi.advanceTimersByTime(1_000)
+      await nextTurn()
+      expect(published).toEqual([0])
+      n.sessions.claude = 2
+      vi.advanceTimersByTime(1_000)
+      await nextTurn()
+      expect(published).toEqual([0, 2])
+      n.sessions.claude = 0
+      vi.advanceTimersByTime(5_000)
+      await nextTurn()
+      expect(published).toEqual([0, 2, 0])
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('with no window to publish to, the next look ends the watch, and a snapshot read much later starts none [host]', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const svc = service()
+      n.sessions.claude = 1
+      expect(await svc.setProviderEnabled('claude', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+      n.sessions.claude = 0
+      vi.advanceTimersByTime(2_000)
+      expect(vi.getTimerCount()).toBe(0)
+      n.sessions.claude = 2
+      vi.advanceTimersByTime(3_600_000)
+      expect(claudeInUse(svc)).toBe(2)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

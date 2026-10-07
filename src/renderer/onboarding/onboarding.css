@@ -29,7 +29,7 @@
 .ob-root .blogo line { stroke: var(--ob); stroke-width: 4; stroke-linecap: round; }
 .ob-root .bname { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
 /* Badges and pills (this one, .badge, .ma-badge, .rn-badge, .hc-badge, the
-   approval pill, .opt-tag, .as-beta) clear 4.5:1 in both themes, pinned in
+   approval pill, .opt-tag) clear 4.5:1 in both themes, pinned in
    tests/unit/renderer/token-contrast.test.ts. The azure ones draw with --brand
    over an 8% wash of it (--ob over --ob-soft measured 4.3:1), or on a solid
    --brand fill where the pill sits on a tinted card. */
@@ -552,7 +552,6 @@
 .ob-root .rn-tsub { font-size: 9px; color: var(--text-muted); letter-spacing: .04em; }
 .ob-root .rn-badge { position: absolute; top: -7px; right: 8px; font-size: 8.5px; font-weight: 800; letter-spacing: .06em; border-radius: 5px; padding: 1px 6px; }
 .ob-root .rn-badge.rn-now { color: var(--surface-sunken); background: var(--brand); }
-.ob-root .rn-badge.rn-beta { color: var(--surface-sunken); background: var(--status-warning); }
 .ob-root .rn-badge.rn-b22 { color: var(--status-warning); background: var(--surface-raised); border: 1px solid color-mix(in srgb, var(--status-warning) 50%, transparent); }
 .ob-root .rn-points { display: flex; justify-content: center; gap: 34px; margin-top: 26px; flex-wrap: wrap; }
 .ob-root .rn-pt { display: flex; align-items: baseline; gap: 8px; font-size: 13px; color: var(--text-secondary); }
@@ -571,7 +570,6 @@
 .ob-root .as-card.sel .as-radio::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--ob); }
 .ob-root .as-marks { display: flex; gap: 6px; margin-bottom: 16px; }
 .ob-root .as-t { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-.ob-root .as-beta { font-size: 10.5px; font-weight: 500; padding: 2px 7px; border-radius: 999px; color: var(--surface-sunken); border: 1px solid var(--ob-line); background: var(--brand); }
 .ob-root .as-sub { color: var(--text-secondary); font-size: 13px; margin-top: 2px; }
 .ob-root .as-why { color: var(--status-warning); font-size: 12px; margin-top: 8px; }
 .ob-root .as-note { color: var(--text-muted); font-size: 12px; text-align: center; margin: 0; }

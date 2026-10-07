@@ -15,8 +15,8 @@ vi.mock('../../src/main/conductor-mcp-server', () => ({ getConductorMcpPort: () 
 
 import { CAPABILITY_KEYS, WP1_REQUIRED_CAPABILITIES, PROVIDER_IDS, missingCapabilityKeys, isNeverOwnedLaunchVariable, NEVER_OWNED_LAUNCH_VARIABLES } from '../../src/shared/providers'
 import type { CapabilityPlatform } from '../../src/shared/providers'
-import { createClaudePackage } from '../../src/main/providers/claude'
-import { createCodexPackage } from '../../src/main/providers/codex'
+import { createClaudePackage, claudeWiredCapabilities } from '../../src/main/providers/claude'
+import { createCodexPackage, codexWiredCapabilities } from '../../src/main/providers/codex'
 import { claudeDescriptor } from '../../src/renderer/providers/claude'
 import { codexDescriptor } from '../../src/renderer/providers/codex'
 import { composeProviders, composedProviderIds } from '../../src/main/providers/compose'
@@ -34,6 +34,25 @@ const cases = [
 const SESSION_METHODS = ['resolveBinary', 'buildSpawnCommand', 'detectUiRunning', 'ingestSessionTelemetry', 'listHistorySessions', 'resumeCommand', 'configureMcpServer'] as const
 const phase = resolvePhase(undefined, { eager: false })
 
+/** The package whose declaration the candidate judges: the one the main
+ *  composition root registers, as the app runs it. A bare factory call has
+ *  no registry realms, so Codex declares its unwired table there. */
+function judgedPackage(id: 'claude' | 'codex') {
+  _resetProviderRegistryForTest()
+  try {
+    composeProviders()
+    const pkg = tryGetProviderPackage(id)
+    if (!pkg) throw new Error(`the composition root registered no ${id} package`)
+    return pkg
+  } finally {
+    _resetProviderRegistryForTest()
+  }
+}
+
+/** The WP1-required capabilities a declaration does not support. */
+const candidateGaps = (capabilities: ReturnType<typeof createCodexPackage>['capabilities']) =>
+  WP1_REQUIRED_CAPABILITIES.filter((k) => capabilities[k].state !== 'supported')
+
 describe.each(cases)('provider conformance: $id', ({ id, create, descriptor, ambientRealmVariable, ownedRealmVariable, offeredMethods }) => {
   const pkg = create()
 
@@ -42,7 +61,7 @@ describe.each(cases)('provider conformance: $id', ({ id, create, descriptor, amb
     expect(pkg.id).toBe(id)
     expect(pkg.displayName.length).toBeGreaterThan(0)
     expect(pkg.session.id).toBe(pkg.id)
-    for (const m of SESSION_METHODS) expect(typeof (pkg.session as Record<string, unknown>)[m], m).toBe('function')
+    for (const m of SESSION_METHODS) expect(typeof (pkg.session as unknown as Record<string, unknown>)[m], m).toBe('function')
     expect(packageRegistrationProblem(pkg)).toBeNull()
     expect(create()).not.toBe(pkg) // a factory, not a module-level singleton
   })
@@ -55,9 +74,28 @@ describe.each(cases)('provider conformance: $id', ({ id, create, descriptor, amb
       if (d.maxTestedVersion) expect(d.maxTestedVersion).toMatch(SEMVER)
       if (d.state !== 'supported') expect(d.note, `${k} (${d.state}) must carry a note`).toBeTruthy()
     }
+    for (const k of WP1_REQUIRED_CAPABILITIES) expect(pkg.capabilities[k].state, k).not.toBe('unsupported')
+    if (phase === 'candidate') expect(candidateGaps(judgedPackage(id).capabilities), 'WP1-required capabilities not supported at the candidate, as the composition root registers the package').toEqual([])
+  })
+
+  // [host] PR 4 P4.10 review: the candidate judges the declaration the app
+  // registers. Each wired table (codexWiredCapabilities, claudeWiredCapabilities)
+  // supports every WP1-required key; a bare factory table never can, so a
+  // candidate that judged it could never pass. WP2 PR 4 (owner answers
+  // 2026-10-04): the Claude adapter's discovery, sign-in status and sign-out
+  // are completed, so neither provider has a gap, and no WP1-required key is
+  // switched off on any platform (the review fix pass: Claude's macOS sign-out
+  // runs on the Mac's one sign-in, with the user's acknowledgement).
+  it('main package as the composition root registers it: its declaration supports every WP1-required capability', () => {
+    const judged = judgedPackage(id)
+    expect(packageRegistrationProblem(judged)).toBeNull()
+    expect(missingCapabilityKeys(judged.capabilities)).toEqual([])
+    expect(judged.capabilities).toBe(id === 'codex' ? codexWiredCapabilities : claudeWiredCapabilities)
+    expect(candidateGaps(judged.capabilities), `${id}: WP1-required capabilities the candidate would refuse`).toEqual([])
     for (const k of WP1_REQUIRED_CAPABILITIES) {
-      expect(pkg.capabilities[k].state, k).not.toBe('unsupported')
-      if (phase === 'candidate') expect(pkg.capabilities[k].state, `${k} must be supported at the candidate`).toBe('supported')
+      const overrides = judged.capabilities[k].platformOverrides ?? {}
+      const off = (Object.entries(overrides) as Array<[string, string]>).filter(([, s]) => s !== 'supported').map(([p]) => `${k}:${p}`)
+      expect(off, `${id}: WP1-required keys switched off on a platform`).toEqual([])
     }
   })
 
@@ -166,7 +204,9 @@ describe('composition roots (WP1.66)', () => {
     composeRendererProviders()
     composeRendererProviders()
     expect(composedRendererProviderIds()).toEqual([...PROVIDER_IDS])
-    expect(listRendererProviders().map((d) => d.maturity)).toEqual(['stable', 'beta'])
+    // P4.11 (row 54): the Codex Beta label comes off in the release where parity
+    // lands; the maturity field stays, read by the Providers card (WP1.21).
+    expect(listRendererProviders().map((d) => d.maturity)).toEqual(['stable', 'stable'])
     expect(getRendererProvider('codex').shortName).toBe('Codex')
     _resetRendererProviderRegistryForTest()
     composeRendererProviders()
@@ -191,7 +231,12 @@ describe('Codex declares what it implements (WP1.17, WP1.18)', () => {
     }
     expect(bare.realmFolders).toBeUndefined()
     expect(wired.realmFolders).toBeDefined()
-    expect(wired.launch?.kinds).toEqual(['session', 'review'])
+    // WP2 PR 4, P4.5 (row 57): a Cloud Agent's run is a launch of its own kind.
+    expect(wired.launch?.kinds).toEqual(['session', 'review', 'background'])
+    expect(typeof wired.background?.run).toBe('function')
+    // WP2 PR 4, P4.7 (row 68) fix pass 1: an Insights report's model run is
+    // the package's own port, which the runner reaches through the registry.
+    for (const pkg of [bare, wired]) expect(typeof pkg.insights?.run).toBe('function')
   })
 
   it('account usage is supported exactly when the usage port exists (usage track MP3); Claude keeps its own and declares unknown', () => {

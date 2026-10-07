@@ -10,7 +10,10 @@
  *
  * What it does:
  *   1. Seeds sample data (configs, commands, agents, memory) into a throwaway
- *      temp data root so pages look populated without touching real user data
+ *      temp data root so pages look populated without touching real user data;
+ *      with Claude Code and Codex both on, fictional accounts of each, and
+ *      stand-in CLIs (capture-seed.ts), run on a home, app data and temp
+ *      folders inside that root (capture-env.ts). Run it on the test VM only.
  *   2. Launches the built Electron app via Playwright, pointed at that root
  *   3. Navigates to each relevant view and captures screenshots
  *   4. Saves JPEGs to src/renderer/assets/training/
@@ -21,7 +24,10 @@ import { _electron as electron } from '@playwright/test'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
+import { execFileSync } from 'child_process'
 import { STEPS, ONBOARDING_VERSION } from '../src/renderer/onboarding/steps'
+import { captureHomeDir, captureLaunchEnv, captureFakeBinDir } from './capture-env'
+import { CAPTURE_CODEX_ACCOUNTS, CAPTURE_PROVIDER_SETTINGS, captureAppMetaKeys, seedCaptureProviders } from './capture-seed'
 
 const SCREENSHOT_DIR = path.join(__dirname, '..', 'src', 'renderer', 'assets', 'training')
 // Must match the build's __APP_VERSION__ exactly — the Claude CLI-setup gate
@@ -67,6 +73,12 @@ function redactAccountInStatusline(sl: any) {
 // writes exactly where the app reads.
 const CAPTURE_DATA_ROOT = path.join(os.tmpdir(), `ccc-capture-${process.pid}`)
 
+// The app's home, and every home path this script seeds, are inside the data
+// root too (P4.11, capture-env.ts): the user's real ~/.claude and ~/.codex are
+// never read, renamed or written. The launch below passes it as USERPROFILE
+// and HOME, so the app's own home directory is this folder.
+const CAPTURE_HOME = captureHomeDir(CAPTURE_DATA_ROOT)
+
 function getResourcesDir(): string {
   return path.join(CAPTURE_DATA_ROOT, 'resources')
 }
@@ -97,10 +109,10 @@ const SAMPLE_CONFIGS = [
   { id: 'demo-mobile', label: 'Mobile App', workingDirectory: path.join(homePath, 'mobile'), model: '', color: '#F9E2AF', sessionType: 'local', shellOnly: true, partnerTerminalPath: PARTNER_SHELL },
   { id: 'demo-infra', label: 'Infrastructure', workingDirectory: path.join(homePath, 'infra'), model: '', color: '#CBA6F7', sessionType: 'local', shellOnly: true },
   { id: 'demo-gpu', label: 'GPU Server', workingDirectory: '/home/developer/ml-pipeline', model: '', color: '#F38BA8', sessionType: 'ssh', shellOnly: true, sshConfig: { host: '10.0.1.50', port: 22, username: 'developer', remotePath: '/home/developer/ml-pipeline' } },
-  // Codex provider demo. shellOnly so capture works on hosts without codex
-  // installed; the Edit dialog renders CodexFormFields based purely on the
-  // saved provider/codexOptions, no live spawn required for the screenshot.
-  { id: 'demo-codex', label: 'Codex Provider', workingDirectory: path.join(homePath, 'codex-demo'), color: '#F9E2AF', sessionType: 'local', shellOnly: true, provider: 'codex', codexOptions: { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' } },
+  // Codex provider demo, on the seeded default Codex account (P4.11: the
+  // stand-in Codex makes Codex found, so it no longer needs shellOnly, which
+  // made the Edit dialog show it as Terminal only). Never launched here.
+  { id: 'demo-codex', label: 'Codex Provider', workingDirectory: path.join(homePath, 'codex-demo'), color: '#F9E2AF', sessionType: 'local', provider: 'codex', providerAccountId: CAPTURE_CODEX_ACCOUNTS[0].accountId, codexOptions: { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' } },
 ]
 
 const SAMPLE_COMMANDS = [
@@ -387,7 +399,9 @@ function seedSampleData(): BackupInfo {
     'configs.json': SAMPLE_CONFIGS,
     'commands.json': SAMPLE_COMMANDS,
     'command-sections.json': SAMPLE_SECTIONS,
-    'settings.json': { localMachineName: 'Demo Workstation', terminalFontSize: 14, updateChannel: 'stable', colourMigrationNoticeDismissed: true, colourMigrationNoticePending: false },
+    // P4.11: Claude Code and Codex both on (Codex's on/off answered), the
+    // Conductor tools on, Sentinel off (capture-seed.ts).
+    'settings.json': { localMachineName: 'Demo Workstation', terminalFontSize: 14, updateChannel: 'stable', colourMigrationNoticeDismissed: true, colourMigrationNoticePending: false, ...CAPTURE_PROVIDER_SETTINGS },
     // Boot gates. A "very high" sentinel works only for the >= comparisons
     // (lastSeenVersion / lastTrainingVersion / lastWhatsNewVersion). The Claude
     // CLI-setup wizard is gated on `setupVersion !== __APP_VERSION__`, so
@@ -397,11 +411,16 @@ function seedSampleData(): BackupInfo {
     // The v2 onboarding harness (bootGates priority 1.5) outranks all of the
     // above and needs its own three keys — derived from STEPS so a newly added
     // step can't silently re-break this. Mirrors tests/e2e/helpers/electron-app.ts.
+    // P4.11: lastSeenVersion and lastRunVersion are compared with the running
+    // version EXACTLY (onboarding/upgrade-flow.ts), so the old '99.99.99'
+    // sentinel there read as an upgrade and opened What's New over the
+    // window; with Codex on, Hello Codex and the multi-spawn intro are marked
+    // seen too (captureAppMetaKeys).
     'app-meta.json': {
       setupVersion: APP_VERSION,
       lastTrainingVersion: '99.99.99',
       lastWhatsNewVersion: '99.99.99',
-      lastSeenVersion: '99.99.99',
+      ...captureAppMetaKeys(APP_VERSION),
       hasCreatedFirstConfig: true,
       accountGateDecided: true,
       completedSteps: Object.fromEntries(STEPS.map((s) => [s.id, '2026-01-01T00:00:00.000Z'])),
@@ -431,11 +450,10 @@ function seedSampleData(): BackupInfo {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
   }
 
-  // Temporarily hide real projects so only demo ones appear in screenshots.
-  // Rename ~/.claude/projects/ → ~/.claude/projects-real-bak/ during capture.
-  // Fail loudly if a leftover backup exists -- silently continuing would let
-  // real session data leak into screenshots (and confuse the cleanup step).
-  const projectsDir = path.join(os.homedir(), '.claude', 'projects')
+  // The capture home's projects folder (P4.11: never the real one). A folder
+  // there from an earlier run is set aside, as before, so only demo projects
+  // appear; a leftover backup still stops the run.
+  const projectsDir = path.join(CAPTURE_HOME, '.claude', 'projects')
   const projectsBackup = projectsDir + '-real-bak'
   if (fs.existsSync(projectsBackup)) {
     throw new Error(
@@ -446,13 +464,13 @@ function seedSampleData(): BackupInfo {
   if (fs.existsSync(projectsDir)) {
     fs.renameSync(projectsDir, projectsBackup)
     activeBackupInfo.projectsRenamed = true
-    console.log('[capture] Hid real projects directory')
+    console.log("[capture] Set aside the capture home's projects folder from an earlier run")
   }
   fs.mkdirSync(projectsDir, { recursive: true })
 
-  // Same treatment for Codex history -- seedTokenomics scans ~/.codex/sessions/
-  // and would otherwise pull all real Codex transcripts into screenshots.
-  const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions')
+  // Same treatment for Codex history in the capture home (seedTokenomics scans
+  // <home>/.codex/sessions/).
+  const codexSessionsDir = path.join(CAPTURE_HOME, '.codex', 'sessions')
   const codexSessionsBackup = codexSessionsDir + '-real-bak'
   if (fs.existsSync(codexSessionsBackup)) {
     throw new Error(
@@ -463,7 +481,7 @@ function seedSampleData(): BackupInfo {
   if (fs.existsSync(codexSessionsDir)) {
     fs.renameSync(codexSessionsDir, codexSessionsBackup)
     activeBackupInfo.codexSessionsRenamed = true
-    console.log('[capture] Hid real Codex sessions directory')
+    console.log("[capture] Set aside the capture home's Codex sessions folder from an earlier run")
   }
 
   // Insights reports live at <RESOURCES>/insights/ as one dir per run -- the
@@ -562,10 +580,21 @@ function seedSampleData(): BackupInfo {
     }
     const dir = path.join(projectsDir, s.dir)
     fs.mkdirSync(dir, { recursive: true })
-    activeBackupInfo.createdMemoryDirs.push(dir)
+    activeBackupInfo!.createdMemoryDirs.push(dir)
     fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), lines.join('\n') + '\n', 'utf-8')
     console.log(`[capture] Seeded transcript: ${s.dir} (${s.model}, ${s.turns} turns)`)
   })
+
+  // P4.11: the fictional Claude and Codex accounts, the Codex memories and
+  // the stand-in CLIs, all inside the data root (capture-seed.ts).
+  const providerFiles = seedCaptureProviders({
+    dataRoot: CAPTURE_DATA_ROOT,
+    resourcesDir: getResourcesDir(),
+    homeDir: CAPTURE_HOME,
+    fakeBinDir: captureFakeBinDir(CAPTURE_DATA_ROOT),
+    now,
+  })
+  console.log(`[capture] Seeded the Claude and Codex accounts and the stand-in CLIs (${providerFiles.length} files)`)
 
   return activeBackupInfo
 }
@@ -615,21 +644,21 @@ function cleanupSampleData(info: BackupInfo | null): void {
     }
   }
 
-  // Restore real projects directory
-  const projectsDir = path.join(os.homedir(), '.claude', 'projects')
+  // Restore the capture home's projects directory
+  const projectsDir = path.join(CAPTURE_HOME, '.claude', 'projects')
   const projectsBackup = projectsDir + '-real-bak'
   if (info.projectsRenamed) {
     try {
       if (!fs.existsSync(projectsBackup)) {
-        console.warn('[capture] projects-real-bak directory missing; skipping restore to protect real data')
+        console.warn("[capture] the capture home's projects-real-bak folder is missing; skipping its restore")
       } else {
         fs.rmSync(projectsDir, { recursive: true, force: true })
         fs.renameSync(projectsBackup, projectsDir)
-        console.log('[capture] Restored real projects directory')
+        console.log("[capture] Restored the capture home's projects folder")
       }
     } catch (err) {
       console.error('[capture] WARNING: Failed to restore projects directory!', err)
-      console.error(`[capture] Your real projects are at: ${projectsBackup}`)
+      console.error(`[capture] The capture home's earlier projects folder is at: ${projectsBackup}`)
       console.error('[capture] Manually rename it back to: ' + projectsDir)
     }
   } else {
@@ -639,21 +668,21 @@ function cleanupSampleData(info: BackupInfo | null): void {
     }
   }
 
-  // Restore real Codex sessions directory
+  // Restore the capture home's Codex sessions folder
   if (info.codexSessionsRenamed) {
-    const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions')
+    const codexSessionsDir = path.join(CAPTURE_HOME, '.codex', 'sessions')
     const codexSessionsBackup = codexSessionsDir + '-real-bak'
     try {
       if (!fs.existsSync(codexSessionsBackup)) {
-        console.warn('[capture] codex sessions-real-bak missing; skipping restore to protect real data')
+        console.warn("[capture] the capture home's Codex sessions-real-bak folder is missing; skipping its restore")
       } else {
         if (fs.existsSync(codexSessionsDir)) fs.rmSync(codexSessionsDir, { recursive: true, force: true })
         fs.renameSync(codexSessionsBackup, codexSessionsDir)
-        console.log('[capture] Restored real Codex sessions directory')
+        console.log("[capture] Restored the capture home's Codex sessions folder")
       }
     } catch (err) {
       console.error('[capture] WARNING: Failed to restore Codex sessions directory!', err)
-      console.error(`[capture] Your real Codex sessions are at: ${codexSessionsBackup}`)
+      console.error(`[capture] The capture home's earlier Codex sessions folder is at: ${codexSessionsBackup}`)
     }
   }
 
@@ -753,13 +782,49 @@ async function clickNav(window: any, label: string): Promise<void> {
   await window.waitForTimeout(1200)
 }
 
-/** Click a tab button by text */
+/** Click a tab button by text. The Settings tabs are buttons in a <nav>
+ *  (SettingsPage's TabsRail), so a button there wins over any other button
+ *  with the same words (an "Accounts" elsewhere on the page). */
 async function clickTab(window: any, text: string): Promise<void> {
-  await window.evaluate((txt: string) => {
-    const buttons = document.querySelectorAll('button')
-    for (const btn of buttons) { if (btn.textContent?.trim() === txt) { btn.click(); return } }
+  const clicked = await window.evaluate((txt: string) => {
+    const scoped = Array.from(document.querySelectorAll('nav button')) as HTMLElement[]
+    const all = Array.from(document.querySelectorAll('button')) as HTMLElement[]
+    for (const btn of [...scoped, ...all]) { if (btn.textContent?.trim() === txt) { btn.click(); return true } }
+    return false
   }, text)
+  if (!clicked) console.log(`[capture] WARNING: tab "${text}" not found`)
   await window.waitForTimeout(500)
+}
+
+/** The Conductor MCP page's browser: started at boot (headless), so wait
+ *  for its status to read Connected; if it reads Stopped, press the page's
+ *  own "Start browser" once. Returns the status the shot shows. */
+async function waitForBrowserConnected(window: any, timeoutMs = 45000): Promise<string> {
+  const start = Date.now()
+  let pressed = false
+  let last = ''
+  while (Date.now() - start < timeoutMs) {
+    const state = await window.evaluate(() => {
+      const pills = Array.from(document.querySelectorAll('[data-testid="sub-tool-status"]')).map((e) => (e.textContent || '').trim())
+      const startBtn = (Array.from(document.querySelectorAll('button')) as HTMLElement[])
+        .find((b) => (b.textContent || '').trim() === 'Start browser' && b.offsetParent !== null)
+      return { pills, canStart: !!startBtn }
+    })
+    last = state.pills.join(' | ')
+    if (state.pills.some((p: string) => /^Connected/i.test(p))) return last
+    if (state.canStart && !pressed && state.pills.some((p: string) => /Stopped/i.test(p))) {
+      await window.evaluate(() => {
+        const b = (Array.from(document.querySelectorAll('button')) as HTMLElement[])
+          .find((x) => (x.textContent || '').trim() === 'Start browser' && x.offsetParent !== null)
+        if (b) b.click()
+      })
+      pressed = true
+      console.log('[capture] Conductor MCP: pressed "Start browser"')
+    }
+    await window.waitForTimeout(1000)
+  }
+  console.log(`[capture] WARNING: the browser did not read Connected within ${timeoutMs} ms (last: ${last})`)
+  return last
 }
 
 async function dismissModals(window: any): Promise<void> {
@@ -789,31 +854,85 @@ async function dismissModals(window: any): Promise<void> {
   }
 }
 
-/** Launch a session by clicking the Launch button on the matching config
- *  row. Each ConfigRow has hover-revealed Launch / Pin / Edit / Delete
- *  buttons, all titled identically — we find the right one by walking
- *  from the label span up to the row container, then querying within. */
-async function launchSessionFromSidebar(window: any, label: string): Promise<void> {
-  const launched = await window.evaluate((l: string) => {
-    const spans = Array.from(document.querySelectorAll('span'))
-    for (const s of spans) {
-      if (s.textContent?.trim() !== l) continue
-      // Walk up to the config row container (the hoverable parent)
-      let row: HTMLElement | null = s as HTMLElement
-      for (let i = 0; i < 8 && row; i++) {
-        if (row.querySelector('button[title="Launch"]')) break
-        row = row.parentElement
-      }
-      if (!row) continue
-      const launchBtn = row.querySelector('button[title="Launch"]') as HTMLElement | null
-      if (launchBtn) { launchBtn.click(); return true }
+/** The sidebar's two-mode panel: the saved configs live on its Saved tab,
+ *  the live sessions on its Running tab (it opens on Running by default, so
+ *  a config row is not on the page until Saved is chosen). */
+async function clickPanelTab(window: any, tab: 'saved' | 'running'): Promise<void> {
+  const ok = await window.evaluate((t: string) => {
+    const b = document.querySelector(`[data-testid="panel-tab-${t}"]`) as HTMLElement | null
+    if (!b) return false
+    b.click()
+    return true
+  }, tab)
+  if (!ok) console.log(`[capture] WARNING: no ${tab} tab in the sidebar`)
+  await window.waitForTimeout(600)
+}
+
+/** Open a config's Edit dialog from its row on the Saved tab (the row's own
+ *  Edit button). */
+async function editConfigFromSidebar(window: any, label: string): Promise<void> {
+  await clickPanelTab(window, 'saved')
+  const opened = await window.evaluate((l: string) => {
+    const rows = Array.from(document.querySelectorAll('[data-testid="config-row"]')) as HTMLElement[]
+    const row = rows.find((r) => (r.innerText || '').split('\n').map((s) => s.trim()).includes(l))
+    const edit = row ? (row.querySelector('button[title="Edit"]') as HTMLElement | null) : null
+    if (!edit) return false
+    edit.click()
+    return true
+  }, label)
+  if (!opened) console.log(`[capture] WARNING: no Edit button for config "${label}"`)
+  await window.waitForTimeout(1000)
+}
+
+/** Close the open dialog as a user does: Escape, then its own Cancel (and a
+ *  Discard if it asks about unsaved changes) while a dialog is still up. */
+async function closeDialog(window: any): Promise<void> {
+  for (let i = 0; i < 4; i++) {
+    const open = await window.evaluate(() => Array.from(document.querySelectorAll('[role="dialog"], [data-testid="session-dialog"]')).some((d) => (d as HTMLElement).offsetParent !== null))
+    if (!open) return
+    await window.keyboard.press('Escape')
+    await window.waitForTimeout(400)
+    await window.evaluate(() => {
+      const buttons = (Array.from(document.querySelectorAll('[role="dialog"] button, [data-testid="session-dialog"] button')) as HTMLElement[]).filter((b) => b.offsetParent !== null)
+      const pick = buttons.find((b) => /^(Discard|Discard changes|Don't save)$/i.test((b.textContent || '').trim())) || buttons.find((b) => /^(Cancel|Close)$/i.test((b.textContent || '').trim()))
+      if (pick) pick.click()
+    })
+    await window.waitForTimeout(500)
+  }
+  console.log('[capture] WARNING: a dialog stayed open')
+}
+
+/** End the app's whole process tree (Electron's helpers and any session's
+ *  shell), as the e2e harness's hardKill does: a plain kill of the main
+ *  process leaves the rest running on Windows. */
+function killAppTree(pid: number | undefined): void {
+  if (!pid) return
+  try {
+    if (process.platform === 'win32') execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', timeout: 10000, windowsHide: true })
+    else {
+      try { process.kill(-pid, 'SIGKILL') } catch { process.kill(pid, 'SIGKILL') }
     }
-    return false
+  } catch { /* already gone */ }
+}
+
+/** Launch a session from its config row on the Saved tab (the row's own
+ *  Launch button), then show the Running tab, as a user does. */
+async function launchSessionFromSidebar(window: any, label: string): Promise<void> {
+  await clickPanelTab(window, 'saved')
+  const launched = await window.evaluate((l: string) => {
+    const rows = Array.from(document.querySelectorAll('[data-testid="config-row"]')) as HTMLElement[]
+    const row = rows.find((r) => (r.innerText || '').split('\n').map((s) => s.trim()).includes(l))
+    if (!row) return false
+    const launchBtn = (row.querySelector('button[title="Launch"]') || row.querySelector('button[aria-label^="Launch"], button[title^="Launch"]')) as HTMLElement | null
+    if (!launchBtn) return false
+    launchBtn.click()
+    return true
   }, label)
   if (!launched) console.log(`[capture] WARNING: config "${label}" not found in sidebar`)
   else console.log(`[capture] Launched session: ${label}`)
   // Wait for terminal to mount + xterm to render the prompt
   await window.waitForTimeout(2500)
+  await clickPanelTab(window, 'running')
 }
 
 /** Click a button in the active session's toolbar by its title attribute. */
@@ -897,10 +1016,18 @@ async function main() {
     const dataRoot = path.dirname(resourcesDir)
     console.log(`[capture] App data root (CCC_E2E_DATA_DIR): ${dataRoot}`)
     const app = await electron.launch({
-      args: [BUILT_APP],
+      // P4.11: Electron's own user data (by default under the real app data
+      // folder, shared with an installed app) in the data root too, as the
+      // e2e harness does (tests/e2e/helpers/electron-app.ts).
+      args: [BUILT_APP, `--user-data-dir=${path.join(dataRoot, 'electron-userdata')}`],
+      cwd: dataRoot,
       // CCC_FORCE_SPLASH pinned off: the capture assumes the first window is
       // the main window, so a stray export must not surface the splash.
-      env: { ...process.env, NODE_ENV: 'production', CCC_E2E_DATA_DIR: dataRoot, CCC_FORCE_SPLASH: '0' },
+      // P4.11: the isolated home with the capture's switches (capture-env.ts):
+      // NODE_ENV production, CCC_E2E_DATA_DIR, CCC_FORCE_SPLASH off; app
+      // data and temp folders in the data root; the stand-in CLIs first on a
+      // PATH without any real Claude or Codex.
+      env: captureLaunchEnv(dataRoot),
     })
     const window = await app.firstWindow()
     await window.setViewportSize({ width: WIDTH, height: HEIGHT })
@@ -908,7 +1035,9 @@ async function main() {
     await window.waitForTimeout(6000)
     await dismissModals(window)
 
-    // Step 1: Session Options — open edit dialog on first config
+    // Step 1: Session Options -- open edit dialog on first config (its row's
+    // Edit button, on the sidebar's Saved tab)
+    await clickPanelTab(window, 'saved')
     await window.evaluate(() => {
       const items = document.querySelectorAll('button')
       for (const btn of items) {
@@ -947,7 +1076,7 @@ async function main() {
       // label so the shot tracks whatever the registry currently ships;
       // React 18 reads value via the prototype descriptor, so set through
       // it and fire change. Starting effort is a radio-pill group.
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set
+      const setter = Object.getOwnPropertyDescriptor(globalThis.HTMLSelectElement.prototype, 'value')?.set
       const selects = Array.from(document.querySelectorAll('select'))
       for (const s of selects) {
         const wrap = s.closest('div')?.textContent || ''
@@ -966,56 +1095,36 @@ async function main() {
     })
     await window.waitForTimeout(500)
     await capture(window, 'step-session-options.jpg', 'Session config dialog (Claude Code, Opus + Ultracode startup)')
-    // Close dialog — try multiple methods
-    await window.keyboard.press('Escape')
-    await window.waitForTimeout(300)
-    await window.keyboard.press('Escape')
-    await window.waitForTimeout(300)
-    // Also click any close/cancel button
-    await window.evaluate(() => {
-      const overlays = document.querySelectorAll('.fixed')
-      overlays.forEach(el => el.remove())
-    })
-    await window.waitForTimeout(500)
+    // Close the dialog as a user does, discarding the provider/model change
+    // made for the shot (closeDialog). It used to delete every `.fixed`
+    // element from the page, which also took the app's own dialog layer, so
+    // no later dialog drew (the VM run's empty step-codex shot).
+    await closeDialog(window)
 
     // Step 1b: Codex Provider -- open Edit on the Codex demo config so the
-    // SessionDialog surfaces ProviderSegmentedControl + CodexFormFields
-    // (model dropdown, permissions preset, reasoning effort). Right-click
-    // the config label to get the context menu, then click Edit. Mirrors
-    // the fallback path used above for Web App / API Server.
-    await window.evaluate(() => {
-      const spans = document.querySelectorAll('span')
-      for (const s of spans) {
-        if (s.textContent === 'Codex Provider') {
-          s.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 100, clientY: 200 }))
-          return
-        }
-      }
-    })
-    await window.waitForTimeout(800)
-    await window.evaluate(() => {
-      const items = document.querySelectorAll('[role="menuitem"], button')
-      for (const el of items) { if (el.textContent?.trim() === 'Edit') { (el as HTMLElement).click(); return } }
-    })
-    await window.waitForTimeout(800)
+    // SessionDialog surfaces the Codex fields (model, permissions preset,
+    // reasoning effort): its row's own Edit button on the Saved tab (the
+    // config label's right-click menu is gone).
+    await editConfigFromSidebar(window, 'Codex Provider')
     await capture(window, 'step-codex.jpg', 'Codex provider edit dialog (CodexFormFields visible)')
-    // Close dialog
-    await window.keyboard.press('Escape')
-    await window.waitForTimeout(300)
-    await window.keyboard.press('Escape')
-    await window.waitForTimeout(300)
-    await window.evaluate(() => {
-      const overlays = document.querySelectorAll('.fixed')
-      overlays.forEach(el => el.remove())
-    })
-    await window.waitForTimeout(500)
+    await closeDialog(window)
 
-    // (The Agent Hub capture left with #443 -- the training card is gone and
-    // the surviving Cloud Agents page has no card of its own yet.)
+    // (The Agent Hub capture left with #443.) The Cloud Agents page has a
+    // Feature Guide card again (the owner's 2026-10-04 answer); its image is
+    // the page with the seeded demo agents (SAMPLE_CLOUD_AGENTS). Until this
+    // shot exists the card shows v2-shell-hero.jpg (training-steps.ts).
+    await clickNav(window, 'Cloud Agents')
+    await window.waitForTimeout(800)
+    await capture(window, 'step-cloud-agents.jpg', 'Cloud Agents page (seeded demo agents)')
 
     // Step 3: Conductor MCP (nav label is "Conductor MCP"; the asset/step id
     // stays 'vision' for back-compat with saved view state)
+    // P4.11: both providers on, the browser started, the Codex review and
+    // Claude review cards as built.
     await clickNav(window, 'Conductor MCP')
+    const browserState = await waitForBrowserConnected(window)
+    console.log(`[capture] Conductor MCP status: ${browserState}`)
+    await window.waitForTimeout(800)
     await capture(window, 'step-vision.jpg', 'Conductor MCP page')
 
     // Step 4: Tokenomics (small settle so the transcript scan the seed feeds
@@ -1032,6 +1141,17 @@ async function main() {
     // Step 6: Memory
     await clickNav(window, 'Memory')
     await window.waitForTimeout(3000) // async scan
+    // P4.11: the Claude store and a Codex account's memories in one shot:
+    // bring the Codex section's heading to the middle of the page.
+    const codexSection = await window.evaluate(() => {
+      const els = Array.from(document.querySelectorAll('h1, h2, h3, h4, [role="heading"], div, span')) as HTMLElement[]
+      const head = els.find((e) => e.children.length === 0 && /codex memories/i.test(e.textContent || ''))
+      if (!head) return false
+      head.scrollIntoView({ block: 'center' })
+      return true
+    })
+    if (!codexSection) console.log('[capture] WARNING: no Codex memories section on the Memory page')
+    await window.waitForTimeout(600)
     await capture(window, 'step-memory.jpg', 'Memory Visualiser')
 
     // Step 7: Logs (no historical sessions seeded — empty state still shows
@@ -1040,10 +1160,15 @@ async function main() {
     await window.waitForTimeout(800)
     await capture(window, 'step-logs.jpg', 'Logs page')
 
-    // Step 8: Settings (Security)
+    // Step 8: Settings, Accounts (P4.11): the Providers card with Claude Code
+    // and Codex on and found, the fictional Claude accounts, and the Codex
+    // accounts (one the default, one the reviewer). The Claude rows' sign-in
+    // line comes from the stand-in's `auth status`, so let it settle.
     await clickNav(window, 'Settings')
     await window.waitForTimeout(500)
-    await capture(window, 'step-security.jpg', 'Settings page')
+    await clickTab(window, 'Accounts')
+    await window.waitForTimeout(3000)
+    await capture(window, 'step-security.jpg', 'Settings, Accounts')
 
     // Step 8a (v1.5.13): Dynamic Workflows toggle - on the Settings General
     // tab, scroll the Security section into view so the "Disable Claude Code
@@ -1093,7 +1218,7 @@ async function main() {
     // Snap — click Snap button to surface the dropdown menu (Rectangle /
     // Window). Capture the dropdown, NOT the rectangle overlay (which is
     // a separate Electron window).
-    const snapClicked = await clickToolbarButton(window, 'Take Screenshot')
+    const snapClicked = await clickToolbarButton(window, 'Take a screenshot')
     if (snapClicked) {
       await window.waitForTimeout(500)
       await capture(window, 'step-snap.jpg', 'Snap dropdown menu')
@@ -1138,10 +1263,12 @@ async function main() {
     // screenshots reliably. Tour falls back to the legacy bullet view.
 
     console.log('[capture] Closing app...')
-    // app.close() opens a graceful-shutdown race; if Electron does not
-    // exit within ~5s we SIGKILL the underlying node-spawned process so
-    // it does not leave a window hanging on the user's screen. Playwright
-    // exposes the child via app.process().
+    // app.close() opens a graceful-shutdown race; with live sessions (the
+    // hero's three) the app asks before quitting, so it can hang. If Electron
+    // does not exit within ~5s its whole process tree is ended (killAppTree):
+    // a plain kill of the main process left Electron's helpers, the sessions'
+    // shells and the vision browser running on Windows (VM run, P4.11).
+    // Playwright exposes the child via app.process().
     const child = app.process()
     let closed = false
     await Promise.race([
@@ -1149,8 +1276,8 @@ async function main() {
       new Promise<void>((r) => setTimeout(r, 5000)),
     ])
     if (!closed) {
-      console.warn('[capture] app.close() did not finish in 5s -- SIGKILL')
-      try { child.kill('SIGKILL') } catch {}
+      console.warn('[capture] app.close() did not finish in 5s -- ending its process tree')
+      killAppTree(child.pid)
     }
   } finally {
     cleanupSampleData(backupInfo)
@@ -1159,9 +1286,15 @@ async function main() {
   // Success path only: drop the throwaway data root (seeded CONFIG plus
   // whatever the app wrote next to it). On failure it stays behind so the
   // seeded state can be inspected.
-  try { fs.rmSync(CAPTURE_DATA_ROOT, { recursive: true, force: true }) } catch {}
+  // Retried: right after the app's tree is ended its files can still be held
+  // for a moment on Windows.
+  try { fs.rmSync(CAPTURE_DATA_ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 }) } catch {}
+  if (fs.existsSync(CAPTURE_DATA_ROOT)) console.warn(`[capture] could not remove the data root ${CAPTURE_DATA_ROOT}; remove it by hand`)
 
   console.log('\n[capture] All screenshots captured.')
+  // Nothing of the app is left to wait for; a lingering Playwright handle
+  // must not keep the tool running.
+  process.exit(0)
 }
 
 main().catch((err) => {

@@ -2,7 +2,7 @@
 
 **AI Code Conductor** (the "app")
 
-Last updated: 2 October 2026
+Last updated: 4 October 2026
 
 ## The short version
 
@@ -144,6 +144,61 @@ The Tokenomics cost index is separate and is not affected by that switch.
   installed runs it against a new, empty folder, never your own, and so does
   Sentinel's read of the models the installed Codex offers (`codex debug
   models --bundled`, the list built into Codex, with no sign-in).
+- **Insights for a Codex account.** A report on a Codex account reads that
+  account's own conversation files (its sessions folder) on this computer, counts
+  its sessions itself, and sends a summary of them (the figures, the previous
+  report's figures as numbers only, and for each recent session the start of
+  your requests and of Codex's replies, with known secret formats removed) to
+  Codex's model, as one read-only run of the Codex command-line tool with no
+  tools, on that account's own sign-in and allowance, in an empty folder the
+  app makes for it and removes after. Codex keeps that run's conversation in
+  the account's folder, as it keeps any session's, so its cost shows in
+  Tokenomics; the next report leaves it out. The report and its figures are
+  saved in the app's data folder (`insights/`), as a Claude Code report is.
+- **Run all's written analysis.** With Run all, each account's own report runs
+  as set out above, on that account. The written analysis that compares them
+  is one more run, on one account: the primary Claude Code account when it
+  produced figures, otherwise the first account that did. It is sent the
+  comparison the app computed, and nothing else: each account's name as the
+  roll-up shows it (which can be its email), its reporting period, its
+  figures, and the first three items of each of its top lists. For a Codex
+  account those lists are its most-used tool and MCP server names (a name that
+  is not a plain identifier is sent as "other"), its languages, and the short
+  goal summaries Codex wrote for its report. No request or reply text is sent,
+  though the goal summaries describe what the sessions were for. So when the
+  analysis runs on Claude Code, all of it, the Codex accounts' part included,
+  goes to Anthropic under that Claude Code account; when it runs on a Codex
+  account, all of it, the other accounts' goal summaries and MCP server names
+  included, goes to OpenAI under that Codex account. It runs in an empty
+  folder the app makes for it and removes after. On Claude Code it runs with
+  no tools, keeps no transcript and loads none of your own settings or
+  instruction files (their proxy and certificate settings alone are passed
+  on, so it can connect as your sessions do). On Codex it is the same
+  read-only run with no tools as a report, and Codex keeps it in that
+  account's sessions folder, as it keeps a report's run.
+- **The Agent Canvas and Vision guidance.** For a Codex account you added, the
+  app writes its three instruction files (the canvas review loop, canvas plans
+  and the Conductor browser) into that account's own folder, under `skills/`,
+  while the built-in tools are on, whichever of them are on, and removes them at
+  that account's next launch with the built-in tools off. For the sign-in
+  already on this computer, it writes the same three into your own Codex
+  folder, under `skills/`, before a session there while the built-in tools are
+  on, and removes them when you turn Codex or the built-in tools off; while both
+  are on it keeps the copies already there up to date. Codex lists them for
+  every session that uses that folder, including ones you start outside the
+  app. Before it writes into your own Codex folder the app notes that folder's
+  path, and nothing else, in a small file in its own data folder, so that it
+  can find its copies again to remove them. In either folder it rewrites or
+  removes only the skill folders it marked as its own, never through a link,
+  and never a skill of yours with the same name.
+- **The Memory page and Debug Logging read each Codex account's own folders.**
+  The Memory page lists the memory files Codex keeps in each account's
+  `memories` folder (your own Codex folder included, once you use it), reading
+  the start of each for its description and a file you open in full, and
+  changes nothing there. Debug Logging reads the account's `config.toml` for
+  its `log_dir` setting, then opens the account's log folder, or shows the
+  `log_dir` folder selected in the folder that holds it. Nothing of either
+  leaves your machine.
 - **A name you give a Codex session is written beside its conversation.** Once
   the app knows for certain which conversation the session is on, it writes
   the name, and the time it was set, in a small file next to that
@@ -169,8 +224,9 @@ The Tokenomics cost index is separate and is not affected by that switch.
 | `status.openai.com` | OpenAI's public service-status page, for the title bar's Codex status pill | While Codex is on: when the app starts, every 5 minutes, and at once when Codex is turned on. Never while it is off or not set up |
 | `api.github.com`, `github.com` | Checks for app updates and downloads them; powers the optional GitHub integration | On update checks, and when you use the GitHub features |
 | `raw.githubusercontent.com` | Fetches a public model-pricing table (LiteLLM's open dataset) so cost figures are accurate | At most once every 24 hours, cached locally |
-| `support.claude.com`, `raw.githubusercontent.com`, `api.github.com` | Sentinel (off by default), for the assistants in use: Anthropic's public Claude Code model list and Claude Code's public changelog (the anthropics/claude-code repository), and Codex's public release notes (the openai/codex repository's releases, read one version at a time from GitHub's API), all read without any sign-in. Its analysis of an update is a run of the assistant in use (with both on, Claude Code): Claude Code in its analysis account, or Codex in the Codex account chosen for it in Settings, Sentinel (when none is chosen, or the chosen one cannot run, the account Codex reviews run on), with that account's own sign-in, as any run of it. The analysis is sent only the changelog or release notes, in an empty folder of its own that is removed after: Claude Code's runs with no tools, keeps no transcript and loads none of your own settings or instruction files (their proxy and certificate settings alone are passed on, so it can connect as your sessions do); Codex's runs with no tool that runs a command, reads the web or connects an app (its file-editing tool is refused by its read-only sandbox) and loads no project instructions | Only while Sentinel is on: the model list when the app starts; the changelog or release notes, and the analysis, when the installed version has changed since Sentinel last checked, and when you press Re-run in its panel |
+| `support.claude.com`, `raw.githubusercontent.com`, `api.github.com` | Sentinel (off by default), for the assistants in use: Anthropic's public Claude Code model list and Claude Code's public changelog (the anthropics/claude-code repository), and Codex's public release notes (the openai/codex repository's releases, read one version at a time from GitHub's API), all read without any sign-in. Its analysis of an update is a run of the assistant in use (with both on, the one Ask Conductor runs on, Claude Code by default): Claude Code in its analysis account, or Codex in the Codex account chosen for it in Settings, Sentinel (when none is chosen, or the chosen one cannot run, the account Codex reviews run on), with that account's own sign-in, as any run of it. The analysis is sent only the changelog or release notes, in an empty folder of its own that is removed after: Claude Code's runs with no tools, keeps no transcript and loads none of your own settings or instruction files (their proxy and certificate settings alone are passed on, so it can connect as your sessions do); Codex's runs with no tool that runs a command, reads the web or connects an app (its file-editing tool is refused by its read-only sandbox) and loads no project instructions | Only while Sentinel is on: the model list when the app starts; the changelog or release notes, and the analysis, when the installed version has changed since Sentinel last checked, and when you press Re-run in its panel |
 | OpenAI: `chatgpt.com`, and with Codex 0.155.1 also `sdmntprsouthcentralus.oaiusercontent.com` (OpenAI's content storage) | Codex's own usage check for a Codex account with no session open, run by the Codex command-line tool in that account's folder with that account's own sign-in. Codex reads the account's usage allowance and credits count, and on the same start refreshes its list of models and checks its plugin cache, as it does whenever it runs | Only when you open the Usage page, press Refresh or use an account card's Retry; about a second, one account at a time. Never for an API-key account, for your own Codex folder, or for an account a session or review is using |
+| OpenAI: `chatgpt.com`, and the sign-in pages it sends you to | A Codex account's chatgpt.com sign-in in the app: its sign-in window, and that account's view of chatgpt.com in the browser pane, with that account's own sign-in. The sign-in is kept in that account's own browser storage in the app, apart from every other account, and nothing is copied from your own browser; beside it the app keeps a note of which account is signed in, its email and when, never a password, token or cookie value | Only when you sign a Codex account in to chatgpt.com, or open chatgpt.com in a Codex session's browser pane. Sign out of chatgpt.com, or archiving the account, clears that storage |
 
 To avoid the Codex usage check, leave the Usage page closed: it runs only on
 the three actions above, and an account with a session open or an API key is
@@ -200,7 +256,10 @@ or OpenAI through those tools, exactly as they would if you ran them yourself in
 a terminal. A code review works the same way: a Codex review asked for from a
 Claude session sends the change under review to OpenAI through Codex, and a
 Claude review asked for from a Codex session sends it to Anthropic through
-Claude Code; each review direction can be switched off in Settings. Signing in
+Claude Code; each review direction can be switched off in Settings. A cloud
+agent works the same way: its task and the project it runs in go to the
+assistant it runs on, and a Codex agent is a `codex exec` run in its Codex
+account's folder, with that account's own sign-in. Signing in
 to a Codex account runs Codex's own sign-in, which talks to OpenAI directly. The app does not add to, intercept, or copy that traffic.
 See Anthropic's and OpenAI's privacy policies for how they handle it.
 

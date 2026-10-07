@@ -18,7 +18,10 @@
  * The accounts service, the Codex package's reviewer, the headless Claude
  * spawner, the network fetches and the settings are faked: no process
  * starts, no request leaves, and the only folders made are this suite's own
- * state folder and what the service makes (and removes) inside it.
+ * state folder and what the service makes (and removes) inside it. The
+ * cases where the runs folder is a link plant junctions, so they live in a
+ * suite of their own that runs in CI and on the VM only:
+ * sentinel-analysis-folders-links.test.ts.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
@@ -26,19 +29,8 @@ import * as os from 'os'
 import * as path from 'path'
 import type { SentinelStateSnapshot } from '../../../src/shared/sentinel-types'
 import { sentinelVersionParts, sentinelCompatibleSubject, CLAUDE_ONLY_SCOPE } from '../../../src/renderer/components/sentinel/sentinel-report-text'
+import { deriveDotState } from '../../../src/renderer/components/sentinel/SentinelDot'
 
-// P3.9 round 2 (F2): a hook run once just before the next mkdtemp, to move
-// the runs folder between the check and the make.
-const fsHooks = vi.hoisted(() => ({ beforeMkdtemp: null as null | ((prefix: string) => void) }))
-vi.mock('fs', async (orig) => {
-  const real = await orig<typeof import('fs')>()
-  const mkdtempSync = ((prefix: string, opts?: unknown) => {
-    const h = fsHooks.beforeMkdtemp
-    if (h) { fsHooks.beforeMkdtemp = null; h(prefix) }
-    return (real.mkdtempSync as (p: string, o?: unknown) => string)(prefix, opts)
-  }) as typeof real.mkdtempSync
-  return { ...real, mkdtempSync, default: { ...real, mkdtempSync } }
-})
 vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn(), on: vi.fn() },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => [] },
@@ -121,9 +113,9 @@ vi.mock('../../../src/main/providers/core', async (orig) => ({
     },
   },
 }))
-const settings = vi.hoisted(() => ({ value: null as null | Record<string, unknown> }))
+const settings = vi.hoisted(() => ({ value: null as null | Record<string, unknown>, onRead: null as null | (() => void) }))
 vi.mock('../../../src/main/config-manager', () => ({
-  readConfig: () => settings.value,
+  readConfig: () => { settings.onRead?.(); return settings.value },
   readConfigChecked: () => ({ value: settings.value, outcome: settings.value ? 'ok' : 'absent' }),
 }))
 vi.mock('../../../src/main/account-profiles', () => ({
@@ -136,13 +128,13 @@ vi.mock('../../../src/main/account-profiles', () => ({
 const claudeRuns: Array<{ cwd: string; listing: string[]; env: Record<string, string> | undefined; transportEnv?: Record<string, string> }> = []
 /** Round 3: the Claude package's transport picker (none unless a case sets it). */
 const transport = vi.hoisted(() => ({ pick: null as null | ((raw: string) => Record<string, string>) }))
-const versionThrows = vi.hoisted(() => ({ on: false }))
+const versionThrows = vi.hoisted(() => ({ on: false, value: undefined as unknown }))
 /** Fixer 10: the Claude Code version installed, and its analysis's reply (none: no findings). */
 /** Fixer 13: `versionCode`, the exit code of `claude --version` (not 0: the version is unavailable). */
 const claude = vi.hoisted(() => ({ version: '2.1.300', answer: null as null | string, versionCode: 0 }))
 const spawnClaudeHeadless = vi.fn(async (args: string[], _t?: number, _stdin?: string, _home?: string | null, _signal?: AbortSignal, opts?: { cwd?: string; env?: Record<string, string>; transportEnv?: Record<string, string> }) => {
   if (args[0] === '--version') {
-    if (versionThrows.on) throw new Error('the version check broke')
+    if (versionThrows.on) throw (versionThrows.value ?? new Error('the version check broke'))
     return { code: claude.versionCode, stdout: claude.versionCode === 0 ? `${claude.version} (Claude Code)` : '', stderr: '' }
   }
   if (opts?.cwd) claudeRuns.push({ cwd: opts.cwd, listing: fs.readdirSync(opts.cwd), env: opts.env, transportEnv: opts.transportEnv })
@@ -184,14 +176,15 @@ beforeEach(() => {
   review.answer = null
   review.hold = null
   settings.value = null
+  settings.onRead = null
   spawnClaudeHeadless.mockClear()
   claudeRuns.length = 0
   transport.pick = null
   versionThrows.on = false
+  versionThrows.value = undefined
   claude.version = '2.1.300'
   claude.answer = null
   claude.versionCode = 0
-  fsHooks.beforeMkdtemp = null
   fetchChangelog.mockClear()
   fetchChangelog.mockImplementation(async () => null)
   fetchCodexReleaseNotes.mockClear()
@@ -309,7 +302,7 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
     expect(path.dirname(run.cwd)).toBe(path.resolve(runsDir()))
     expect(path.basename(run.cwd)).toMatch(/^ccc-sentinel-claude-/)
     expect(run.listing).toEqual([])
-    expect(run.env).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1' })
+    expect(run.env).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1', CLAUDE_CODE_MAX_RETRIES: '8' })
     expect(fs.existsSync(run.cwd)).toBe(false)
     // The version check is not an analysis: it runs as before.
     expect(spawnClaudeHeadless).toHaveBeenCalledWith(['--version'], 15000, undefined, null)
@@ -479,6 +472,22 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
     expect(s.getSentinelState()!.snapshot().lastAnalysisError).toBe('Codex is off. Turn it on in Settings, Accounts.')
   })
 
+  // [host] WP2 PR 4, P4.3: Sentinel follows the Settings row "Ask Conductor
+  // runs on", and a provider switched off never rewrites the saved choice.
+  it('P4.3: the row says Codex but Codex is switched off: Claude Code\'s update is analysed on Claude Code, no Codex run, and the setting is left as it was', async () => {
+    settings.value = { askConductorProvider: 'codex' }
+    svc.pref.codex = 'off'
+    fetchChangelog.mockImplementation(async () => '## 2.1.300\n- claude change')
+    const s = await sentinel({ lastSeenCcVersion: '2.1.200', lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    fetchChangelog.mockImplementation(async () => null)
+    expect(claudeAnalyses()).toHaveLength(1)
+    expect(String(claudeAnalyses()[0][2])).toMatch(/--- BEGIN CHANGELOG [0-9a-f]{16} ---/)
+    expect(review.runs).toHaveLength(0)
+    expect(svc.prepares).toEqual([])
+    expect(settings.value).toEqual({ askConductorProvider: 'codex' })
+  })
+
   it('both updated at once: each is analysed, Claude Code first, and each version is recorded', async () => {
     fetchChangelog.mockImplementation(async () => '## 2.1.300\n- claude change')
     const s = await sentinel({ lastSeenCcVersion: '2.1.200', lastSeenCodexVersion: '0.153.4' })
@@ -492,59 +501,90 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
   })
 })
 
-describe("the analysis folders (round 1)", () => {
-  it('round 2: a runs folder that became a link between the check and the make is refused; nothing runs and nothing is left there', async () => {
+describe("the title-bar chip's failed-analysis mark (owner answers review, E-S6) [host]", () => {
+  const snap = (s: Awaited<ReturnType<typeof sentinel>>) => s.getSentinelState()!.snapshot()
+  it('an analysis that ran and failed is marked failed [host]', async () => {
     svc.pref.claude = 'off'
-    const elsewhere = path.join(dir, 'elsewhere')
-    fs.mkdirSync(elsewhere)
-    fsHooks.beforeMkdtemp = () => {
-      fs.renameSync(runsDir(), runsDir() + '-was')
-      fs.symlinkSync(elsewhere, runsDir(), 'junction')
-    }
+    review.answer = () => ({ ok: false, code: 'failed', message: 'Codex exited with code 1: unexpected status 400 Bad Request.' })
     const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
     await s.sentinelStartupCheck()
-    expect(fsHooks.beforeMkdtemp).toBeNull()
-    expect(review.runs).toHaveLength(0)
-    expect(fs.readdirSync(elsewhere)).toEqual([])
-    expect(svc.released).toBe(1)
-    expect(s.getSentinelState()!.snapshot().lastAnalysisError).toBe("Sentinel's analysis could not run on Codex: no empty folder could be made for it.")
+    expect(snap(s)).toMatchObject({ lastAnalysisFailed: true })
+    expect(snap(s).lastAnalysisError).toContain('unexpected status 400')
   })
-
-  it('leftovers of earlier runs (own prefix, an hour old, real folders) are swept; a young one, another name and a link are left', async () => {
-    svc.pref.claude = 'off'
-    fs.mkdirSync(runsDir(), { recursive: true })
-    const old = path.join(runsDir(), 'ccc-sentinel-codex-OLD111')
-    const young = path.join(runsDir(), 'ccc-sentinel-codex-YOUNG1')
-    const other = path.join(runsDir(), 'something-else')
-    const target = path.join(dir, 'link-target')
-    for (const d of [old, young, other, target]) fs.mkdirSync(d)
-    fs.writeFileSync(path.join(target, 'keep.txt'), 'x')
-    const link = path.join(runsDir(), 'ccc-sentinel-codex-LINK11')
-    fs.symlinkSync(target, link, 'junction')
-    const hourAgo = (Date.now() - 2 * 60 * 60 * 1000) / 1000
-    for (const d of [old, other]) fs.utimesSync(d, hourAgo, hourAgo)
-    try { fs.lutimesSync(link, hourAgo, hourAgo) } catch { /* not everywhere */ }
+  it('release notes that could not be read, or a launch Codex could not prepare, mark it failed [host]', async () => {
+    fetchCodexReleaseNotes.mockImplementationOnce(async () => null)
     const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
     await s.sentinelStartupCheck()
-    expect(review.runs).toHaveLength(1)
-    expect(fs.existsSync(old)).toBe(false)
-    expect(fs.existsSync(young)).toBe(true)
-    expect(fs.existsSync(other)).toBe(true)
-    expect(fs.existsSync(path.join(target, 'keep.txt'))).toBe(true)
-  })
-
-  it('a runs folder that is a link (not the app\'s own folder) is refused: nothing runs, the lease goes', async () => {
+    expect(snap(s)).toMatchObject({ lastAnalysisFailed: true })
     svc.pref.claude = 'off'
-    const elsewhere = path.join(dir, 'elsewhere')
-    fs.mkdirSync(elsewhere)
-    fs.mkdirSync(path.join(dir, 'sentinel'), { recursive: true })
-    fs.symlinkSync(elsewhere, runsDir(), 'junction')
+    svc.prepareAnswer = () => ({ ok: false, code: 'acknowledgement-required', message: 'This sign-in is unverified: confirm that this launch may use it.' })
+    await s.sentinelRerun()
+    expect(snap(s)).toMatchObject({ lastAnalysisFailed: true })
+    expect(snap(s).lastAnalysisError).toContain('This sign-in is unverified')
+  })
+  it('unmatched findings (the analysis completed) are not a failure [host]', async () => {
+    svc.pref.claude = 'off'
+    review.answer = () => reply('{"tokens":{"refresh_token":"FAKE"}}')
+    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    expect(snap(s).lastAnalysisError).toMatch(/could not be matched/)
+    expect(snap(s).lastAnalysisFailed).toBe(false)
+  })
+  it('an assistant switched off while its notes were fetched, or a Re-run with every assistant off, is not a failure [host]', async () => {
+    fetchCodexReleaseNotes.mockImplementationOnce(async () => { svc.pref.codex = 'off'; return { text: NOTES_TEXT, versions: ['0.155.1'], cut: null } })
+    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    expect(snap(s).lastAnalysisError).toBe('Codex is off. Turn it on in Settings, Accounts.')
+    expect(snap(s).lastAnalysisFailed).toBe(false)
+    svc.pref = { claude: 'off', codex: 'off' }
+    await s.sentinelRerun()
+    expect(snap(s).lastAnalysisError).toMatch(/Claude Code is off/)
+    expect(snap(s).lastAnalysisFailed).toBe(false)
+  })
+  it('the launch rule refusing the runner itself (its provider switched off as it starts) is not a failure [host]', async () => {
+    svc.pref.claude = 'off'
+    // Codex is switched off after the runner was chosen and before it starts.
+    fetchCodexReleaseNotes.mockImplementationOnce(async () => {
+      settings.onRead = () => { svc.pref.codex = 'off'; settings.onRead = null }
+      return { text: NOTES_TEXT, versions: ['0.155.1'], cut: null }
+    })
     const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
     await s.sentinelStartupCheck()
     expect(review.runs).toHaveLength(0)
-    expect(svc.released).toBe(1)
-    expect(fs.readdirSync(elsewhere)).toEqual([])
-    expect(s.getSentinelState()!.snapshot().lastAnalysisError).toBe("Sentinel's analysis could not run on Codex: no empty folder could be made for it.")
+    expect(snap(s).lastAnalysisError).toBe('Codex is off. Turn it on in Settings, Accounts.')
+    expect(snap(s).lastAnalysisFailed).toBe(false)
+  })
+  it('an unexpected error in the start-up check or a Re-run is a failed check (polish pass, E-S8) [host]', async () => {
+    svc.pref.codex = 'off'
+    fetchChangelog.mockImplementationOnce(async () => { throw new Error('the changelog read broke') })
+    const s = await sentinel({ lastSeenCcVersion: '2.1.290' })
+    await s.sentinelStartupCheck()
+    expect(snap(s)).toMatchObject({ analyzing: false, lastAnalysisError: 'the changelog read broke', lastAnalysisFailed: true })
+    versionThrows.on = true
+    await s.sentinelRerun()
+    expect(snap(s)).toMatchObject({ analyzing: false, lastAnalysisError: 'the version check broke', lastAnalysisFailed: true })
+  })
+  it('a thrown value that is not an Error still marks the check failed with its text, so the chip says it did not complete (final nits, E-Q15) [host]', async () => {
+    svc.pref.codex = 'off'
+    // Not an Error: the reason has no .message, only its own text.
+    fetchChangelog.mockImplementationOnce(async () => { throw 'the changelog read broke, as a plain value' })
+    const s = await sentinel({ lastSeenCcVersion: '2.1.290' })
+    await s.sentinelStartupCheck()
+    expect(snap(s)).toMatchObject({ analyzing: false, lastAnalysisError: 'the changelog read broke, as a plain value', lastAnalysisFailed: true })
+    expect(deriveDotState(true, snap(s))).toBe('incomplete')
+    versionThrows.on = true
+    versionThrows.value = 'the version check broke, as a plain value'
+    await s.sentinelRerun()
+    expect(snap(s)).toMatchObject({ analyzing: false, lastAnalysisError: 'the version check broke, as a plain value', lastAnalysisFailed: true })
+    expect(deriveDotState(true, snap(s))).toBe('incomplete')
+  })
+  it('a problem carried beside an analysis that completed is not a failure [host]', async () => {
+    svc.installation = { discoveryState: 'error', compatibility: 'unknown' }
+    fetchChangelog.mockImplementationOnce(async () => '## 2.1.300\n- x')
+    const s = await sentinel({ lastSeenCcVersion: '2.1.300' })
+    await s.sentinelRerun()
+    expect(snap(s).lastAnalysisError).toMatch(/The installed Codex could not be checked/)
+    expect(snap(s).lastAnalysisFailed).toBe(false)
   })
 })
 

@@ -148,7 +148,7 @@ async function renderArmed(el: React.ReactElement) {
 // answers come from it, and the takeover renders on its own turn.
 const BASE = {
   configLoaded: true, logsWipeBytes: 0, showTraining: false, showTrainingAll: false, showGitHubOnboarding: false,
-  loggingConsentSeen: true, whatsNewDue: false, trainingDue: false, githubOnboardingDue: false,
+  loggingConsentSeen: true, whatsNewDue: false, githubOnboardingDue: false,
 }
 function AppLike({ over = {}, onStartSession }: { over?: Record<string, unknown>; onStartSession: () => void }) {
   const open = useHelloCodexStore((s) => s.open === 'takeover')
@@ -791,6 +791,11 @@ describe('Hello Codex: review round 1', () => {
     expect(pages[3].points.map((p) => p.lead)).toEqual(['It needs Claude Code too.', 'A separate reviewer, not another session.'])
     expect(pages[3].where).toBe('Settings, Accounts')
     expect(helloCodexComparison(off).find(([w]) => w === 'Code review')![2]).toBe('Needs Claude Code on')
+    // [host] P4.11: the Agent Canvas, Vision and the browser push reach Codex
+    // sessions since P4.1 and P4.2, as the "How Codex differs" page says.
+    for (const opts of [off, { claudeReview: true, claudeOn: true }]) {
+      expect(helloCodexComparison(opts).find(([w]) => w === 'Vision, browser, canvas')).toEqual(['Vision, browser, canvas', 'Yes', 'Yes'])
+    }
     // P3.16 sweep: the table names every Codex permission choice the session
     // dialog offers, Plan mode (P3.8) included, in the dialog's order.
     for (const opts of [off, { claudeReview: true, claudeOn: true }]) {

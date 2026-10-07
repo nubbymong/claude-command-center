@@ -24,11 +24,13 @@ import { trackUsage } from '../stores/tipsStore'
 import { useAddAccount } from '../hooks/useAddAccount'
 import { AccountsSurface } from './settings/accounts/AccountsSurface'
 import { CodeReviewTools } from './settings/CodeReviewTools'
+import { AccountLogFoldersPanel } from './settings/AccountLogFoldersPanel'
 import { BuildIdentityLine } from './BuildIdentityLine'
 import { shortSha } from '../../shared/build-identity'
 import { usesClaude, usesCodex } from '../onboarding/provider-choice'
 import { ProviderMark } from './sidebar/Badges'
-import { sentinelAnalysisProvider } from '../../shared/ask-conductor-provider'
+import { sentinelAnalysisProvider, askConductorProviderChoice } from '../../shared/ask-conductor-provider'
+import { askConductorChoiceShown } from '../lib/askConductorGate'
 import { sentinelSettingsText } from './sentinel/sentinel-report-text'
 import { useProviderAccountsStore, sentinelCodexAccountChoices, accountDisplayName } from '../stores/providerAccountsStore'
 import { FOOTER_BARE_LABEL_PROVIDER, footerHiddenLabelsFor } from '../../shared/usage-labels'
@@ -283,6 +285,28 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   Show Ask Conductor
                   <span className="text-[10px] text-[var(--text-muted)]">(The button at the bottom of the sidebar)</span>
                 </label>
+                {/* P4.3 (OD27 M4, option B): which assistant Ask Conductor runs
+                    on. Shown only while both are on (askConductorChoiceShown);
+                    Claude Code by default; turning a provider off never rewrites
+                    the saved choice. Sentinel's analysis follows it. */}
+                {askConductorChoiceShown(settings) && (
+                  <div data-ux-id="settings-ask-conductor-runs-on" className="mt-2">
+                    <Field label="Ask Conductor runs on">
+                      <select
+                        value={askConductorProviderChoice(settings)}
+                        onChange={(e) => save({ askConductorProvider: e.target.value === 'codex' ? 'codex' : 'claude' })}
+                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus-ring-strong focus:border-blue/50 transition-colors"
+                        data-ux-id="settings-ask-conductor-runs-on-select"
+                      >
+                        <option value="claude">Claude Code (default)</option>
+                        <option value="codex">Codex</option>
+                      </select>
+                    </Field>
+                    <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                      Which assistant answers your Ask Conductor questions, and so whose allowance they use. Applies the next time Ask Conductor starts.
+                    </p>
+                  </div>
+                )}
                 {/* Sessions panel (the two-mode left panel, design pass
                     2026-08-24; supersedes the #362 layout picker). One choice:
                     which tab the app opens on. */}
@@ -604,6 +628,8 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                 >
                   Open log folder
                 </button>
+                {/* WP2 PR 4, P4.4 (row 56): each Codex account's own log folders */}
+                <AccountLogFoldersPanel />
               </Section>
 
               <Section title="Advanced" icon={<path d="M8 2v3M8 11v3M2 8h3M11 8h3M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>

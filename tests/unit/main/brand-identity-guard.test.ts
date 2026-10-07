@@ -272,7 +272,7 @@ describe('brand identity guard', () => {
     expect(init).toMatch(/GetDParameter/)
   })
 
-  it('release artifacts carry the current brand name, on every platform', () => {
+  it('release artifacts carry the current brand name; the Mac download also names the macOS it needs', () => {
     // These WERE frozen to ClaudeCommandCenter- because the updater in shipped
     // clients matched release assets by that literal prefix, so renaming them
     // would have made every install see "no matching asset" — indistinguishable
@@ -280,13 +280,21 @@ describe('brand identity guard', () => {
     // they can no longer see. Releases worked around it by publishing each
     // installer TWICE, under both names.
     //
-    // 2.1.0-beta.6 taught the updater BOTH prefixes (see the next test), so any
-    // client that can reach a new release already resolves the brand name and
-    // the duplicate is dead weight — its .blockmap and latest*.yml never even
-    // referenced it. Only installs on beta.5 or older are left behind, and they
-    // can download from the release page by hand.
+    // 2.1.0-beta.6 taught the updater BOTH prefixes (see the next test), so a
+    // Windows or Linux client that can reach a new release resolves the brand
+    // name, and the duplicate is dead weight: its .blockmap and latest*.yml
+    // never even referenced it. Only installs on beta.5 or older are left
+    // behind there, and they can download from the release page by hand.
+    //
+    // The Mac download is named AICodeConductor-<version>-macosNN.dmg, where NN
+    // is the macOS the packaged app needs (build.mac.minimumSystemVersion). The
+    // updater in a build from before that floor matches neither name, so a Mac
+    // on such a build is offered nothing from this release and downloads it
+    // from the release page by hand (tests/unit/main/update-macos-floor.test.ts).
     expect(pkg.build.nsis.artifactName).toBe('AI-Code-Conductor-${version}.${ext}')
-    expect(pkg.build.mac.artifactName).toBe('AI-Code-Conductor-${version}-mac.${ext}')
+    const macosMajor = parseInt(String(pkg.build.mac.minimumSystemVersion), 10)
+    expect(macosMajor).toBeGreaterThanOrEqual(13)
+    expect(pkg.build.mac.artifactName).toBe('AICodeConductor-${version}-macos' + macosMajor + '.${ext}')
     expect(pkg.build.linux.artifactName).toBe('AI-Code-Conductor-${version}-linux-${arch}.${ext}')
   })
 

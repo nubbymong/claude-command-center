@@ -56,11 +56,15 @@ vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/debug-logger')>()),
   logWarn: (msg: string) => { h.warnings.push(String(msg)) },
 }))
+// [host] The real logger kept above keeps its log inside the test's own folder, never
+// the installed app's (tests/helpers/test-data-dir.ts).
+const TEST_DATA = await vi.hoisted(async () => (await import('../../helpers/test-data-dir')).useTestDataDirectory())
 vi.mock('../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 0,
   registerCodexReviewSession: () => {},
   registerClaudeReviewSession: (sid: string, cwd: string) => { h.reviewRoots.push({ sid, cwd }) },
   unregisterCodexReviewSession: () => {},
+  releaseMcpSessionProvider: () => {},
   disposeCodexReviewUsage: () => {},
 }))
 vi.mock('../../../src/main/providers', () => ({
@@ -302,5 +306,12 @@ describe('the kept conversation records the account it ran under (P3.6)', () => 
     claim(ID, '/p/demo')
     expect(getKeptCodexConversation(`${SID}y`)).toEqual({ uuid: ID, cwd: '/p/demo' })
     expect(getKeptCodexConversationSource(`${SID}y`)).toBeUndefined()
+  })
+})
+
+describe("the test's own log folder", () => {
+  it("[host] the real logger keeps its log inside the test's own folder", async () => {
+    const { getLogDir } = await import('../../../src/main/debug-logger')
+    expect(getLogDir()).toBe(path.join(TEST_DATA, 'debug'))
   })
 })

@@ -100,11 +100,13 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
     h.codexReviewRoots.push({ sessionId, cwd })
   },
   unregisterCodexReviewSession: () => {},
+  releaseMcpSessionProvider: () => {},
   registerClaudeReviewSession: () => {},
 }))
 
 vi.mock('../../../src/main/providers', () => ({
   getProvider: () => ({
+    resolveBinary: () => ({ cmd: 'claude', source: 'system' }), // WP2 PR 4: the local launch resolves Claude through the provider
     // Stand in for the real providers, which spread process.env: hand back a
     // STALE inherited CCC_SESSION_WORKTREE so every 'not designated' assertion
     // below verifies it is SCRUBBED, not merely absent.

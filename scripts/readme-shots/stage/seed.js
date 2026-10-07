@@ -1,15 +1,30 @@
-// README staging — seed the test VM with the fictional workspace in content.js.
+// README staging: seed a throwaway staging root with the fictional workspace
+// in content.js, for the installed app to run on (launch.js) and shoot.js to
+// capture. Runs ON the screenshot VM, from a checkout with node_modules.
 //
-//   node seed.js --app-version 2.1.0-beta.15      stage everything (app must be closed)
-//   node seed.js --restore                         put the pre-staging state back
+//   CCC_STAGE_ROOT=<root> node seed.js --app-version 2.1.1-beta.2   stage everything (app closed)
+//   CCC_STAGE_ROOT=<root> node seed.js --restore                    undo it (and the C:\dev projects)
 //
-// Runs ON the VM as the desktop user. Writes only under the app's data/resources
-// dirs, the user's ~/.claude and ~/.codex, C:\dev (the fake projects) and the
-// npm bin dir (the fake CLIs). The first run moves whatever was there into
-// <runner>/backup/ so --restore can undo all of it.
+// Everything is written inside CCC_STAGE_ROOT, one throwaway folder that
+// carries this tool's marker (stage-root.js: made only in an absent or empty
+// folder, checked before anything is written, renamed or deleted; the root may
+// never be or hold the real home, sit in the real ~/.claude or ~/.codex, the
+// app's or npm's app data folders, or the installed app's data folder). Every
+// other CCC_STAGE_* folder must be inside the root; by default the layout is
+// the one launch.js starts the app with (capture-env.ts). There is no mode
+// that writes over a real install: the VM user's own app data, ~/.claude,
+// ~/.codex and npm folder are never touched.
 //
-// Every path is forward-slash and absolute; nothing here is portable beyond the
-// screenshot VM and nothing here should ever run on a developer's machine.
+// The one place outside the root: the project folders the fictional configs
+// name, C:\dev\{web,platform,data,notes} (or CCC_STAGE_DEV inside the root).
+// The seed makes only folders that do not exist yet, marks and records each,
+// never overwrites a file, and stops before writing anything if one of them
+// exists without its mark. --restore removes only recorded entries that are
+// still exactly one of those marked folders.
+//
+// The Codex accounts are written through the app's own registry code
+// (codex-registry.ts), bundled with the checkout's own esbuild (pinned by the
+// lockfile; no download at run time).
 
 'use strict'
 
@@ -18,33 +33,55 @@ const path = require('path')
 const crypto = require('crypto')
 const { execFileSync } = require('child_process')
 const C = require('./content')
+const S = require('./stage-root')
 
 const argv = process.argv.slice(2)
 const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined }
 const RESTORE = argv.includes('--restore')
 const APP_VERSION = flag('--app-version') || '2.1.0-beta.15'
 
-const HOME = process.env.CCC_STAGE_HOME || 'C:/Users/User'
-const DATA = process.env.CCC_STAGE_DATA || 'C:/Users/User/AppData/Local/AI Code Conductor'
-const RES = process.env.CCC_STAGE_RES || `${DATA}/resources`
+// The guard, before anything else touches the file system (exit 2, fail closed).
+let STAGE
+try {
+  STAGE = S.resolveStage(process.env)
+  if (!RESTORE) S.checkDevTargets(STAGE.DEV)
+  S.ensureMarker(STAGE.ROOT, { create: !RESTORE })
+} catch (e) {
+  if (e instanceof S.StageRefusal) { console.error('refusing: ' + e.message); process.exit(2) }
+  throw e
+}
+
+const HOME = STAGE.HOME
+const DATA = STAGE.DATA
+const RES = STAGE.RES
 const CONFIG = `${RES}/CONFIG`
-const NPM_BIN = process.env.CCC_STAGE_NPM_BIN || 'C:/Users/User/AppData/Roaming/npm'
-const RUNNER = process.env.CCC_STAGE_RUNNER || 'C:/Users/user/ccc-cap'
+const NPM_BIN = STAGE.NPM_BIN
+const RUNNER = STAGE.RUNNER
 const BACKUP = `${RUNNER}/backup`
 const PROJECTS = `${HOME}/.claude/projects`
 const CODEX_SESSIONS = `${HOME}/.codex/sessions`
-const DEV = process.env.CCC_STAGE_DEV || 'C:/dev'
+const DEV = STAGE.DEV
+const DEV_RECORD = `${RUNNER}/dev-created.json`
+// The checkout this script is in (scripts/readme-shots/stage).
+const REPO = path.resolve(__dirname, '..', '..', '..')
 const NOW = Date.now()
 
 const log = (m) => console.log(m)
+const codexAcct = (key) => C.CODEX_ACCOUNTS.find((a) => a.key === key)
 
 // ── small fs helpers ───────────────────────────────────────────────────────
-function mkdirp(p) { fs.mkdirSync(p, { recursive: true }) }
-function writeJson(p, v) { mkdirp(path.dirname(p)); fs.writeFileSync(p, JSON.stringify(v, null, 2) + '\n', 'utf8') }
-function writeText(p, s) { mkdirp(path.dirname(p)); fs.writeFileSync(p, s, 'utf8') }
+// Every write and delete below is held inside the staging root; the project
+// folders under DEV go through writeProjectFile and restore's own checks.
+function inRoot(p) {
+  if (!S.inside(p, STAGE.ROOT)) throw new Error(`[seed] ${p} is outside the staging root ${STAGE.ROOT}`)
+  return p
+}
+function mkdirp(p) { fs.mkdirSync(inRoot(p), { recursive: true }) }
+function writeJson(p, v) { mkdirp(path.dirname(p)); fs.writeFileSync(inRoot(p), JSON.stringify(v, null, 2) + '\n', 'utf8') }
+function writeText(p, s) { mkdirp(path.dirname(p)); fs.writeFileSync(inRoot(p), s, 'utf8') }
 function readJson(p, fallback) { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fallback } }
-function touch(p, ms) { const d = new Date(ms); fs.utimesSync(p, d, d) }
-function rmrf(p) { fs.rmSync(p, { recursive: true, force: true }) }
+function touch(p, ms) { const d = new Date(ms); fs.utimesSync(inRoot(p), d, d) }
+function rmrf(p) { S.removeNoFollow(inRoot(p)) }
 function moveInto(src, destDir) {
   if (!fs.existsSync(src)) return
   mkdirp(destDir)
@@ -79,6 +116,12 @@ const BACKED = [
 const DB_FILES = ['transcripts.db', 'transcripts.db-wal', 'transcripts.db-shm', 'tokenomics.db', 'tokenomics.db-wal', 'tokenomics.db-shm']
 
 function backupOnce() {
+  // A backup from an earlier run is NOT this state's backup: seeding over it
+  // would delete the current state with nothing to restore it from.
+  if (fs.existsSync(`${BACKUP}/.done`) && !argv.includes('--reuse-backup')) {
+    console.error(`refusing: ${BACKUP}/.done is from an earlier run; restore or move it first (or pass --reuse-backup)`)
+    process.exit(2)
+  }
   if (fs.existsSync(`${BACKUP}/.done`)) { log('backup already taken — leaving it alone'); return }
   log('taking the one-time backup → ' + BACKUP)
   for (const [name, dir] of BACKED) copyInto(dir, `${BACKUP}/${name}-parent`)
@@ -106,7 +149,13 @@ function restore() {
   rmrf(CODEX_SESSIONS)
   if (fs.existsSync(`${BACKUP}/codex/sessions`)) fs.renameSync(`${BACKUP}/codex/sessions`, CODEX_SESSIONS)
   uninstallFakeClis()
-  rmrf(DEV)
+  // Only the project folders this seed made (seedProjects), each still exactly
+  // DEV\<one of its names> and marked; any other entry is reported, not removed.
+  const record = readJson(DEV_RECORD, [])
+  for (const d of Array.isArray(record) ? record : []) {
+    if (S.validDevEntry(d, DEV)) { S.removeNoFollow(path.resolve(d)); log('removed project folder ' + d) }
+    else log('!! not removing recorded entry ' + JSON.stringify(d) + ': not one of this tool\'s marked project folders under ' + DEV)
+  }
   fs.renameSync(`${BACKUP}/.done`, `${BACKUP}/.restored-${Date.now()}`)
   log('restored')
 }
@@ -116,6 +165,8 @@ function restore() {
 // real file's place and the real one is parked beside it as claude.real.cmd.
 function installFakeClis() {
   const here = __dirname
+  // A staging fake-CLI folder does not exist yet (the npm bin always did).
+  mkdirp(NPM_BIN)
   const real = `${NPM_BIN}/claude.cmd`
   if (fs.existsSync(real) && !fs.readFileSync(real, 'utf8').includes('fake-claude.js')) {
     fs.renameSync(real, `${NPM_BIN}/claude.real.cmd`)
@@ -129,6 +180,10 @@ function installFakeClis() {
   fs.copyFileSync(`${here}/content.js`, `${NPM_BIN}/content.js`)
   writeText(`${NPM_BIN}/claude.cmd`, `@echo off\r\nnode "%~dp0fake-claude.js" %*\r\n`)
   writeText(`${NPM_BIN}/codex.cmd`, `@echo off\r\nnode "%~dp0fake-codex.js" %*\r\n`)
+  // Where the fake Claude keeps each session's status file (this staging's
+  // resources; it has no default of its own) and the home its transcripts
+  // are under.
+  writeJson(`${NPM_BIN}/fake-stage.json`, { statusDir: `${RES}/status`, home: HOME })
   log('fake claude/codex installed on PATH')
 }
 function uninstallFakeClis() {
@@ -140,15 +195,18 @@ function uninstallFakeClis() {
     rmrf(`${NPM_BIN}/fake-${n}.js`)
   }
   rmrf(`${NPM_BIN}/content.js`)
+  rmrf(`${NPM_BIN}/fake-stage.json`)
   log('fake CLIs removed')
 }
 
 // ── CONFIG/*.json ──────────────────────────────────────────────────────────
 function seedConfig() {
   const configs = C.CONFIGS.map((c) => {
-    const { profileKey, ...rest } = c
+    const { profileKey, codexAccountKey, ...rest } = c
     const out = { ...rest }
     if (profileKey) out.profileId = acct(profileKey).id
+    // 2.1.1: a Codex config names its account in the registry (absent = the default).
+    if (codexAccountKey) out.providerAccountId = codexAcct(codexAccountKey).accountId
     if (rest.sessionType === 'local' && !rest.machineName) out.machineName = 'workstation'
     return out
   })
@@ -165,8 +223,8 @@ function seedConfig() {
     }
     if (s.customName) base.customName = s.customName
     if (s.shellOnly) return { ...base, shellOnly: true, terminalOptions: c.terminalOptions }
+    if (s.provider === 'codex') return { ...base, providerAccountId: codexAcct(s.codexAccountKey).accountId, codexOptions: c.codexOptions }
     base.profileId = acct(s.accountKey).id
-    if (s.provider === 'codex') return { ...base, codexOptions: c.codexOptions }
     return {
       ...base,
       resumeUuid: s.resumeUuid, resumeCwd: c.workingDirectory,
@@ -175,11 +233,19 @@ function seedConfig() {
   })
   writeJson(`${CONFIG}/session-state.json`, { sessions, activeSessionId: C.ACTIVE_SESSION_ID, savedAt: NOW - 30 * C.MIN })
 
-  const steps = ['whatsNewV2', 'welcome', 'findClaude', 'compatibility', 'accounts', 'github', 'statusline', 'codex', 'codexSignIn', 'builtinTools', 'transparency', 'finish']
+  // The onboarding steps as src/renderer/onboarding/steps.ts lists them (2.1.1;
+  // ONBOARDING_VERSION '3'): all done, so the flow never covers the window.
+  const steps = ['whatsNewV2', 'welcome', 'assistants', 'commandBar', 'findClaude', 'compatibility', 'accounts', 'codexSetup', 'helloCodex', 'github', 'statusline', 'builtinTools', 'transparency', 'finish']
   const completedSteps = {}
   for (const s of steps) completedSteps[s] = APP_VERSION
   writeJson(`${CONFIG}/app-meta.json`, {
-    setupVersion: APP_VERSION, lastSeenVersion: APP_VERSION, lastTrainingVersion: APP_VERSION,
+    // lastTrainingVersion above every card: the app stamps the newest card's
+    // version, and its compare reads a prerelease like 2.1.1-beta.2 as 2.1.0,
+    // so the 2.1.1 cards would count as new and the boot chain would wait on
+    // a tour nothing opens (no resume prompt; VM run at c65d0b19).
+    setupVersion: APP_VERSION, lastSeenVersion: APP_VERSION, lastRunVersion: APP_VERSION, lastTrainingVersion: '99.99.99',
+    // 2.1.1's one-time pages: Hello Codex and the multi-spawn intro, seen.
+    helloCodexSeenVersion: APP_VERSION, multiSpawnIntroVersion: APP_VERSION,
     onboardingCompletedVersion: '3', onboardingAppVersion: APP_VERSION, completedSteps,
     commandsSeeded: true, colorMigrated: true, hasCreatedFirstConfig: true, firstRunCardDismissed: true,
     accountWizardDismissed: true, accountGateDecided: true, lastSeenGlobalAccount: acct('alex').email,
@@ -187,7 +253,9 @@ function seedConfig() {
 
   const settings = readJson(`${CONFIG}/settings.json`, {})
   Object.assign(settings, {
-    loggingConsentSeen: true, loggingEnabled: true, legacyLogsSurfacingSeen: true, showTips: false,
+    loggingConsentSeen: true, loggingConsentVersion: 2, loggingEnabled: true, legacyLogsSurfacingSeen: true, showTips: false,
+    // 2.1.1: both assistants on; Codex's on/off counts only with the answer.
+    claudeEnabled: true, codexAnswered: true,
     agentHubExplainerDismissed: true, colourMigrationNoticeDismissed: true, colourMigrationNoticePending: false,
     configHydrationNoticeDismissed: true, localMachineName: 'workstation', updateChannelChosen: true, updateChannel: 'beta',
     statusLineEnabled: true, conductorToolsEnabled: true, codexEnabled: true, sentinelEnabled: false,
@@ -361,14 +429,23 @@ function seedMemory() {
 }
 
 // ── codex rollouts ─────────────────────────────────────────────────────────
+function realmSessionsDir(accountKey) {
+  const a = codexAcct(accountKey)
+  if (!a) throw new Error('[seed] no Codex account ' + accountKey)
+  return `${RES}/codex-realms/${a.realmId}/sessions`
+}
+function rolloutDir(base, start) {
+  const d = new Date(start)
+  return `${base}/${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`
+}
 function seedCodex() {
   rmrf(CODEX_SESSIONS)
+  for (const a of C.CODEX_ACCOUNTS) rmrf(realmSessionsDir(a.key))
   for (const r of C.CODEX_HISTORY) {
     const start = NOW - r.daysAgo * C.DAY
-    const d = new Date(start)
-    const dir = `${CODEX_SESSIONS}/${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`
+    const dir = rolloutDir(r.account ? realmSessionsDir(r.account) : CODEX_SESSIONS, start)
     const id = uuid()
-    const lines = [JSON.stringify({ timestamp: new Date(start).toISOString(), type: 'session_meta', payload: { id, timestamp: new Date(start).toISOString(), cwd: r.cwd, originator: 'codex_cli_rs', cli_version: '0.60.0', model: r.model } })]
+    const lines = [JSON.stringify({ timestamp: new Date(start).toISOString(), type: 'session_meta', payload: { id, timestamp: new Date(start).toISOString(), cwd: r.cwd, originator: 'codex_cli_rs', cli_version: '0.155.1', model: r.model } })]
     let ts = start
     let total = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 }
     for (let i = 0; i < r.turns; i++) {
@@ -384,6 +461,46 @@ function seedCodex() {
     touch(file, ts)
   }
   log(`codex rollouts written: ${C.CODEX_HISTORY.length}`)
+  seedCodexLogs()
+}
+
+// Codex conversations for the Logs page: provider 'codex' runs on the docs-site config (Website account), each
+// with its rollout in that account's realm, appended to the runs the Logs DB is built from.
+function seedCodexLogs() {
+  const seedFile = `${RUNNER}/transcripts-seed.json`
+  const seedDoc = readJson(seedFile, { runs: [] })
+  const c = cfg('cfg-docs')
+  const a = codexAcct('website')
+  let added = 0
+  for (const r of C.CODEX_LOG_RUNS) {
+    const startMs = NOW - r.daysAgo * C.DAY - 2 * C.HOUR
+    const id = uuid()
+    const rows = []
+    const lines = [JSON.stringify({ timestamp: new Date(startMs).toISOString(), type: 'session_meta', payload: { id, timestamp: new Date(startMs).toISOString(), cwd: c.workingDirectory, originator: 'codex_cli_rs', cli_version: '0.155.1', model: r.model } })]
+    let ts = startMs
+    for (const t of r.turns) {
+      ts += (t.user ? rint(20, 90) : rint(3, 14)) * 1000
+      if (t.user) {
+        rows.push({ ts, role: 'user', kind: 'message', content: t.user })
+        lines.push(JSON.stringify({ timestamp: new Date(ts).toISOString(), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: t.user }] } }))
+      } else if (t.text) {
+        rows.push({ ts, role: 'assistant', kind: 'message', content: t.text })
+        lines.push(JSON.stringify({ timestamp: new Date(ts).toISOString(), type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: t.text }] } }))
+      } else if (t.tool) {
+        const meta = {}
+        for (const k of ['file_path', 'command']) if (t.input[k] !== undefined) meta[k] = String(t.input[k]).slice(0, 200)
+        rows.push({ ts, role: 'assistant', kind: 'tool_call', content: '', toolName: t.tool, toolMeta: JSON.stringify(meta) })
+        lines.push(JSON.stringify({ timestamp: new Date(ts).toISOString(), type: 'response_item', payload: { type: 'function_call', name: t.tool, arguments: JSON.stringify(t.input), call_id: 'call_' + hex(24) } }))
+      }
+    }
+    const file = `${rolloutDir(realmSessionsDir('website'), startMs)}/rollout-${new Date(startMs).toISOString().replace(/[:.]/g, '-')}-${id}.jsonl`
+    writeText(file, lines.join('\n') + '\n')
+    touch(file, ts)
+    seedDoc.runs.push({ sessionId: hex(24), configId: c.id, configLabel: c.label, projectCwd: c.workingDirectory, accountEmail: a.label, profileId: a.accountId, provider: 'codex', startedAt: startMs, endedAt: ts + 4000, path: file.replace(/\//g, '\\'), sourceFormat: 'codex-rollout', sourceVersion: '0.155.1', rows })
+    added++
+  }
+  writeJson(seedFile, seedDoc)
+  log(`codex log runs written: ${added}`)
 }
 
 // ── insights ───────────────────────────────────────────────────────────────
@@ -394,17 +511,24 @@ function seedInsights() {
   const sam = acct('sam')
   const jordan = acct('jordan')
   const runs = [
-    { id: '2026-07-21-064102-011900', timestamp: Date.parse('2026-07-21T06:41:02Z'), status: 'complete', accountEmail: a.email, profileId: a.id, kind: 'account' },
-    { id: '2026-08-04-070812-013207', timestamp: Date.parse('2026-08-04T07:08:12Z'), status: 'complete', accountEmail: sam.email, profileId: sam.id, kind: 'account' },
-    { id: '2026-08-11-071940-013802', timestamp: Date.parse('2026-08-11T07:19:40Z'), status: 'complete', accountEmail: jordan.email, profileId: jordan.id, kind: 'account' },
+    { id: '2026-09-14-064102-011900', timestamp: Date.parse('2026-09-14T06:41:02Z'), status: 'complete', accountEmail: a.email, profileId: a.id, kind: 'account' },
+    { id: '2026-09-21-070812-013207', timestamp: Date.parse('2026-09-21T07:08:12Z'), status: 'complete', accountEmail: sam.email, profileId: sam.id, kind: 'account' },
+    { id: '2026-09-28-071940-013802', timestamp: Date.parse('2026-09-28T07:19:40Z'), status: 'complete', accountEmail: jordan.email, profileId: jordan.id, kind: 'account' },
     { id: C.INSIGHTS.runId, timestamp: C.INSIGHTS.timestamp, status: 'complete', accountEmail: a.email, profileId: a.id, kind: 'account' },
   ]
-  writeJson(`${dir}/catalogue.json`, { runs })
+  // 2.1.1 (P4.7): a Codex account's report, provider 'codex', its account id as profileId.
+  const cx = codexAcct(C.CODEX_INSIGHTS.accountKey)
+  if (!cx) throw new Error('[seed] no account ' + C.CODEX_INSIGHTS.accountKey + ' for the Insights run')
+  const codexRun = { id: C.CODEX_INSIGHTS.runId, timestamp: C.CODEX_INSIGHTS.timestamp, status: 'complete', provider: 'codex', profileId: cx.accountId }
+  // The page opens on the catalogue's last run: keep the primary account's newest Claude report last.
+  writeJson(`${dir}/catalogue.json`, { runs: [...runs.slice(0, -1), codexRun, runs[runs.length - 1]] })
   // Older runs reuse the same report so a stray click never lands on an empty page.
   for (const r of runs) {
     writeText(`${dir}/${r.id}/report.html`, C.INSIGHTS.html)
     writeJson(`${dir}/${r.id}/kpis.json`, C.INSIGHTS.kpis)
   }
+  writeJson(`${dir}/${codexRun.id}/report.json`, C.CODEX_INSIGHTS.report)
+  writeJson(`${dir}/${codexRun.id}/kpis.json`, C.CODEX_INSIGHTS.kpis)
   log('insights written')
 }
 
@@ -417,8 +541,17 @@ function canonicalize(value) {
 }
 function seedCanvas() {
   const secretFile = `${CONFIG}/conductor-secret.json`
-  const secret = readJson(secretFile, null)?.secret
-  if (!secret) { log('!! no conductor-secret.json — start the app once first; skipping canvas'); return }
+  let secret = readJson(secretFile, null)?.secret
+  if (!secret) {
+    // 2.1.1 makes its install secret lazily (the first session token), so a
+    // first start alone leaves none. Mint it as the app does
+    // (src/main/install-secret.ts: 32 random bytes as hex, CONDUCTOR_SECRET_VERSION
+    // 3), owner-only; the app then loads this one.
+    secret = crypto.randomBytes(32).toString('hex')
+    mkdirp(CONFIG)
+    fs.writeFileSync(secretFile, JSON.stringify({ secret, v: 3 }), { encoding: 'utf8', mode: 0o600 })
+    log('conductor-secret.json minted for the staging')
+  }
   const key = crypto.createHmac('sha256', secret).update('ccc:canvas-record-v1', 'utf8').digest()
   const mac = (record) => crypto.createHmac('sha256', key).update(`canvas-record-v1\n${canonicalize(record)}`, 'utf8').digest('hex')
 
@@ -464,8 +597,48 @@ function seedProjects() {
     'data/pipeline': { 'pyproject.toml': '[project]\nname = "pipeline"\n' },
     'notes': { '2026-08-17.md': '# Monday\n' },
   }
-  for (const [rel, fs_] of Object.entries(files)) for (const [name, body] of Object.entries(fs_)) writeText(`${DEV}/${rel}/${name}`, body)
-  log('project dirs written')
+  // Each top-level folder is made here (and marked, and recorded so --restore
+  // removes it) or was made and marked by an earlier run: checkDevTargets
+  // stopped the run before any write when one exists without its mark.
+  const made = readJson(DEV_RECORD, [])
+  for (const t of S.DEV_TOPS) {
+    const top = path.join(DEV, t)
+    if (!fs.existsSync(top)) {
+      fs.mkdirSync(top, { recursive: true })
+      fs.writeFileSync(path.join(top, S.DEV_MARKER), 'made by scripts/readme-shots/stage/seed.js for README screenshots\n', { flag: 'wx' })
+      if (!made.includes(top)) made.push(top)
+    } else if (!fs.existsSync(path.join(top, S.DEV_MARKER))) {
+      throw new Error(`[seed] ${top} lost its mark during the run`)
+    }
+  }
+  writeJson(DEV_RECORD, made)
+  // Never overwrite: a file already there (from an earlier run) is kept.
+  let written = 0
+  for (const [rel, fs_] of Object.entries(files)) {
+    for (const [name, body] of Object.entries(fs_)) {
+      const file = path.join(DEV, ...rel.split('/'), name)
+      if (!S.DEV_TOPS.some((t) => S.inside(file, path.join(DEV, t)))) throw new Error(`[seed] ${file} is not in a project folder of this tool`)
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      try { fs.writeFileSync(file, body, { encoding: 'utf8', flag: 'wx' }); written++ } catch (e) { if (e.code !== 'EEXIST') throw e }
+    }
+  }
+  log(`project dirs written: ${written} files (folders made by this tool: ${made.join(', ') || 'none'})`)
+}
+
+// -- Codex accounts (2.1.1: the app's account registry) --
+// Written by codex-registry.ts through the app's own registry code, bundled
+// with this checkout's own esbuild (a devDependency pinned by the lockfile; no
+// download at run time) into the runner folder and run with this node.
+function seedCodexAccounts() {
+  let esbuild
+  try { esbuild = require(path.join(REPO, 'node_modules', 'esbuild')) } catch {
+    console.error(`refusing: no esbuild in ${REPO}\node_modules (run npm ci in the checkout first)`)
+    process.exit(2)
+  }
+  const out = path.join(RUNNER, 'codex-registry.cjs')
+  esbuild.buildSync({ entryPoints: [path.join(__dirname, 'codex-registry.ts')], bundle: true, platform: 'node', format: 'cjs', target: 'node20', outfile: inRoot(out), logLevel: 'silent' })
+  const text = execFileSync(process.execPath, [out, RES, path.join(__dirname, 'content.js')], { encoding: 'utf8' })
+  log(text.trim())
 }
 
 // ── Logs DB via python ─────────────────────────────────────────────────────
@@ -484,6 +657,7 @@ if (RESTORE) {
   seedProjects()
   seedConfig()
   seedAccounts()
+  seedCodexAccounts()
   seedStatus()
   seedTranscripts()
   seedMemory()

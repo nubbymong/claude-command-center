@@ -61,20 +61,21 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
 
 ## 2. Summary
 
-- 75 rows: **52 DONE, 12 PARTIAL, 11 OPEN** (recounted after P3.15, with section 4's P3.2 to P3.15 rows brought current from their phase records;
-  they agree with the parity checklist).
-- The 23 rows not DONE, by gap: **implementation 12, verification 6, owner 5** (rows 15 and 58, an owner action and a record to sign; rows 22, 41 and 63, each built as a default pending the owner's decision, section 10). Row 53
+- 75 rows: **62 DONE, 12 PARTIAL, 1 OPEN** (row 68 DONE with P4.7 on 2026-10-05; before it 61 DONE, 12 PARTIAL and 2 OPEN, recounted after the owner's answers of 2026-10-04, the CI and VM records of 9.7 and the review fix pass: rows 41, 51, 52, 53, 57 and 63 leave PARTIAL with their questions answered and question 5's answer built; rows 59 and 67 are DONE with their runs, and row 60 PARTIAL until its release-candidate leg;
+  they agree with the parity checklist). The rule applied: a row leaves PARTIAL once only verification is left. Rows 51, 52, 53 and 57, whose checklist entries named their question as the gap that kept them PARTIAL, and rows 41 and 63, which owed only the decision beyond verification, are DONE; row 22, whose question was answered too, stays PARTIAL, because it also owes the owner's real-account resume after a Switch, the gap that keeps row 35 PARTIAL (the records commit e4493707 had counted row 22 DONE: 62 DONE, 11 PARTIAL). At the recount after PR 4's P4.1 to P4.6 records and question 8 it was 53 DONE, 18 PARTIAL and 4 OPEN, and after P3.15 52 DONE, 12 PARTIAL and 11 OPEN.
+- The 13 rows not DONE, by gap: **implementation 1, verification 10, owner 2** (row 14 under implementation, row 68 having left it with P4.7; rows 15 and 58 under owner, an owner action and row 58's one sign-in run (its artifacts record was signed on 2026-10-05), row 58's web half built ahead of the owner's one sign-in run, OR2, which confirms its three unverified values; rows 11, 16, 22, 34, 35, 45, 54, 55, 60 and 66 under verification, row 22 the owner's real-account resume and the rest of its real-CLI walk, row 55 its delete check, row 54 its images' review and row 60 its release-candidate leg). At the recount before the owner's answers of 2026-10-04: implementation 5, verification 8, owner 9 (rows 22, 41, 51, 52, 53, 57 and 63 then under owner, each built as a default pending a question). At the recount after P3.15: implementation 9, verification 6, owner 8. Row 53
   moved from owner to implementation when the owner decided it
-  (`docs/wp1/owner-decisions-2026-09-27.md`, M4).
+  (`docs/wp1/owner-decisions-2026-09-27.md`, M4), and back under owner with question 6 (PB4, 2026-10-02).
 - By PR: **8 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
   part of row 14 goes with row 53 into PR 4, because it is the same change.
-- 47 DONE rows still owed verification at that recount. The 27 built or verified in PR 3 (rows 7, 8, 10, 17, 20, 24, 28, 31, 32, 36, 37, 38, 39, 40, 42, 43, 44, 46, 47, 61, 62, 65, 69, 70, 71, 72 and 73) owed their VM checks under
+- Of the 62 DONE rows now, 49 still owe verification, as their rows in section 4 list (rows 1, 2, 3, 4, 6, 7, 9, 12, 13, 17, 18, 20, 21, 23, 25, 27, 28, 29, 31, 32, 33, 36, 37, 39, 40, 42, 43, 44, 46, 47, 48, 49, 50, 51, 52, 53, 56, 57, 61, 62, 63, 64, 65, 68, 69, 70, 71, 73 and 74), and 13 owe nothing: rows 5, 19, 26, 30, 59, 67 and 75 (gap none) and rows 8, 10, 24, 38, 41 and 72 (every check their gap names is done); 49 + 13 = 62. At the recount after P3.15 (52 DONE), 47 DONE rows still owed verification. The 27 built or verified in PR 3 (rows 7, 8, 10, 17, 20, 24, 28, 31, 32, 36, 37, 38, 39, 40, 42, 43, 44, 46, 47, 61, 62, 65, 69, 70, 71, 72 and 73) owed their VM checks under
   PR 3's gate 6 (section 6; 31, 32 and 65: done, their screenshot review owed). Gate 6's row checks ran at 525a00ac on 2026-10-02
   (P3.16): rows 8, 10, 24 and 72 passed every VM check their rows list, and the others still owe what their rows list (row 36's
   Duration check failed, is fixed in fixer 9 and passed its VM re-check at aca63cc7 and d0caf0bd; row 38's midnight UTC check is time-bound and was not run). The other 20 (rows 1, 2, 3, 4, 6, 9, 12, 13, 18, 21, 23, 25,
   27, 29, 33, 48, 49, 50, 64 and 74) owe real-CLI, per-OS or packaged
   verification, recorded in PR 4 and closed at release level. The other 5
-  DONE rows (5, 19, 26, 30, 75) owe nothing.
+  DONE rows (5, 19, 26, 30, 75) owed nothing; the 10 rows DONE since (41, 51,
+  52, 53, 56, 57, 59, 63, 67 and 68) make the 62.
 - Row 17 was counted PARTIAL here, from the code, while the checklist marked
   it VERIFIED; the checklist marked it PARTIAL too until P3.14 (c65b359e) built
   the Codex credits row and removed the known issue in
@@ -82,12 +83,14 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
   verification owed. The checklist
   moved rows 52, 68 and 69 from OWNER to MISSING, since parity settles them
   (section 10); row 69 is now built (P3.8).
-- Genuinely unresolved UX decisions: **three**, each built as a default pending the owner's decision: row 41 (P3.8 round 1, caef0d42: Codex has no one-line
-  model or effort command; section 10, question 2) and row 22 (P3.6 finding
-  V3: a declined confirm after a Switch restores the previous account; question 3) and row 63 (P3.10: Codex asks the user to review the app's hooks once per account; question 4). The one before them (row 53, both providers on) was decided by
+- Genuinely unresolved UX decisions: **none**. The seven built as defaults were decided on 2026-10-04: questions 2, 3, 4, 6 and 7 A and question 8 B, each kept as built, and question 5 C, superseding the default A and built in PR 4 (785b886e, 5c3c62dd). They were: row 41 (P3.8 round 1, caef0d42: Codex has no one-line
+  model or effort command; section 10, question 2), row 22 (P3.6 finding
+  V3: a declined confirm after a Switch restores the previous account; question 3), row 63 (P3.10: Codex asks the user to review the app's hooks once per account; question 4), row 51 (PB1: the instruction channel on this computer's sign-in; question 5), row 53 (PB4: characters outside the BMP; question 6), row 57 (PB5: the Cloud Agent skip-permissions mapping; question 7) and rows 51 and 52 (the VM checkpoint at 956df1a3: Codex's Auto preset cannot ask before the app's own tools; question 8). The one before them (row 53, both providers on) was decided by
   the owner on 2026-09-27 (option B; OD27 M4). Section 10.
-- PR 3 waits on the owner for those three decisions and for the owner actions
-  in section 10; nothing in it is blocked from being built.
+- PR 3 waits on the owner for the owner actions in section 10 only (its
+  questions 2, 3 and 4 were answered on 2026-10-04); nothing in it is blocked
+  from being built. PR 4 no longer waits on a section 10 question (questions
+  5 to 8 were answered on 2026-10-04); its owner-gated items are in 9.5.
 
 ## 3. Where the draft plan disagreed with the record
 
@@ -111,7 +114,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | # | Feature | Status | Settled by | Gap | PR |
 |---|---|---|---|---|---|
 | 1 | Provider on/off, "not set up", last provider on | DONE | OD26 U1, U3 | verification: real CLI 0.153.4 and 0.155.1; packaged per OS | 2, v4 |
-| 2 | CLI detect and version classes | DONE | OD20 D7; PLAN A8 | verification: real minimum, pinned and maximum per OS | 2, v4 |
+| 2 | CLI detect and version classes | DONE | OD20 D7; PLAN A8 | verification: the real maximum per OS (the minimum and pinned detected as supported on Windows, macOS and Linux in CI runs 37134624406 and 37156412028) | 2, v4 |
 | 3 | Install and update | DONE | PLAN A9 | verification: one real install per OS (macOS, Linux; Homebrew unrun) | 2, v4 |
 | 4 | Sign-in (browser, API key) | DONE | PLAN A6, A7; OD26 U2 | verification: real API-key sign-in and sign-out; macOS, Linux | 2, v4 |
 | 5 | Device-code sign-in | DONE (off) | OD26 U3 (stays off, WP1.41) | none | 2 |
@@ -136,7 +139,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 19 | Strip cost wording | DONE | "API-equivalent estimate" wording (decided by design, 2026-09-26) | none | 2 |
 | 20 | Account chip on the strip and in the sidebar | DONE (P3.6, 57ce396a, 68d00f62, 4439d7e2; mocked): a Codex session's account chip on the strip and its sidebar card, from the identity; Claude's chips read the identity's colour | Canvas 2026-09-26, "Switching a running Codex session's account": the strip's Codex account pill and its Switch account menu; the footer's label rule (a Codex identity shows its name); parity for the sidebar | verification: the VM check of W1, done: PASS at 427807fb (P3.7's VM run, MOCKED) and at 525a00ac (PR 3 gate 6, P3.16: the note's Dismiss 8 px from the floating GitHub button, a hit test landing on it); the owner's screenshot review; the SSH live matrix at PR 3's head | 2; 3 |
 | 21 | Multi-account footer | DONE | Canvas 2026-09-26 (footer, option B); OD27 M1 | verification: real CLI, packaged | 2, v4 |
-| 22 | Switch the account of a running session | PARTIAL (P3.6, 8274b3d1, 4439d7e2, bb99d2da; mocked): Switch account lists the Codex accounts, and a pick restarts the session on the new account with its conversation carried over. A declined confirm after a Switch restores the previous account, the default pending the owner's decision (section 10, question 3) | Canvas 2026-09-26 (as row 20): keep the conversation; copy its rollout into the new account's folder, then `codex resume` there | owner (question 3); verification: the real-CLI walk on 0.153.4 and 0.155.1, done for a switch between managed accounts (the conversation carried and continued there) and a declined confirm as built, PASS at 525a00ac (PR 3 gate 6, fake-key accounts on a loopback fake model; P3.16); owed: the real-account resume (owner), the carry to and from this computer's sign-in, a switch back and a conversation from an earlier day (P3.6); the SSH live matrix | 3 |
+| 22 | Switch the account of a running session | PARTIAL (P3.6, 8274b3d1, 4439d7e2, bb99d2da; mocked): Switch account lists the Codex accounts, and a pick restarts the session on the new account with its conversation carried over. A declined confirm after a Switch restores the previous account, as the owner decided on 2026-10-04 (section 10, question 3: A, kept as built) | Canvas 2026-09-26 (as row 20): keep the conversation; copy its rollout into the new account's folder, then `codex resume` there | verification: the real-CLI walk on 0.153.4 and 0.155.1, done for a switch between managed accounts (the conversation carried and continued there) and a declined confirm as built, PASS at 525a00ac (PR 3 gate 6, fake-key accounts on a loopback fake model; P3.16); owed: the real-account resume (owner), the gap that keeps this row PARTIAL, as it keeps row 35; the carry to and from this computer's sign-in, a switch back and a conversation from an earlier day (P3.6); the SSH live matrix | 3 |
 | 23 | Choose the account at launch | DONE | Commit 6 canvas, 2026-09-24 | verification: per OS | 2, v4 |
 | 24 | Running sessions per account | DONE (P3.2, 65612489): "N running" on the account row | Canvas 2026-09-26 ("N running" pill on the row) | verification: real CLI: done, PASS with the real CLI 0.155.1 on a packaged build of 525a00ac (PR 3 gate 6, P3.16) | 3 |
 | 25 | Tokenomics reads managed realms and `~/.codex` | DONE | OD20 D10; OD26 U3 | verification: real rollouts | 2, v4 |
@@ -157,10 +160,10 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 35 | Restart and Switch keep the conversation | PARTIAL (P3.5, 90a717df, Restart; P3.6, 4439d7e2, Switch; mocked): Restart resumes the conversation the session kept (VM c2c42e22); a Switch carries it into the new account and resumes it | Parity (Claude's Restart resumes); canvas 2026-09-26 for Switch | verification: the Switch half on the VM with a real CLI (row 22), done: PASS on 0.155.1 and 0.153.4 at 525a00ac (PR 3 gate 6, P3.16); owed: the real-account resume after a Switch (owner; row 22) | 3 |
 | 36 | Statusline segments | DONE (the account chip in P3.6, 68d00f62; Lines changed and Duration in P3.7, 5de7a4c4, 9f2bd164; mocked) | Parity (line counts: evidence first; section 19 if Codex reports none) | verification: the VM run, done: PASS at 427807fb (MOCKED) and at 525a00ac (PR 3 gate 6, the real CLIs; P3.16): the line count of a new and a deleted file on 0.153.4 and 0.155.1, and the Duration on a new conversation, after a Restart, after a relaunch, outside the app and after a TUI resume (0.155.1); FAIL there: the Duration after the saved session file was cleared (P3.7), fixed in fixer 9 (86ae88ac) and re-checked PASS on 0.155.1 and 0.153.4 at aca63cc7 (fixer 9's head: "Close sessions", "Don't open", the last tab closed, and a TUI resume after a clear) and at d0caf0bd (fixer 10: "Close sessions" and a TUI resume after it; P3.7); the owner's screenshot review | 3 |
 | 37 | Statusline settings | DONE (P2; P3.7, 5de7a4c4, 9f2bd164; mocked): the settings apply to Codex, and Lines changed and Duration show for a Codex session | Parity | verification: the VM screenshot of the Status Line tab with Codex on, both themes, done: PASS at 427807fb (MOCKED) and at 525a00ac (PR 3 gate 6, P3.16); the owner's screenshot review | 2; 3 |
-| 38 | Statusline after resuming an old rollout | DONE (P3.5, 28f42af2, 90a717df; mocked; VM c2c42e22): the claim re-reads its date folders on every poll and finds a resumed conversation wherever it is | Parity | verification: a session crossing midnight UTC on a real CLI (time-bound: not run at PR 3 gate 6, 525a00ac; it can be scheduled for 17:00 on the VM, 00:00 UTC) | 3 |
+| 38 | Statusline after resuming an old rollout | DONE (P3.5, 28f42af2, 90a717df; mocked; VM c2c42e22): the claim re-reads its date folders on every poll and finds a resumed conversation wherever it is | Parity | verification: a session crossing midnight UTC on a real CLI, done: PASS on the VM on 2026-10-04 (run cp4-row38; real Codex 0.155.1 on the loopback fake model, fictional data): the status line followed the tab across 00:00 UTC (381,011, then 763,033, then 1,146,055 input tokens), a Restart ran `codex resume` with the same conversation id and the turn after it updated, and the rollout stayed in its day folder and grew | 3 |
 | 39 | Model catalogue | DONE: the registry's Codex models, the list the supported CLIs (0.153.4 and 0.155.1) offer in their own picker, Sentinel's check, and the release gate's Codex half (P3.8, 260d4abc; round 1, caef0d42); P3.9 (3a4ed400; mocked): Sentinel's Codex check compares the registry with the list the installed CLI offers, read from it (`codex debug models --bundled` in an empty folder, no sign-in), naming its version, else the shipped list | Parity: the model registry plus Sentinel's coverage check. Not app-server `model/list`: OD27 M2 allows usage reads only | verification: done on the VM at 7678c433 (`--bundled` accepted on 0.153.4 and 0.155.1, the same list as the plain command, no connection); the gpt-5.2 notice to the owner stands (section 10); ADR-009: P3.9, quarantined after its own bounded rounds, is covered by PR 3's PR-level pass (P3.16), PASS at 525a00ac | 3 |
 | 40 | Effort | DONE (P3.8, 260d4abc; round 1, caef0d42): each Codex model's own levels, from the CLI's catalogue (0.155.1's are the same, VM); a launch drops a saved effort its model cannot run. The CLI accepts max and ultra at launch on both versions (VM) | Parity | verification: whether the server takes max and ultra (a real sign-in; the CLI does not check at launch) | 3 |
-| 41 | Mid-session model and effort | PARTIAL, built as the default pending the owner's decision (P3.8 round 1, caef0d42): on a live session the command bar's model pill types a bare `/model`, only at Codex's ready prompt, which opens Codex's own model-and-effort picker and keeps the conversation; a stopped session keeps the select, applied at its next start | Parity: applied live, keeping the conversation. Codex has no one-line form (VM: `/model <slug>` is sent as a message; there is no `/effort`), so Claude's one-step switch cannot carry over as it is | owner: the default (section 10, question 2); verification: the pill on the VM, done: PASS on 0.155.1 and 0.153.4 at 525a00ac (PR 3 gate 6, P3.16; a stopped session's select on 0.153.4) | 3 |
+| 41 | Mid-session model and effort | DONE, as the owner decided on 2026-10-04 (section 10, question 2: A, kept as built; P3.8 round 1, caef0d42): on a live session the command bar's model pill types a bare `/model`, only at Codex's ready prompt, which opens Codex's own model-and-effort picker and keeps the conversation; a stopped session keeps the select, applied at its next start | Parity: applied live, keeping the conversation. Codex has no one-line form (VM: `/model <slug>` is sent as a message; there is no `/effort`), so Claude's one-step switch cannot carry over as it is | verification: the pill on the VM, done: PASS on 0.155.1 and 0.153.4 at 525a00ac (PR 3 gate 6, P3.16; a stopped session's select on 0.153.4) | 3 |
 | 42 | Sentinel | DONE (P3.9, 3a4ed400; mocked): while Codex is on, its version against the supported range (a finding outside it), the live model list (row 39), and a newer version's release notes analysed against its launch flags, TUI, rollout session files and config and account files; the analysis runs on the provider that is on (both on: the one Ask Conductor runs on, Claude Code until PR 4's row); the same panel, dot, Settings section and Transparency card | Parity: version drift, flags and the rollout format checked, with findings; the analysis runs on whichever provider is on | verification: the VM run at 7678c433 (the findings as specified; a Codex-run analysis left config.toml unchanged; the notes read failed, fixed in round 1, e357fe33, with the ADR-009 pass 1 findings); the VM re-check at 82c78680, five of six passed, its bug and the ADR-009 pass 2 findings fixed in round 2, 1f010667); the VM re-check at 84fd2d03, the suspended git left by a fast failure fixed in round 3, 5fd82db8); ADR-009: FINDINGS after pass 3, P3.9 quarantined; covered by PR 3's PR-level pass (P3.16), PASS at 525a00ac, its rounds 3 to 5 included; the VM re-check at 2499766e: direct route 10/10 clean, npm route 1/15 left a suspended git (round 4 logs the kill's result; an access-denied result is an upstream residual); the reviews of rounds 4 and 5: done (P3.9); fixers 10 to 13 (P3.9): only a version above the highest checked is analysed at start, for Claude Code too, which keeps versions installed in turn within the three-analysis cap, and a Re-run makes the installed version the highest checked once its analysis is done (an unmatched Re-run of a version no start analyses says to use Re-run again); the seeded panel check PASS on the VM at be6ee406; limits: a Re-run reads notes from the version the panel names, so after a downgrade with a newer update pending its prompt also takes in versions already checked (bounded by the slice caps, never an extra analysis); on the npm shim route, a helper Codex starts after its scheduled reads have stopped (two in a row found its chain alone, about 1 s and 2 s in) and that outlives Codex is not ended; a version below the highest checked is never analysed at start, even a new one (a Re-run analyses it); owed: the VM read of a leftover kill's log line on the npm route (access denied or not), a completed real analysis (owner) and the owner's screenshot review | 3 |
 | 43 | Watchdog | DONE (P3.10, d8f538b1; mocked): armed for a local Codex session (opt-in, off by default, as for Claude) with Codex's own detectors: its usage-limit and sustained server-error cells above the composer, the reset time, a turn running, Codex's own retry; the retry typed only into its ready, empty composer, Enter 300 ms later only when the pane shows it typed; the safeguard check shown unavailable (Codex has no such message). Round 1 (afae03f7): the session header's Watchdog pill shows on a Codex session and counts only the checks Codex has; the Feature Guide, tip and What's New cover it, under the one switch. VM at 6d576634: armed only when switched on, backoff and retry on a server error. Round 2 (5b178c7a): the header pill follows the watchdog live (it showed only after another change); one overload is retried once (an error above a newer turn is an earlier one's). VM at 6b465aef: the pill live on a Codex and a Claude session (R1); one retry per overload (R2); a persistent overload retried without backing off, fixed in round 3 (18029bb0): an episode lasts until two minutes of quiet after a retry, for Claude and Codex alike, so the backoff grows and the cap trips; VM at the round-3b build: a persistent overload backs off 30, 60, 120, 240 and 300 s and gives up, on a Codex and a Claude session, and an error after two quiet minutes starts afresh. Round 4: an episode whose recovering frame was the session's last output settles two minutes after it, and the backoff a retry logs is the one the episode then waits; VM at the round-4 build: a fresh episode after a last-output recovery, the logged backoff equal to the wait | Parity: auto-retry and silence detection; aicc_planning#72 (a CLI without its own patterns reports Watchdog unavailable, never Claude's) | verification: the Watchdog on an SSH Claude session (a persistent overload backing off, in the owner's live SSH matrix); a real usage limit and overload (a working model, owner); the owner's screenshot review; the SSH live matrix; ADR-009: done, P3.10's own pass (d8f538b1..4ba85a3a, PASS) and PR 3's PR-level pass (P3.16), PASS at 525a00ac | 3 |
 | 44 | Services (PTY integrity) | DONE (P3.15; the VM at c11fb360, 0.155.1 and 0.153.4, re-checked under the bundled ConPTY at 7c52a432): a Codex tab is in the Services snapshot exactly as the Claude tab (bytes, gap 0, columns) | Parity | verification: macOS, Linux | 3 |
@@ -175,29 +178,29 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 48 | Conductor MCP transport | DONE | PLAN commits 4 and 5b | verification: a live 0.155.1 tool listing | 2, v4 |
 | 49 | `codex_review` | DONE | PLAN commit 5a (its defaults stand unless the owner overturns them) | verification: a real run on a signed-in account | 2, v4 |
 | 50 | `claude_review` | DONE | PLAN commit 5b, owner decisions 1 to 3 (2026-09-24) | verification: a live wait past 300 s | 2, v4 |
-| 51 | Agent Canvas from Codex | OPEN: withheld (`src/main/conductor-mcp-server.ts:1106`) because a Codex session had no bound id; `/mcp` binds one since commit 5b | Parity: the tools, roots, instruction delivery and the live loop | implementation | 4 |
-| 52 | Browser and vision tools | OPEN: withheld (`conductor-mcp-server.ts:911-913`, `:1042`, a "Claude-only for now" call of 2026-07-02) | Parity; the later owner decisions (the 2.1.1 gate, OD26 P1) end a call worded "for now" (section 10) | implementation | 4 |
-| 53 | Ask Conductor on Codex | OPEN: pinned to Claude (`src/renderer/lib/askConductor.ts:255`) and blocked with Claude Code off (`askConductorGate.ts`) | Codex only: design section 2 and parity (Ask runs on the provider that is on). Both on: OD27 M4 (option B, canvas "Ask Conductor provider choice" v1): a Settings, General row "Ask Conductor runs on", shown only while both are on, Claude Code by default | implementation | 4 |
-| 54 | App knowledge, tour, tips | PARTIAL: the P2 fixes are done | The AGENTS.md surface sweep; recorded 2026-09-26: the Codex "Beta" labels come off in the release where parity lands | implementation (the final sweep) | 2; 4 |
-| 55 | Memory | OPEN: a banner only (`MemoryPage.tsx:204-206`) | Parity: each realm's Codex memories on the Memory page | implementation | 4 |
-| 56 | Codex logs | OPEN | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | implementation | 4 |
-| 57 | Cloud Agents | OPEN: Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | implementation | 4 |
-| 58 | Web sign-in and artifacts | OPEN | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (the artifacts record); implementation (the web session) | 4 |
+| 51 | Agent Canvas from Codex | DONE (P4.1, f472890d to 56200cd5; question 5 answered C on 2026-10-04 and built in 785b886e and 5c3c62dd, its review fix pass aaa6990e; mocked): built, this computer's sign-in getting the canvas skills copied into its own Codex skills folder, and the Auto preset as question 8 was decided (B); was withheld (`src/main/conductor-mcp-server.ts:1106`) because a Codex session had no bound id | Parity: the tools, roots, instruction delivery and the live loop | verification: the VM walk, question 5's part done at bb1b5e4a (the copy and its removal on this computer's sign-in, a copy held open by another program while the tools were turned off, and its HOST QUARANTINE link files, all PASS), OR4 (a copied skill read from the Windows sandbox among it), OR5; done: the spec and quality reviews and the ADR-009 delta pass of question 5's C (785b886e, 5c3c62dd) and of its fixes (aaa6990e, 1e11f4db), L1-1 fixed and every confirmation PASS (final reviewed tree dc1915f2) | 4 |
+| 52 | Browser and vision tools | DONE (P4.2, 78fda1d4, 43c1b67e; mocked): built, the Auto preset as the owner decided on 2026-10-04 (question 8: B, kept as built); was withheld (`conductor-mcp-server.ts:911-913`, `:1042`, a "Claude-only for now" call of 2026-07-02) | Parity; the later owner decisions (the 2.1.1 gate, OD26 P1) end a call worded "for now" (section 10) | verification: the VM (vision and the push with the fake model, the per-preset approvals); OR4 | 4 |
+| 53 | Ask Conductor on Codex | DONE (P4.3, 8f753a75 to 56200cd5; mocked): built, the characters outside the BMP as the owner decided on 2026-10-04 (question 6: A, kept as built); was pinned to Claude (`src/renderer/lib/askConductor.ts:255`) and blocked with Claude Code off (`askConductorGate.ts`) | Codex only: design section 2 and parity (Ask runs on the provider that is on). Both on: OD27 M4 (option B, canvas "Ask Conductor provider choice" v1): a Settings, General row "Ask Conductor runs on", shown only while both are on, Claude Code by default | verification: the VM (the first Ask in a fresh account folder), OR4, OR5 | 4 |
+| 54 | App knowledge, tour, tips | PARTIAL: the P2 fixes are done; P4.1 to P4.5's own copy landed with them (0014a464, da729159, 2111d7e7); P4.11's sweep and the Beta labels done (4bf3d0ac to 8a77e500); the README and Feature Guide images recaptured on the 2.1.1-beta.2 candidate, Windows and macOS, approved by the owner on 2026-10-07 and committed | The AGENTS.md surface sweep; recorded 2026-09-26: the Codex "Beta" labels come off in the release where parity lands | verification: done for the recaptured images (the owner's approval of 2026-10-07, Windows and macOS); owed: `step-snap.jpg` and the Cloud Agents card's image | 2; 4 |
+| 55 | Memory | PARTIAL (P4.4, f311b5a5 to d7b38752; mocked): listing, guard and read built; delete built, hidden and refused in main until the VM check; frontmatter edit does not carry over (recorded) | Parity: each realm's Codex memories on the Memory page | verification: the delete check on the VM (else OR4); OR4: the real file format | 4 |
+| 56 | Codex logs | DONE (P4.4, f311b5a5, 3401d0dd; mocked) | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | verification: the VM (each account's folders open, `log_dir` from `config.toml` included) | 4 |
+| 57 | Cloud Agents | DONE (P4.5, 467aa157 to f4550ac4; mocked): built, the skip-permissions choice as the owner decided on 2026-10-04 (question 7: A, kept as built); was Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | verification: the VM run, OR4 | 4 |
+| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, fee9be3a to b7544899; second half, 25ae6d22 to 9666004f, its review fixes e5cdd086 to 1f0a096d and b7a96be2; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10), signed by the owner on 2026-10-05: alternative A, no Codex artifacts item (`docs/wp2/evidence/codex-artifacts-section-19-record.md`) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values) | 4 |
 
 ### E. Everything else
 
 | # | Feature | Status | Settled by | Gap | PR |
 |---|---|---|---|---|---|
-| 59 | PR CI on Linux | OPEN: Windows and macOS only (`.github/workflows/ci.yml`) | OD20 D5 | implementation | 4 |
-| 60 | Real-CLI coverage in CI | OPEN: no workflow installs Codex | OD20 D7; WP1.71 | implementation | 4 |
+| 59 | PR CI on Linux | DONE (P4.8; VERIFIED): `ubuntu-latest` in the test matrix, the whole suite green in CI run 37134624406 (f4d98918, 2026-10-03), after which 60b39238 made the Linux job blocking; green again in CI run 37156412028 (f9f9bfc6) (`docs/wp1/evidence/ci-matrix.md`). Was Windows and macOS only (`.github/workflows/ci.yml`) | OD20 D5 | none | 4 |
+| 60 | Real-CLI coverage in CI | PARTIAL (P4.8): the `codex-conformance` job runs Codex 0.153.4 and 0.155.1 on Windows, macOS and Linux, all six legs green in CI run 37134624406 (f4d98918) with the runner's own Codex home untouched and again in CI run 37156412028 (f9f9bfc6), and shown red once by the prove-red dispatch, CI run 37155296304 (90fa4048). Was: no workflow installed Codex | OD20 D7; WP1.71 | verification: the release-candidate leg, at release (`-f codex_rc_version=<v>`) | 4 |
 | 61 | Compact | DONE (P3.8, 260d4abc; round 1, caef0d42): the strip's Compact on a Codex session types Codex's own /compact only at its ready, empty prompt (otherwise it types nothing and says why) and presses Enter only in the same run; the real TUI submits it that way on 0.153.4 and 0.155.1 (VM) | Parity: Codex's own compact command (evidence first) | verification: round 1 on the VM, done: rounds 1 and 2 PASS on 0.155.1 and 0.153.4 at 525a00ac (PR 3 gate 6, a loopback fake model; P3.16); what a real /compact does to a conversation (a real sign-in, owner) | 3 |
 | 62 | Extra CLI arguments | DONE (P3.11, 28739b19; round 1, 057fa776; mocked): a Codex config has the Extra CLI arguments field (the one field, in the Codex section), saved as `codexOptions.extraArgs`; each word is one launch argument after every flag the app sets; one rule refuses, in any spelling and under every alias the supported CLIs give them, the flags the app sets (the working folder and `--worktree` included), the account, provider and endpoint settings, and a word Codex reads as one of its commands; the dialog says why under the field and Save waits; a saved value that is refused is dropped at launch (logged) and the session starts without it; done: the VM run at 919385af (WINDOWS_1, real Codex 0.153.4 and 0.155.1): all five checks PASS on both versions (extra arguments on the direct and npm `.cmd` routes, through the picker and on a resume by id; a refused value said in the dialog, Save waiting; refused saved values dropped at launch with a log line, the session starting without them; the Claude Code field with the same dialog check and its launch unchanged), e2e 81; the round-1 re-review (spec, code quality) and ADR-009 pass 2 at 919385af PASS, the P3.11 verdict PASS | Parity: the same field and IPC character guard, plus a block-list of the flags the app manages and of any setting that changes the account, provider or endpoint | verification: the owner's screenshot review of the field and its message, both assistants, both themes (gallery `.ccc-canvas/screens/p3.11-919385af/`); the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused); ADR-009: done, P3.11's pass and PR 3's PR-level pass (P3.16), PASS at 525a00ac | 3 |
-| 63 | Hooks gateway and notification rules | PARTIAL, built as the default pending the owner's decision (P3.10, d8f538b1; mocked): each local Codex launch gets six command hooks running the app's forwarder, which posts each event to the Hooks gateway as a Claude http hook does (loopback, the session's token, the size cap, redaction); Codex asks the user to review them once per account. Notification rules: the one rule on a hook event (Attention Pulse, Claude's idle Notification, filter-only) gets from a Codex idle mark what Claude's idle_prompt gives it (round 1). Round 1 (afae03f7) fixes ADR-009 pass 1 (the forwarder never through an environment proxy; no PowerShell call of a path it reads as a wildcard or cmd.exe expands; the hook folders in the app's own data folder, owner-only, read only at their real path) and gives an npm-installed Codex its hooks from a resources folder with a space (a checked plain-path copy). VM at 6d576634: all six events at the gateway on both versions and routes, the review once per account; the round 1 re-check passed V3 (the plain-path copy through the npm shim from the default resources folder, reused across starts) and S6 (a user's own hooks still run). Round 2 (5b178c7a): both plain-copy folders owner-only, bigint file ids, the root hardened once a run; VM at 6b465aef: both plain-copy folders and the root owner-only (R4), the picker told only of tabs on the same account (R10). Round 3 (18029bb0): a hook folder the app did not make this run is used only once it belongs to the user, and the root is hardened again when made again in the run. VM at the round-3b build: a hook folder from an earlier run used once it is the user's (an admin account). Rounds 3b and 4: the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders are prepared asynchronously and only while Codex is on, by one call of the owner-only rule (on Windows one PowerShell call), used only when read back as this user's alone, and checked again before first use; VM at the round-4 build: the wrapper, the folders' real rights, the app's start with Codex on and off, an early launch that waited and got its hooks. Round 5: any folder name makes the round trip exactly, a name ending in a dot or a space is refused, a failed preparation waits five minutes before the same folders are tried again, and a launch waits only while the Hooks gateway listens (and for the wiring) | Parity: route Codex `notify` and hook events. Codex reviews hooks given at launch, which Claude does not, so the trust step cannot carry over as it is | owner: the default (section 10, question 4); verification: the VM re-run of the rule's real round trip at the final build, done at 525a00ac (PR 3 gate 6, P3.16: `owner-only-folders-real.test.ts` 4 of 4, `hook-wrapper-start-folder.test.ts` 2 of 2, the hook root the user's and SYSTEM's alone with inheritance cut, the six events at the gateway; the real test with the names fixer 9 added, aac1b46e, PASS on the VM at aca63cc7 and d0caf0bd, with `hook-wrapper-start-folder.test.ts`, 6 of 6 each time; in CI at the final head); a hook folder from an earlier run on a standard Windows account (owner); the POSIX hook runner; the SSH live matrix; ADR-009: done, P3.10's own pass (d8f538b1..4ba85a3a, PASS), its rounds 4 and 5 included, and PR 3's PR-level pass (P3.16), PASS at 525a00ac | 3 |
+| 63 | Hooks gateway and notification rules | DONE, as the owner decided on 2026-10-04 (section 10, question 4: A, kept as built; P3.10, d8f538b1; mocked): each local Codex launch gets six command hooks running the app's forwarder, which posts each event to the Hooks gateway as a Claude http hook does (loopback, the session's token, the size cap, redaction); Codex asks the user to review them once per account. Notification rules: the one rule on a hook event (Attention Pulse, Claude's idle Notification, filter-only) gets from a Codex idle mark what Claude's idle_prompt gives it (round 1). Round 1 (afae03f7) fixes ADR-009 pass 1 (the forwarder never through an environment proxy; no PowerShell call of a path it reads as a wildcard or cmd.exe expands; the hook folders in the app's own data folder, owner-only, read only at their real path) and gives an npm-installed Codex its hooks from a resources folder with a space (a checked plain-path copy). VM at 6d576634: all six events at the gateway on both versions and routes, the review once per account; the round 1 re-check passed V3 (the plain-path copy through the npm shim from the default resources folder, reused across starts) and S6 (a user's own hooks still run). Round 2 (5b178c7a): both plain-copy folders owner-only, bigint file ids, the root hardened once a run; VM at 6b465aef: both plain-copy folders and the root owner-only (R4), the picker told only of tabs on the same account (R10). Round 3 (18029bb0): a hook folder the app did not make this run is used only once it belongs to the user, and the root is hardened again when made again in the run. VM at the round-3b build: a hook folder from an earlier run used once it is the user's (an admin account). Rounds 3b and 4: the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders are prepared asynchronously and only while Codex is on, by one call of the owner-only rule (on Windows one PowerShell call), used only when read back as this user's alone, and checked again before first use; VM at the round-4 build: the wrapper, the folders' real rights, the app's start with Codex on and off, an early launch that waited and got its hooks. Round 5: any folder name makes the round trip exactly, a name ending in a dot or a space is refused, a failed preparation waits five minutes before the same folders are tried again, and a launch waits only while the Hooks gateway listens (and for the wiring) | Parity: route Codex `notify` and hook events. Codex reviews hooks given at launch, which Claude does not, so the trust step cannot carry over as it is | verification: the VM re-run of the rule's real round trip at the final build, done at 525a00ac (PR 3 gate 6, P3.16: `owner-only-folders-real.test.ts` 4 of 4, `hook-wrapper-start-folder.test.ts` 2 of 2, the hook root the user's and SYSTEM's alone with inheritance cut, the six events at the gateway; the real test with the names fixer 9 added, aac1b46e, PASS on the VM at aca63cc7 and d0caf0bd, with `hook-wrapper-start-folder.test.ts`, 6 of 6 each time; in CI at the final head); a hook folder from an earlier run on a standard Windows account (owner); the POSIX hook runner; the SSH live matrix; ADR-009: done, P3.10's own pass (d8f538b1..4ba85a3a, PASS), its rounds 4 and 5 included, and PR 3's PR-level pass (P3.16), PASS at 525a00ac | 3 |
 | 64 | Partner terminal wording | DONE | P2 | verification: per OS | 2, v4 |
 | 65 | GitHub session context | DONE (P3.12, d86fd80f and its fixes; mocked; VM at ff7be273 (WINDOWS_1, real Codex 0.155.1 and 0.153.4), and its re-check with the fixes: a Codex session's commands and edited files, nothing before its first turn, the heading naming Codex, PASS): a Codex session reads the rollout its watcher holds, checked again inside its realm, with Claude's bounded tail, for the unchanged reference scanner and file-signal inspector (`src/main/github/session/codex-rollout-loader.ts`), read only from the realm's real day folder (a path check: see P3.12's limits); both assistants: a recent file shown as plain text, relative to the session's folder when inside it, once per file, under a heading that names the session's assistant; after Switch Account the earlier account's rollout is not read | Parity: read the session's realm rollouts | verification: done, the VM re-checks of P3.12's fixes (P3.12's record); ADR-009: done, PR 3's PR-level pass (P3.16), PASS at 525a00ac, which covers P3.12 (quarantined after its own bounded rounds); owed: the owner's screenshot review; the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused) | 3 |
 | 66 | Packaged smoke | PARTIAL: Windows only, an unsigned candidate on a used VM | OD20 D8; WP1.63 | verification (release level; owner hosts) | 4 |
-| 67 | E2E mode matrix | PARTIAL | WP1.1, WP1.60 | implementation (restart, enable/disable, real launch cases); verification | 2; 4 |
-| 68 | Insights | OPEN: Claude only; Claude's Insights types Claude Code's own `/insights` in a terminal (`src/main/insights-runner.ts:234-237`) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. A mockup comes before the build (section 10) | implementation | 4 |
+| 67 | E2E mode matrix | DONE (P4.9, 7f6a165f, 04e65569, c75c3acb; VERIFIED): every cell of WP1.60's matrix has its e2e spec; on the Windows test VM the 26 specs passed 94 of 94, twice at 956df1a3 (runs e2e-956df1a3 and e2e-956df1a3-run2), at c65d0b19 (run e2e-c65d0b19) and at bb1b5e4a (run e2e-bb1b5e4a), the real launch of 0.153.4 (`codex.cmd`) and 0.155.1 (`codex.exe`) included | WP1.1, WP1.60 | none: the runs are recorded in `docs/wp1/evidence/mode-matrix.md`; WP1.1 and WP1.60 move to evidenced with row 16's traceability binding (P4.10) | 2; 4 |
+| 68 | Insights | DONE (P4.7, 9c4f219e to 4079c764 and its record, with fix passes 1 to 9; fix pass 5, 0b3f913c to ac383100, answers #625's attribution findings, recorded in section 6's PR 2 entry; fix pass 6 is 3397df8d to 0632d08f; fix pass 7 is 58abef14 and 01bf64db; fix pass 8 is 1bf3df7e; fix pass 9 is 4079c764; mocked): a Codex account's report, which the app makes from the account's own sessions with one read-only `codex exec` and shows in the page's own layout, figures and history; Run all over both assistants (C1 = A) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. The mockup was approved on the Agent Canvas on 2026-10-05 (v1, no notes) | verification: the spec and quality reviews of fix pass 9 (done so far: ADR-009 round 1: FINDINGS (14 fixed, 5 on the closeout list), fixed in fix pass 2; round 2: PASS, its minors and the fix pass 3 reviews' minors fixed in fix pass 4; round 3 over fix pass 4: PASS, its findings fixed in fix pass 6; the spec and quality reviews of fix passes 4, 5 and 6: PASS; round 4 over fix pass 6: PASS, its one minor fixed in fix pass 7; round 5 over fix pass 7: PASS at 01bf64db; the VM run at 01bf64db: PASS, 3 refusals and 3 failed commands per account on both Codex versions; the pre-push batch to 01bf64db: green; CI at 01bf64db: one guard failure, fixed in fix pass 8; the spec and quality reviews of fix pass 8: PASS, PASS, the quality review's two nits fixed in fix pass 9), OR4 (a real report's content); the VM final pass, after the dev dependency bumps and the Electron 44 migration, ran at 7c1fab06, and CI's required jobs are green at 6c1e0d52 (run 37553704348; its Desktop test gate is red by design until the owner attests, #309); fix passes 16 and 17 (the release review of 2026-10-07, then its reviews and ADR-009 pass): a session larger than the read limit is left out wherever it sits, counted, and named in the prompt, the run log and the saved report's subtitle, which the page shows | 4 |
 | 69 | Plan mode | DONE (P3.8 round 1, caef0d42; round 2, f1783110): a "Plan mode" permissions choice, as Claude's launch option: the session starts READ-ONLY and Codex's own `/plan` is typed into its first ready prompt only (never the folder-trust prompt, the user's typing or after a turn), within a bounded wait; otherwise a note says Plan mode is not on and the session is read-only. The pill reads "plan" only while Codex's footer shows its Plan mode | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM, done: round 3 PASS at c67b1041, and rounds 4 and 5 at 525a00ac (PR 3 gate 6, P3.16): 3 of 3 fresh launches on 0.155.1 and 5 of 5 on 0.153.4, a Restart and a tab switch PASS (no erase was needed in those runs, so the erase after a second read and the start-up row's place are unit-tested only); the attackers' confirmation of the launched answer on `pty:spawn`, done: PASS by ADR-009 lens C in its round 3 on fixer 11 (P3.8); the approval flow with a working model (owner-only) | 3 |
 | 70 | Image paste | DONE (P3.15, bbcb6ef8; the focused key on the VM at c11fb360, both versions): with the terminal focused Alt+V goes to the CLI and Codex attaches the image itself ("[Image #1]"); with focus elsewhere a Codex session's line is ASCII and typed by the Codex typing rule, its notes in the paste hint (mocked: `codex-image-paste.test.ts`, `alt-v-image-route.test.tsx`); the tip and the Tips and Shortcuts card say both | Parity | verification: the wrapped line on the VM (round 1), done: PASS at 525a00ac (PR 3 gate 6, 0.155.1: a line over two composer rows at 91 columns, Enter 302 ms later; P3.16); real Claude Code's own Alt+V, signed in, and the focused key over SSH (owner); macOS, Linux | 3 |
 | 71 | Copy, paste, scrollback, mouse | DONE (P3.15, bbcb6ef8; the VM at c11fb360): copy, paste (Ctrl+V and right-click, bracketed) and mouse (Codex sets no mouse mode) as Claude's; scrollback: a local Codex session on Windows runs under node-pty's bundled ConPTY, which keeps it (122 lines and the wheel scrolling in the VM's in-app trial, against 38 and an inert wheel under the system ConPTY), with the system ConPTY as the fallback (mocked: `bundled-conpty.test.ts`, `pty-conpty-per-provider.test.ts`) | Parity | verification: re-checked packaged at 7c52a432, 98455d52, 855e1484 and f2b1cf65 (the fallbacks, the input guard: 0 app exits in 40 tries, and again at f2b1cf65, where the input failure's cause was confirmed: keys typed after Codex ended); the TUI trace fixture replaced; macOS, Linux. A tab left open by a background command is a known issue | 3 |
@@ -260,7 +263,14 @@ Per PR:
 - **PR 2 (#625).** P2 and the usage track are built, reviewed, VM-checked (e2e
   81/81 at `7c2739bf`) and their screens approved. Left for the package: the PR
   body and the ADR-009 verdict comment for the final head, and CI at that head.
-  The verification its rows still owe is recorded in PR 4 (section 2).
+  The verification its rows still owe is recorded in PR 4 (section 2). Its
+  usage attribution commits (MP10 and the registry settle) had an ADR-009
+  delta pass during PR 4: FINDINGS, four minors, fixed on PR 4's branch in
+  fix pass 5 (0b3f913c, 2d4ae702, and the copy with this record), each with
+  a test red before its fix and the behaviour fixes mutation-proved; the two
+  tests its spec review owed are added (f536ad4d), and fix pass 6 brings the
+  README's summary into line (158d5c2a). Confirmed: the delta pass over fix
+  pass 5, two lenses, PASS; fix pass 5's spec and quality reviews, PASS.
 - **PR 3.** Phases P3.1 to P3.16 (section 8). Done: its PR-level ADR-009
   pass, PASS at 525a00ac; the VM checks at its earlier heads b3937173 and
   1e14b611, where the listed checks (section 8, P3.16) PASS at b3937173 and
@@ -306,11 +316,82 @@ Per PR:
   changes `pty-manager.ts` and, in P3.2, `statusline-watcher.ts`); the
   screenshot review; the Desktop test gate (#309); posting the ADR-009
   marker and removing the needs-review label; the real-Mac and
-  real-account checks its rows list (gate 6's owner-only list, P3.16);
-  and questions 2 to 4 (section 10).
+  real-account checks its rows list (gate 6's owner-only list, P3.16).
+  Questions 2 to 4 were answered on 2026-10-04 (section 10).
 - **PR 4.** Phases P4.1 to P4.11 (section 9), including row 15, which OD20 D8
-  makes a merge blocker. The SSH live matrix is owed if P4.1 or P4.3 edits
-  `pty-manager.ts`.
+  makes a merge blocker. The SSH live matrix is owed (P4.1 and P4.3 edit
+  `pty-manager.ts`; 9.7 gate 5). Questions 5 to 8 were answered on
+  2026-10-04 (section 10). Fix pass 13 (d3700924, cdde4930, a588c142)
+  answers three review-thread findings on #625 and #628 (15 new tests, 11
+  mutants, 11 killed): a linked legacy record that cannot be stored keeps
+  its account; a session's MCP record lasts one launch, so a revived Ask
+  tab gets its own assistant's tools; the account memory listing gives
+  only paths the memory channels take. Its spec and quality reviews and
+  the ADR-009 delta pass (the Conductor MCP server and the memory channel
+  bound) PASS; the SSH live matrix (it changes `pty-manager.ts`) is owed.
+  Fix pass 13c (0ee4f1c1 to 8a6fdf2a and the jsdom range with this
+  record): the memory channels and the account listing apply one path
+  check in one unit; two tests hold a replaced process's late exit apart
+  from the next launch's MCP record; jsdom is held at 30.0.x (`~30.0.1`)
+  while CI and the release workflow run Node 20; the vision teardown test
+  waits for the exit it asserts (30 of 30 runs). 9 new tests, 8 mutants,
+  8 killed. Fix pass 13's spec and quality reviews and its ADR-009 delta
+  pass, and the reviews of the fixes after it, PASS; the SSH live matrix
+  is still owed. The reviews and attack passes of fix passes 10 to 15
+  PASS. CI is green at 6c1e0d52 (run 37553704348), the Linux and Codex
+  conformance jobs included, and the Desktop test gate waits on the owner
+  (#309). The VM final pass ran at 7c1fab06 (the package upgrade, e2e 94
+  of 94, native 226 of 226, the quarantine suites, the paste and colour
+  checks), and the commits from there to 6c1e0d52 change no main or
+  preload source. Fix pass 16 (387eacf5, 1d8330cd), for the release
+  review of 2026-10-07: a Codex Insights report counts a session whole or
+  not at all (a session larger than the read limit is left out, counted
+  and named in the prompt, and a run with none left says why), and the
+  start sweep of chatgpt.com sessions with no record chooses and bars its
+  accounts before its first wait, so a sign-in that completes on another
+  account while it runs keeps its session and its record (6 new tests, 7
+  mutants, 7 killed). Its spec and quality reviews and its ADR-009 pass
+  (the Insights read, account sign-in storage) are answered by fix pass
+  17 (a5220bc0, b27e1df0): a completed report's saved subtitle, which the
+  page shows, also names a session left out as larger than the read
+  limit; such a session is left out wherever it sits in the newest-first
+  order, so a re-run reads the same sessions as the first run; the limit
+  is worded from its constant; and the start sweep closes a chosen
+  account's open panes as it bars it, so no sign-in is recorded under the
+  bar, with tests pinning the bars in the call's own tick, each bar
+  lifting when its own wipe ends, and a failed wipe lifting its bar (7
+  new tests, 8 changed; 19 mutants, 18 killed, 1 an equivalent survivor).
+  Fix pass 17 reviewed PASS (spec, quality); fix pass 17b answers their
+  nits and the ADR-009 re-attack's two minors, and fix pass 17c answers
+  17b's spec and quality reviews. A file the read can tell, within its
+  first chunk, is one of the report's own earlier runs is left out there,
+  is not counted, and spends none of the read limit; one that does not fit
+  what is left is looked at (its first chunk) before the read stops, and
+  passed over. A file that names a run folder only later is left out too,
+  but spends its full size. So the sessions read stay within the limit,
+  and on top of it each such own run costs at most its first chunk, as
+  does the one file the read stops at. Tests also pin the per-file cap at
+  the walk's size, the stop at the first session that does not fit, and
+  an account the sweep did not choose left alone (17b: 4 new tests, 6
+  mutants, 6 killed; 17c and 17d: 3 new tests, 10 mutants, 10 killed, 17d
+  pinning where the first chunk ends). Fix pass 17c passed its spec and
+  quality reviews and the ADR-009 re-attack; 17d closed their two nits.
+  Fix pass 18: a Codex account stays barred until its storage clear
+  actually ends; the wait for it stays bounded, a clear that ends with an
+  error lifts the bar at once, one that never ends keeps the account
+  barred for the run, overlapping wipes each lift only their own share,
+  and a wipe's bar lasts until the whole wipe is done (fix passes 18 and
+  18b, the second for 18's reviews and ADR-009 re-attack: 6 new tests; 8
+  mutants, 7 killed, 1 an equivalent survivor). Fix pass 18b passed its
+  spec and quality reviews and the ADR-009 re-attack, and the pre-push
+  checks were clear. The owner approved the README and Feature Guide
+  images, Windows and macOS, on 2026-10-07. The owner decided on
+  2026-10-07 that the real-account chatgpt.com sign-in sitting (OR2, and
+  the one-account part of OR1), not run before this release, moves to the
+  owner's own test of 2.1.1-beta.2; the checks that need two distinct
+  identities stay outstanding. Owed: CI at the new head. Still owed for
+  PR 4: the PR-level ADR-009 pass at its final head (9.7 gate 4), the SSH
+  live matrix and the owner's other checks.
 
 Package completion is not release completion. A complete PR merges to beta
 only on the owner's word, in the order #625, PR 3, PR 4, and nothing is
@@ -336,13 +417,66 @@ released from it until section 7 holds.
 5. **Dependabot PRs:** every Dependabot PR open at the cut (today #620 to
    #624) rolled in (owner decision recorded 2026-09-26); #621, the Electron 44
    major, with its own ADR-009 pass and a VM packaging run.
+   *Electron 44 (#621): built in PR 4; its reviews and re-attack PASS; not
+   done while the checks listed under Owed are outstanding* (7a9a6989,
+   f81cba5d,
+   c6c437e6, 2bb4d75e; fix pass 10 is eeb09462, 93dd836f and fd565aaa; the
+   colour-reply fix is 501c2bd8; fix pass 11 is 2304229a to 212d8d23;
+   fix pass 12 is dcfc5cb3 and 1261e3c9).
+   ADR-009 round 1, three lenses (clipboard and paths; injection and the
+   certificate rule; updater and platform): FINDINGS, 1 major and minors, all
+   answered in fix pass 10 (26 mutants, 26 killed). Since then a Mac on an
+   earlier version is offered nothing from a release that needs macOS 13
+   (its download is named `AICodeConductor-<version>-macos13.dmg`, which
+   earlier updaters never match), the release gate refuses a cut whose
+   Electron needs a newer macOS than its tag's floor, an unreadable macOS
+   version counts as the running build's floor, a file copied from
+   `\\localhost\<share>` pastes, a path on the `pipe`, `mailslot` or `IPC$`
+   share is never opened, a copied image that is gone is no image, the
+   install uses the Windows native prebuilds as CI does, and
+   `npm run package` keeps them. The Mac download's new name (U1), and the
+   one download by hand it means for a Mac on 2.1.1-beta.1 or earlier, is
+   the default the owner may override; no bridge release is built. The VM
+   packaging run at 2bb4d75e: the release-shaped package built and
+   verified; native suite under Electron 44 15 of 15 files (226 tests); the
+   NSIS upgrade over the shipped 2.1.1-beta.1 PASS; e2e 94 of 94; the
+   packaged walk 39 parts, 0 errors; paste 8 of 9 cases (the ninth, the
+   `\\localhost` share: fixed in 93dd836f, unit-tested, VM-verified at
+   501c2bd8); a local `npm ci` and `npm run package` (fixed in fd565aaa,
+   unit-tested, VM-verified at 501c2bd8). The VM re-check at 501c2bd8: the
+   `\\localhost\c$` paste copied 146,402 B; the `pipe` share pasted no image
+   with 0 connections to the pipe; a copied image whose file was deleted
+   pasted no image; `npm ci` used the shipped prebuilds with no native
+   rebuild; `npm run package` and `verify:package` PASS. The colour-reply
+   fix (501c2bd8): main answers a local Codex session's terminal colour
+   query as the PTY emits it (12 mutants, 12 killed); on the VM 20 Codex
+   launches, the composer clean in 20 of 20, main's answer within 3.6 ms.
+   Fix pass 11 answers the fix pass 10 spec review (6 items), its quality
+   review (2 should-fix, 6 nits) and ADR-009 round 2 (the updater lens: 1
+   major and 3 minors; the native and startup lens: PASS, 4 minors): 21 new
+   tests, 29 mutants, 29 killed. Fix pass 12 (dcfc5cb3, 1261e3c9) answers
+   the colour-reply fix's spec review (2 items) and quality review (1
+   should-fix, 4 nits) and ADR-009 round 2b over the colour reply and paste
+   (2 lenses: PASS, 5 minors, one already answered in fix pass 11): 13 new
+   tests, 13 mutants, 13 killed; the responder runs for a local Codex
+   session on every OS and was verified live on Windows. The spec and
+   quality reviews of fix passes 11 and 12 and the ADR-009 re-attack over
+   them PASS; CI's required jobs are green at 6c1e0d52 (run 37553704348),
+   the Linux jobs included, and its Desktop test gate is red by design
+   until the owner attests (#309). Owed: the SSH live matrix for the
+   colour-reply fix (it changes `pty-manager.ts`); the macOS checks (the
+   DMG under its new name with LSMinimumSystemVersion 13.0, Finder file
+   paste, image paste) and the AppImage on a Rocky Linux host; real
+   keyboard focus in the in-app browser and account panes on an
+   interactive desktop.
 6. **Known defects settled.** The six C items in the checklist's P2
    acceptance section (the narrow-window overlap of the partner label, the
    renderer-only one-at-a-time rule, Resume replacing the tab list while its
    prompt is open, a session file written while the resume prompt is
    unanswered, a launch needing a dialog while that prompt is open, the
    untracked local Claude spawn) and the Codex statusline's
-   midnight-UTC limitation (row 38) are fixed or each given an explicit owner
+   midnight-UTC limitation (row 38; its VM check passed on 2026-10-04, run
+   cp4-row38) are fixed or each given an explicit owner
    disposition; the one pre-existing e2e failure, reproduced on beta, routed
    privately, is settled through that route (owner rule: no release with known
    bugs). Section 8 names the phase that takes each.
@@ -366,7 +500,11 @@ released from it until section 7 holds.
 12. Then, in order: the merges, the version bump on beta (the beta-bump
     model), `release.yml` watched to green; promotion to stable afterwards, as
     AGENTS.md describes. aicc_planning#84 (adding the Desktop test gate to the
-    beta ruleset) is an owner action, not a condition of this list.
+    beta ruleset) is an owner action, not a condition of this list. The
+    version in that bump is the final `2.1.1` and the changelog entry is
+    final, before the signed cut whose build carries the WP1.63 smoke; the
+    stable promotion moves the same tree (below, "The WP1 candidate at a
+    stable release").
 
 **Verification that only the release can close** (not inside a PR's own VM
 run):
@@ -376,11 +514,77 @@ run):
 - the upgrade walk repeated on the signed release candidate (the 2026-09-26
   walk used an unsigned candidate on a used Windows VM);
 - the release-candidate Codex CLI version (D7);
-- real sign-in, status and sign-out per OS on disposable identities, the
-  native keyring smoke and a real two-account run (rows 4, 6 and 15; WP1.10,
-  WP1.11, WP1.20, WP1.64, WP1.72);
-- the macOS and Linux columns of the 20 DONE rows in section 2;
+- the macOS and Linux columns of the 20 DONE rows in section 2, apart from
+  rows 4 and 6 (below);
 - the owner's desktop attestation.
+
+Not on that list: real sign-in, status and sign-out per OS on disposable
+identities, the native keyring smoke and a real two-account run (rows 4, 6
+and 15; WP1.10, WP1.11, WP1.20, WP1.64, WP1.72). OR1 runs them in PR 4, on
+its final build and on every OS, before it merges (9.5, P4.10; the owner's
+request: "on each system"). The packaged smoke of the signed release build
+stays for release (row 66, above).
+
+**The WP1 candidate at a stable release (P4.10, 628c0558).** A stable,
+non-dry-run `release.yml` run gives `WP1_PHASE=candidate` to both steps that
+run the suite, and `tests/wp1/phase.ts` lets the environment only raise the
+phase. That raises every WP1 gate, not only traceability's binding check:
+traceability's completeness rules (nothing planned, every record taken at
+`boundHead`, nothing but neutral paths changed since), dependency-boundaries
+R4 (each deep-import allowlist entry needs an `owner-approved` exemption),
+provider-conformance (every WP1-required capability `supported` in the
+declaration the composition root registers, aa73558a), and the legacy gate,
+which is at the candidate already (all 13 `delete` paths are gone). Run at
+aa73558a with `WP1_PHASE=candidate`, it refuses:
+
+- the 9 entries of `tests/wp1/deep-import-allowlist.json` (6 marked
+  `pending-owner`: `conductor-mcp-server.ts` to `codex/mcp-config.ts`,
+  `per-session-settings.ts` to `claude/statusline-command.ts` and
+  `claude/ssh-shim.ts`, `statusline-watcher.ts` to `claude/telemetry.ts` and
+  `claude/statusline.ts`, `tk-pricing.ts` to `codex/pricing.ts`; 3 with no
+  exemption, held by `pty-manager.ts`'s ledger disposition: to
+  `claude/ssh-shim.ts`, `claude/spawn.ts` and `claude/ui-detection.ts`): an
+  owner decision on each (section 10). Settled by the owner's answers of
+  2026-10-04 and built in PR 4 (be38c516): all nine are routed through the
+  provider interfaces, reached from the registry (R3 allows a shared module
+  no other route), and the deep-import, cross-package reach and
+  package-orphan allowlists are empty;
+- Claude's `cli.discovery`, `auth.status` and `auth.logout`, declared
+  `unknown` ("wired in the Claude adapter slice"): wired in a recorded change,
+  or the requirement decided by the owner (section 10). Codex passes on the
+  table it registers. Settled by the owner's answers of 2026-10-04 and built
+  in PR 4 (99d6a1a1): discovery was already wired and is now declared; the
+  status check and the sign-out reuse the app's `claude auth status` probe
+  and a sign-out beside it, in the account's own profile home, run from the
+  executable discovery proved with no shell. A sign-out of this computer's
+  own sign-in (the primary profile; every profile on macOS, where each runs
+  on the Mac's one keychain sign-in under the app's setup, D2) runs only with
+  the user's acknowledgement, through the provider-neutral sign-out's
+  existing acknowledgement (the review fix pass, FA). Provider conformance
+  and dependency boundaries pass with `WP1_PHASE=candidate`, with no
+  WP1-required key switched off on any platform;
+- the 73 items still `planned`, each moving as its evidence lands (P4.10).
+
+Two consequences, written down before the cut is planned:
+
+- **The beta-channel build is not candidate-gated.** Only a stable,
+  non-dry-run release declares the candidate from the workflow. The 2.1.1
+  beta-channel cut runs with the manifest deciding the phase; it says
+  `gate0` there, and a neutral edit can set it. Stable-only is deliberate:
+  the signed build that carries the WP1.63 packaged smoke comes from that
+  beta-channel cut (item 12), so forcing the candidate on it would make it
+  red every time.
+- **The version string must be final before the signed cut.**
+  `package.json` and `changelog.ts` are not neutral paths
+  (`tests/wp1/binding.ts`), so a `2.1.1-beta.N` cut whose signed build
+  carries the smoke, followed by a bump to `2.1.1` for stable, can never
+  pass: with `boundHead` at the beta head the bump breaks the binding, and
+  with it at the bump head the smoke's record was not taken at `boundHead`.
+  The one route that passes: the final `2.1.1` in `package.json` and the
+  final changelog entry land before the signed beta-channel cut (tagged
+  `v2.1.1-beta` under `release.yml`'s bare-version rule), the evidence is
+  taken at that head, a manifest-only commit declares the candidate, and the
+  same tree is promoted to stable.
 
 ## 8. PR 3 phase plan
 
@@ -880,8 +1084,9 @@ whole, the spawn answers main's reason and whether the launch resumed it from
 a copy already there, and the tab says so once, above its terminal and
 outside its buffer, in the app's muted text, until dismissed, in words true
 for that (`utils/launchNote.ts`, with the app's spoofing-character rule; VM
-findings V1 and V4). Default pending the owner's decision (VM finding V3; a
-Claude switch never asks at launch, so parity cannot settle it): a Switch
+findings V1 and V4). The default, kept by the owner on 2026-10-04 (section
+10, question 3, A; VM finding V3; a Claude switch never asks at launch, so
+parity cannot settle it): a Switch
 whose launch then asks for confirmation and is declined takes the tab back
 to the account it came from, or to the default account when that one can no
 longer launch, and says which.
@@ -902,7 +1107,7 @@ went its own way there is left as it is, the session carrying on from it and
 the note saying so.
 Done: the ADR-009 pass (the copy, the leases, the respawn's carry in pty:spawn,
 the pty-manager record; independent attacker sub-agents, bounded rounds: pass 1 at cf8f42d4 FINDINGS (one major, the cross-tab claim), fixed in 62cf7d8b and 31da7fb1; pass 2 at 31da7fb1 PASS; the cleanup at 78f2fcec confirmed by both lenses); the independent spec and quality reviews,
-PASS at 78f2fcec; the VM walk at 1063e3d9 (WINDOWS_1, MOCKED: fake CLI, fictional accounts; e2e 81/81): main's switch logic passed every case, and its findings are fixed: V1, the note was written into the terminal and the new session's first frame on Windows (ConPTY's) cleared it, so it is now shown in the new-account notice's place above the terminal, outside its buffer, until dismissed; V2, a tab that picked a conversation another tab holds on the same account was never recorded on it, so its Switch started a new conversation silently, and it is now recorded (the rollout stays the holder's to read), so its Switch refuses it as in use and says so; V3, Cancel on the confirm-at-launch question after a Switch left the tab on the new account; a Claude switch never asks at launch, so this is the owner's call, and the default pending that decision takes the tab back to the account it came from (or to the default account when that one can no longer launch); V4, the note is the app's muted text, which the token-contrast tests hold in both themes; V5, the claude.ai items in a Codex tab's right-click menu, predates P3.6 (#216) and is P4.6's (row 58, the per-account web session).
+PASS at 78f2fcec; the VM walk at 1063e3d9 (WINDOWS_1, MOCKED: fake CLI, fictional accounts; e2e 81/81): main's switch logic passed every case, and its findings are fixed: V1, the note was written into the terminal and the new session's first frame on Windows (ConPTY's) cleared it, so it is now shown in the new-account notice's place above the terminal, outside its buffer, until dismissed; V2, a tab that picked a conversation another tab holds on the same account was never recorded on it, so its Switch started a new conversation silently, and it is now recorded (the rollout stays the holder's to read), so its Switch refuses it as in use and says so; V3, Cancel on the confirm-at-launch question after a Switch left the tab on the new account; a Claude switch never asks at launch, so this was the owner's call (decided on 2026-10-04: A, as built), and the default takes the tab back to the account it came from (or to the default account when that one can no longer launch); V4, the note is the app's muted text, which the token-contrast tests hold in both themes; V5, the claude.ai items in a Codex tab's right-click menu, predates P3.6 (#216) and is P4.6's (row 58, the per-account web session).
 Done too: the VM re-check at 2cbf27ac (MOCKED; e2e 81/81) passed V1 to V4,
 and its findings are dealt with: W1, the note's dismiss sat under the GitHub
 button that floats over the terminal's top-right corner, so the bar now keeps
@@ -932,8 +1137,8 @@ owed gate-3 review (2026-10-02, P3.16), with a test nit (one re-point test
 also asserts the re-point never ran) fixed in fixer 9 (aac1b46e).
 W1: done, PASS on the VM at 427807fb (P3.7's run, MOCKED) and at 525a00ac
 (PR 3 gate 6, P3.16).
-Owed: the owner's decision on V3 (restore the previous account on a declined
-confirm, the default until then); the owner's review of the screenshots (the strip pill and its menu, the right-click menu,
+Decided on 2026-10-04: V3 as built (question 3, A: restore the previous
+account on a declined confirm). Owed: the owner's review of the screenshots (the strip pill and its menu, the right-click menu,
 the sidebar card's Codex line, the chips' colours, the note, a declined
 confirm after a Switch, and the reworded What's New and accounts pages, both
 themes); the owner's real-account resume (the server half of P3.1 answer
@@ -1098,12 +1303,16 @@ cannot be removed (held by another program) fails: `session:clear`
 answers false and, since fixer 11, the cache is dropped, so nothing writes
 the set back. But the file still holds the cleared set, and the next start
 offers it, because nothing retries the removal and the renderer ignores
-the false (pre-existing). The proposed fix is for the durability core to
-remember a failed clear and retry it at each exit flush until the next
-save. A clear refused by the read-failure latch (the last load of
-session-state.json was a read failure) deletes nothing, because what could
-not be read is never deleted (by design). The set stays on disk and the
-next start with a readable file offers it again.
+the false (pre-existing). PR 4 fixed it (85ffb170, then 9d606305): the
+clear is retried at each later save, exit flush and load, and a clear
+still owed is kept across a restart in a small marker beside the file, so
+the next start offers nothing and tries the removal again; a later save,
+or every copy removed, ends it. A clear refused by the read-failure latch
+(the last load of session-state.json was a read failure) deletes nothing,
+because what could not be read is never deleted (by design). The set stays
+on disk and the next start with a readable file offers it again; since
+9d606305 such a clear arms no retry, and the next load still reads the
+file (PR 4 review C-Q1).
 Limit (P3.7, fixer 9 A1; ADR-009 lens D finding 2, recorded): one
 transient read failure of session-state.json at start (an EBUSY from a
 scanner) sets the read-failure latch, so saves are refused for that run;
@@ -1206,8 +1415,8 @@ when the composer holds exactly that command; otherwise nothing is typed and
 the strip or the pill says why for a moment (`codex-composer.test.ts`,
 `screen-registry.test.ts`, `session-status-strip-codex-controls.test.tsx`).
 The one strip App renders drops a press's Enter when it is re-pointed at
-another tab. Row 41, built as the default pending the owner's decision
-(section 10, question 2): Codex has no one-line model or effort command
+another tab. Row 41, built as the default and kept by the owner on
+2026-10-04 (section 10, question 2, A): Codex has no one-line model or effort command
 (`/model <slug>` is sent as a message; there is no `/effort`), so on a live
 session the model pill types a bare `/model`, which opens Codex's own
 two-step picker and keeps the conversation, and the strip then shows what
@@ -2255,8 +2464,8 @@ folder from an earlier run on a standard Windows account (owner); the Watchdog o
 owner's live SSH matrix; a real paid-model turn (owner): an approval request
 raising the dot, and the Watchdog on a real usage limit and overload; the POSIX
 hook runner on macOS and Linux; the SSH live matrix at PR 3's head; the owner's
-review of the P3.10 gallery and screenshots, and the owner's answer to
-question 4.
+review of the P3.10 gallery and screenshots. Question 4 was answered on
+2026-10-04: A, kept as built.
 
 **P3.11 Extra CLI arguments.** Claude's field and IPC character guard for
 Codex, rejecting the flags the app manages (model, effort, permissions, MCP,
@@ -4453,26 +4662,48 @@ comment with its marker line regenerated at the final head and posted by
 the owner, who also removes the needs-review label (gate 4); CI at the
 final head (after the push); the owner's items, unchanged (section 6).
 
-## 9. PR 4 outline
+## 9. PR 4 phase plan
 
-After PR 3, one PR at a time. Less detail here; PR 4 gets its own phase plan
-when PR 3 is complete.
+One PR (PR 4), stacked on #626 (itself on #625), targeting beta. One
+integration owner (the orchestrating session) integrates the phases one at a
+time; parallel Opus implementers work only on the disjoint lanes of 9.3. Every
+phase is **APPROVED** as the outline recorded; the owner steps are the
+artifacts record (P4.6), the Insights mockup (P4.7), P4.10's owner action, the
+owner-only checks in 9.5, and section 10's questions 5 to 8 (answered on
+2026-10-04). The batched VM
+probe session (9.2) ran on 2026-10-02; each probe settled a technical choice
+inside an approved phase and reopened nothing. Two results cannot be settled
+by parity and became section 10's questions 5 (row 51) and 6 (row 53); a
+third, question 7 (row 57, the Cloud Agent permission mapping), followed from
+PB5 and the plan's own preset matching. Each was built as its stated default
+while the owner decided, and only what an answer would change waited on it;
+the answers of 2026-10-04 kept every default but question 5's, answered C
+and built (9.7). Two
+further VM steps, PB8 and PB9, ran the same day before any code: they raised
+no question and settle the Windows reads and the submit primitive's form.
+
+Line numbers in the outline's notes have moved: at `525a00ac` the canvas roots
+are registered at `pty-manager.ts:5617-5653` and `--plugin-dir` is passed at
+`:5771-5783`.
 
 | Phase | Rows | ADR-009 | SSH radius | State |
 |---|---|---|---|---|
-| P4.1 Agent Canvas from Codex: the tools on Codex's bound `/mcp` session, roots, instruction delivery, the live loop | 51 | Y | Y if `pty-manager.ts` changes (the canvas roots and `--plugin-dir` are wired there, `pty-manager.ts:4699-4727` and `:4853`) | APPROVED |
+| P4.1 Agent Canvas from Codex: the tools on Codex's bound `/mcp` session, roots, instruction delivery, the live loop | 51 | Y | Y (the roots are registered in the Codex branch of `pty-manager.ts`) | APPROVED (this computer's sign-in: question 5, from PB1, built as its default A) |
 | P4.2 Browser and vision tools for Codex | 52 | Y | N | APPROVED (a one-line notice to the owner, section 10) |
-| P4.3 Ask Conductor on Codex: a help workspace Codex reads (`AGENTS.md`), the opening question on a Codex launch; with both on, the Settings, General row "Ask Conductor runs on" (Claude Code by default), the dock row's provider type badge, and the provider read again when a closed Ask tab is revived | 53 (and the Ask part of 14) | Y | Y if `pty-manager.ts` changes | APPROVED (both on: OD27 M4) |
+| P4.3 Ask Conductor on Codex: a help workspace Codex reads (`AGENTS.md`), the opening question on a Codex launch; with both on, the Settings, General row "Ask Conductor runs on" (Claude Code by default), the dock row's provider type badge, and the provider read again when a closed Ask tab is revived | 53 (and the Ask part of 14) | Y | Y (the carrier passes the question through the Codex branch to `buildCodexSpawn`, and the logged Codex launch line, `pty-manager.ts:5000`, changes) | APPROVED (both on: OD27 M4). Carrier (PB4): argv after `--` on the direct route; the composer through P4.1's primitive on the npm `.cmd` route and for a live tab; characters outside the BMP: question 6, built as its default A |
 | P4.4 Memory and Codex logs | 55, 56 | Y | N | APPROVED |
-| P4.5 Cloud Agents with `codex exec` | 57 | Y | N | APPROVED |
-| P4.6 Codex web session; the artifacts record | 58 | Y | N | Web session: APPROVED. Artifacts: the owner signs a section 19 record |
-| P4.7 Insights for Codex: a Conductor-native report, run with `codex exec`; a mockup on the Agent Canvas before the build | 68 | Y | N | APPROVED (a one-line notice to the owner, section 10) |
-| P4.8 CI: `ubuntu-latest` in the test matrix; real-CLI conformance at the minimum, pinned and release-candidate versions | 59, 60 | N | N | APPROVED |
+| P4.5 Cloud Agents with `codex exec` | 57 | Y | N | APPROVED (the skip-permissions mapping: question 7, from PB5, built as its default A, Auto) |
+| P4.6 Codex web session; the artifacts record | 58 | Y | N | Web session: APPROVED, in the in-app window (PB7: the page loads with its sign-in form, no challenge); the sign-in window is built ahead of the owner's run, fail-closed on three unverified values that the run (OR2) confirms. Artifacts: a section 19 record, signed by the owner on 2026-10-05 (alternative A) |
+| P4.7 Insights for Codex: a Conductor-native report, run with `codex exec`; a mockup on the Agent Canvas before the build | 68 | Y | N | APPROVED (a one-line notice to the owner, section 10); the mockup approved on the canvas 2026-10-05 (v1, no notes), its choice C1 = A |
+| P4.8 CI: `ubuntu-latest` in the test matrix; real-CLI conformance at the minimum, pinned and release-candidate versions | 59, 60 | N (a product fix it finds: by its own paths, 9.7 gate 4) | N | APPROVED |
 | P4.9 E2E mode matrix: restart, enable/disable, a real launch | 67 | N | N | APPROVED |
-| P4.10 Qualification and owner-run gates; traceability to evidenced; the verification owed by the 20 DONE rows | 15, 16, 66 | N | N | Owner action first (OD20 D8: hosts, disposable identities, timing) |
+| P4.10 Qualification and owner-run gates; traceability to evidenced; the verification owed by the 20 DONE rows | 15, 16, 66 | N (a product seam it needs: by its own paths, 9.7 gate 4) | N | Owner action first (OD20 D8: hosts, disposable identities, timing) |
 | P4.11 Final user-facing sweep, the "Beta" labels removed, the screenshot recapture | 54 | N | N | APPROVED |
 
 The 15 rows: 15, 16, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 66, 67, 68.
+Not in PR 4: Codex over SSH (section 11: the remote resume page and the SSH
+Persistent and Remote Resumable lines keep `needsClaude`); `codex cloud` (row
+57's settling, WP1.41); app-server methods beyond the usage read (section 11).
 
 Notes that bind the build:
 
@@ -4512,6 +4743,3386 @@ Notes that bind the build:
   queue: an open Account usage page's age line that does not age while the
   page stays open (pre-existing, Claude's cards too).
 
+### 9.1 Phase visual
+
+```mermaid
+flowchart LR
+  B0(["PR 4 branch from the LOCAL PR 3 head"]) --> S0["S0 scaffold, before any lane: IPC names, preload, types, lease kind, setting field, web id class"]
+  PV[["PB1-PB7 run 2026-10-02"]]
+  PS[["PB8 sandbox reads, PB9 paste fold and take-back: run 2026-10-02, no question raised"]]
+  PV --> Q5{{"Question 5, owner: instructions on this computer's sign-in; default A built"}}
+  PV --> Q6{{"Question 6, owner: characters outside the BMP; default A built"}}
+  PV --> Q7{{"Question 7, owner: Cloud Agent skip-permissions mapping; default A (Auto) built"}}
+  subgraph E ["Lane E: CI and tests"]
+    P48["P4.8 CI: Linux and real CLI"] --> P49["P4.9 E2E specs"]
+  end
+  subgraph A ["Lane A: MCP, launch, primitive (serial)"]
+    P41a["P4.1 gate, roots, worktree, link, approvals, screen reading"] --> P41s["P4.1 skills staging and instructions"] --> P41b["P4.1 submit primitive, live loop, copy"] --> P42["P4.2 vision and browser"] --> P43c["P4.3 carrier"]
+  end
+  subgraph A2 ["Lane A2"]
+    P43s["P4.3 setting row, dock, revive, gate"] --> P43w["P4.3 AGENTS.md"]
+  end
+  subgraph BL ["Lane B"]
+    P44["P4.4 memory and Codex logs"]
+  end
+  subgraph C ["Lane C: background runs (serial)"]
+    P45["P4.5 record, dialog, IPC, gates, lease, exec runner"] --> P47["P4.7 Insights"]
+  end
+  subgraph D ["Lane D"]
+    P46a["P4.6 partition, sweep, Claude items off a Codex tab"] --> P46w["P4.6 sign-in window, Codex item"]
+    P46r["P4.6 artifacts record drafted"] --> P46A["P4.6 artifacts half"]
+  end
+  subgraph F ["Lane F: the close"]
+    P410p["P4.10 traceability fix, evidence map"] --> P411["P4.11 sweep, Beta labels, recapture"] --> P410["P4.10 qualification, owner gates, evidence"]
+    P411i["P4.11 inventory"] --> P411
+  end
+  S0 --> P41a & P43s & P44 & P45 & P46a
+  PV --> P41a & P41b & P43c & P44 & P45
+  PS --> P41b
+  P43w --> P43c
+  P42 --> CP1{{"Checkpoint 1: after P4.2"}}
+  P43c --> CP2{{"Checkpoint 2: P4.3 with its carrier, P4.4, P4.5, P4.6 first half"}}
+  P44 --> CP2
+  P45 --> CP2
+  P46a --> CP2
+  OR3{{"OR3 owner: Insights mockup and artifacts record, one render"}} --> P47
+  OR3 --> P46A
+  P45 --> X45["VM: P4.5's edit case, non-admin sandbox"]
+  X45 -.->|only if it fails| OR6{{"OR6 owner: admin setup on a throwaway account, then the VM repair last"}}
+  OR6 --> G
+  X45 --> G
+  P46w --> P411
+  P46A --> P411
+  P47 --> P411
+  P49 --> P411
+  CP2 --> P411
+  Q5 --> P411
+  Q6 --> P411
+  Q7 --> P411
+  OI{{"Owner: every image, one by one"}} --> P411
+  OR1{{"OR1 owner: hosts, identities, timing; row 15 gates"}} --> P410
+  OR4{{"OR4 owner: real-model checks"}} --> P410
+  P410 --> G(["Final head: PR-level ADR-009, SSH live matrix, VM e2e, CI green, owner word"])
+  P46w --> OR2{{"OR2 owner: one chatgpt.com sign-in run through the built window (confirms its three values)"}} --> G
+  OR5{{"OR5 owner: runs the SSH live matrix"}} --> G
+```
+
+ASCII view (time runs right; `==` building, `[..]` waits on a VM step or the
+owner, `|..|` a checkpoint):
+
+```
+Probes   PB1-PB7 done 2026-10-02 (questions 5, 6 and later 7 raised; each built as its default A)
+VM step  PB8 sandbox reads + PB9 paste fold and take-back: done 2026-10-02 (no question raised)
+Scaffold S0 => (lands before any lane starts)
+Lane E   P4.8 ======>  P4.9 specs ======================================> VM e2e at the final head
+Lane A     P4.1 gate/roots/link/approvals/screen ==> skills/instructions ==> primitive/loop (PB9's form) ==> P4.2 ==> |CP1| [A2 done] P4.3 carrier ==>
+Lane A2    P4.3 setting/dock/revive/gate ======> AGENTS.md ==>
+Lane B     P4.4 memory/logs on PB6's layout ======> [VM delete check, counted only if consolidation runs]
+Lane C     P4.5 record/IPC/gates/lease/runner (cwd = project) ======> [OR3 approved] P4.7 ======>
+Lane D     P4.6 partition/sweep/Claude items off ==> sign-in window (fail-closed, ahead of OR2) ==> [OR3 signed] artifacts ==>
+Lane F     P4.10 traceability fix + map; P4.11 inventory ====>     [Q5-Q7 answers] P4.11 ===> [images] P4.10 ===> PR gates
+Checks     |CP1| after P4.2    |CP2| P4.3 + carrier, P4.4, P4.5, P4.6 first half    |final head|
+Owner      asked now: OR1, OR4, OR5, questions 5, 6 and 7; OR3 rendered once both drafts are ready;
+           OR6 part 2 only if P4.5's non-admin edit case fails, part 1 (the VM repair) last;
+           on the final build: OR1's gates, OR2 (one chatgpt.com sign-in run), OR4, OR5
+```
+
+### 9.2 Probes before build (run 2026-10-02)
+
+One batched session on the Windows test VM (WINDOWS_1), with the real Codex
+0.153.4 and 0.155.1 (each version's npm install, run both as the `codex.exe`
+it ships and through its `.cmd` shim; run 2026-10-02: PB1 and PB5 on all four,
+PB2, PB3, PB4's first launch and PB6 on 0.155.1 direct and 0.153.4 shim, PB4's
+argv on both directly), throwaway Codex homes with a fake key behind a dead
+proxy, and the loopback fake model of the P3.10 to P3.15 walks extended for
+these probes (tool search and MCP calls, a code-word check and a hash of the
+text received, never the text). No real sign-in (the throwaway homes were
+signed in with the fake key); nothing was written into a user's own Codex
+folder; the throwaway realm's `config.toml` hash was recorded before and after
+every writable `codex exec`. Anything that needs real credentials or a real
+model is the owner's (9.5). Not covered by
+any probe: macOS or Linux; other Codex versions; a home where a Windows
+sandbox is already set up; a real model's choices. The report is
+`SP/vm-pr4-probes/report.md` (scratch, not tracked).
+
+**PB1. The instruction channel.** For P4.1's instructions and P4.2's vision
+skill.
+- Steps: (1) the strings of both binaries, for config keys that take an
+  instructions file or a skills folder; (2) for each key found, and for
+  `-c developer_instructions` without whitespace (as the `.cmd` route allows)
+  and with it (the direct route only), a launch on each install route with a
+  code word held only there; the fake model recorded whether the word reached
+  the request and where; (3) precedence: the throwaway `config.toml` set its
+  own value for each key, and the launch set the app's.
+- Decided, by the rule as amended (feasibility review F3; read literally, the
+  v2 rule would have picked a key that replaces Codex's own instructions): a
+  channel qualifies only if it ADDS to Codex's base instructions and replaces
+  no value the user set. Managed accounts take the realm skills channel (the
+  realm is the app's folder; the listing is P3.1 answer 8 and was not
+  re-probed); this computer's sign-in takes a channel only if it also leaves
+  the user's Codex folder untouched on both routes.
+- Result: `-c developer_instructions` lands in the developer message beside
+  the skills listing (both versions and routes; text with spaces on the direct
+  route only); `model_instructions_file` and `instructions` replace Codex's
+  base instructions (21,175 characters down to the value); `skills.config` and
+  `experimental_compact_prompt_file` add nothing; a launch `-c` replaces the
+  user's own value for that key, and nothing merges. No launch `-c` changed
+  `config.toml`. Managed accounts: the realm's `skills/`. This computer's
+  sign-in: none qualifies, question 5.
+
+**PB2. Tool approvals.** For P4.1's pre-allow and P4.2.
+- Steps: the strings, for per-tool MCP approval keys; a probe MCP server
+  exposing `canvas_snapshot`, `canvas_review` and `canvas_render` (no
+  annotations, as the app declares none), called by the fake model through
+  Codex's tool search, under the app's Read Only, Standard and Auto launch
+  flags (`permissions.ts:9-27`), on both versions; each per-tool key found, set
+  by `-c` for two tools only.
+- Result: Codex asks before every call of a tool without annotations under
+  Read Only, Standard and Auto, on both versions, with the probe's server
+  (Auto's `--ask-for-approval never` included). Under the app's own Auto
+  launch the VM checkpoint at 956df1a3 saw Codex refuse such a call with no
+  prompt instead ("MCP tool call requires approval, but approval policy is
+  never"), on both versions (P4.1; section 10, question 8);
+  `-c mcp_servers.<server>.tools.<tool>.approval_mode=approve`
+  lifts it for exactly that tool on both (0.153.4 too, although its strings
+  list no "approve"); `=auto` lifts nothing; approving once leaves
+  `config.toml` unchanged. The values hold no whitespace, so they ride the
+  `.cmd` route. P4.1 pre-allows the two, as Claude's two are
+  (`per-session-settings.ts:92`). Not probed: the Unrestricted and Plan
+  presets.
+
+**PB3. The submit form.** For P4.1's primitive and live loop, and P4.3's live
+hand-off.
+- Steps: the pseudo-terminal driver against the real TUI, at a ready
+  composer, on both versions. Three forms: one write of text and Enter; the
+  text in one write, then Enter 300 ms later (F2); the text as a bracketed
+  paste, then Enter 300 ms later (F3). Four texts: the two marker lines
+  exactly as the canvas writes them (an em dash and a middle dot,
+  `canvas-marker-queue.ts:4-5`; `CanvasNotesPanel.tsx:1626`), an ASCII
+  version, and an 8,000-character line mixing ASCII, accented Latin,
+  punctuation, CJK and an emoji. Recorded: the composer rows before Enter,
+  whether it was submitted, and the length and SHA-256 of what arrived.
+- Result: one write of text and Enter never submits (either version, any
+  text); F2 (and F3 alike) submits byte-exact on both versions, U+2014 and
+  U+00B7 kept and shown in the composer row; an 8,000-character text shows
+  only `[Pasted Content N chars]` (N in code points) 2.5 to 3.3 s after the
+  write, an Enter before it is swallowed and an Enter after it submits;
+  characters outside the BMP are dropped by the composer itself (an 18-unit
+  text with U+1F680 delivered 16 units). The primitive writes F2; the marker
+  lines keep their own characters. Not probed by PB3: the length at which
+  Codex starts folding into the placeholder, the composer's height, and how a
+  folded paste is taken back; PB9 measured them (below).
+
+**PB4. The Ask carrier.** For P4.3's carrier.
+- Steps: (1) the direct route: the app's Codex flags, `--`, then the
+  8,000-character line as one argument; and `--` with a question that starts
+  with `-`; (2) the composer route in PB3's form at the first ready composer,
+  on both routes; (3) a first launch in a fresh untrusted folder standing in
+  for the help workspace (an `AGENTS.md` holding a code word), an account
+  folder with no sandbox setting, under Read Only and under Standard.
+- Result: argv after `--` delivers 8,000 characters whole on both versions
+  (SHA-256 equal, the emoji kept), and a question starting with `-` stays the
+  question; the composer delivers all but characters outside the BMP, on both
+  routes (7,998 of 8,000 units; the gap was the one emoji). So argv carries
+  it on the direct route and the composer on the `.cmd` route; those
+  characters on `.cmd` and for a live tab are question 6. A first launch in an
+  untrusted folder shows folder trust, then "Set up the Codex agent sandbox"
+  (administrator, non-admin, Quit), under Read Only and Standard alike, on both
+  versions, and no hooks review; answering them writes the account's
+  `config.toml` (a trust entry and a `[windows]` key); the folder's
+  `AGENTS.md` reaches the request as a user message. Not probed: argv at a
+  first launch that shows those screens (the argv homes were pre-trusted), and
+  a folder with the help workspace's hardened access list (PB8 covered
+  its reads).
+
+**PB5. The background run.** For P4.5's runner and P4.7's.
+- Steps: `codex exec --json` with the prompt on stdin, `-C <project>`, the
+  fake model's plain and edit turns, on both versions and routes; each `-s`
+  level; with and without `--ephemeral`, `--ignore-user-config` and
+  `--skip-git-repo-check`; a git and a non-git project; the SHA-256 of the
+  account folder's `config.toml` and a list of its files and the project's
+  before and after each run.
+- Result: `exec --json -m <model> -c model_reasoning_effort=<effort> -C
+  <project> -s <level> --skip-git-repo-check -`, prompt on stdin; read-only
+  and workspace-write leave `config.toml` byte-identical with every flag set;
+  danger-full-access adds the project's trust entry to `config.toml` on every
+  run that reaches the model, whatever the flags (`--ephemeral` and
+  `--ignore-user-config` included); every run writes Codex's runtime databases
+  and helpers in the home (as any Codex session does), and `--ephemeral` drops
+  only the rollout; on Windows, in PB5's fresh homes, with no sandbox set up,
+  workspace-write refused every edit (20 of 20, exit 0, the refusal only on
+  stderr and in the reply); a non-git folder exits 1 without
+  `--skip-git-repo-check`. The edit evidence is the pass with `-m` (the pass
+  without it sent no tools to the fake provider). Default maps to read-only,
+  skip-permissions to workspace-write as question 7's default A (P4.5). The app runs the same
+  argv without `-C`, from the project as its working folder (P4.5: its runner
+  takes no path in argv). Not probed: a home with a Windows sandbox already
+  set up; `-o <file>`.
+
+**PB6. Memories and logs.** For P4.4's fixtures.
+- Steps: a throwaway home with memories turned on, three fake turns, quit,
+  relaunch, a 60 s wait, quit; `log_dir` set by `-c` to a plain path, and the
+  default `log/`; on both versions.
+- Result: `memories/` is a git repository (`.git/`, the sample hooks
+  included) holding `extensions/ad_hoc/instructions.md`,
+  `phase2_workspace_diff.md`, a heading-only `raw_memories.md` and an empty
+  `rollout_summaries/`; no `MEMORY.md` or `memory_summary.md` with the fake
+  model, so those are seeded and labelled, and their real format joins OR4;
+  `memories_1.sqlite`'s tables differ by version. `-c log_dir` moves
+  `codex-tui.log`; `codex-login.log` stayed in `log/` (written at sign-in,
+  before any `log_dir`; whether a `log_dir` in `config.toml` moves it is not
+  established).
+
+**PB7. The chatgpt.com sign-in page in an Electron window, no sign-in.**
+Sizes OR2.
+- Steps: an Electron window with a fresh in-memory partition loads the
+  chatgpt.com sign-in page, with Electron's own user agent and then the Chrome
+  one the claude.ai window uses, 20 s each. Nothing typed, nothing pressed.
+- Result: a sign-in form under both user agents, no challenge ("Continue with
+  Google", "Continue with Apple", "Continue with phone", an email field); OR2
+  runs on the in-app window as planned, with the app's existing Chrome user
+  agent.
+
+**PB8 and PB9 (run 2026-10-02, after PB1 to PB7, before any code).** One VM
+session, agent, own copy of the fake model, no real sign-in, under the rules
+below (report `SP/vm-pr4-probes/report-pb89.md`, journal
+`journal-pb89.md`; scratch, not tracked).
+- Scope: WINDOWS_1 only; Codex 0.155.1 through its `codex.exe` and 0.153.4
+  through its npm `.cmd` shim (the other two routes were not run);
+  throwaway homes with a fake key behind a dead proxy. PB8: 20 sessions under
+  Read Only and Standard. PB9: 128 recorded sessions (and one unrecorded) at
+  80, 200 and 40 columns and 38, 24 and 16 rows, the screen judged with the
+  app's own reader ported from `src/shared/codex-screen.ts`. Not covered: the
+  Auto, Unrestricted and Plan presets; the administrator sandbox (OR6);
+  macOS and Linux; a real model; a bracketed paste in PB9.
+- Side effects: the sandbox menu was answered four times, each by "2" and
+  Enter only once "2." was the selected row, never option 1; each throwaway
+  `config.toml` changed only through the trust and sandbox answers; the VM's
+  `%TEMP%` gained four explicit access entries (98 to 102), one per PB8 home
+  that set up the non-admin sandbox, as earlier walks did. Everything else the
+  session made was removed (no links followed); the VM user's own `~/.codex`
+  is unchanged (6,536 files, same hash).
+
+**PB8. The sandbox reads the app's folders.**
+- Why it was run: the canvas plugin folder is hardened on every directory,
+  with an explicit user-and-SYSTEM access list and its files written `0o600`
+  (`canvas-plugin.ts:733-748`); so is the help folder (`help-workspace.ts:141`;
+  `account-profiles.ts:689-697`); a managed realm inherits the resources
+  folder's access list (`realm-folders.ts:26-29`). Codex's Windows sandbox
+  runs the model's commands under its own identities, and the app advises the
+  administrator setup on Windows (`tips-library.ts:1113`,
+  `app-knowledge.ts:204`). Codex reads `AGENTS.md` itself (PB4); a skill's
+  body and `app-knowledge.md` are read by the model's shell.
+- Steps: the resources folder directly under the VM user's profile (the most
+  restrictive common inheritance), the plugin and help folders hardened with
+  the app's own access-list call, managed realms as the app makes them. Under
+  Read Only and Standard with the non-admin sandbox, on both versions, the
+  fake model's shell command read a file in a realm's `skills/`, the plugin
+  folder and `app-knowledge.md`, and a write test told the sandbox's own
+  token from the user's.
+- Result: under the non-admin sandbox, the realm's `skills/`, the plugin
+  folder and the help folder's `app-knowledge.md` are all readable, on both
+  versions and both presets. The sandbox token was proven: under Read Only it
+  wrote nowhere; under Standard only in the working folder. Caveat: on this VM
+  the model's default shell, PowerShell (`powershell.exe`), does not start
+  under the non-admin sandbox at all (exit 0xC0000142), nor does
+  `whoami.exe`; the reads ran through `cmd.exe`, whose built-ins and
+  `findstr.exe` run (P3.15's known issue, sharper; P4.5). In the session where
+  the first-launch screens are answered, the command ran outside the sandbox
+  after an approval (it does not measure the sandbox; see the facts below).
+- Decided: no section 10 question and no fallback. The Windows inline paths
+  (question 5's default A, Ask's `AGENTS.md`) stand as decided in v5: they
+  need no folder read under either sandbox. 9.6 item 19 is narrowed to what
+  PB8 showed. Untested: the same reads under the administrator sandbox,
+  which agents cannot set up (OR6). For a managed account on Windows that read
+  is the realm skills' only path (P4.1), so it is checked in OR6 part 2's
+  window if that runs, else in OR4 (9.5); if it fails, that is a numbered
+  section 10 question the same day.
+- Two facts for P4.1's and P4.3's design and ADR-009 pass (9.6 items 21 and
+  22): the session in which the first-launch screens are answered ran with
+  approval OnRequest and sandbox WorkspaceWrite although launched with
+  `--sandbox read-only`, and ran approved commands outside the sandbox, on
+  both versions (later launches honoured Read Only); and Codex grants its
+  sandbox Modify on the session's working folder (at a first launch even under
+  Read Only; on the hardened help folder under Standard), which a mirror of
+  the app's re-hardening could not remove (icacls error 1332), so after Codex
+  has run there the sandboxed model can write into the help folder.
+
+**PB9. The paste fold and its take-back.**
+- Steps: at a ready composer, on both versions, texts from 200 to 8,000 code
+  points in PB3's F2 form, at the widths and heights above: where Codex folds
+  into `[Pasted Content N chars]`, how long the draw takes, the composer's
+  height, and which keys take a text back (69 take-back tries, each checked on
+  screen 1.5 s and 6.5 s after the key and then by submitting a marker and
+  comparing its hash).
+- Result:
+  - Fold point, the same on both versions, every width, 24 and 38 rows: up to
+    1,000 code points the text is visible; from 1,001 it shows as
+    `[Pasted Content N chars]`, N in code points (a 1,000-code-point,
+    1,340-byte mixed text did not fold).
+  - Draw time after the write: 200 code points 0.25 s; 1,000 0.48 to 0.62 s;
+    2,000 0.6 to 0.88 s; 4,000 1.35 to 1.48 s; 8,000 2.4 to 2.85 s. All 38
+    submitted texts arrived with matching length and SHA-256. Once, a
+    26-character text on 0.153.4 was not yet drawn at 0.4 s, and an Enter sent
+    then was swallowed.
+  - Composer height: at most the pane's rows minus 4. A taller unfolded text
+    scrolls inside it, and `codexTextTyped` (`codex-screen.ts:213`) cannot
+    confirm it (for example 1,000 characters at 80 by 16, 40 by 16 and 40 by
+    24). While the composer wraps, the shared reading reports "unrecognised";
+    only `codexTextTyped` confirms a wrapped text.
+  - Take-back: Ctrl+U cleared every state on both versions (folded, visible,
+    taller than the composer, short, and keys sent 0.3 s or 1.5 s after the
+    write before anything was drawn). One Backspace (a folded placeholder
+    whole), Ctrl+A then Ctrl+K, and N Backspaces also cleared. Ctrl+C QUITS
+    Codex when the composer is empty at the moment it is handled (seen 0.3 s
+    into an 8,000-character write, both versions). The clear can be verified
+    on screen (ready, empty) only after the ingestion window: the composer
+    also looks empty while a write is still being taken in (up to about 2.9 s
+    at 8,000).
+  - One held-text event, not reproduced (0.153.4, about 1 in 150 sessions; 24
+    targeted retries): Codex was slow to start (10 s) and its first ready
+    screen still had the start-up footer; a 2,000-character write was never
+    drawn (the composer empty for more than 14 s); a Backspace silently
+    removed one hidden character, and the next typing made the other 1,999
+    appear, submitted with it. Whether Ctrl+U clears that state is unknown.
+- Decided: the primitive's form (P4.1): the exact mode up to 1,000 code
+  points while the text fits the composer, the folded mode from 1,001, Ctrl+U
+  as the only take-back key, Ctrl+C never, and a fail-safe rule for a write
+  that is never drawn. Every length is either confirmed or reliably taken
+  back, so question 6's possible second part is not raised.
+
+**The VM incident and the rules it leaves.** During PB1 a harness fault typed
+into Codex's "Set up the Codex agent sandbox" menu and confirmed option 1,
+which ran Codex's administrator sandbox setup once on WINDOWS_1 (report section
+4). Part of it is not undone, and the VM user's own `~/.codex` now holds stale
+sandbox passwords; both are the owner's (OR6), and no agent check waits for
+them. Every later VM walk, e2e spec and harness follows these rules:
+- The sandbox menu is answered only by moving the selection to "2" and
+  pressing Enter once "2." is the selected row; never a digit plus Enter, and
+  never option 1 (the administrator setup is the owner's, OR6).
+- Nothing is typed into a run whose composer is not ready: ready means the
+  footer is on the last line and no prompt is on screen, both holding on two
+  reads 300 ms apart (the composer is drawn before the folder-trust prompt).
+- `config.toml` is hashed before and after every writable step.
+- Agents never start Codex on, or write into, the VM user's own `~/.codex`;
+  "this computer's sign-in" is simulated with a throwaway `CODEX_HOME`. No
+  agent check needs the real one: the one use of it is P4.10's row 25 check,
+  whose real rollouts are copied read-only from its `sessions/` into a
+  throwaway home, which starts no Codex there and touches no sign-in or
+  sandbox state.
+The extended fake model and the probe scripts stay on the VM for the phases'
+VM runs (report section 3, item 17).
+
+### 9.3 Order and lanes
+
+**Start at once (PB1 to PB7 have reported; no owner answer is needed to
+start):**
+1. The branch (from the local PR 3 ref), then the shared-scaffold commit (S0)
+   by the integration owner, landed before any lane starts: the IPC channel
+   names, the preload and `electron.d.ts` entries, the shared types (a provider
+   on `CloudAgent` and on `InsightsRun`). Four S0 edits fall in lane files,
+   declared exceptions to the table below: the provider on `CloudAgentData`
+   (`cloud-agent-manager.ts:22-41`, lane C), the background lease kind
+   (`consumer-leases.ts:32-36`, lane C), the `askConductorProvider` setting
+   field (`settingsStore.ts`, lane A2) and the Codex web-session id class
+   (`shared/account-web-session.ts`, lane D). After S0 those files belong to
+   their lanes. S0's IPC and preload entries are attacked with the phase each
+   one serves (9.7 gate 4). Record (2026-10-03): S0 reviewed PASS; its
+   channels' ADR-009 pass: PASS at 2d296eea (four lenses, two fix rounds); VM
+   confirmations owed.
+2. PB8 and PB9 have run (9.2, 2026-10-02): no code waits on them any more;
+   the primitive's form is PB9's.
+3. Lane E: P4.8 in full.
+4. Lane A: P4.1's gate, roots and worktree, conversation link, approvals
+   (PB2) and screen-reading additions; the realm skills staging and question
+   5's default (PB1); then the primitive in PB9's form, the live loop and
+   the copy (PB3); then P4.2.
+5. Lane A2: P4.3's "Ask Conductor runs on" row, the dock badge and the
+   carrier's notice lines, the revive, the gate, Sentinel following the row,
+   `AGENTS.md` and the help folder's rebuild before every Ask launch, the
+   copy.
+6. Lane B: P4.4 in full on PB6's layout; delete shown only after its VM check.
+7. Lane C: P4.5 in full (PB5), the IPC included.
+8. Lane D: P4.6's partition builder, the orphan sweep's new prefix, and
+   Claude's items taken off a Codex tab's menu.
+9. Lane E: P4.9's specs on the fake CLI, and the matrix document.
+10. Lane F: P4.10's traceability test fix and evidence map; P4.11's
+    inventory.
+11. Drafts: the artifacts section 19 record and the Insights mockup (from the
+    current code), held for one render (OR3).
+
+**Then, in this order of integration:** P4.1; P4.2; checkpoint 1; P4.3's
+lane A2 half, then its carrier (lane A, after P4.1's primitive and lane A2's
+integration); P4.4; P4.5; P4.6's first half; checkpoint 2; P4.6's sign-in
+window and its Codex menu item (built ahead of OR2, 2026-10-04); P4.7 (after P4.5 and OR3's
+approval); P4.6's artifacts half (after OR3's signature); P4.9 integrated after
+the product phases so the final VM run covers them; P4.11; P4.10 last, because
+it records evidence for the final build; the final head. Section 9's numbering
+is kept apart from three moves: P4.8 goes first, P4.3 is split across two
+lanes, and P4.11 comes before P4.10, each for the reason given. Checkpoint 2
+does not wait for an owner answer: the owner-gated halves (P4.6's sign-in
+window, built ahead of OR2, and its artifacts, P4.7) are covered at the final head. P4.11 re-checks
+its lines against the owner's answers to questions 5 to 8, and if an answer
+brings a change after P4.11 or P4.10 ran, both run again over it before the
+final head.
+
+**Lanes and the files each owns (disjoint).** Every file a phase edits has
+one owner: a lane below, or the integration owner (the shared list).
+
+| Lane | Phases | Files the lane owns |
+|---|---|---|
+| A | P4.1, P4.2, P4.3's carrier (serial) | `src/main/conductor-mcp-server.ts`; `src/main/canvas/*` (the skills staging included); `src/main/providers/codex/spawn.ts`; `src/main/pty-manager.ts` (Codex branch); `src/main/ipc/pty-handlers.ts`; `src/shared/codex-screen.ts`; the submit primitive (new, with its driver); `src/renderer/lib/codexComposer.ts`; `src/renderer/components/TerminalView.tsx` (Ask hand-off); the canvas page's notices (`src/renderer/components/AgentCanvasPane.tsx`, `CanvasNotesPanel.tsx`, `CanvasEmptyState.tsx`); `src/renderer/components/conductor-mcp/AgentCanvasSubTool.tsx`; `src/main/providers/codex/hooks.ts` (the `tomlString` export for question 5's pointer; a hook-trust read only if the hook stream cannot serve P4.1's notice, which is the default); `askConductor.ts` for the carrier only, after lane A2's edits integrate; the main side of the carrier's notice lines (it raises them; lane A2 draws them) and the Ask launch's `-c` values for `AGENTS.md` (P4.3); their tests. The suites that read `codex-screen.ts` through the Watchdog or `codexComposer.ts` are re-run, not edited (P4.1's list) |
+| A2 | P4.3 apart from its carrier | `src/main/help-workspace.ts`; `src/renderer/lib/askConductor.ts` (revive, provider), `askConductorGate.ts`; `src/renderer/components/sidebar/AskConductorDock.tsx` (the badge, and the notice lines lane A raises); `src/renderer/stores/settingsStore.ts` (after S0); `src/main/sentinel/index.ts` if Sentinel's read needs a change; their tests |
+| B | P4.4 | `src/renderer/components/MemoryPage.tsx`; `stores/memoryStore.ts`; `src/main/memory-scanner.ts` (or a new Codex scanner); `src/main/ipc/memory-handlers.ts`; `src/main/utils/path-validator.ts`; `src/main/ipc/debug-handlers.ts`; a new Codex log-folders component; their tests |
+| C | P4.5, then P4.7 | `src/main/cloud-agent-manager.ts` (after S0); `src/main/ipc/cloud-agent-handlers.ts`; `CloudAgentsPage.tsx`, `NewAgentDialog.tsx`, `stores/cloudAgentStore.ts`; `src/main/providers/codex/cli-runner.ts`, `review.ts` (or a new exec runner); `src/main/providers/core/consumer-leases.ts` (after S0); `src/main/insights-runner.ts`, `insights-cross-account.ts`; `src/main/ipc/insights-handlers.ts`; `InsightsPage.tsx`, `src/renderer/components/insights/parseInsightsReport.ts`, `InsightsSections.tsx`, `CrossAccountReport.tsx`, `stores/insightsStore.ts`; their tests. Lane C writes the fake CLI's `exec --json` mode as a patch for the integration owner |
+| D | P4.6 | `src/main/account-web/*`; `src/shared/account-web-session.ts` (after S0); `src/main/ipc/account-web-handlers.ts`; `sidebar/SessionContextMenu.tsx`; `Sidebar.tsx`; `WebviewPane.tsx`; `lib/claude-web-targets.ts`; `stores/webviewStore.ts`; their tests |
+| E | P4.8, P4.9 | `.github/workflows/ci.yml`, `release.yml` (comment); new `tests/integration/*` conformance; new `tests/e2e/*` specs, `tests/wp1/mode-matrix.test.ts` and `tests/e2e/onboarding-provider-select.spec.ts` (created or re-pointed with P4.10); `docs/wp1/evidence/mode-matrix.md`, `ci-matrix.md`; Linux fixes to test files that no other lane owns and that are not on the shared list |
+| F | P4.10, P4.11 (one Opus implementer; the shared files through the integration owner) | `tests/wp1/traceability.test.ts`; `tests/wp1/phase.ts`; the new `tests/wp1/*` files of P4.10's table apart from lane E's `mode-matrix.test.ts`; `tests/wp1/fake-cli/oracle.json`; `docs/wp1/evidence/*` apart from lane E's two; `docs/wp1/evidence/release-qualification.md`; the label files (`src/renderer/providers/codex/index.ts`, `ProvidersCard.tsx`, `AssistantsStep.tsx`, `CodexReconfirmPage.tsx`, `TransparencyStep.tsx`, `RenamePage.tsx`) and the tests that pin them (`provider-conformance.test.ts`, `accounts-surface.test.tsx`, `codex-reconfirm-page.test.tsx`, `onboarding-transparency-recap.test.tsx`, `token-contrast.test.ts`); the capture tools (`scripts/capture-training-screenshots.ts`, `scripts/readme-shots/`) and the images they recapture (`src/renderer/assets/training/*.jpg`, `docs/screenshots/*.jpg`) |
+
+**Shared files, the integration owner only.** Implementers hand their edits to
+these as a patch or a list; the integration owner applies them serially, runs
+the WP1 gate and reconciles the ledger: `src/shared/ipc-channels.ts` (the
+channel names, the main-to-renderer event for Ask's notice lines included),
+`src/preload/index.ts`, `src/renderer/types/electron.d.ts`,
+`src/shared/types.ts`, `src/main/index.ts` (the marker queue's wiring
+included), `src/main/provider-in-use.ts`,
+`src/main/providers/core/accounts-service.ts`,
+`src/main/providers/codex/index.ts`, `src/main/providers/codex/realm-paths.ts`
+(P4.1's skill staging folder), `src/main/providers/codex/auth-operations.ts`
+(P4.4's log-folder helper beside `usageSessionsDir`, and P4.6's sign-out
+clearing if it hooks there), `src/renderer/lib/claudeOff.ts` (lanes A2 and C
+both read it: `CloudAgentsPage.tsx:12`, `InsightsPage.tsx:15`,
+`NewAgentDialog.tsx:41`), `tests/e2e/helpers/fake-codex.ts`, `SettingsPage.tsx`
+(P4.3's General row, P4.4's Debug Logging mount), `src/shared/app-knowledge.ts`,
+`src/renderer/tips-library.ts`, `src/renderer/changelog.ts` with
+`CHANGELOG.md`, `onboarding/WhatsNewV2Step.tsx`, `onboarding/showcase-pages.ts`,
+`GuidedTour.tsx`, `training-steps.ts`, `onboarding/hello-codex.ts`,
+`onboarding/BuiltinToolsStep.tsx`, `PRIVACY.md`, `README.md`,
+`docs/USER_GUIDE.md`, `tests/unit/renderer/whatsnew-showcase.test.tsx`,
+`tests/wp1/legacy-codex-ledger.json`, `docs/wp1/legacy-codex-manifest.json`,
+`tests/wp1/traceability.json`, `docs/wp2/parity-checklist.md`,
+`docs/wp2/completion-plan.md`, the PR 4 `CONTEXT.d/` fragment.
+
+**Rules carried in.**
+- One PR at a time (owner rule of 2026-08-23). Inside PR 4: parallel only on
+  disjoint files, in the shared worktree; one integration owner; one shared
+  lock, held for every typecheck, vitest and mutation run, not only mutation
+  runs; implementers stage only their own paths; no rewording of commits others
+  depend on (owner rule of 2026-10-02).
+- A typecheck error in another lane's files does not block a lane; the lane's
+  own files must be clean, and the integration owner's typecheck at each
+  integration must be clean.
+- No branch switch in the worktree while any implementer has uncommitted work.
+- Linux (P4.8): a Linux failure in a test file a lane owns is fixed by that
+  lane (lane E reports it); one in a shared-list file goes to the integration
+  owner; one in a file no lane owns is lane E's; one that is
+  a product bug is fixed by the lane that owns the product file, as its own
+  recorded change (9.7 gate 4). No lane waits for lane E.
+- Tests are tagged in each phase: [host] a named host-safe unit file (its
+  header grepped for HOST QUARANTINE before every run; never a directory, never
+  `-t`); [CI] needs the real `codex`, Linux or macOS; [VM] e2e and real-CLI
+  walks on the Windows test VM. New cases that plant junctions or links go into
+  a new file headed HOST QUARANTINE (CI and VM only) unless the owner clears
+  them for the host.
+- Affected tests and boundary checks during development; the full suite and
+  packaged VM runs at checkpoints, on CI and the Windows test VM, never on the
+  owner's machine: checkpoint 1 (after lane A's P4.2), checkpoint 2 (P4.3 with
+  its carrier, P4.4, P4.5 and P4.6's first half), and the final head.
+- Any change to "codex" text moves the WP1 legacy-codex gate: run it and the
+  traceability test before every push.
+
+### 9.4 Phase entries
+
+**P4.1 Agent Canvas from Codex (row 51).** The canvas tools on Codex's bound
+`/mcp` session, the serving roots, the instructions and the live loop, as a
+Claude session has them. Probes: PB1, PB2, PB3 (all reported).
+- *Today.* Withheld at `conductor-mcp-server.ts:1109`
+  (`source !== 'codex' && toolOn('canvas')`); its comment (:1104-1108) says
+  Codex has no bound session id, which is stale, because `/mcp` binds
+  `boundSessionId = authedSession` (:1367). The serving rule (ADR-016, ADR-017)
+  is keyed on the session id and checks no provider
+  (`canvas/canvas-store.ts:265-528`). Roots are registered only in the
+  interactive Claude branch (`pty-manager.ts:5617-5653`; "Interactive Claude
+  sessions only", :5333). The Codex branch (:4880) registers none and deletes
+  `CCC_SESSION_WORKTREE` (:5001-5003); its launch folder is
+  `built.cwd || resolvedCwd` (:4977), where `built.cwd` can be the folder a
+  rollout recorded (P3.5). The conversation link reads Claude's transcript
+  (`canvas/canvas-session-link.ts:122-134`). Codex gets the Conductor MCP
+  server from `providers/codex/spawn.ts:239-247` (token :260), with no
+  `developer_instructions` and no skill staging anywhere in `src/main`. The
+  marker queue writes the line and Enter in one write
+  (`writeSubmittedLine`, `pty-manager.ts:6278`, wired at `index.ts:907-916`),
+  which Codex's composer never submits (PB3; evidence addenda 13 and 15). The
+  queue's `write` is synchronous (`canvas-marker-delivery.ts:19`). The shared
+  screen reading (`src/shared/codex-screen.ts`) recognises the trust prompt
+  and the sandbox-setup menu (by its footer, "Press enter to confirm or esc to
+  go back", :103; PB4's recorded screens) but not Codex's MCP approval form
+  ("Allow the <server> MCP server to run tool ...", which submits on a digit,
+  PB2).
+- *Parity spec (Claude).* The tools on its MCP connection
+  (`registerCanvasTools`, `conductor-mcp-server.ts:1110-1205`). The project
+  folder and the CCC worktree as roots, the project only from
+  `resolveCwd(options.cwd)`, through `isHomeOrAncestor` and the store's
+  floors, never from a transcript-derived folder (`pty-manager.ts:5590-5653`;
+  the adversarial fix of 2026-08-15 recorded at `ipc/pty-handlers.ts:952-967`).
+  The instructions as the plugin's skills `agent-canvas`, `canvas-plan` and
+  `conductor-vision`, loaded by `--plugin-dir` while the built-in tools are on
+  (`pty-manager.ts:5771-5783`; `canvas/canvas-plugin.ts:573-578`,
+  `ensureCanvasPlugin` :713), writing nothing into the user's files.
+  `canvas_snapshot` and `canvas_review` pre-allowed
+  (`hooks/per-session-settings.ts:92`, :160-169). The live loop: markers
+  written at turn boundaries from the hook gateway (`index.ts:907-916`,
+  `canvas/canvas-marker-delivery.ts:21-27`, `ipc/canvas-handlers.ts:1075-1080`).
+- *Changes.*
+  - Lift the gate and correct its comment.
+  - Roots in the Codex branch, mirroring :5617-5653: `resolvedCwd`
+    (`resolveCwd(options.cwd)`, :2189) through `isHomeOrAncestor` and
+    `registerCanvasUatRoot`; never `codexCwd` or any folder a rollout
+    recorded. Not from `noteSessionSpawnForCanvas` (`ipc/pty-handlers.ts:969-995`):
+    that site sees the raw and the resume folder, which is what the 2026-08-15
+    fix moved out. The worktree as Claude's: `designatedWorktreeDir(resolvedCwd,
+    sessionId)` (:5336-5344) through `designateCanvasWorktreeRoot`, with
+    `CCC_SESSION_WORKTREE` set to it instead of deleted, and deleted as today
+    when the session designates none.
+  - Link the canvas to the claimed Codex conversation id (P3.5).
+  - The instructions (PB1). A managed account through its realm's `skills/`,
+    staged by a folder helper in `realm-paths.ts` while the built-in tools are
+    on, and removed (only the app's own, verified files) when they are off, as
+    Claude gets `--plugin-dir` only while they are on. Staging reuses
+    `canvas-plugin.ts`'s `OWNED_FILES` and its integrity check (:573-578,
+    :713); it refuses the external-default realm (this computer's sign-in),
+    refuses a link at the realm's `skills/` or at a skill folder, and never
+    overwrites or deletes a same-named folder the app does not own. The staged
+    files, like the plugin folder, are verified against `OWNED_FILES` before
+    every spawn and never trusted from disk (as `ensureCanvasPlugin` does on
+    every call, `canvas-plugin.ts:722-728`), since a session's preset may not
+    hold in the session where the first-launch screens are answered (9.6 item
+    21). PB8: the realm's `skills/` is readable under the non-admin sandbox;
+    under the administrator sandbox it is untested and checked in OR6 part 2's
+    window or OR4 (9.5); a failure there is a numbered section 10 question the
+    same day.
+  - This computer's sign-in as question 5 settles, built meanwhile as its
+    default A: on the direct route only, and only when no settings layer Codex
+    reads names `developer_instructions`. The layers, listed per version in the
+    phase record from both binaries' strings and tagged source, each with its
+    location: `<CODEX_HOME>/config.toml` at its top level and in every
+    `[profiles.*]` table; every `.codex/config.toml` on the walk Codex makes
+    from the working folder up to the project root marker (a trusted
+    project's own settings); and the managed layer the strings name
+    (`managed_config`; on 0.153.4 also `requirements.toml`). Where a version's
+    managed-layer location cannot be established, default A passes nothing on
+    that version. Each layer is checked as plain text, failing toward passing
+    nothing; a user's extra arguments cannot carry `-c`, `--config` or
+    `--profile` (`shared/extra-args.ts:59-67`, :85-99), so the files are the
+    only user source. Then `-c developer_instructions=<value>`, the value
+    encoded as a TOML string as `tomlString` does (`hooks.ts:130-133`,
+    exported for this). On Windows the value is a condensed text of the three
+    skills inline, at most 6,000 characters (it needs no folder read under
+    either sandbox); a [host] test holds it to that bound and shows the direct
+    route's launch line stays under 32,767 characters with it, every
+    per-preset key, the longest extra arguments and an 8,000-character Ask
+    question quoted at its worst. On macOS and Linux
+    it is a short text naming the three skills and where their full text is in
+    the app's plugin folder, as Codex lists its own skills (the full text,
+    about 29,000 characters at `525a00ac`, is close to Windows'
+    32,767-character launch-line limit and would sit in every request).
+    Otherwise, and on the npm `.cmd` route, the tools and their descriptions
+    without the skills' guidance, and the canvas page says so in one line.
+  - Approvals (PB2), by parity per preset. On every spawn
+    `-c mcp_servers.conductor.tools.canvas_snapshot.approval_mode=approve`,
+    and the same for `canvas_review`, as Claude pre-allows the two in every
+    mode. Under a Codex preset whose matching Claude mode does not ask before
+    the app's tools, per-tool `approval_mode=approve` keys for exactly the
+    tools that mode does not ask before, under that preset only (PB2: a
+    per-tool key works on both versions and rides the `.cmd` route). The
+    presets are matched by their own words (`CodexFormFields.tsx:44-51`;
+    `claude-cli-options.ts:86-93`): Unrestricted ("Full machine access") with
+    Claude's Bypass ("Skip every permission prompt"), which asks before
+    nothing; Auto ("Workspace writes, no prompts") with Claude's Auto
+    ("Auto-accept most actions"), whose handling of these tools the phase
+    record takes from Claude Code's documented behaviour or, where only a real
+    model can show it, from OR4's check of a real Claude session in Auto mode.
+    Auto meanwhile gets no keys, so on Auto, which cannot ask, Codex refuses
+    these tools (the VM checkpoint at 956df1a3; the Feature Guide says so,
+    5e5d0478 and 3e9ae9d6; section 10, question 8); Read Only, Standard and
+    Plan keep Codex's prompt, as Claude's Ask permissions, Accept edits and
+    Plan mode ask.
+    Nothing wider: no `default_tools_approval_mode`, no session or always
+    approval. The npm `.cmd` route's line must stay under cmd.exe's 8,191
+    characters: with every key (about 29 tools under Unrestricted) and the
+    longest extra arguments (`EXTRA_ARGS_MAX`, 512, `extra-args.ts:8`) it is
+    tested to fit; were it over, the per-preset keys are dropped with a log
+    line, never the launch. No security reason against the per-preset keys is
+    known; if the ADR-009 pass finds one, it is raised as a numbered section 10
+    question that day and that preset gets no keys meanwhile (its tools other
+    than the snapshot and review are then refused on a preset that cannot
+    ask, Unrestricted and Auto, and asked about on the others). P4.2 applies
+    the same rule to its tools.
+  - The screen reading (`codex-screen.ts`, `BLOCKING_RE` :100-117): add Codex's
+    MCP approval form ("Allow the <server> MCP server to run tool") and the
+    sandbox-setup menu's title ("Set up the Codex agent sandbox"; its footer is
+    already matched, so this is defence in depth), as both versions draw them,
+    with screen fixtures from the rows PB2 and PB4 recorded. The Watchdog,
+    Compact and Plan-mode paths read the same module and gain the same refusal.
+  - One submit primitive (P4.3 reuses it), built from the two copies of this
+    rule that exist (`codexComposer.ts:197` in the renderer; the Watchdog's
+    `submitCodex`, `watchdog/watchdog-manager.ts:609-634`), which stay as they
+    are:
+    - It writes only at Codex's ready, empty composer, ready meaning the shared
+      reading says `ready` on two reads 300 ms apart (the composer is drawn
+      before the trust prompt, PB1). It never writes while the trust prompt,
+      the sandbox menu or the MCP approval form is on screen, or while a
+      composer is drawn above or under a prompt.
+    - The text in one write (PB3's F2, as both existing copies), then Enter as
+      its own write, in PB9's two confirmation modes:
+      - exact, up to 1,000 code points and only while the text fits the
+        composer (at most the pane's rows minus 4): Enter once
+        `codexTextTyped` (`codex-screen.ts:213`) confirms the whole text,
+        polled within a bound, not checked once at a fixed 300 ms (PB9 saw a
+        26-character text not yet drawn at 0.4 s, and an Enter sent then was
+        swallowed); `codexTextTyped` is also the only check that confirms a
+        wrapped text, since the shared reading reports a wrapping composer as
+        "unrecognised";
+      - folded, from 1,001 code points: Enter only once
+        `[Pasted Content N chars]` shows with N the text's code-point count,
+        within a bounded wait of at least 5 s (PB9 drew it in under 2.9 s at
+        8,000), never earlier.
+      The band neither mode confirms, a visible text taller than the composer
+      (it depends on the pane's size), is taken back and reported not
+      delivered.
+    - Take-back is Ctrl+U only (PB9: it cleared every state on both versions);
+      never Ctrl+C, which quits Codex when its composer is empty as the key is
+      handled. A clear is verified on screen (ready, empty) only after the
+      ingestion window (up to about 2.9 s at 8,000 code points), then "not
+      delivered" is reported with the reason. Only in the same run.
+    - After the write it re-reads the screen once before any further key. If a
+      prompt or menu is on screen (the race window between the second ready
+      read and the write, which an idle session does not open), it sends no
+      further key and reports not delivered. The phase record names that
+      window.
+    - Fail-safe for a write that is never drawn (PB9's held-text event, not
+      reproduced, about 1 in 150 sessions, 0.153.4): when neither mode
+      confirms the text within its bound, it sends Ctrl+U only after the
+      ingestion window, verifies that the composer is ready and empty, and
+      reports not delivered. Whether Ctrl+U clears that held state is unknown,
+      so the phase record carries it as a residual; it raises no question.
+    - It refuses text holding a control character or a character outside the
+      BMP (neither can be confirmed on screen; defence in depth beside
+      `normaliseQuestion` and `agentMarkerSchema`). P4.3's carrier removes the
+      characters outside the BMP first, as question 6's default.
+    - Busy: while a turn runs it waits, bounded, for the ready composer (for a
+      marker, the queue's own fallback bound, `MARKER_FALLBACK_FLUSH_MS`, 120 s,
+      `canvas-marker-queue.ts:35`); on timeout it reports "not delivered" to
+      its caller, which the canvas shows on the review it belongs to. The
+      wiring's `write` becomes asynchronous with a result.
+    - Main holds a Codex session's screen only while the Watchdog is on (:543),
+      so the primitive brings a bounded headless pane fed by the session's
+      output, or works through the renderer's screen; the phase record names
+      which, and why.
+    - A Codex session's markers go through it; Claude's keep
+      `writeSubmittedLine`. The marker lines are the canvas's own: U+2014 and
+      U+00B7 arrive byte-exact on both versions (PB3), and no marker holds a
+      character outside the BMP.
+  - The live loop from Codex's turn boundaries (P3.10's hook events). Until an
+    account's hooks are trusted (row 63, question 4, default A built), no hook
+    event arrives and the queue writes at once, as before #580
+    (`canvas-marker-delivery.ts:21-27`); the primitive then holds the marker
+    until Codex's composer is ready, so the boundary is read from Codex's
+    screen instead of its hooks. Declared deviation, recorded in the phase
+    record and under section 10's question 4. The canvas page says so for a
+    Codex session that has sent no hook event (read from the hook stream; no
+    read of Codex's trust record).
+  - Copy: lift `needsClaude` from `showcase-pages.ts:75` and
+    `WhatsNewV2Step.tsx:109` and reword them for both assistants (the tools
+    reach every Codex account, so question 5 does not change these lines); fix
+    `app-knowledge.ts:108` (the canvas half), `hello-codex.ts:219` (it names
+    vision, the in-app browser and the Agent Canvas: P4.1 takes the canvas out
+    of the sentence and P4.2 rewrites the rest), `GuidedTour.tsx:33-39` and the
+    `AgentCanvasSubTool.tsx:14-17` comment. A known-issues entry in
+    `app-knowledge.ts` states question 5's default for this computer's
+    sign-in; P4.11 re-checks it once the owner answers.
+- **Notice (instruction channel).** Claude's plugin writes nothing into the
+  user's own files or settings, so Codex's channel must not either, for
+  managed accounts and for this computer's sign-in (whose Codex folder is the
+  user's own). On the npm `.cmd` route no launch argument may hold whitespace
+  (`spawn.ts:149`, :177-180), so `-c developer_instructions=<text>` cannot ride
+  that route, and a path-valued `-c` fails there whenever the path holds a
+  space. PB1 (2026-10-02) found no channel that adds to Codex's instructions on
+  both routes for this computer's sign-in without writing into the user's
+  Codex folder or replacing a value the user set: question 5. The rest of P4.1
+  is built meanwhile, with the default A.
+- *ADR-009: Y* (MCP tools exposed to a new caller, the serving roots, the
+  launch configuration for instructions and approvals, skills written into a
+  realm, keystrokes written into the terminal). The attackers are told PB8's
+  two facts (9.6 items 21 and 22): the session in which the first-launch
+  screens are answered does not hold its preset and runs approved commands
+  outside the sandbox, and Codex grants its sandbox write access to the
+  working folder; nothing P4.1 stages or trusts may rely on either holding.
+  They are also briefed with any scope notes held privately. *SSH radius: Y*
+  (the Codex branch of `pty-manager.ts`); one live matrix at PR 4's head
+  (OR5).
+- *Tests (failing first).*
+  - [host] A Codex `/mcp` connection lists the canvas tools (a new case:
+    `conductor-mcp-provider-binding.test.ts` asserts no canvas withholding
+    today).
+  - [host] A Codex session's roots come from the configured folder and never
+    from a rollout's or a resume's folder; home is refused; the worktree is
+    designated (beside `canvas-worktree-spawn.test.ts`).
+  - [host] `spawn.test.ts` (near :232-238): the two `approval_mode=approve`
+    keys on every preset, the per-preset keys only under their preset, and
+    nothing server-wide; `developer_instructions` on the direct route only,
+    never on the `.cmd` route, and never when any listed layer names it (one
+    case per layer: top level, a profile, a trusted project's settings at the
+    working folder and at a parent below the root marker, the managed layer;
+    nothing passed on a version whose managed layer is unknown); the value
+    TOML-encoded, with a plugin path holding a space and a backslash, and with
+    a single quote; the condensed inline text on Windows, at most 6,000
+    characters, and the pointer on macOS and Linux; the direct route's launch
+    line under 32,767 characters with the condensed text, every per-preset
+    key, the longest extra arguments and an 8,000-character Ask question
+    quoted at its worst. The npm `.cmd` line stays under 8,191 characters with
+    every key under every preset and the longest extra arguments; a forced
+    overflow drops the per-preset keys with a log line and still launches.
+  - [host] Staging: the external-default realm refused; a same-named folder the
+    app does not own neither overwritten nor deleted; removed when the tools
+    are off. [CI, VM] (a HOST QUARANTINE file) a link at `skills/` or at a skill
+    folder refused.
+  - [host] The screen reading: the MCP approval form and the sandbox menu read
+    as blocked on both versions' fixtures. Re-run, as they read the module
+    through the Watchdog or `codexComposer.ts` (Compact, Plan mode, image
+    paste, the command bar, the status strip, the launch):
+    `codex-watchdog.test.ts`, `overload-episode.test.ts`,
+    `codex-screen-hooks-review.test.ts`, `codex-composer.test.ts` (with its
+    fixtures `codex-composer-screens.ts`), `codex-image-paste.test.ts`,
+    `alt-v-image-route.test.tsx`, `commandbar-codex-toolbar.test.ts`,
+    `session-status-strip-codex-controls.test.tsx`,
+    `terminalview-account-launch.test.tsx`.
+  - [host] The primitive: typed, Enter withheld until confirmed, taken back,
+    run changed; the exact mode by `codexTextTyped` with a bounded poll (a
+    slow draw gets no early Enter), up to 1,000 code points and rows minus 4;
+    the folded mode from 1,001 (N matched); the band taller than the
+    composer taken back and reported not delivered; Ctrl+U the only take-back
+    key, verified after the ingestion window, and no write ever holding
+    Ctrl+C; the re-read after the write (a prompt then on screen: no further
+    key); the fail-safe for a write never drawn; refuses while the approval
+    form, the sandbox menu or the trust prompt is on screen, and while a
+    composer is drawn with a prompt; ready held on two reads; refuses a
+    control character and a character outside the BMP; the busy wait and its
+    "not delivered". Screen fixtures from PB9's recorded sessions.
+  - [host] A marker to a Codex session goes through it
+    (`canvas-marker-queue.test.ts` and the delivery wiring).
+  - [host] `whatsnew-showcase.test.tsx` :102-112 and :215.
+- *VM.* PB8 and PB9 ran first (9.2). A Codex session renders a design, the user
+  annotates it and Codex fetches the review, on both versions, with the fake
+  model driving tool search, the render, the review and the marker turn; a
+  marker filed mid-turn waits for the ready composer. Default A's real
+  Windows text (the condensed skills inline) reaches the developer message on
+  both versions (PB1 sent only a code word); the pointer form, with the plugin
+  folder at a path holding a space and backslashes, is checked the same way
+  on the VM for its encoding, its read being macOS and Linux's. Each
+  preset's approvals, Unrestricted included. A real model's own choice to use
+  the canvas is the owner's (OR4).
+- *Owner.* Screenshot review (the canvas page and What's New); question 5.
+- *Record (2026-10-03; the code at 56200cd5).*
+  - *Built.* f472890d (lane A); dd869a08 (integration: the marker wiring
+    through main, the canvas each marker belongs to, the guidance reason
+    `skills-not-staged`); P4.1's part of 0014a464 (the copy). 9e200c0a, with
+    the types ec375b78 brought, makes pty-manager reach the Codex package only
+    through the registered provider (its launch route, its staged skills
+    folder, its run screen and its logged launch line), with no behaviour
+    change: it closes the dependency-boundaries failure the integration review
+    found at 8a926411 (INT-2) and puts the skills-folder helper in
+    `realm-paths.ts`, where this entry put it. Every clause above is built,
+    question 5's default A included.
+  - *Reviews.* The P4.1 review (f472890d, dd869a08, 0014a464): spec and
+    quality FAIL on A-1 only (a marker not sent was lost while the canvas page
+    was closed). The fix pass 43c1b67e, with lane A's patches fix-1
+    (`App.tsx`) and fix-2 (`app-knowledge.ts`) applied in da729159: A-1 (a
+    renderer store keeps each marker not sent, by canvas, until dismissed; its
+    listener starts at app start); A-2 (managed or not follows the account's
+    ownership, with the path rule as a second guard against the resources
+    folder's real path); A-3 (`canvas-codex-launch-wiring.test.ts` pins the
+    launch wiring with the tools on); A-4 (the guidance test reads only its
+    own temporary tree, through an injected reader); A-8 (clearer page and log
+    lines). The re-review of 43c1b67e: spec and quality FAIL on RA-1 only; the
+    fix pass 56200cd5 closes RA-1 to RA-5, and its verification is spec PASS,
+    quality PASS. The boundary review of 9e200c0a: spec PASS with RBND-1
+    recorded, quality PASS.
+  - *A-6, superseded by the parity revert.* 43c1b67e staged each realm skill
+    by its tool group (agent-canvas and canvas-plan on the Canvas switch,
+    conductor-vision on the Vision switch), a step stricter than Claude. The
+    re-review (RA-1) found that this reopens the settled parity rule and
+    strips guidance Claude keeps, and 56200cd5 reverts it: the staging follows
+    the Built-in Tools master switch, as Claude's `--plugin-dir` does, all
+    three skills while it is on. Each skill is staged in its own try, so one
+    that cannot be written is logged, the outcome reads `failed`, and the
+    others are still staged; the ownership mark is written before `SKILL.md`,
+    and a folder the attempt made and could not mark is removed while empty,
+    so the next launch stages it.
+  - *A-7, declined.* Codex reads no `<CODEX_HOME>/requirements.toml`: its
+    requirements layers are the system ones, the cloud bundle, the legacy
+    `managed_config.toml` and the managed preferences (the codex-rs config
+    loader at rust-v0.153.4 and rust-v0.156.1), and question 5's scan already
+    reads each.
+  - *The pane.* Main keeps its own bounded headless pane per Codex run
+    (scrollback 0, its size clamped, the Watchdog's CSI clamp), fed from the
+    run's first byte, because the marker queue's flush and a held Ask question
+    are main's to deliver whether or not a renderer is looking; the renderer's
+    screen stays the renderer's.
+  - *The race window.* It lies between the second ready read and the write.
+    The primitive re-reads the screen once right after the write and sends no
+    further key if a prompt is up; an idle session does not open the window.
+  - *One write.* The text goes to the run's process in one write (PB9's form,
+    measured on the bundled ConPTY). On the system ConPTY fallback a single
+    long write is unproven; a failure there is unconfirmed text, taken back
+    and reported not delivered.
+  - *Too tall.* A visible text whose estimated rows exceed the pane's rows
+    minus 4 is refused untyped, and one that still reaches the composer's full
+    height is taken back; both are reported `too-tall`.
+  - *The ingestion window.* 1,000 ms plus 0.45 ms per code point (4,600 ms at
+    8,000; PB9 measured up to 2.9 s). With the confirmation bounds (5 s exact,
+    6 s folded) the take-back falls after it for texts up to about 11,000 code
+    points.
+  - *Approvals and A-5.* Unrestricted keys all 29 tools a Codex connection can
+    be offered (P4.1's 10 and P4.2's 19); Auto gets none, and since Auto
+    cannot ask, Codex refuses those tools there (the VM checkpoint at
+    956df1a3; the Feature Guide says so). Claude Code's documentation
+    (permission modes) says that in auto mode an MCP tool call
+    not marked as needing the user goes to a classifier, neither always asked
+    nor always approved; Accept edits does not list MCP tools; the default
+    mode asks; bypassPermissions approves. The documentation therefore does
+    not settle a fixed per-tool key for Codex's Auto, which has no classifier,
+    so parity cannot settle it: section 10's question 8 asks the owner, with
+    no keys on Auto as the built default meanwhile, and OR4's check of a real
+    Claude session in Auto mode on the canvas, vision and browser tools
+    informs it.
+  - *Question 5's layers,* the same in both binaries' strings and in tagged
+    source from rust-v0.153.4 to rust-v0.156.1: `<CODEX_HOME>/config.toml`
+    (its top level and every `[profiles.*]` table);
+    `<CODEX_HOME>/*.config.toml`; `<CODEX_HOME>/managed_config.toml` (read
+    although Codex ignores it on Windows); every `.codex/config.toml` from the
+    working folder up to the file-system root (more than Codex's own walk to
+    the root marker) and the working folder's `config.toml`; the system layer
+    (`config.toml` and `requirements.toml` under `%ProgramData%\OpenAI\Codex`,
+    and `config.toml`, `requirements.toml` and `managed_config.toml` under
+    `/etc/codex`); the enterprise cloud layer's
+    `<CODEX_HOME>/cloud-config-bundle-cache.json`; and on macOS the managed
+    preferences `com.openai.codex`. Each file is read as plain text, its
+    escapes undone, case ignored. Nothing is passed when a file cannot be read
+    as text, for the macOS managed preferences, when a home Codex never ran in
+    has no cloud cache, on any version but 0.153.4, 0.154.0, 0.155.0, 0.155.1,
+    0.156.0 and 0.156.1. Through the resume picker (aa581eda, after the VM
+    checkpoint) the guidance reaches only a new conversation the picker starts
+    in the session's own folder: a resumed conversation keeps the instructions
+    it started with (Codex's behaviour), a pick in another worktree passes
+    nothing, and the canvas page says so (the `picker` guidance state,
+    758cb407).
+  - *The live loop (question 4's default A, a declared deviation).* Until an
+    account's hooks are trusted, the queue writes at once and the primitive
+    holds the marker for Codex's ready composer, bounded at 120 s; the canvas
+    page says so for a Codex session that has sent no hook event yet.
+  - *Residuals.* A-6's residual stands after the revert: a managed realm's
+    staged skills are also listed by a Codex review or background run started
+    in that realm while the built-in tools are on, and after the tools are
+    switched off they stay until that account's next interactive launch
+    removes them (whether `codex exec` lists realm skills is a VM item). A-9:
+    markers flushed at one boundary go to the primitive one at a time, and the
+    second's 120 s ready wait starts once the first is submitted, so of two
+    reviews filed in one turn the second usually reports busy-timeout; that is
+    within the bound and the user is told (A-1), and holding later markers
+    until the next turn's end once hooks are trusted is a possible follow-up.
+    Pre-existing and rare: when a rebuild's removal of a skill folder that is
+    not exactly the app's fails part-way after its ownership mark is gone, the
+    next launch reads the folder as not the app's and leaves it, so that skill
+    stays unstaged until the folder is cleared. PB9's held-text event (about 1
+    in 150 sessions, 0.153.4): whether Ctrl+U clears it is unknown; carried,
+    no question. The copy that still reads as Claude's alone (A42-6, F-9) is
+    in P4.11's inventory.
+  - *RBND-1 and RBND-2.* 9e200c0a edited two integration-owned files directly,
+    `src/main/providers/codex/index.ts` (the CodexProvider members) and
+    `src/main/providers/codex/realm-paths.ts` (the moved helper), instead of
+    handing them over as patches; their content is verified, nothing was lost,
+    and both ledger rows carry the change. 9e200c0a and fc460f8f typecheck
+    only with ec375b78, which brings the types they use (the lane and patch
+    model): harmless once PR 4 is squash-merged, though `git bisect` inside
+    the branch meets two commits that do not compile.
+  - *Owed.* The VM walk (the render, annotate and review loop on both versions
+    with the fake model, a marker filed mid-turn, the inline Windows text
+    reaching the developer message, the pointer's encoding with a plugin path
+    holding a space and backslashes, each preset's approvals with
+    Unrestricted; the quarantined link files on CI and the VM); OR4 (a real
+    model's own use; a real Claude session in Auto mode; the staged skill read
+    under the administrator sandbox, or OR6 part 2); OR5; the owner's
+    screenshot review; questions 5 and 8. ADR-009 pass: PASS at 2d296eea (four
+    lenses, two fix rounds); VM confirmations owed.
+
+**P4.2 Browser and vision tools (row 52).** Probes: PB1 (the vision skill),
+PB2.
+- *Today.* Vision is withheld at `conductor-mcp-server.ts:912-916`
+  (`toolOn('vision') && source !== 'codex'`, the "Claude-only for now" call of
+  2026-07-02; the block ends at :1032). `open_in_app_browser` is withheld at
+  :1045 (`toolsMaster && source !== 'codex'`) and bound through
+  `decideAgentBrowserPush(boundSessionId, ...)` at :1053.
+  `fetch_host_screenshot` (:901) has no provider gate already.
+- *Parity spec.* A Claude session gets both groups under the same switches
+  (`toolOn`, :843-844), and the `conductor-vision` skill.
+- *Changes.* Remove both `source !== 'codex'` conditions and their comments.
+  The vision skill reaches Codex through P4.1's channel (question 5 applies
+  to this computer's sign-in). The push binds to the Codex session's bound id.
+  Approvals: none pre-allowed on every preset (Claude pre-allows none of
+  them); Codex asks before each call under Read Only, Standard and Plan
+  (PB2), and on Auto, which cannot ask, refuses it (the VM checkpoint at
+  956df1a3). Under a preset whose matching Claude mode does not ask, P4.1's
+  per-preset rule sets per-tool `approval_mode=approve` keys for these tools
+  too (Unrestricted, as Claude's Bypass; Auto: none, question 8); a
+  deviation is recorded only where a per-tool key cannot do it, and a
+  security reason against a key goes to section 10 as P4.1 says. The
+  Unrestricted preset, not probed, is checked on the VM. Copy:
+  `app-knowledge.ts:80`, :108 (the vision and browser
+  half) and :132; `BuiltinToolsStep.tsx:16`, :25-26; `tips-library.ts:439`;
+  the rest of `hello-codex.ts:219`; worded for question 5's default where a
+  line names the vision skill.
+- *ADR-009: Y* (a new caller for tools that drive a browser and push to the
+  in-app pane). The attackers are also briefed with any scope notes held
+  privately. *SSH radius: N.*
+- *Tests.* [host] `conductor-mcp-provider-binding.test.ts:78` (the
+  `CLAUDE_ONLY` list goes and the Codex listing is asserted);
+  `conductor-mcp-agent-browser.test.ts` (a push bound to a Codex session).
+- *VM.* Vision on WINDOWS_1 (Q6's cause was the harness's fake home, fixed at
+  d536ca5d). A Codex session takes a screenshot and pushes a page, the fake
+  model making the calls after a tool search; the per-preset approvals,
+  Unrestricted included. A real model's own use is OR4.
+- *Owner.* The one-line notice in section 10. No question of its own.
+- *Record (2026-10-03; the code at 56200cd5).*
+  - *Built.* 78fda1d4 (lane A) and P4.2's part of 0014a464 (the copy): both
+    `source !== 'codex'` gates and their comments are gone, the push still
+    goes through `decideAgentBrowserPush` with the Codex session's bound id,
+    nothing new is pre-allowed, and Unrestricted gets a per-tool key for each
+    of the 19 new tools; Standard, Read Only and Plan keep asking, and Auto,
+    which cannot ask, refuses them (section 10, question 8).
+  - *Reviews.* The P4.2 review (78fda1d4, 0014a464): spec PASS; its quality
+    findings are fixed in 43c1b67e (among them, the routing and push cases run
+    over `/mcp` and `/sse`, with the Vision and Built-in Tools switches) and
+    fix-2 (the question 5 known issue names the Vision tools too). The
+    re-review closed every P4.2 finding (A42-1 to A42-4, A42-7). Recorded
+    deviations, accepted by the review: the Codex push test is a new
+    `conductor-mcp-codex-browser.test.ts`, and the `CLAUDE_ONLY` list was
+    re-pointed to `codex_review` instead of removed.
+  - *Owed.* The VM: under Unrestricted on both versions, the key for
+    `vision_setViewport` (the one tool name with a capital) honoured, and
+    `vision_screenshot`'s inline image drawn by Codex's client (A42-5); vision
+    on WINDOWS_1; a screenshot and a push by the fake model after a tool
+    search. OR4 (a real model's own use); the owner's screenshot review.
+    ADR-009 pass: PASS at 2d296eea (four lenses, two fix rounds); VM
+    confirmations owed.
+
+**P4.3 Ask Conductor on Codex (row 53, the Ask part of 14).** Lane A2 builds
+everything but the carrier; lane A builds the carrier after P4.1's primitive
+and lane A2's integration. Probes: PB3, PB4 (both reported).
+- *Today: the launch.* The provider is pinned at
+  `src/renderer/lib/askConductor.ts:255` (`provider: 'claude'`; the comment
+  says the Codex provider ignores `CCC_ASK_PROMPT`). A closed tab is revived by
+  `handOverTo` (:178-208), which keeps the provider through `...existing`;
+  a live session gets the raw question and `\r` written in (:182). The gate is
+  `askConductorGate.ts:19-27` (`isClaudeOff`), worded at `claudeOff.ts:29`.
+  Claude gets the question by environment reference, never as text on its
+  launch line: `TerminalView.tsx:1080-1081`, `pty.spawn` (:1106), the zod check
+  (`ipc/pty-handlers.ts:313`), `pty-manager.ts:2044`,
+  `provider.buildSpawnCommand` (:5186, `askPrompt` :5205; Claude's is
+  `buildClaudeLocalSpawn`, `providers/claude/spawn.ts:54`), `CCC_ASK_PROMPT`
+  (`providers/claude/spawn.ts:76-85`), and `askPromptEnvValue` after `--`
+  (`spawn-claude-command.ts:418-428`). `buildCodexSpawn`
+  (`providers/codex/spawn.ts:193-410`) takes no prompt, the Codex branch
+  (`pty-manager.ts:4880-4956`) passes none, and the Codex launch line is
+  logged verbatim (:5000).
+- *Today: the workspace, setting and dock.* The help workspace
+  (`help-workspace.ts:138-156`) writes `CLAUDE.md` (:16-63), `app-knowledge.md`
+  and the two skill files into a folder with an explicit user and SYSTEM
+  access list (`hardenCredentialDir`, :141; `account-profiles.ts:689-697`);
+  nothing writes an `AGENTS.md`. "Show Ask Conductor" is
+  `SettingsPage.tsx:276-285` with `settingsStore.ts:268-274`; there is no
+  `askConductorProvider` field or setter. `src/shared/ask-conductor-provider.ts`
+  (:9-28) is read by Sentinel (`sentinel/index.ts:28`, :545), SettingsPage
+  (:31, :134, :350, :363) and TransparencyStep (:4, :176); nothing writes it.
+  The dock row is `AskConductorDock.tsx:239-269`; the reusable badges are in
+  `sidebar/Badges.tsx` (`ProviderMark` :244, `SessionTypeBadge` :271).
+- *Spec.* Codex only: Ask runs on Codex (design section 2, parity). Both on:
+  OD27 M4 (option B), as section 9's P4.3 note records it.
+- *Changes (lane A2, the note unchanged).*
+  - The help workspace gains an `AGENTS.md` (Codex reads it as a user message
+    once the folder is trusted, PB4). On Windows it carries the knowledge
+    inline, which needs no folder read under either sandbox (PB8 found the
+    folder readable under the non-admin one; the administrator one is
+    untested); on macOS and Linux it points at `app-knowledge.md`, as the help
+    workspace's `CLAUDE.md` does (`help-workspace.ts:18`). For the inline
+    file the Ask launch passes `-c project_doc_max_bytes=<n>`, `<n>` the
+    UTF-8 byte size of the `AGENTS.md` written plus a margin (a test shows the
+    written file never exceeds it), and `-c project_root_markers=[]`, as the
+    `analysis` operation does (`cli-runner.ts:85`), so no parent folder's
+    `AGENTS.md` joins it; neither holds whitespace, so both routes take them.
+    Lane A2 writes the file; lane A adds the two values to the Ask launch
+    (`spawn.ts`, with the carrier). Both override a value the user may have
+    set, for the Ask session only, and the phase record says so. That is the
+    stated exception to PB1's rule (which governs instructions added to the
+    user's sessions): the two values only size and scope the app's own
+    instruction file in the app's own help folder, add nothing to any session
+    of the user's and change no file, and without them Ask on Windows would
+    lose the knowledge it answers from, which Claude's Ask always reads.
+    v4's last-resort read entry on the help folder is dropped: the inline
+    path needs no folder access.
+  - The help folder is rebuilt to exactly the app's own files before every
+    Ask launch on Codex. Ask launches already refresh it through
+    `help:workspace` (`ipc/cli-handlers.ts:77-83`, calling
+    `ensureHelpWorkspace`); P4.3 extends that so the folder holds nothing
+    but the app's own tree, `AGENTS.md` included, verified and rebuilt from
+    nothing whenever it is not exactly that, as `ensureCanvasPlugin` does for
+    the plugin (`canvas-plugin.ts:713-751`). The requirement comes from PB8:
+    Codex grants its sandbox write access to the session's working folder,
+    the help folder included, and the app's re-hardening may not remove it;
+    and the session in which the first-launch screens are answered (Ask's
+    first launch happens in the help folder) runs WorkspaceWrite and approved
+    commands outside the sandbox even under Read Only. So P4.3 never relies on
+    the help folder staying unwritable by the model: whatever the model wrote
+    there (an instruction file, a project settings file such as
+    `.codex/config.toml`, a skills folder) is gone before the next Ask launch
+    reads the folder.
+  - The Settings, General row "Ask Conductor runs on" beside Show Ask
+    Conductor: shown only while both are on, Claude Code by default, never
+    rewritten when a provider is turned off; it writes `askConductorProvider`,
+    and Sentinel follows it.
+  - The dock row wears the type badge while both are on, and draws the
+    carrier's one-line notices that lane A raises from main through a channel
+    on the shared list: the removal notice (question 6, default A), and the
+    not-delivered line: when the primitive reports a question not delivered
+    (a visible text taller than Codex's prompt at that pane size, a write
+    never drawn, or a prompt on screen), the dock keeps the question and says
+    it was not sent and why.
+  - A revive reads the provider again.
+  - The gate opens for Codex only.
+  - Copy: lift `needsClaude` from `showcase-pages.ts:180-181` and
+    `WhatsNewV2Step.tsx:81` and :111 (Ask runs on Codex whatever question 6
+    decides); fix the Sentinel sentences (PRIVACY.md :172;
+    `app-knowledge.ts:142`; `changelog.ts:48`), `app-knowledge.ts:87` and
+    :127, `training-steps.ts:184`, `GuidedTour.tsx:42-46` and `claudeOff.ts:29`.
+- *Changes (lane A, the carrier, as PB4 settled it).* The route is known in main
+  (`buildCodexSpawn`), so main picks the carrier. On the direct route the
+  question is a launch argument after `--`, and the logged launch line
+  (`pty-manager.ts:5000`) names only its length. On the npm `.cmd` route main
+  holds the question and gives it to P4.1's primitive at Codex's first ready,
+  empty composer. A live Ask tab gets it through the same primitive, never the
+  raw question and `\r`. Before the primitive types it, the characters outside
+  the BMP are removed and main raises the removal notice for lane A2's dock
+  line (question 6, default A). A Codex Ask session gets its `codexOptions` (the zod check,
+  `pty-handlers.ts:461-466`).
+- **Notice (carrier): parity requirements.**
+  1. The question never appears on the app's logged launch line (`:5000` logs
+     the Codex line verbatim), as Claude's route keeps it off its own by
+     environment reference.
+  2. On argv, `--` comes before it, so a question starting with `-` is never
+     read as a flag (Claude's route does the same; PB4: it holds on both
+     versions).
+  3. A live Ask tab gets the question through P4.1's primitive, never the raw
+     question and `\r` (`askConductor.ts:182`).
+  4. It is typed only into Codex's first ready, empty composer, never into the
+     folder-trust prompt or the sandbox-setup menu a first Ask shows (PB4; the
+     probe incident is the concrete case; P3.8's Plan-mode rule,
+     `typeWhenCodexComposerReady`, `codexComposer.ts:366`).
+  5. The whole question arrives: up to `MAX_QUESTION`, 8,000 characters
+     (`askConductor.ts:39`), non-ASCII included. PB4: it holds on the direct
+     route's argv; elsewhere it holds for every character in the BMP, and
+     question 6 covers the rest.
+- **Deviation, declared (decided by PB4; recorded as P3.8's Plan-mode
+  deviation was).** Section 9's note names launch argv as the Codex path, and
+  argv is the carrier wherever it can be: the direct route, after `--`, the
+  logged line naming only the question's length. The npm `.cmd` route refuses
+  any argument holding whitespace or a character cmd.exe interprets
+  (`spawn.ts:149`, :177-180), so there the composer through P4.1's primitive
+  carries the question, a deviation forced by that refusal, as far as PB4
+  shows; what it cannot carry whole is a numbered section 10 question. PB4
+  (2026-10-02): argv carries the whole question on the direct route; the
+  composer carries every character in the BMP and loses the rest, on both
+  routes, so those characters on the `.cmd` route, and for a live tab on
+  either route, are question 6. v2's "composer on both routes" alternative is
+  dropped: it would have set the note aside where argv works, and PB4 shows it
+  would not have carried the whole question anyway. The phase record names
+  the carrier per route, with PB4's evidence.
+- *Check at build.* The helper-skill offer on Codex: skills are listed from
+  the realm's `skills/` (P3.1 answer 8). The preset of a Codex Ask session is
+  the one matching Claude's Ask launch (parity). PB4: under Read Only and
+  Standard alike, on both versions, a fresh account folder shows folder trust,
+  then "Set up the Codex agent sandbox" (administrator, non-admin, Quit), and
+  no hooks review; a folder already trusted showed neither.
+- *ADR-009: Y* (the carrier: launch argv and keystrokes into the terminal;
+  the help workspace and the two `-c` values on the Ask launch; a new saved
+  setting that main reads). On argv the
+  question sits in the Codex process's command line, readable by the user's
+  other processes; Claude's sits in its own once its shell expands the
+  environment reference (`terminal-launch-line.ts:63-65`), so what carries over
+  is that no shell parses the words and the app's logged line never holds
+  them; the attackers are told. They are also told PB8's two facts (9.6
+  items 21 and 22) and attack the help folder's rebuild: nothing the
+  sandboxed model writes into the help folder in one Ask session may be read
+  by a later Ask launch, and no Ask preset is relied on to keep the folder
+  read-only. They are also briefed with any scope notes held privately.
+  *SSH radius: Y* (the Codex branch passes the question and
+  the log line at `pty-manager.ts:5000` changes); P4.1's matrix run at PR 4's
+  head covers it (OR5).
+- *Tests (failing first).* [host] `ask-conductor-launch.test.ts`;
+  `ask-conductor-persistence.test.ts` (a revive reads the provider again);
+  `ask-conductor-ui.test.tsx` (the badge; the removal and not-delivered
+  lines);
+  `settings-sentinel-codex.test.tsx` (the row shows only with both on and is
+  never rewritten); `help-workspace-skill.test.ts` (`AGENTS.md`: inline on
+  Windows, its byte size within `<n>`; the pointer on macOS and Linux; the
+  rebuild: a planted `.codex/config.toml`, an extra file and an edited
+  `AGENTS.md` are all gone or restored, byte for byte, before the next Ask
+  launch);
+  `claude-off-launch.test.tsx`; `sentinel-codex-service.test.ts` (Sentinel
+  follows the row); `whatsnew-showcase.test.tsx`; for the carrier
+  (`spawn.test.ts` and the Codex branch's tests): the question off the logged
+  line (its length only), `--` on argv on the direct route, no argv on the
+  `.cmd` route, the live hand-off through the primitive, nothing typed into a
+  trust or sandbox prompt, an 8,000-character question with an emoji whole on
+  argv and with the emoji removed and reported through the composer.
+- *VM.* Ask in Codex-only mode; both on with each choice; a revive after the
+  choice changes; the first Ask in a fresh account folder (its trust and
+  sandbox screens, answered by the 9.2 rules), the fake model answering, under
+  Read Only and Standard, on both versions; argv on the direct route at such a
+  first launch (PB4 ran argv in a trusted folder only: whether Codex holds the
+  argv question until the screens are answered). Ask on Codex in the real
+  help folder: the inline knowledge reaches the request whole, with the two
+  `-c` values on both routes, and no parent folder's `AGENTS.md` joins it;
+  after a first Ask, a file the fake model's command wrote into the help
+  folder is gone at the next Ask launch, and `AGENTS.md` is the app's own.
+  A real answer's quality is OR4.
+- *Owner.* Screenshot review; question 6.
+- *Record (2026-10-03; the code at 56200cd5).*
+  - *Built.* Lane A2: 8f753a75 (the gate, the provider choice, the dock badge
+    and notice lines, the revive, `AGENTS.md` and the rebuilt help folder).
+    Integration: 12dcb6bd (the Settings row, the Codex Ask header mark, the
+    Claude-off wording) and 0014a464 (the copy). Lane A, the carrier:
+    fc460f8f, with the types and app-knowledge patches 6 to 8 in ec375b78.
+  - *The carrier per route, with PB4's evidence.* On the direct route's fresh
+    launch the question rides the launch line after `--`, whole (PB4: argv
+    carries the whole question on both versions), and the logged launch line
+    names only its length. On the npm `.cmd` route, an exact resume and the
+    picker, and for a question holding a control character or a lone
+    surrogate, main types it through P4.1's submit primitive at Codex's first
+    ready, empty composer, waiting up to 300 s through any trust, sandbox or
+    approval screen; the characters outside the BMP are removed first and
+    counted, and main raises the `removed` notice (PB4: the composer carries
+    every character in the BMP and loses the rest; question 6's default A); a
+    question not sent raises `not-delivered` with its reason, and the dock
+    keeps it with Send again. A live Ask tab on Codex gets its question
+    through `askConductor:handOff` (the app window's top frame, a strict
+    payload, only a Codex session launched as Ask) into the same primitive; a
+    Claude Ask tab keeps its PTY write. Argv on `codex resume` was never
+    probed, so a resume types the question.
+  - *The two `-c` values.* Every Codex Ask launch, on every route, passes
+    `-c project_doc_max_bytes=<n>` (`<n>` the UTF-8 byte size of the
+    `AGENTS.md` text written plus 4,096, refused unless a positive integer of
+    at most 16 MiB) and `-c project_root_markers=[]`. Both override a value
+    the user may have set, for the Ask session only.
+  - *The preset (A2-3).* A Codex Ask session runs on Read Only, by parity.
+    Claude's Ask session carries no permission mode, so it runs in Claude's
+    default mode, the session dialog's "Ask permissions", and P4.1's pairing
+    of the Codex presets with Claude's modes by their words pairs Read Only
+    with Ask permissions. Nothing relies on the preset to keep the help folder
+    read-only: the rebuild before every Ask spawn does (9.6 items 21 and 22).
+  - *The rebuild (A2-12).* The help folder is rebuilt before every Ask spawn
+    of either assistant (main, in `pty-handlers`, right before the spawn), by
+    `help:workspace`, and once at boot (best-effort). Running it for a Claude
+    Code Ask is the safer reading: a project settings file a Codex session
+    planted (`.claude/settings.local.json`, `.mcp.json`) would otherwise reach
+    the next Claude Ask; the cost is that a Claude Ask's own "don't ask again"
+    approvals written there do not outlive its session. Before the rebuild,
+    an Ask start waits for an earlier Ask run in the help folder to end, and
+    starts nothing if it does not.
+  - *Reviews.* The P4.3 review of lane A2's half (8f753a75, 12dcb6bd,
+    0014a464): spec FAIL (A2-1, and A2-2, which lane A's carrier closed),
+    quality FAIL (minor fixes). The integration review (INT-1) found the copy
+    ahead of the carrier; the carrier and 2111d7e7 (the copy matched to the
+    code as built) close it. The fix pass 9167f9a9, with lane A2's patches
+    fix-1 to fix-3 applied in da729159: A2-1 (Past discussions asks for the
+    picker on either assistant), A2-3, A2-4 (each fail-closed guard of the
+    rebuild has its own case and mutant), A2-5 (a failed rebuild logged by
+    code only), A2-6 (the helper skill reads for both assistants), A2-7 (a
+    revive clears what a restart clears), A2-8 (a not-delivered hand-off keeps
+    its own question). The re-review: fc460f8f spec FAIL on RASK-1 only and
+    quality FAIL (small fixes), every carrier rule PASS; ec375b78, 9167f9a9,
+    da729159 and 2111d7e7 PASS. The fix pass 56200cd5 closes RASK-1 to RASK-5
+    (RASK-6 was closed by 2111d7e7); its verification is spec PASS, quality
+    PASS.
+  - *RASK-1's consequence.* An Ask launch of either assistant runs in the help
+    folder main has just rebuilt, on every route: `pty:spawn` sets the rebuilt
+    folder as the launch folder, and a resumed Ask conversation (a restored
+    tab's, a Restart's, Codex's kept one) is resumed only when it ran in that
+    folder. So after the resources folder moves, the next Ask start begins a
+    new conversation in the new help folder; the old one stays in Past
+    discussions only if it ran there. The tab's saved working folder still
+    shows the old path until the tab is reopened (display only; main does not
+    use it for an Ask).
+  - *Decisions inside the phase.* The question on the launch line only at the
+    fresh direct launch; typed through the primitive elsewhere; the 300 s
+    bound; the rebuild before every Ask spawn of either assistant and at boot.
+    RASK-5: a question handed to an Ask tab that is still starting is kept,
+    and the dock says the session was still starting. A2-8's other half is
+    deferred: main's notices carry no question id (a shared-type change), and
+    a notice that outlives its tab is harmless, since Send again revives.
+  - *Follow-up proposal (not built).* Past discussions runs the resume picker
+    in the help folder, and both pickers list the worktrees
+    `git worktree list` reports from there; when the resources folder lies
+    inside a git repository, the picker lists that repository's worktrees too
+    and can start a picked conversation in a sibling worktree, outside the
+    help folder, so the Ask session loses the app's framing there. It needs a
+    deliberately chosen resources folder and an explicit pick. The proposal:
+    set `GIT_CEILING_DIRECTORIES` to the resources folder on Ask spawns, or
+    hold each picker to the help folder (`CCC_GATED_DIRS` for Claude's, an
+    equivalent for Codex's); it touches the launch or the picker scripts, so
+    it waits for a decision.
+  - *Owed.* The VM: the argv question at a first launch in a fresh account
+    folder, behind its trust and sandbox screens (whether Codex holds it until
+    they are answered decides whether "opens with it already asked", in app
+    knowledge and the training card, holds there); the `.cmd` question typed
+    after those screens; the inline `AGENTS.md` read whole with both `-c`
+    values on both routes, and no parent folder's `AGENTS.md` joining it; the
+    rebuild after a real Ask session; a live hand-off mid-turn; a resumed Ask
+    with a question; the pointer skill's read of `help/app-knowledge.md` on
+    Windows under the non-admin sandbox, where PowerShell does not start
+    (A2-6); the quarantined `help-workspace-rebuild-links.test.ts`, with its
+    "follows the link" mutant, on CI or the VM. OR4 (a real answer); OR5; the
+    owner's screenshots (the Settings row, the dock badge, the notice lines,
+    the still-starting line, the Codex Ask header mark, the failure line in
+    the dock and after "Failed to launch session:" on a Restart); question 6.
+    ADR-009 pass: PASS at 2d296eea (four lenses, two fix rounds); VM
+    confirmations owed.
+
+**P4.4 Memory and Codex logs (rows 55, 56).** Probe: PB6 (reported).
+- *Today: memory.* The banner is at `MemoryPage.tsx:204-207`.
+  `memory-scanner.ts:217` reads only `~/.claude/projects/<dir>/memory/*.md`, one
+  shared folder (profiles junction it: `account-profiles.ts:2-3`, :32). IPC is
+  `ipc/memory-handlers.ts:16-56` (scan, read, delete, writeFrontmatter, recent
+  sessions). The path guard (`utils/path-validator.ts:27-62`,
+  `validateMemoryPath` :27) is fixed to `~/.claude/projects`. Codex memories
+  are off by default; when on, `<CODEX_HOME>/memories/` holds `MEMORY.md`,
+  `memory_summary.md` and `raw_memories.md` (P3.1 answer 10, from the
+  strings); PB6's run (fake model) made `memories/` a git repository holding
+  `extensions/ad_hoc/instructions.md`, `phase2_workspace_diff.md`, a
+  heading-only `raw_memories.md` and an empty `rollout_summaries/`, with no
+  `MEMORY.md` or `memory_summary.md`. The files carry a heading, not
+  frontmatter.
+- *Today: realms and logs.* The helpers are `providers/codex/realm-paths.ts:161-184`,
+  `auth-operations.ts:424-435` (`usageSessionsDir`, the model for a folder
+  helper with its canonical-home check) and `accounts-service.ts:2979-3005`
+  (`sessionsRoots`, per account). Settings, Debug Logging is
+  `SettingsPage.tsx:585-607`; "Open log folder" (:601-606) calls
+  `debug:openFolder` (`ipc/debug-handlers.ts:25-30`), which opens the fixed
+  `<dataDir>/debug` with `shell.openPath` (it launches whatever it is given)
+  and takes no argument; no IPC opens an arbitrary path. Codex's `log/` holds
+  `codex-login.log` and `codex-tui.log`; `log_dir` moves `codex-tui.log` (PB6,
+  by `-c`); `codex-login.log`, written at sign-in, stayed in `log/`.
+- *Parity spec.* The Memory page lists, reads and manages Claude's memory
+  files; Settings offers the app's own log folder.
+- *Changes.*
+  - Each realm's Codex memories on the Memory page, labelled by account, with
+    the "memories are off" state where a realm has none. The listing walks
+    `memories/` recursively and never lists or opens `.git/`.
+  - A Codex memory path guard beside `validateMemoryPath`: inside the realm's
+    `memories/`, refusing any `.git` segment and any link or junction.
+  - The page's own actions where Codex's files allow: read. Frontmatter edit
+    does not carry over (the files carry a heading, not frontmatter): recorded.
+    Delete (`memory-handlers.ts:30`) is built for files under `memories/`,
+    never `.git/`, and shown for Codex only once P4.4's VM check shows Codex's
+    consolidation (a git repository and a database) does not restore or
+    re-commit a deleted file at its next start. The check counts only if
+    consolidation is seen to run after the delete; otherwise it is
+    inconclusive, delete stays hidden, and the check joins OR4. If it shows the
+    file restored or re-committed, delete is recorded as not carrying over.
+  - Each realm's log folders beside "Open log folder", through a new channel
+    keyed by account id that resolves the folder in main: the realm's `log/`
+    (where `codex-login.log` always lands), and its `log_dir` when the
+    account's `config.toml` sets one (both can hold logs). It refuses an
+    unknown id, a relative `log_dir`, and a UNC or device path (`\\host\share`,
+    `\\?\`, `\\.\`: `shell.openPath` on a share opens a network connection) by
+    their form alone, before any file or shell call; then it opens a folder
+    only when its real path is a local directory and refuses a link or
+    junction; never a path from the renderer. The folder helper sits beside
+    `usageSessionsDir` (integration owner).
+  - The banner replaced, and `app-knowledge.ts:122` ("Memory is a dashboard
+    over Claude's auto-memory") updated.
+  - Fixtures: the layout from PB6's run (the listing skips `.git/`, and delete
+    never touches it); `MEMORY.md` and `memory_summary.md` seeded from the
+    strings and labelled seeded. Optional, reopening nothing: the fake model
+    taught to answer the stage-1 request, and PB6 re-run inside P4.4's VM work,
+    may replace part of the seeding.
+- *ADR-009: Y* (new IPC reading files under realm folders, a path guard, an
+  open-folder channel whose folder comes from a config file). The attackers
+  are also briefed with any scope notes held privately. *SSH radius: N.*
+- *Tests.* [host] `memory-scanner.test.ts` (a nested file listed, `.git/`
+  never listed); `memory-codex-coverage-banner.test.ts:94`; a new keyed
+  open-folder test with `fs` and `shell` mocked (an unknown id; a `log_dir`
+  naming a file; a relative `log_dir`; a UNC path; a device path: each
+  refused, and for the UNC and device forms neither `fs` nor `shell` is
+  called). [CI, VM] (a HOST
+  QUARANTINE file, as these plant junctions) a `.git` path and a link out of
+  `memories/` refused; a `log_dir` that is a link or junction refused; the
+  Codex cases beside `memory-path-symlink.test.ts`.
+- *VM.* A realm with memories turned on shows them, and each account's log
+  folders open, `log_dir` set in `config.toml` included. The delete check,
+  run after the optional stage-1 extension of the fake model: a deleted
+  run-made file, a relaunch and a wait, then whether it came back or was
+  committed; it counts only if consolidation ran after the delete (a new
+  commit in `memories/.git`, `phase2_workspace_diff.md` rewritten, or the
+  `jobs` or `consolidation_progress` row advanced), else OR4. PB6 made the
+  layout but not `MEMORY.md` or `memory_summary.md`: their real format is
+  OR4.
+- *Record (2026-10-03; the code at 56200cd5).*
+  - *Built.* f311b5a5 (lane B); f6f127e5 (integration: the account folders
+    port beside `usageSessionsDir`, the main wiring, the Settings Debug
+    mount); lane B's part of 0014a464 (the copy). Every clause above is built:
+    memories per account with the off state, the recursive walk that never
+    lists or opens `.git` and never follows a link, the guard beside
+    `validateMemoryPath`, read, delete built and hidden, the keyed log-folder
+    channel refusing by form before any call, the banner replaced.
+  - *Recorded, as this entry asks.* Frontmatter edit does not carry over
+    (Codex's memory files carry a heading, not frontmatter). Delete is hidden,
+    and refused in main, until P4.4's VM check; an inconclusive check goes to
+    OR4.
+  - *Reviews.* The P4.4 review (f311b5a5, f6f127e5, 0014a464): spec PASS,
+    quality PASS with minors. The fix pass 3401d0dd, with lane B's patch fix-6
+    (`auth-operations.ts` and its test) in da729159: B-1 (a strict request
+    schema on the log-folder channel), B-2 (delete refused in main while
+    hidden), B-3 (one case rule for the same path in the account-folder
+    checks), B-4 (account cards that say only what the app knows), B-6, B-7.
+    The re-review of 3401d0dd: spec PASS; its one quality finding, RDB-1, is
+    fixed in d7b38752 (containment compares the memories folder's exact
+    spelling on every platform; the case rule stays in the real-path test),
+    and its verification is quality PASS.
+  - *B-9 (parity).* The memory scan walks each account's memories whatever the
+    provider choice, as it reads Claude's store whatever the choice; the page
+    shows Codex's only while Codex is in use.
+  - *B-8 (left).* One private `checkedHome(realm)` in `auth-operations.ts`,
+    used by `usageSessionsDir` and `accountFolders`, would make "the same
+    check" true by construction rather than by copy; not done.
+  - *Pre-existing (not a PR 4 regression).*
+    `tests/unit/memory-path-symlink.test.ts` (50005dc5, 2026-06-15) plants
+    junctions without a HOST QUARANTINE header; it should carry one.
+  - *Log folders.* The button for a `log_dir`, "Show log_dir folder", shows
+    that folder selected in its parent rather than opening it.
+  - *Owed.* The VM: a realm with memories on shows them; each account's log
+    folders open, `log_dir` set in `config.toml` included (PB6 saw
+    `codex-tui.log` move with `-c log_dir` only, so the copy saying it moves
+    with `config.toml` stays only if the VM confirms it); a mapped network
+    drive, an 8.3 short name and a subst drive refused through the real path
+    (the quarantined suite covers junctions only); a realm whose home path
+    holds a non-ASCII letter in another case than its `CODEX_HOME` lists its
+    memories and opens its log folder; the quarantined link cases; the delete
+    check (a run-made file deleted, a relaunch and a wait; it counts only if
+    consolidation ran). OR4: the real `MEMORY.md` and `memory_summary.md`
+    format, and the delete check if the VM's is inconclusive. The owner's
+    screenshot review. ADR-009 pass: PASS at 2d296eea (four lenses, two fix
+    rounds); VM confirmations owed.
+
+**P4.5 Cloud Agents with `codex exec` (row 57).** Probe: PB5 (reported).
+- *Today: the runner.* The refusal is `cloud-agent-manager.ts:192`
+  (`providerLaunchRefusal('claude')`), repeated at :341. The spawn is
+  `resolveAgentEnv` (:51-79), then the shell command `type "<tmp>" | claude`
+  with the optional skip-permissions flag (:304-306), `shell: true` (:347-353).
+  Output is plain text, capped at 500 KB (:81, :371-402); cost is read by regex
+  (:450-472). Neither record has a provider field: `CloudAgent`
+  (`shared/types.ts:458-476`) or `CloudAgentData`
+  (`cloud-agent-manager.ts:22-41`). `cloudAgent:dispatch` takes an unvalidated
+  object (`ipc/cloud-agent-handlers.ts:18-28`).
+- *Today: renderer, counts and leases.* The Claude-off gates are
+  `CloudAgentsPage.tsx` :94, :122, :449, :475 and `NewAgentDialog.tsx:41`. In
+  use (`provider-in-use.ts:27-28`): Claude counts agents and Insights; Codex
+  counts Sentinel only. Leases (`core/consumer-leases.ts:32-36`): the launch
+  kinds are `session` and `review`.
+- *Today: reusable parts.* `providers/codex/cli-runner.ts` (`runCodexCli` :957;
+  a fixed argv per operation, :37-87; the `review` operation passes `-m`,
+  :50, and runs in the project folder, :47-49); `cliCommandLine` refuses any
+  argv element outside `PLAIN_ARG` on every platform (:146, :160), so no path
+  can ride the argv; `review.ts:42-156` (the JSONL reader: text, usage,
+  errors), which runs `{ ...cmd, cwd: input.cwd }` (:129-130) and refuses a
+  network-path working folder on the verbatim `.cmd` route (:118);
+  `sentinel/index.ts:465-524` (prepareLaunch, lease, run, release).
+  `tests/e2e/helpers/fake-codex.ts` has no `exec --json` mode.
+- *Parity spec.* A background agent runs its provider's headless CLI in the
+  account's realm, keeps the output, records the cost, counts as the provider
+  in use, is refused while the provider is off, and carries the per-agent
+  permission choice. It changes none of the account's settings.
+- *Changes.*
+  - A provider on the record and in the dialog, with Codex accounts listed as
+    Claude's profiles are. `cloudAgent:dispatch` gains a strict zod schema: the
+    provider, and an account id of that provider's class.
+  - A Codex run is `codex exec --json -m <model> -c
+    model_reasoning_effort=<effort> -s <level> --skip-git-repo-check -`, the
+    prompt on stdin, in the account's realm, with the project as its working
+    folder, as the `review` operation runs (PB5's argv without `-C`;
+    `cliCommandLine` and `PLAIN_ARG` unchanged; a network-path project refused
+    on the `.cmd` route as `review.ts:118` does; `-m` and the effort from the
+    config, as the interactive launch passes them); no `--ephemeral`, as
+    Claude's agent keeps its transcript; no `--ignore-user-config`, which drops
+    the account's own settings and did not stop the danger-full-access write.
+    It holds a lease of the background kind, so the M2 usage read never reads
+    an account in use.
+  - Text from `agent_message` items; tokens from `turn.completed.usage`
+    (`input_tokens`, `cached_input_tokens`, `cache_write_input_tokens`,
+    `output_tokens`, `reasoning_output_tokens`), minding P3.1 answer 9's
+    version difference after `exec resume`. A refused edit shows only on
+    stderr and in the model's reply, and the run exits 0 (PB5), so stderr is
+    kept with the output.
+  - Permissions. Claude's default maps to `-s read-only`. Claude's
+    skip-permissions choice runs `--dangerously-skip-permissions`
+    (`cloud-agent-manager.ts:305`), Claude's Bypass mode ("Skip every
+    permission prompt", `claude-cli-options.ts:92`), which P4.1's matching
+    pairs with Codex's Unrestricted; and Unrestricted (`danger-full-access`)
+    makes Codex write the project's trust entry into the account's
+    `config.toml` on every run (PB5), against this plan's acceptance for a
+    background agent, taken from the parity spec above, that a run changes
+    none of the account's settings. Parity cannot settle it: question 7 (row 57),
+    built meanwhile as its default A: `-s workspace-write`, the app's Auto
+    preset ("Workspace writes, no prompts", `CodexFormFields.tsx:50`; as Auto
+    maps for an interactive session, `permissions.ts:9-27`): the agent is
+    confined to its project; on Windows it makes no edits without Codex's
+    sandbox setup (PB5's fresh homes, with no sandbox set up, refused every
+    edit; the P3.1 addendum shows a session editing after Codex's
+    administrator setup; P3.15's known issue and `tip.codex-windows-sandbox`
+    apply; and under the non-admin sandbox PowerShell, Codex's default shell
+    on Windows, does not start at all, nor does `whoami.exe`, while
+    `cmd.exe` built-ins and `findstr.exe` run (PB8), so an agent's shell
+    commands fail there: the known-issues entry `app-knowledge.ts:204` gains
+    that sentence, through the integration owner); `config.toml` is
+    untouched. B would be Unrestricted, as Claude's
+    Bypass. Only the mapping step and the checkbox's wording wait on the
+    answer: for a Codex agent the checkbox is worded for the built option ("Auto:
+    workspace writes, no prompts, for this run", with the Windows known issue
+    beside it). No flag that bypasses the sandbox is ever used.
+  - The account's files after a run: `config.toml` and `auth.json`
+    byte-identical (under question 7's B, apart from the project's trust
+    entry Codex writes); the other writes are Codex's own runtime state (its
+    databases, helpers and the rollout), the same files any Codex session the
+    app launches writes, so P4.5 adds no new kind of write (the phase record
+    says so). The app never restores `config.toml` after a run: a restore would
+    discard trust answers the user's own sessions made meanwhile.
+  - Codex agents count in `provider-in-use.ts`; the Claude-off gates open for
+    Codex.
+  - The fake CLI's `exec --json` mode (lane C's patch, applied by the
+    integration owner).
+  - Not `codex cloud` (WP1.41).
+  - Copy: `app-knowledge.ts:87`, :122, and the known issue at :204 (above).
+- *ADR-009: Y* (a new child-process argv and sandbox mapping, a new lease kind,
+  IPC, what a run may change in the account's folder). The attackers are also
+  briefed with any scope notes held privately. *SSH radius: N* (the existing
+  imports from pty-manager stay as they are).
+- *Tests.* [host] `cloud-agent-manager.test.ts`,
+  `cloud-agent-provider-off.test.ts`, `provider-in-use.test.ts`,
+  `cloudAgentStore.test.ts`, `claude-off-headless.test.tsx`; the reader
+  against `exec-json.jsonl` and `exec-edit-json.jsonl` (P3.1 fixtures); the
+  argv (`--skip-git-repo-check`, `-m`, no `--ephemeral`, no sandbox bypass,
+  each permission choice mapped as question 7's built option says; no
+  element holds the project path; `-m` and the effort pass `PLAIN_ARG`); the
+  project as the working folder, a network path refused on the `.cmd` route;
+  the dispatch schema's refusals (an unknown provider; a Codex id with provider
+  `claude` and the reverse; an id of the wrong class). [VM] the account's
+  `config.toml` and `auth.json` unchanged (needs the real CLI); E2E
+  `cloud-agents.spec.ts` with the fake CLI.
+- *VM.* An agent run on both versions and routes with the real CLI and the
+  fake model, `config.toml` and `auth.json` hashes unchanged, under each
+  permission choice; the edit case in a home with the non-admin sandbox set
+  (answered by the 9.2 rules in a TUI launch first; PB5 did not cover a home
+  with a sandbox set). Only if that edit case fails: the edit case with
+  Codex's administrator setup on a throwaway managed account, after OR6 part
+  2, and before OR6 part 1 (that setup resets the shared sandbox accounts, so
+  the VM repair comes after it). This check gates the final head, not the
+  build. A real model's output and cost are OR4.
+- *Record (2026-10-03; the code at 56200cd5).*
+  - *Built.* 467aa157 (lane C); 19c9a8d8 (integration: the core background
+    port, the Codex package wiring, the accounts service's kind words and
+    remote refusal, `provider-in-use.ts`, the shared types, the preload
+    bridge, the quit stop, the fake CLI's `exec --json` mode, lane F's
+    conformance pin); lane C's part of 0014a464 (the copy). Every clause above
+    is built, question 7's default A included: the tick is worded "Auto:
+    workspace writes, no prompts, for this run", the default runs
+    `-s read-only`, the tick `-s workspace-write`, and no flag that bypasses
+    the sandbox is ever used. A cost shows only when a Codex config names the
+    model (Codex's default model is not in `exec`'s JSON); tokens always show.
+  - *Reviews.* The P4.5 review (467aa157, 19c9a8d8, 0014a464): spec PASS;
+    quality FAIL on C-1 only (at quit a running Codex agent lost only its
+    wrapper line). The fix pass f4550ac4, with lane C's comment patches fix-1
+    and fix-2 in da729159: at quit a running Codex agent's whole tree is ended
+    as a Claude agent's is (`taskkill /T` on its root on Windows, its process
+    group elsewhere); a Stop after codex has exited still ends the run's
+    leftovers and does not record a finished run as cancelled; one running
+    agent counts once as Codex in use; exit 0 after a failed turn keeps its
+    reason in the output. The re-review of f4550ac4: spec PASS, quality PASS,
+    with RCEF-1 recorded.
+  - *What a run writes.* By this entry's reading, a run's other writes in the
+    account's folder are Codex's own runtime state, the files any Codex
+    session the app launches writes, so P4.5 adds no new kind of write;
+    `config.toml` and `auth.json` unchanged by a run is a VM check (below).
+  - *Residuals.* A quit inside the 2 s settle window after codex has exited
+    does not run the leftovers step (it needs a fresh table read, which a
+    synchronous quit cannot take), so a command the model left running that
+    still holds the pipes can outlive a quit landing in exactly that window.
+    RCEF-1, the POSIX quit check (VM-pending): on macOS and on Linux, start a
+    Codex agent run whose model starts a long command (a dev server, or
+    `sleep 600`), quit the app while it runs, then read the process table
+    (`ps -eo pid,pgid,ppid,lstart,command`); it passes when no process of the
+    run outlives the app (node, codex or the model's command). If the model's
+    command survives in its own process group, the quit flush must also end
+    the run's observed members (start-time vouched), as the in-app Stop does.
+    Until it runs, the quit flush's comment in `cli-runner.ts` ("So a command
+    the model started does not outlive the app") is conditional on macOS and
+    Linux, as the `index.ts` ledger row now says; on Windows it rests on the
+    VM sizing below.
+  - *Owed.* The VM: an agent run on both versions and routes with the real CLI
+    and the fake model, dispatched from a config that names the model (without
+    `-m` the fake provider got no tools, PB5), `config.toml` and `auth.json`
+    hashes unchanged under each permission choice; the edit case under the
+    non-admin sandbox (OR6 part 2 only if it fails); whether Codex's Windows
+    sandbox starts the model's commands as descendants of codex at all (a
+    process-table read during an Auto agent's long command on both routes,
+    each command's parent chain and user), a quit during a long agent command
+    on both routes, and whether `taskkill /T` exits non-zero on a
+    sandbox-owned process; whether 0.153.4 or 0.155.1 ever exits 0 after a
+    failed turn; the e2e `cloud-agents.spec.ts`. RCEF-1's macOS and Linux
+    check (above). OR4 (a real agent's output and cost); question 7; the
+    owner's screenshot review. The P4.11 copy: `AgentHubOnboarding.tsx:59` ("A
+    headless Claude runs it") and LaunchAckConfirm's "Start session" title on
+    a Codex agent's Retry. ADR-009 pass: PASS at 2d296eea (four lenses, two
+    fix rounds); VM confirmations owed.
+
+**P4.6 Codex web session; the artifacts record (row 58).** Owner: OR2 (one
+sign-in run through the built window), OR3 (the record). PB7 sized OR2.
+- *Today: Claude's web session.* The partition is
+  `persist:claude-web-${profileId}` (`shared/account-web-session.ts:171-176`);
+  `PROFILE_ID_RE` (:189) refuses Codex's `acct-<hex>` ids
+  (`shared/providers/ids.ts:23-37`). Sign-in is `account-web/sign-in.ts:594`:
+  in-app at :631; the SSO cookie copy at :670 onward (`cookie-harvest.ts:174`;
+  injected at `sign-in.ts:797-904`). The in-app window is
+  `in-app-sign-in.ts:148-200` (it loads claude.ai, which needed a Chrome user
+  agent; SSO keeps the system browser, :5-18). Artifacts are
+  `artifacts.ts:43-65`. The pane is `account-pane.ts` (:53; navigation policy
+  :85, :223, :366, :430). IPC: `ipc-channels.ts:357-380` and
+  `ipc/account-web-handlers.ts:57-317`; the orphan sweep is `index.ts:194`.
+- *Today: the Codex tab.* The menu items are `SessionContextMenu.tsx:230-243`
+  (Open artifacts) and :245-256 (Authenticate claude.ai...).
+  `Sidebar.tsx:1603-1605` takes `s.profileId ?? primaryProfileId` with no
+  provider check: the #216 fallback a Codex tab hits (P3.6 V5). The pane's
+  account is `WebviewPane.tsx:74-80`.
+- *Parity spec.* A Claude account has its own web session: in-app sign-in, the
+  pane's account surface, and sign-out clearing it. Section 9's note binds: the
+  in-app window only (WP1 design principle 4, no credential copy).
+- *Changes: web session.*
+  - Start now: a Codex partition builder keyed by the Codex account id, with
+    its own prefix, checked against the registry id pattern; the orphan sweep
+    covering the new prefix; Claude's two items taken off a Codex tab's menu,
+    because both act on another account (the primary Claude profile: #216,
+    P3.6 V5).
+  - Built ahead of the owner's run (2026-10-04: OR2a moved into the owner's
+    single run, OR2): the in-app sign-in window and the pane's account surface
+    on chatgpt.com, using the app's existing Chrome user agent (PB7: the form
+    loads under both, no challenge); a Codex tab's own web-session menu item;
+    the Settings row's status and items; sign-out and archive clear the
+    session (the Codex CLI's own sign-out does not, as Claude's does not). The
+    three values only a real sign-in shows (the session cookie name, the
+    identity read, the sign-in methods' hosts) sit in one descriptor, marked
+    unverified. Completion fails closed (the named cookie AND a valid email),
+    so a wrong value means the run never completes and the partition is
+    wiped, never a false "signed in"; the navigation allowlist names exactly
+    the listed hosts, never any https host (part of the ADR-009 surface); and a
+    run that does not complete logs names only: the cookie names, whether the
+    named one matched, how many identity reads ran, the identity answer's HTTP
+    status and the key path to an email-shaped value, and the off-site hosts
+    it saw (never values or query strings).
+  - If OR2 shows the in-app window cannot complete a chatgpt.com sign-in,
+    section 9's note applies: the cookie path goes to the owner, and if the
+    owner declines it, the web half becomes a section 19 record.
+  - `WhatsNewV2Step.tsx:120` ("claude.ai in the app.") is not in section 9's
+    flag list and names claude.ai, so it keeps its flag. The Codex web session
+    goes into the 2.1.1 changelog (P4.11 checks).
+- *Artifacts.* No equivalent on either supported version (P3.1 answer 11): no
+  artifacts, share or publish command; the `artifact` flag is under development
+  and off; the TUI has `/export` and `/copy`; `codex cloud` is experimental and
+  off. The record (design section 19: evidence, user impact, alternatives and a
+  recommended decision) is drafted now and rendered with the Insights mockup
+  (OR3); the artifacts half follows the owner's signature, and the signed
+  record decides whether a Codex item replaces "Open artifacts" on a Codex tab
+  (the section 9 note: "the artifacts record decides the other").
+  *Record (2026-10-05):* signed by the owner on the Agent Canvas, alternative
+  A: no Codex item replaces "Open artifacts", and the Feature Guide and the
+  artifacts tip each gain a sentence naming Codex's own `/export` (lane INS's
+  copy patch). The record is
+  `docs/wp2/evidence/codex-artifacts-section-19-record.md` (b2047f0d), its
+  citations re-checked at 5ec4423b.
+- *ADR-009: Y* (a new partition and window, a navigation policy, IPC keyed by a
+  new id class). The attackers are also briefed with any scope notes held
+  privately. *SSH radius: N.*
+- *Tests.* [host] The `account-web-*.test.ts` family;
+  `partition-revocation.test.ts`; `sidebar-context-menus.test.tsx` (a Codex
+  row never gets Claude's items, and gets the Codex item once it lands);
+  `claude-web-targets.test.ts`; `webview-pane-*`; refusals: the Codex
+  partition builder refuses a `profile-` id and Claude's an `acct-` id; a host
+  outside the allowlist is blocked in the sign-in window; sign-out and archive
+  clear the Codex partition.
+- *VM.* PB7 (no sign-in), then PB7b before the owner's run (credential-free:
+  the cookie names after an unauthenticated load, the identity endpoint's
+  unauthenticated answer, and each sign-in method's first off-site host and
+  whether it is a popup or a redirect). The sign-in itself is OR2, one run
+  through the built window on the final build.
+- *Record (2026-10-03; the first half, at 56200cd5).*
+  - *Built (the start-now half).* fee9be3a (lane D); 4dc59b16 (integration:
+    the orphan sweep for both web partitions, and no Claude account on a Codex
+    pane); abf00a25 (the pane's claude.ai entry pinned off a Codex session);
+    the fix b7544899. A Codex account's own web partition
+    (`webPartitionForCodexAccount`, `persist:codex-web-<registry account id>`,
+    checked against the registry's own id pattern), the dev start's
+    orphan-partition warning over both prefixes, and Claude's Open artifacts
+    and Authenticate claude.ai off a Codex tab's menu.
+  - *Scope addition, declared (D-2).* `WebviewPane.tsx`'s start page no longer
+    offers the primary Claude profile's claude.ai on a Codex session (lane D's
+    proposal, applied in 4dc59b16, pinned in abf00a25). The start-now list
+    names only the menu; this is the same #216 fallback on the pane, it only
+    removes a wrong-account offer, and it adds no Codex surface (the
+    chatgpt.com surface stayed for the second half: then after OR2a, since
+    folded into OR2).
+  - *Reviews.* The P4.6 review (fee9be3a, 4dc59b16, abf00a25): spec PASS,
+    quality PASS (D-1 a records item, D-2 to D-6 nits). The fix b7544899: the
+    right-click prefetch resolves its account through
+    `claudeWebActionProfileId`, the menu's own helper (D-3), and the comment
+    fixes (D-4, D-5); D-1 is the row 58 note in the checklist, D-6 the ledger
+    wording in d7da1228. Its re-review: spec PASS, quality PASS. Not done,
+    optional: a source pin on the dev start's orphan-warning call in
+    `index.ts`.
+  - *For the second half (then after OR2a, since folded into OR2).*
+    `webPartitionForCodexAccount` checks
+    the id's form only, so each caller that makes a Codex web partition first
+    confirms from the provider registry that the account is a Codex account;
+    any removal (sign-out, archive, clean-up) checks the whole folder name
+    against its id class, never the listing warning's prefix match alone; new
+    account-keyed channels take strict schemas and trusted-sender checks.
+  - *Owed (then; the 2026-10-04 record below supersedes it).* OR2a, then the
+    sign-in window, the pane's account surface and the Codex menu item; OR3, the artifacts record; OR2b on the final build.
+    ADR-009 pass: PASS at 2d296eea (four lenses, two fix rounds); VM
+    confirmations owed. The second half has its own round when it is
+    built.
+- *Record (2026-10-04; the second half, 25ae6d22 to 9666004f).*
+  - *Built ahead of the owner's run (lane W58; mocked).* 25ae6d22 (the window,
+    the session and the pane, behind one descriptor), 59e44ec7 (archive clears
+    the web session first), 2a439f3e (the codexWeb channels), ba13d06b (the
+    Codex tab's menu item, the pane's chatgpt.com entry and the Settings
+    row), fdd99d30, 59825c52, 60d398fc and 9666004f (tests), 2622cd7f (a comment).
+  - *The three unverified values* (`CODEX_WEB_SERVICE`,
+    `shared/account-web-session.ts`), public knowledge and not evidence, for
+    OR2 to confirm: the session cookie `__Secure-next-auth.session-token` (or
+    its first chunk, `.0`); the identity read `/api/auth/session`, the email at
+    `user.email`; the sign-in hosts `auth.openai.com`, `accounts.google.com`
+    and `appleid.apple.com`. PB7 verified the sign-in page,
+    `https://chatgpt.com/auth/login`.
+  - *Guards, each mutation-proven (29 mutants, 29 killed).* The codexWeb
+    channels: the trusted sender, the `account` id class only (even against
+    the registry), the registry check (known, Codex, not archived, not being
+    archived) before any partition is made, a finished sign-in re-checked
+    before its record is saved, no URL from the renderer. The window: the main
+    frame to chatgpt.com and the listed hosts only; completion on the named
+    cookie AND a valid email, re-checked, then the cancel flag; popups and
+    permissions denied; an identity read that returns only the email
+    (origin-gated inside the expression, isolated world, uncached). The pane:
+    signed out, the listed hosts only; a record needs the email; the record
+    store keeps metadata only. Each run owns its window; one sign-in at a
+    time across both services; an archive is refused when the clear fails.
+    Claude's suites unchanged and green.
+  - *Reviews, round 1 (at 9666004f).* Spec review PASS (five minors); quality
+    review FAIL (one major, eight minors); the second half's ADR-009 round, four
+    lenses. Findings fixed in e5cdd086 to 67a2c00d (lane W58; mocked).
+  - *Round 1 fixes (2026-10-05; e5cdd086 to 67a2c00d).* An archive commits
+    only through a path that cleared the web session first, decided under the
+    registry lock, and the clear runs after the archive's read-only checks;
+    the archive seam is in provider core (`providers/core/archive-hooks.ts`).
+    Before any wipe the run's window and the account's panes close, and the
+    record goes only after a wipe that succeeded; a record that cannot be
+    written or removed is reported. No sign-in or pane starts on an account
+    while its clear runs; a pane opens only for a Codex session holding the
+    account's launch lease.
+    The window and the pane block downloads, hold a sub-frame's own navigations
+    to https, and log hosts only. A sign-in that does not complete also logs
+    whether the session cookie was seen, the identity reads, and the identity
+    answer's HTTP status and key names, never a value. A pane records an email
+    that answers late, a
+    bounded number of times. The Settings row keeps its own sign-in line,
+    follows one already running, and reads its status afresh after an archive.
+    The start-up wiring is pinned (`main/codex-web-wiring.test.ts`), and the
+    real modules are tested together (`codex-web-boundary.test.ts`). 69
+    mutants, 69 killed.
+  - *Reviews, round 2 (at 03745c1a).* ADR-009 re-attack, lenses A to D:
+    PASS (minors); spec re-review PASS (three minors); quality re-review FAIL
+    (one major). Every item fixed in 9f9919ea to 7db97d78 (lane W58; mocked).
+  - *Round 2 fixes (2026-10-05; 9f9919ea to 7db97d78).* The identity answer is read on the
+    service as the run goes, spaced and bounded, until it is a JSON answer
+    with keys (round 3: until one shows an email path); a look while the
+    page is elsewhere does not count, and a
+    timed-out or cancelled run looks once more before its window closes (a
+    Cancel lets the run close its own window after that look). The line
+    names the key path to an email-shaped value, and drops (and counts) key
+    names shaped like an id or a secret. Every wipe of an account's session,
+    the one after an unfinished sign-in included, holds a counted bar, so no
+    pane opens mid-wipe; a record write that throws reads as not written. A
+    pane opens only for a Codex session whose current launch lease is on the
+    account, and closes when that launch ends or switches account; a refused
+    open says why on the start page. The wiring is two functions index.ts
+    calls and its test calls (`account-web/codex-web-wiring.ts`). Embedded
+    about:blank, about:srcdoc, blob and data frames load in both services'
+    account views and the Codex sign-in window; http, file and custom schemes
+    stay refused. A failed page load in an account view is logged by host and
+    error code. 47 of 47 mutants killed.
+  - *Reviews, round 3 (at 9a56752e).* ADR-009, lenses A to D: PASS
+    (minors); spec PASS (one minor); quality FAIL (one major). Every item
+    fixed in 78925acb to 88d9575b (lane W58; mocked).
+  - *Round 3 fixes (2026-10-05; 78925acb to 88d9575b).* The identity answer is looked at
+    until one shows where an email sits, and at once on the poll where the
+    session cookie first appears, so the sign-in page's own answer is never
+    the last word; a later look that fails or answers worse keeps the
+    earlier, better answer. The line lists the top-level key names and the
+    key path to an email-shaped value, and counts every other name; a key
+    holding a dot is never a path name. Cancel hides the window at once,
+    then the bounded last look, then the window goes. A pane closed because
+    its session no longer runs under the account says why on the start
+    page. At start, each Codex account's web session with no record is
+    wiped (round 4: only when the record store read cleanly, and only an
+    account whose partition folder exists), so a sign-in cut short by a
+    quit never leaves a session that
+    offers no Sign out. A lease check that throws closes the pane, and the
+    wiring test checks the calls in index.ts sit at the top level of their
+    blocks. 31 of 31 mutants killed.
+  - *Reviews, round 4 (at a9cddff9).* ADR-009 lenses A and C: PASS;
+    quality FAIL (one major). Every item fixed in a7b306aa to 1e04001f (lane W58;
+    mocked).
+  - *Round 4 fixes (2026-10-05; a7b306aa to 1e04001f).* The start sweep reads the record
+    store once, without side effects: unless it read cleanly with the
+    expected schema, or is absent, the whole sweep stands down with one line
+    and the file stays where and as it was; a record with a bad field still
+    counts for its account. It touches only an account whose own partition
+    folder already exists, so no partition is made at start for a
+    never-used or archived account. The first-cookie look at the identity
+    answer stays pending until a look answers from chatgpt.com. On an email
+    path a name after the first is shown only when it says mail (round 5:
+    only an email field name); any other is a star (users.*.email,
+    byLocal.*). 23 of 23 mutants killed.
+  - *Reviews, round 5 (at 1f6f68ce).* Every review and lens PASS; four
+    minors, fixed in bb11f51d to 76cb26f2 (lane W58; mocked).
+  - *Round 5 fixes (2026-10-05; bb11f51d to 76cb26f2).* The record store reads as absent
+    only when its stat says there is no entry; a stat that throws, or a
+    folder in its place, is unreadable. The start sweep stands down while a
+    quarantined copy of the store (`codex-web-sessions.json.corrupt-*`, left
+    when an ordinary read could not parse it) is beside it, or while that
+    cannot be ruled out. What a user sees meanwhile: each Codex account's
+    row reads chatgpt.com not signed in (its record went with the
+    quarantined file); a session still in a partition stays there; Sign in
+    to chatgpt.com completes at once on that session and records it again;
+    once the quarantined file is removed by hand, the next start sweeps. A
+    store written by a newer build (a downgrade) is never overwritten: a
+    save or a removal is refused, so a finished sign-in fails closed (it is
+    cleared, "could not be recorded") and a sign-out or an archive reports
+    that its record could not be removed (round 6: sign-in is refused up
+    front, and a removal counts as done once the wipe has). On an email
+    path a name after the
+    first is shown only when it is an email field name (mail, email,
+    email_address, primary_email; any case); any other is a star. Test
+    fixtures use made-up names. 11 of 11 mutants killed.
+  - *Reviews, round 6 (at def1ee32).* Lenses A and C PASS; spec PASS;
+    quality FAIL (one latent major, the newer-store rule). Every item fixed
+    in 494f1e81 (lane W58; mocked).
+  - *Round 6 fixes (2026-10-05; 494f1e81).* A record store written by a
+    newer build (a downgrade) is one rule, and the file is never rewritten:
+    Sign in to chatgpt.com is refused up front with the reason ("This
+    account's chatgpt.com records were written by a newer version of the
+    app.") before any window opens; the row shows that reason instead of a
+    plain not signed in, and still offers Sign out of chatgpt.com; a
+    sign-out wipes and succeeds once the wipe has; an archive is never
+    refused for a record this build cannot write. A sign-in made in a Codex
+    pane whose record cannot be saved, for any reason, is cleared, as the
+    window's is. The start sweep's stand-down line names the quarantined
+    copy by file name. 11 of 11 mutants killed.
+  - *Reviews, round 7 (at a543e179).* Spec PASS, lens C PASS; quality one
+    latent major (opening the pane over a newer store could clear a live
+    sign-in). Fixed in 99a3bb21 (lane W58; mocked).
+  - *Round 7 fixes (2026-10-05; 99a3bb21).* While the record store was
+    written by a newer build, the Codex web surface is inert for every
+    account: sign-in and the account view are refused up front with the
+    reason, so no partition is touched and nothing is recorded or cleared,
+    and the Settings row, the session menu and the browser pane's start page
+    show the reason instead of Sign in and chatgpt.com. Sign out of
+    chatgpt.com and archive still wipe and succeed; the newer store keeps
+    its record for the newer build, the accepted behaviour (this build never
+    rewrites a file it cannot read whole). A pane whose record cannot be
+    written for any other reason still clears its session. 8 of 8
+    mutants killed.
+  - *Reviews of the round 7 fixes.* The spec review of 99a3bb21 and
+    1f0a096d: PASS, with one minor (a pane closed because the sign-in made
+    in it could not be recorded did not say why, where the round 6 fix
+    spec asked for a reason on any close a failed record write sets off),
+    fixed in fix pass 9. Quality, round 7: PASS at 4a24ec9a.
+  - *Fix pass 9 (2026-10-06; b7a96be2).* When a sign-in made in a Codex
+    pane cannot be recorded, the account's panes close first with the
+    reason, and the renderer shows it on the start page, as it shows every
+    close main gives a reason for; the clear follows in the same tick, so
+    the renderer is told once. Red first at 4d681799 (2 tests), green
+    after; 2 mutants, 2 killed.
+  - *Codex record store only.* The start sweep and the newer-store rule
+    belong to the Codex record store (`codex-web-store.ts`), added in this
+    release.
+  - *Owed.* The reviews of fix pass 9; PB7b on the VM; OR2 on the final
+    build (then a values-only fix and a re-run if a value was wrong). OR3's
+    artifacts record is signed (2026-10-05, above).
+
+**P4.7 Insights for Codex (row 68).** After P4.5 (the account hold and the
+per-run confirmation it built) and OR3's approval.
+Probe: PB5 (shared with P4.5).
+- *Today: the run.* `insights-runner.ts:235-239` (`spawnClaudeInsights`) spawns
+  node-pty directly, accepts the trust prompt (:381-398) and types `/insights`
+  (:291). It polls `~/.claude/usage-data/report.html` (:57-59, :332-362), then
+  exits (:346). Figures come from headless `claude -p` (`extractKpis` :777,
+  prompt :426-464, flags `buildKpiSpawnArgs` :527-529: no
+  `--no-session-persistence`, so both Claude passes keep their transcripts).
+  History is `insights/catalogue.json` (:62-63, :142); the lock is per
+  `profileId` (:94-97). `insights:run` accepts only `isValidProfileId`
+  (`ipc/insights-handlers.ts:22-25`), which refuses `acct-` ids.
+- *Today: cross-account, record and page.* The cross-account run is
+  `runCrossAccountInsights` (:1085) over `listProfiles()` (:1060, in
+  `resolveCrossAccountTargets` :1059); its pure half is
+  `insights-cross-account.ts:36-44`. `InsightsRun` (`shared/types.ts:534-575`)
+  has carried an optional `provider` field since S0 (:543-546; absent reads
+  as Claude Code's). The page: the Codex-only message
+  `InsightsPage.tsx:277-296`, the run picker :403-426, the sections :537
+  (parsed from Claude's HTML by
+  `src/renderer/components/insights/parseInsightsReport.ts`), the figures
+  :558, the cross-account report :528.
+- *Spec (section 10, parity of 2026-09-26).* A Conductor-native Codex report
+  run with `codex exec`, in the page's existing layout, figures and run
+  history, on the account's own allowance. A mockup on the Agent Canvas first,
+  made from `InsightsPage.tsx`, `insights-runner.ts` and
+  `insights-cross-account.ts` (ADR-013).
+- *Changes (after the mockup is approved).* As the OR3 mockup refreshed on
+  2026-10-04 at 18cfc710 draws them, approved on the canvas 2026-10-05 (v1,
+  no notes): screens 1 to 9, and its choice C1 = A.
+  - A Codex report run in the form of Sentinel's Codex analysis
+    (`providers/codex/cli-runner.ts:69-91`, P3.9), not P4.5's agent argv,
+    which gives the model a shell: `exec --json`, `-s read-only`, no tool that
+    runs a command, browses or connects anything, web search off, none of the
+    account's config, rules or `AGENTS.md`, no `-m` (Codex's default model
+    for the account, as Claude's report uses Claude Code's default); the
+    instructions, the session digest and the previous run's figures on stdin;
+    no path in argv (9.6 item 20). One change from that form: no
+    `--ephemeral` (mockup D13). It runs in an empty folder made for it, as
+    Sentinel's does (`sentinel/index.ts:505-513`), never a project or the
+    sessions folder (9.6 item 22), on an accounts-service launch that holds the
+    account's lease for the whole run, as Sentinel's analysis
+    (`sentinel/index.ts:493-503`) and a Codex cloud agent
+    (`cloud-agent-manager.ts:566-641`) do. It reads the account's own
+    rollouts (the sessions folder the accounts service names,
+    `providers/codex/index.ts:555`, with the line reader in
+    `logging/codex-rollout-normalizer.ts`), counts sessions, turns, tool calls,
+    tokens, refusals and failed commands itself, leaves out its own report
+    runs, and fills the page's sections, figures and history
+    (`InsightsSections.tsx`, `KpiSidebar.tsx`, `CrossAccountReport.tsx`, lane
+    C). The report renders as text or structured data, never raw HTML.
+  - `insights:run` accepts a Codex account id with a strict check (the
+    provider and the id class).
+  - The run record's `provider` field (S0, `shared/types.ts:543-546`) set to
+    `'codex'` on a Codex run; "vs previous run" pairs runs by account and
+    provider. A Codex run keeps Codex in use through the account's lease, as a
+    Codex cloud agent does (`provider-in-use.ts:29-32` counts only Codex's runs
+    that hold no lease).
+  - The account picker lists Codex accounts from `sessionAccountOptions`
+    (`utils/launchAccount.ts:88-110`) under a Codex heading after Claude
+    Code's, and shows with two or more accounts across both providers (mockup
+    D7).
+  - The cross-account roll-up as the mockup's choice C1 = A, approved: one
+    roll-up over every account of both assistants that is on ("Run all (N)"
+    counts them); the roll-up's own rules unchanged; each column carries its
+    assistant's mark; the written analysis runs where it runs today (the
+    primary when it produced figures, else the first member that did), and
+    Codex writes it when that member is a Codex account (with Claude Code off,
+    always).
+  - The Codex-only message replaced.
+  - Recorded from the mockup, approved on the canvas 2026-10-05 (v1):
+    - D12: a run on an account marked "confirm at launch" (this computer's
+      Codex sign-in, or an unverified one) asks the per-run confirmation a
+      Codex cloud agent asks (`NewAgentDialog.tsx:304-318`), sent only with
+      the account it names (`cloud-agent-manager.ts:622-627`); Run all leaves
+      such an account out and names it under "Left out of this comparison"
+      (`CrossAccountReport.tsx:260-270`).
+    - D13: the run is kept, not `--ephemeral`, as Claude's report runs keep
+      their transcripts (`insights-runner.ts:527-529`) and Codex cloud agents
+      keep theirs (`agent-run.ts:19-20`): its cost reaches Tokenomics on that
+      account, and the next report knows it by its working folder and leaves
+      it out.
+    - D14: a Codex run has no "report ready, KPI extraction failed" state
+      (`InsightsPage.tsx:559-569`): one reply holds the cards and the figures,
+      so a reply that fails the check fails the run with its reason.
+  - Lift `needsClaude` from `WhatsNewV2Step.tsx:125` and from the Feature
+    Guide card (`training-steps.ts:682-687`); from `showcase-pages.ts:161`
+    ("Insights across accounts"), since the approved C1 = A includes the Codex
+    roll-up; take Claude Code's mark off `tip.insights`
+    (`tips-library.ts:528-541`); fix `app-knowledge.ts:87` and :122, and the
+    2.1.1 changelog lines that call Insights Claude-only (`changelog.ts:57`,
+    :74).
+- *ADR-009: Y* (a model run over the user's conversation history, a new runner,
+  IPC). The attackers are also briefed with any scope notes held privately.
+  *SSH radius: N:* the Codex path through `cli-runner` touches no radius file,
+  and Claude's runner keeps its pty-manager import (`insights-runner.ts:19`).
+- *Tests.* [host] The `insights-*.test.ts` family,
+  `insights-provider-off.test.ts`, `insights-codex-empty.test.ts`,
+  `parse-insights-report.test.ts`, `insightsStore.test.ts`; a rollout holding
+  markup renders inert (beside `insights-no-iframe.test.tsx`); the
+  `insights:run` refusals (an unknown provider; a wrong id class; a
+  mismatched provider).
+- *VM.* A report on each version, the fake model returning a scripted report
+  through the real CLI. A real report's content is OR4.
+- *Record (2026-10-05, fix passes 2026-10-06; lane INS, 9c4f219e to 2eb9f998, mocked).*
+  - *Built.* 9c4f219e (main: the report run, the strict run check, the
+    roll-up over both assistants), 38dd2dc9 (the page), 0d3c75f2 (the runs
+    folder named so the WP1 gate reads no Codex home in it), a7c0adab and
+    deb2a7c4 (review fixes). The app reads the account's rollouts from the
+    sessions folder its launch names (`launch.sessionsDir`), newest first
+    within 30 days, each whole and a line at a time (a line over 4 MB is
+    skipped and counted), until the next session would pass 256 MB; it never
+    follows a link, and leaves out its own runs by their working folder. It
+    counts sessions, turns, tool calls, failed commands, sandbox refusals,
+    the median turn time, tokens, edit and read-only sessions, the tools, and
+    the languages of the files changed. One `codex exec` (`cli-runner.ts`
+    `insights`: the `analysis` argv less `--ephemeral`) runs in
+    `<resources>/insights/.insights-codex-runs/ccc-insights-codex-*`, checked
+    by real path and removed after, on a background launch that holds the
+    account's lease; it gets the figures, the previous run's figures and a
+    digest of at most 60,000 characters (the start of each request and
+    reply, secrets redacted), all marked as data. The reply is checked by the
+    one rule for report.json (`shared/insights-codex-report.ts`), which the
+    page applies again before it draws anything as text; report.json and
+    kpis.json are written 0600. The figures: Volume, Outcomes (Tasks
+    Completed, judged), Friction, Performance, Tokens and Session Types;
+    lists Top Tools and Top Languages (counted) and Top Goals (judged).
+  - *Fix pass 1* (834ec616, 753884ce, dccd1770; integrated by 819d43b3), for
+    the three WP1 gate failures found at integration: the runner reaches the
+    report's model run through the registered Codex package's Insights port,
+    never by a deep import, and a package without the port fails the run
+    saying so; the page's account keys are `<assistant>|<id>`; the Feature
+    Guide's Insights card no longer promises a breakdown neither report
+    draws.
+  - *Fix pass 2* (a3aa3db4, a786d82a, and this record), for ADR-009 round 1
+    and the spec and quality reviews at dccd1770. Run all's written analysis
+    holds no tools and loads no settings file, memory file or MCP server and
+    keeps no transcript: on Claude Code in Sentinel's argv form, in an empty
+    folder of its own removed after, with its account's proxy and
+    certificate settings passed on; on Codex a report's read-only run. It is
+    sent the comparison between one pair of data markers after a rule to
+    treat it as data. A tool or MCP server name counts under its own name
+    only when it is an identifier; nothing placed in a data block can open or
+    close one; the previous run's figures reach the next report as numbers
+    only. The port and the runs folder are checked before the account is
+    launched; the runs folder is checked again before the stale sweep and
+    before a run's folder is removed (on POSIX, writable by no one else),
+    and `insights` before anything is made in it. Each session is read
+    through the file the walk saw, within a time limit that fails the run
+    and lets go of the lease and the lock. A Run all list with holes is
+    refused, and one naming only accounts that cannot run is refused before
+    any launch. report.json is served only as a regular file within 512 KiB,
+    and a failed read shows no report. Codex's written analysis and a run's
+    failure text are kept as plain text. PRIVACY.md says what each written
+    analysis is sent, in both directions, and where that run is kept; the
+    Insights card drops a clause neither report draws.
+  - *Fix pass 3* (c1b278b2, e20aeb95, 2eb9f998, and this record), for three
+    defects the VM dry run at dccd1770 found with the real CLI on 0.153.4
+    and 0.155.1. A sandbox refusal is counted in the words real sessions
+    record: when nothing ran, Codex's own words stand in for the output with
+    no exit status, and an edit the read-only sandbox blocked, a command the
+    sandbox would not start and a request to run outside the sandbox that
+    the approval policy refused are refusals, read at the start of an output
+    only; a command runner that could not start a command for another reason
+    is a failed command. Run all names an account whose sign-in check failed
+    under "Left out of this comparison", with the reason that it needs
+    attention, as a Claude Code account whose sign-in fails is named with
+    its reason; it is never launched and never counts toward the accounts a
+    roll-up needs. In Settings, Accounts a provider's in-use line follows the
+    count each snapshot now carries (the count a switch-off is refused with)
+    and goes once nothing holds the provider, on both providers' rows (the
+    row's own two-second re-read of this pass is replaced in fix pass 4 by
+    the snapshot main publishes as the count moves).
+  - *Fix pass 4* (256bb133, 750d272c, and this record), for ADR-009 round 2
+    and the spec and quality reviews of fix pass 3. A report reads only a
+    session file that is the account's own: a rollout with a second name
+    (at the walk or once open) is not read and is counted with the links not
+    followed, and report.json is matched to its lstat on the whole device
+    and inode, opened without waiting on a FIFO. On POSIX `insights` is held
+    to the runs folder's rule (this user's, writable by no one else). Every
+    block of data a report or a written analysis is sent sits between two
+    lines carrying a marker made fresh for that prompt (Sentinel's
+    `analysisNonce`; a marker found in the data is never used, and with none
+    left nothing is sent); FIGURES is a block too, so the tool and MCP server
+    names it counts sit inside one, and every label in the roll-up's data is
+    one line. The written analysis on Claude Code holds Sentinel's second
+    layer (`--disallowedTools` with Sentinel's list), its switches are
+    Sentinel's constant and its transport settings come through Sentinel's
+    one reader. Codex's own words at the start of an output count as a
+    refusal or a failure only on the output of one of its command runners or
+    an edit, never over an explicit success: true, so the recorded wording
+    still reads 3 refusals and 3 failed commands. After a refused switch-off
+    main publishes a new snapshot each time that provider's in-use count
+    moves, until nothing holds it, and the row reads no snapshot of its own;
+    `inUse` is a required field. A read stopped at its time limit lets go of
+    its stream and file once each, and its walk stops.
+  - *Fix pass 6* (3397df8d, 1d3d3a15, d4c9fcb2, cf1c167c, and this record),
+    for ADR-009 round 3 over fix pass 4 and the reviews of fix passes 4 and
+    5. On POSIX `insights` is made owner-only (0700) through a handle on the
+    folder its check saw: opened without following a link, and changed only
+    when it is a folder, this user's, and that same folder (device and
+    inode); otherwise nothing is changed and the run is refused before
+    anything is made in it or launched. After a refused switch-off, main's
+    watch of the in-use count ends only once a snapshot carried 0, so a run
+    that starts as the count reaches 0 is followed until it ends. A report
+    whose sessions cannot be marked off, and a roll-up whose comparison
+    cannot be, on either assistant, are covered by tests. The provider row
+    reads the in-use count every snapshot carries, and every renderer
+    fixture carries it.
+  - *Fix pass 7* (58abef14 and this record), for ADR-009 round 4 over fix
+    pass 6. Only a snapshot that carries a provider above 0 hands main's
+    in-use watch on; one that carries 0 leaves the provider to the next
+    look, which lets it go if nothing holds it then and follows its count
+    again if something does, so whichever snapshot is built first the last
+    count published is 0 and no timer is left.
+  - *Fix pass 8* (1bf3df7e), for CI run 37434087671 (the #360 dialog
+    palette guard, red on all three systems): the Codex run confirmation is
+    its own file, `insights/CodexRunConfirm.tsx`, on the dialog tokens, so
+    `InsightsPage.tsx` holds no `role="dialog"`; its wording, focus, Escape,
+    click outside, buttons and closing when a run starts are unchanged. Red
+    first at 01bf64db (1 of the guard's 15 tests), green after.
+  - *Fix pass 9* (4079c764), for the two nits of fix pass 8's quality
+    review: the confirmation's tick box, Run and Cancel carry the focus
+    ring (`focus-ring`), as MultiSpawnPopover's controls do, and
+    `InsightsPage.tsx` hands it the Run button that opened it, which Escape
+    and Cancel give focus back to; a click outside leaves focus where the
+    click put it. Red first at 4d681799 (1 of the page test's 26 tests),
+    green after.
+  - *Deviations, recorded.* D10: the banner's Sign in button for a Codex
+    account opens Settings, Accounts, where that account's Sign in again is
+    (the Usage page's way, `AccountUsagePanel.tsx:277`), rather than starting
+    it; Re-check sign-ins asks Codex (Check sign-in) about each Codex account
+    the banner names. The run channel's app-window check and strict check
+    cover Claude Code's requests too, so a malformed Claude request is now
+    refused instead of falling back to the primary. A sandbox refusal is read
+    from the tool output's own wording, recorded from real sessions on
+    0.153.4 and 0.155.1 (fix pass 3). Where the spec left a case open, the
+    figures follow what the report tells the user: Sandbox Refusals counts
+    what Codex's sandbox or its approval policy stopped, in Codex's own
+    words; Failed Commands counts a command that ran and failed, also one
+    the operating system denied in words that name no sandbox ("Access is
+    denied.", a shell that could not start, "Failed to write file"), since
+    the output alone cannot tell that denial from any other. On POSIX an
+    `insights` folder of this user's that others can write to (one made
+    under a group-writable umask) is first made owner-only (0700), as the
+    app's other owner-only folders are, through a handle on the folder its
+    check saw (fix pass 6), and refused if it stays writable by others or is
+    another user's (fix pass 4).
+  - *Tests.* [host] `insights-codex-report.test.ts`, `insights-codex-run.test.ts`,
+    `insights-codex-rollup.test.ts`, `insights-run-handler.test.ts`,
+    `providers/codex/insights-exec.test.ts`, `shared/insights-codex-report.test.ts`,
+    `renderer/insights-codex-page.test.tsx`, and the existing Insights files
+    (`insightsStore.test.ts`, `parse-insights-report.test.ts`,
+    `insights-codex-empty.test.ts`, the `insights-*` family,
+    `insights-provider-off.test.ts`, `claude-off-headless.test.tsx`): red
+    first against 5ec4423b, green at deb2a7c4. 76 mutants of the guards, 76
+    killed. [CI] [VM] `insights-codex-links.test.ts` (HOST QUARANTINE: it
+    plants links); on the VM at 01bf64db it passed 6 of 6, and of its 12
+    link mutants 9 were killed (6 by that file, 3 by the host fs-guards
+    test); the other 3 change only a counter, which no test can fail on.
+    Fix pass 1: 7
+    mutants, 7 killed. Fix pass 2 adds `insights-codex-fs-guards.test.ts`
+    (links modelled, never planted) and extends the run, roll-up, report,
+    run-handler, page, cross-account and app-knowledge tests: red first
+    against dccd1770 (36 of the focused set's 207 tests), green at a786d82a;
+    46 mutants of its guards, 43 killed, 3 surviving as one layer of two,
+    the mutant removing both layers killed (the runs folder's link check and
+    its real-path match; a session's no-follow open beside its device and
+    inode match). Fix pass 3 extends the report, roll-up, provider-in-use and
+    Accounts surface tests: red first against 8bfb9ad0 (10 tests), green at
+    2eb9f998 (the focused set, 19 files, 432 tests); 14 mutants, 14 killed.
+    Fix pass 4 extends the fs-guards, report, run, roll-up, cross-account,
+    provider-in-use and Accounts surface tests: red first against 1703d85e
+    (26 of 229 tests in those 7 files, the roll-up file not loading, then 12
+    of 64 in the report and roll-up files), green at 750d272c (the focused
+    set, 22 files, 535 tests); 26 mutants, 26 killed, among them the runs
+    folder's real-path match alone (a mutant that survived the VM run), now
+    killed on the host by a modelled swap after its lstat. Fix pass 6
+    extends the fs-guards, provider-in-use, run, roll-up and kpis.json mode
+    tests and the renderer provider fixtures: red first against ac383100 (5
+    of 104 tests in 5 files), green at 158d5c2a (the focused set, 24 files,
+    731 tests); 8 mutants, 8 killed. Fix pass 7 extends the provider-in-use
+    tests: red first against dfcf34af (3 of 25 tests), green at 58abef14
+    (the focused set, 16 files, 380 tests); 4 mutants, 4 killed. Fix pass 9
+    extends the page test: red first against 4d681799 (1 of 26 tests),
+    green at 4079c764 (17 files with row 58's fix pass 9, the dialog
+    palette guard, the WP1 gate and traceability, 379 tests); 2 mutants,
+    2 killed.
+  - *Reviews.* Spec: PASS at 0d3c75f2 (minors fixed after: the record and
+    statuses here, the copy); confirmation PASS at deb2a7c4. Quality: FAIL at
+    0d3c75f2 (one major: a session over 16 MB was cut silently), fixed in
+    a7c0adab and deb2a7c4; confirmation PASS at deb2a7c4. At dccd1770: spec
+    PASS (1 minor, 1 nit, both fixed in fix pass 2), quality PASS (1 minor and
+    2 nits fixed in fix pass 2; 4 nits on the closeout list). ADR-009 round
+    1 at dccd1770, four lenses: FINDINGS (1 major, 16 minor, 3 none) -> fix
+    pass 2 (14 fixed; 5 coverage and tidy items on the closeout list; 1
+    needing nothing) -> round 2 at 1703d85e, the same four lenses over fix
+    passes 2 and 3: PASS (0 blocker, 0 major; its minors fixed in fix pass
+    4). At 1703d85e the spec and quality reviews of fix pass 3: their minors
+    fixed in fix pass 4, their nits on the closeout list. ADR-009 round 3
+    over fix pass 4, four lenses (A, B, C, D): PASS (0 blocker, 0 major; its
+    findings fixed in fix pass 6). The spec and quality reviews of fix pass
+    4: PASS, PASS. Fix pass 5 (section 6, PR 2): #625's delta ADR-009
+    confirmation over it, two lenses: PASS; its spec and quality reviews:
+    PASS, PASS. The spec and quality reviews of fix pass 6: PASS, PASS.
+    ADR-009 round 4 over fix pass 6, two lenses (B, C): PASS (0 blocker, 0
+    major; its one minor fixed in fix pass 7). ADR-009 round 5 over fix
+    pass 7, at 01bf64db, one lens: PASS, nothing new. The spec and quality
+    reviews of fix pass 8: PASS, PASS (the quality review's two nits fixed
+    in fix pass 9).
+  - *Runs at 01bf64db.* The VM (WINDOWS_1; the fake model, fictional
+    accounts): every piece PASS. The app's report argv through the real
+    CLI on 0.153.4 and 0.155.1, by `codex.exe` and the npm shim, 4 of 4,
+    with an edit inside a report run refused and its folder left empty;
+    the refusal counts on the recorded wording, 3 refusals and 3 failed
+    commands per account on both versions; the HOST QUARANTINE links file
+    6 of 6; the packaged walk 39 steps, 0 errors. The pre-push batch over
+    5ec4423b to 01bf64db: green (327 host-safe unit files, 6,037 tests, at
+    dfcf34af; fix pass 7's 41 affected files, 1,147 tests, again at
+    01bf64db). CI at 01bf64db (run 37434087671): one failure, the #360
+    dialog palette guard on all three systems, fixed in fix pass 8.
+  - *Owed.* The spec and quality reviews of fix pass 9; OR4, a real
+    report's content; the closeout list's coverage and tidy items. The VM
+    final pass after the dev dependency bumps and the Electron 44
+    migration ran at 7c1fab06 (the package upgrade, e2e 94 of 94, native
+    226 of 226), and the commits from there to 6c1e0d52 change no main or
+    preload source; CI's required jobs are green at 6c1e0d52 (run
+    37553704348), and its Desktop test gate is red by design until the
+    owner attests (#309).
+
+**P4.8 CI: Linux and real-CLI conformance (rows 59, 60).**
+- *Today: the matrix.* `.github/workflows/ci.yml:102` is
+  `os: [windows-2025, macos-latest]`. A Linux runner takes the native rebuild
+  path (:133-144) and runs `test:unit:native` (:158-159). No workflow runs
+  Playwright. Vitest runs on Linux only in `release.yml` `build-linux`
+  (:440-500, continue-on-error); its comment (:477-481) says the PR matrix is
+  Windows and macOS. Its last run (release run 35534211954, beta of
+  2026-09-20) passed 898 test files (3 skipped; 11,164 tests); the WP2 stack's
+  tests have never run on Linux.
+- *Today: the real CLI.* No workflow installs Codex.
+  `tests/integration/codex-cli-compat.test.ts` skips without `codex` on PATH
+  (:14-17); `provider-conformance.test.ts` never spawns a CLI; the versions are
+  in `providers/codex/cli-contract.ts:9-14`. The help fixtures were captured on
+  Windows and normalised (P3.1 evidence, "Fixtures and anonymisation").
+- *Spec.* OD20 D5 (`ubuntu-latest` joins the `test` matrix). D7 and WP1.71: the
+  minimum, the pinned and the release-candidate versions, the last tested
+  separately.
+- *Changes.*
+  - Add `ubuntu-latest`, non-blocking only until its first green run, then
+    blocking (package gate 7 needs it green). Linux failures are routed by 9.3's
+    rule: a test fix goes to the lane that owns the file; a product bug is
+    assessed against section 7, never silently deferred, and fixed as its own
+    recorded change with its ADR-009 and SSH flags set by its paths (an unclear
+    case counts as yes).
+  - A real-CLI job per OS. It installs each version into its own prefix and
+    runs P3.1's no-sign-in checks: help, `codex debug models --bundled`
+    against the registry, `codex features list`, the compat suite. Help is
+    first captured per OS into the run's artifacts and compared with the
+    normalised fixture; it is asserted once those captures are reviewed. PR
+    runs test the minimum and pinned versions; the release-candidate version is
+    a `workflow_dispatch` input, which PR runs do not have, so it is dispatched
+    (release level, D7). The job holds no secrets. Its runs are also row 2's
+    detection evidence per OS (P4.10).
+  - `docs/wp1/evidence/ci-matrix.md` (WP1.30) written from these runs.
+  - The `release.yml` comment updated.
+- *ADR-009: N. SSH radius: N* (for any product fix: by its paths).
+- *Tests.* [CI] The CI run on the PR 4 branch with `ci-run`; each new check
+  shown red once against a deliberately wrong fixture, then green.
+- *Record (2026-10-03; the code at 56200cd5).*
+  - *Built.* 3173d4f3 and be53f767 (lane E): `ubuntu-latest` in the `test`
+    matrix, non-blocking until its first green run; the `codex-conformance`
+    job per OS for the minimum and pinned versions (the release-candidate one
+    by dispatch), holding no secrets; the `release.yml` comment;
+    `docs/wp1/evidence/ci-matrix.md`, its results not recorded yet.
+  - *Reviews.* The lane E review (3173d4f3, 7f6a165f, be53f767, 04e65569):
+    spec and quality FAIL on E-1 (P4.8: the prove-red run could never show the
+    model-list check red) and E-5 (P4.9). The fix pass c75c3acb: the model
+    list as its own case with two soft checks (E-1); each help read must name
+    its subcommand on its Usage line (E-2); a flag counts only on an option
+    line (E-3); every CLI run in the job gets a fresh `CODEX_HOME`, and a last
+    step proves the runner's own home untouched (E-4); the checkout keeps no
+    token, and the Codex install runs no scripts and uses its own cache
+    (E-12). The re-review of c75c3acb: spec PASS, quality PASS, with RCEF-2
+    and RCEF-3; the fix d7b38752 moves the own-home picture and verdict to
+    `tests/integration/codex-own-home.mjs`, tested on every change
+    (`codex-own-home.test.ts`), a folder now part of the picture and a missing
+    record failing as such, and `ci-matrix.md` gains an "Own home untouched"
+    column; its verification is spec PASS, quality PASS.
+  - *Owed (CI, after the push with `ci-run`).* The first Linux run of the WP2
+    stack, read job by job (`continue-on-error` hides a red leg), then one
+    commit recording it and dropping `continue-on-error`; the six conformance
+    legs, whose likeliest first red is the Usage-line check of `app-server`,
+    `debug models`, `login status` and `logout`, which have no fixture; the
+    own-home steps on all six legs; the help captures reviewed per OS before
+    `CCC_CODEX_HELP_ASSERT` is turned on; then the prove-red dispatch, filling
+    the "Shown red once" table. The release-candidate version at release.
+    ADR-009: N (this entry); the PR-level pass: owed, not yet run, at PR
+    4's final head (9.7 gate 4); the fix passes' own delta passes are in
+    section 6's PR 4 entry.
+
+**P4.9 E2E mode matrix (row 67).**
+- *Today.* `docs/wp1/evidence/mode-matrix.md` records WP1.1 and WP1.60 as
+  `planned` (:9), with the record at 0cb1bf31 (:11). Its mode rows (:145-150)
+  are fresh-install paths on the fake CLI. "Not covered" (:152-156) lists
+  upgrade, restart, enable/disable round trips and a minimum real launch; the
+  upgrade is now covered by `codex-reconfirm-upgrade.spec.ts` (:136, :171,
+  :196; VM only). Helpers: `tests/e2e/helpers/fake-codex.ts`,
+  `electron-app.ts:162`. Traceability cites
+  `tests/e2e/onboarding-provider-select.spec.ts` (WP1.1) and
+  `tests/wp1/mode-matrix.test.ts` (WP1.1, WP1.2, WP1.3, WP1.60), which do not
+  exist.
+- *Changes.* Specs for: restart (a Codex tab, and an app relaunch); enable and
+  disable round trips (configs say why, tabs read Not started, turning it on
+  and restarting works, the in-use refusal holds); a real launch on the VM
+  against the installed 0.153.4 and 0.155.1, with no sign-in, a fake key and
+  the fake model, as 9.2, skipped where no real CLI is given. The real-launch
+  spec answers a first launch's screens by the 9.2 rules and asserts them (the
+  sandbox menu answered only on a selected "2.", nothing typed before a ready
+  composer, `config.toml` hashed before and after). The matrix document gains
+  the upgrade spec and the new cells. The two cited files are created, or the
+  citations re-pointed (with P4.10).
+- *ADR-009: N. SSH radius: N.*
+- *Tests.* [VM] The VM e2e run.
+- *Record (2026-10-03; the code at 56200cd5).*
+  - *Built.* 7f6a165f (lane E: the restart, enable and disable, and
+    real-launch specs, `tests/wp1/mode-matrix.test.ts` and
+    `tests/e2e/onboarding-provider-select.spec.ts`, the two files traceability
+    cited, and `mode-matrix.md` with the matrix and the upgrade spec);
+    04e65569 (integration: the fake codex stands in for a session launch).
+  - *Reviews.* E-5 (in the lane E review above): the real launch's menu answer
+    could act on a screen that was no longer the live one. The fix c75c3acb
+    reads Codex's first screens through a pure reader
+    (`tests/e2e/helpers/codex-first-screens.ts`): the live screen is the
+    lowest title on screen, Enter goes only on the verified selected row of
+    that screen's own menu, each screen is answered once, and ready needs the
+    composer's placeholder above the footer (it also found that the old ready
+    rule read Codex's disabled composer during sandbox set-up as ready). It is
+    checked in `mode-matrix.test.ts` on screens rendered from the 9.2 probe
+    captures. E-7: the matrix test compares the record's table cell by cell.
+    E-9 was declined (optional, already fail-closed). The re-review: spec
+    PASS, quality PASS.
+  - *Traceability (INT-6).* WP1.60 lists the four specs of its mode-matrix
+    cells (`codex-reconfirm-upgrade`, `codex-mode-restart`,
+    `codex-mode-enable-disable` and `codex-real-launch`), read as the matrix's
+    cells rather than lane E's four new files; the re-review agreed, since
+    `mode-matrix.md`'s table says so and `mode-matrix.test.ts` pins it. WP1.3
+    lists `onboarding-provider-select.spec.ts`; WP1.2 lists
+    `codex-real-launch.spec.ts`, and since a313d4e0 also the two specs of its
+    "Fresh install, Codex only" cell, `onboarding-provider-select.spec.ts` and
+    `codex-session-creation.spec.ts`. The items stay planned.
+  - *Owed (VM).* `codex-real-launch` at the final head with both versions
+    (`CCC_E2E_REAL_CODEX` names exactly 0.153.4 and 0.155.1) and the fake
+    model: the screens the renders show (trust, then the sandbox menu, each
+    replaced in place, one sandbox menu per launch) confirmed at the app's
+    pane size, "Setting up sandbox" waited out, and the annotations (the
+    screens, `config.toml`, the own Codex folders); the four new specs and
+    `codex-session-creation` as before; the results in a new `mode-matrix.md`
+    record. ADR-009: N (this entry); the PR-level pass: owed, not yet run,
+    at PR 4's final head (9.7 gate 4); the fix passes' own delta passes are
+    in section 6's PR 4 entry.
+
+**P4.10 Qualification, owner-run gates, traceability (rows 15, 16, 66).**
+Owner: OR1, OR4.
+- *Today.* `tests/wp1/traceability.json` is at phase `gate0` with
+  `boundHead: null`; all 73 items are `planned` (57 automated, 8 real-cli, 6
+  document, 1 ci, 1 packaged). An evidenced item needs its tests present and
+  naming its id (`traceability.test.ts:83-90`). `release-qualification.md`
+  section 3 (:89-95) says "Not recorded yet". Thirteen cited paths do not
+  exist at `525a00ac`:
+
+  | Missing path | Items | Made by |
+  |---|---|---|
+  | `tests/wp1/mode-matrix.test.ts` | WP1.1, WP1.2, WP1.3, WP1.60 | P4.9 with P4.10 |
+  | `tests/e2e/onboarding-provider-select.spec.ts` | WP1.1 | P4.9 with P4.10 |
+  | `docs/wp1/evidence/real-cli-matrix.md` | WP1.2, WP1.10, WP1.20, WP1.32, WP1.64, WP1.71 | P4.10 (P4.8's runs, OR1) |
+  | `tests/wp1/codex-pinned-source-contract.test.ts` | WP1.11 | P4.10 |
+  | `tests/wp1/fake-keyring.test.ts` | WP1.11, WP1.72 | P4.10 |
+  | `docs/wp1/evidence/keyring-smoke.md` | WP1.11, WP1.72 | P4.10 (OR1) |
+  | `tests/wp1/migration-interruption.test.ts` | WP1.26, WP1.27, WP1.61 | P4.10 |
+  | `docs/wp1/evidence/ci-matrix.md` | WP1.30 | P4.8 |
+  | `tests/wp1/rollback-reupgrade.test.ts` | WP1.31 | P4.10 |
+  | `docs/wp1/evidence/rollback.md` | WP1.31 | P4.10 |
+  | `docs/wp1/evidence/packaged-smoke.md` | WP1.63 | P4.10, from the owner's PR 4 packaged smoke (row 15, OR1); WP1.63 stays `planned` until the signed release run (row 66) |
+  | `docs/wp1/evidence/skip-ledger.md` | WP1.65 | P4.10 |
+  | `tests/wp1/fake-cli/oracle.json` | WP1.69 | P4.10 |
+
+  Each is created or its citation re-pointed to existing evidence.
+- *Today: the candidate check.* `traceability.test.ts:140-149` requires no
+  change under `src`, `scripts`, `tests` or `package.json` since `boundHead`
+  (:148), yet `boundHead` is stored in `tests/wp1/traceability.json`, so the
+  commit that records it always fails the check, and nothing excludes the
+  manifest's own file. Confirmed.
+- *Spec.* OD20 D8 (blocks merge, not implementation) and D9; WP1.11, WP1.63,
+  WP1.64 and WP1.70 to WP1.73.
+- *Changes.*
+  - The owner action first (OR1): hosts per OS, disposable test identities,
+    timing.
+  - Row 15's owner-run gates on the final build, recorded in the cited
+    evidence files and done before merge (OD20 D8): native keyring smoke, real
+    sign-in, status and sign-out, a real two-account run, the packaged smoke
+    of the PR 4 build (`packaged-smoke.md`). WP1.63 is evidenced only by the
+    signed release run (row 66).
+  - The candidate check fixed test-side: the manifest's own file is excluded,
+    and a test shows the check still fails on any other change under `tests/`.
+    The filter becomes a pure function over the changed-file list (`git diff`
+    at :148 feeds it), so that test injects its list and spawns no `git`.
+  - Each item moves to evidenced as its evidence lands.
+  - The verification owed by the 20 DONE rows, Windows column, split three
+    ways (macOS, Linux and packaged close at release, section 7, apart from
+    OR1's rows 4 and 6, which close on every OS before merge):
+    - the agent on the VM, no sign-in (throwaway homes, a fake key, the fake
+      model or the stand-in Claude): rows 1, 2, 9, 12, 13, 21, 23, 25, 33, 48,
+      64 and 74; and rows 27 (a 0.155.1 subagent rollout) and 50 (a
+      `claude_review` wait past 300 s with the stand-in Claude) where the fake
+      model can make their evidence. Row 2 per OS also from P4.8's real-CLI
+      job. Row 25's real rollouts are copied read-only from the VM user's
+      `~/.codex/sessions` into a throwaway home (9.2);
+    - OR1 (real accounts, on the owner's hosts, one per OS, on PR 4's final
+      build, before merge, as 9.5 and the owner's request ask: "on each
+      system"): rows 4 (a real sign-in with a disposable identity and with
+      the API key, status and sign-out) and 6 (a real two-account run and
+      the native keyring smoke; keyring scoping, WP1.10, WP1.11), each on
+      Windows, macOS and Linux (`docs/wp1/evidence/release-qualification.md`,
+      section 4);
+    - OR4 (a real model): rows 18 (a 0.155.1 rollout fixture from a real
+      session; OD27 M3) and 49 (a real `codex_review` run on a signed-in
+      account), and rows 27 and 50 if the fake model cannot make their
+      evidence;
+    - rows 3 and 29 owe no Windows check (macOS, Linux, packaged: release).
+  - Items only the release can evidence stay `planned`, with that reason, and
+    the candidate declaration is made at release: the signed packaged smoke
+    (row 66, WP1.63), the release-candidate CLI (WP1.71) and WP1.37's release
+    record.
+  - A product seam a new keyring or migration test needs is its own recorded
+    change, its ADR-009 and SSH flags set by its paths (an unclear case counts
+    as yes).
+- *ADR-009: N. SSH radius: N* (for any product seam: by its paths).
+- *Tests.* [host] `traceability.test.ts` (the still-fails case, on an
+  injected changed-file list); each new
+  `tests/wp1/*` file tagged by its header (a file that plants junctions or
+  starts processes is headed HOST QUARANTINE: CI and VM only).
+- *Record (2026-10-03; the first part, at 56200cd5).*
+  - *Built.* 9fce54bc (lane F: the candidate check excludes the manifest's own
+    file, through a pure filter over the changed-file list) and cda349ec (lane
+    F: `docs/wp1/evidence/release-qualification.md` section 4, the map of the
+    checks the 20 DONE rows owe).
+  - *Reviews.* The lane F review (9fce54bc, cda349ec): spec PASS; quality FAIL
+    on F-1 (the check could not pass on a depth-1 CI checkout) and F-2 (a
+    manifest-only commit could move the binding past a source change). The fix
+    75c988b1, with lane F's patch fix-1 (the `traceability.json` note) in
+    da729159: the fetch script reads a declared `boundHead` and deepens a
+    shallow checkout in bounded steps, failing loudly when the ancestry still
+    has no answer (F-1); each evidence record carries the head it was taken
+    at, and every record must equal `boundHead` (F-2); the git wiring is
+    injected and pinned (F-3); the binding's neutral paths are an allowlist
+    (the manifest, `docs/**`, `CONTEXT.d/**`, the ADRs, top-level Markdown),
+    everything else breaks it (F-4); the map's internal fixes (F-5, F-7, F-8).
+    The re-review: spec PASS, quality PASS; RCEF-4 (the fetch script's main
+    guard decides by real paths) is fixed in d7b38752.
+  - *F-6.* The map follows 9.5 and the owner's request ("on each system"): OR1
+    runs rows 4 and 6 on Windows, macOS and Linux before merge. This entry and
+    section 7 now say the same (above); the owner is asked to confirm row 6
+    per OS, since 9.5 names per OS only for rows 4 and 15. F-9 (a Codex Beta
+    label both the inventory and the plan missed) is in P4.11's inventory.
+  - *Notes for the binding at release.* On a pull_request run HEAD is GitHub's
+    merge commit, so a candidate declaration passes only on a head current
+    with its base, or at release on a real head. The version bump and the
+    release's `changelog.ts` entry are not neutral paths, so they land before
+    the evidence head; a `phase: candidate` manifest merged back into beta
+    turns beta's candidate check red on its next source change.
+  - *Owed.* OR1 (hosts per OS, two disposable identities, a throwaway API key,
+    a date), then row 15's owner-run gates on the final build; the items
+    moving to evidenced as their evidence lands; the 13 cited paths this entry
+    lists created or re-pointed; OR4's rows. ADR-009: N (this entry); the
+    PR-level pass: owed, not yet run, at PR 4's final head (9.7 gate 4);
+    the fix passes' own delta passes are in section 6's PR 4 entry.
+- *Record (2026-10-03; the second part, the agent-doable half, at
+  6488c2ff).*
+  - *CI (with P4.8).* 60b39238: CI run 37134624406 at f4d98918 is the WP2
+    stack's first green Linux run, read step by step (17,391 tests: 17,307
+    passed, 82 skipped, 2 todo; the first native run on Linux, 217 passed);
+    recorded in `ci-matrix.md` with Windows and macOS, and the ubuntu Test
+    job's `continue-on-error` dropped. e5a8c72a: its six conformance legs
+    recorded, and their help captures reviewed per OS line by line: Windows
+    matches the fixtures; macOS differs in 2 captures and Linux in 4, plus one
+    stderr line on every Linux capture (Codex refuses its PATH helper binaries
+    when its canonical home starts with the temporary folder, on every OS;
+    only Linux spells the two alike); each an OS difference or the run's
+    own set-up, none a fixture to refresh. 5b5e5117: those differences
+    accepted by name and nothing else (red first, seven mutants killed; on the
+    run's 90 real captures all the same, and all red under prove-red's
+    fixture). 2eb1b194: `CCC_CODEX_HELP_ASSERT` is `1`.
+  - *The WP1 candidate at a stable release (re-review note).* 628c0558:
+    `phase` is a field of a neutral path, so a manifest-only commit could
+    switch the candidate off; both `release.yml` steps that run the suite
+    now give `WP1_PHASE=candidate` on a stable release that is not a dry
+    run, and `phase.ts` lets the environment only raise the phase. That
+    raises every WP1 gate (traceability, dependency-boundaries R4,
+    provider-conformance; the legacy gate is at the candidate already), not
+    only the binding check: what it refuses today is listed in section 7 and
+    put to the owner in section 10. A beta, dev or dry run reads the
+    manifest, so beta cuts with planned items still run. Red first; six
+    mutants killed.
+  - *The 13 cited paths.* Made by P4.9: `mode-matrix.test.ts`,
+    `onboarding-provider-select.spec.ts`. Recorded: `ci-matrix.md`. Created:
+    `migration-interruption.test.ts` (WP1.26, WP1.61; every interruption of
+    the registry migration's ports, crash or one-off, converging on a rerun)
+    and `rollback-reupgrade.test.ts` (WP1.31; this build's write-through
+    leaves a `profiles.json` the pre-WP1 build reads, and a re-upgrade keeps
+    every id) in 363020b8; `codex-pinned-source-contract.test.ts` (WP1.11;
+    the upstream source at rust-v0.155.1 and rust-v0.153.4 keys both keyring
+    backends by the canonical `codex_home`, kept as a fixture with the tag
+    commits and file digests) in 7f7b4d0f; `fake-cli/oracle.json` with
+    `fake-cli-oracle.test.ts` (WP1.69) in c4f11e7d; `skip-ledger.md`
+    (WP1.65; every skip of run 37134624406 explained by its condition) in
+    6488c2ff. Re-pointed: WP1.27 drops `migration-interruption.test.ts`;
+    `registry-store.test.ts` and `registry-fs-port.test.ts`, which it
+    already cites, prove it. Each new test file is pure [host], each guard
+    shown red under its mutants.
+  - *Still owed, owner- or VM-gated.* `real-cli-matrix.md` (the VM agent's
+    checks at the final head, OR1, OR4), `keyring-smoke.md` (OR1),
+    `packaged-smoke.md` (OR1; WP1.63 at the signed release run),
+    `rollback.md` (a VM rollback run: whether the pre-WP1 build can still use
+    a Claude credential this build refreshed).
+  - *Open, for the integration owner.* None from the 13 paths: see the
+    review fixes below.
+  - *Findings.* Codex's credential store is a file in `CODEX_HOME` by
+    default (`AuthCredentialsStoreMode`, `codex-rs/config/src/types.rs:109-112`
+    at rust-v0.155.1); the keyring is used only when configured, and nothing
+    in the app configures it. When it is, the backend is Secrets on Windows
+    and Direct elsewhere (9.5, OR1). The fake CLI's `turn.completed` lacks two
+    usage fields both real versions print; the app reads neither. No item
+    moved to evidenced in this part.
+  - *Review (P410b, 2026-10-03; 60b39238..53cb332e).* Every commit spec PASS
+    and quality PASS; findings: one MAJOR on the record (the stable release
+    raises every WP1 gate, not only the binding check), five MINOR, three NIT.
+    The fixes:
+    - P410b-1: section 7 ("The WP1 candidate at a stable release") lists what
+      the candidate refuses today, and section 10 puts the R4 entries and
+      Claude's three capability keys to the owner; aa73558a makes
+      provider-conformance judge the package the composition root registers
+      (red first on the bare factory's table), so Codex passes on its wired
+      table.
+    - P410b-2: the beta-channel build and the version-string trap, in
+      section 7 and in `release-qualification.md` section 3.
+    - P410b-3, P410b-5: fa041dc6 backs the oracle with the upstream source
+      (`tests/wp1/fixtures/codex-cli-source.json`, the tag commits, file
+      digests and verbatim lines of `login.rs`, `main.rs` and the app-server
+      files), refuses an app-source citation as a claim's only backing, and
+      tightens the terminal refusal to exit 1 and the status lines to stderr;
+      the FAKE's exit 2 there is a recorded divergence (no test reads it).
+      `fake-cli.test.ts` names WP1.69.
+    - P410b-6: e287368a builds `fake-keyring.test.ts` (WP1.11, WP1.72): an
+      injected run whose store is an in-memory keyring keyed as upstream,
+      through the app's Codex auth operations and the archive, which signs
+      out first and leaves no credential behind; five mutants killed. The
+      native smoke stays OR1's.
+    - P410b-4: e8655849, the Linux warning's reason from
+      `codex-rs/arg0/src/lib.rs:345-350`: the refusal is on every OS when the
+      canonical home starts with the temporary folder; only Linux spells the
+      two alike.
+    - P410b-7, P410b-8: the tautological hash check dropped (e287368a); the
+      real port's write cited under WP1.26 (dcc1385b); the OR1 keyring names
+      for every OS in 9.5. P410b-9: 53cb332e's message counts "seven made";
+      8 of the 13 paths existed there (5 created), and with e287368a 9 exist
+      and 4 stay owner- or VM-gated.
+  - *Owed.* The prove-red dispatch, filling `ci-matrix.md`'s "Shown red
+    once"; the next CI run with the help asserted on all six legs, and the
+    first macOS and Linux runs of the new [host] files; the re-review of the
+    P410b fixes; OR1 and OR4 as above (the section 10 decisions came on
+    2026-10-04). ADR-009: N (this
+    part: tests, CI and evidence; no path on the ADR-009 list).
+  - *Status at f5370bad.* The second part's agent-doable half is done, and its
+    review fixes are verified (P410b's fix verification at 9ea974b0, and the
+    short verification of ea111ac3, the fake CLI's terminal refusal at exit 1,
+    and of f5370bad: CLOSED, no regression). Owner-gated still: OR1 on every
+    OS (a real sign-in, status and sign-out, the native keyring smoke, a real
+    two-account run, and the packaged smoke of the PR 4 build), OR4 (rows 18
+    and 49, and rows 27 and 50 if the fake model cannot make their evidence),
+    the VM rollback run (`rollback.md`); the owner's decisions in section 10 on
+    the stable release's WP1 candidate came on 2026-10-04 and are built
+    (be38c516, 99d6a1a1). At release: the signed packaged
+    smoke (row 66, WP1.63), the release-candidate CLI (WP1.71) and the release
+    record (WP1.37). Owed on CI or the VM: one run of the quarantined
+    `fake-cli.test.ts`; the prove-red dispatch.
+
+**P4.11 Final sweep, Beta labels, screenshot recapture (row 54).**
+- *Today: the labels.* `src/renderer/providers/codex/index.ts:10`
+  (`maturity: 'beta'`); `ProvidersCard.tsx:160`; `AssistantsStep.tsx:20`
+  (rendered :118); `CodexReconfirmPage.tsx:154` (:138); `TransparencyStep.tsx:123`;
+  `WhatsNewV2Step.tsx:75` (:296); `RenamePage.tsx:112`; `app-knowledge.ts:45`,
+  :75, :85, :93, :94; `docs/USER_GUIDE.md:113`; `README.md:90` ("Still marked
+  Beta"). `changelog.ts:785` is history and is kept.
+- *Today: the tests that pin them.* `provider-conformance.test.ts:169`,
+  `accounts-surface.test.tsx:268`, `codex-reconfirm-page.test.tsx:126`,
+  `onboarding-transparency-recap.test.tsx:141` and :167,
+  `whatsnew-showcase.test.tsx:435`, `token-contrast.test.ts:615` and :648.
+- *Today: the recapture list.* `release-qualification.md` :55-67:
+  `step-security.jpg`, `step-security-mac.jpg` and `step-vision.jpg`; and
+  `docs/screenshots/settings.jpg` and `settings-mac.jpg`, which nothing
+  references. The 7 README images stay.
+- *Today: the surfaces and tools.* `app-knowledge.ts` (known issues :162),
+  `tips-library.ts` (the Codex tips run from `tip.codex-sessions` :943 to
+  `tip.hello-codex-replay` :1119; `tip.codex-windows-sandbox` is :1103-1116),
+  `GuidedTour.tsx` (`STEPS` :49-98), `training-steps.ts` (:127, :212, :250),
+  `README.md` (:90, :117); the capture tools
+  `scripts/capture-training-screenshots.ts` and `scripts/readme-shots/`.
+- *Spec.* Recorded 2026-09-26: the labels come off in the release where parity
+  lands. The AGENTS.md surface sweep. The owner's recapture request of
+  2026-09-26.
+- *Changes.* Sweep everything PR 4 changed (each phase's own copy already
+  landed with it), and re-check the lines written for questions 5 to 8's
+  defaults against the owner's answers. Remove the labels and update their
+  tests; re-read WP1.21 ("labelled with provider maturity") so the mechanism
+  stays. Recapture the images (the Mac ones on the Mac) and put them to the
+  owner one by one. Write the 2.1.1 changelog entry. Section 7.7's
+  whole-release sweep stays release level.
+- *ADR-009: N. SSH radius: N.*
+- *Tests.* [host] the label tests above, updated.
+- *Record (2026-10-03; 4bf3d0ac to 8a77e500, with later fixes to f5370bad).*
+  - *Built, on the defaults of questions 5 to 8 (5 A, 6 A, 7 A, 8 B).* The
+    Codex Beta labels are off, and the provider's maturity drives the pill, so
+    WP1.21's mechanism stays (4bf3d0ac). The Feature Guide shows the cards for
+    the assistants in use, in its sections, rail counts, search and tour, with
+    Codex-alone copy where a card names Claude (3ea17e3d, 3103872b, 2cf39a0b).
+    An open usage page's age line ages (7ea29159). One note reads "1 note" in
+    the review marker line (b2e0a17f). Claude Opus 5.5 and Sonnet 5.5 are in
+    the model registry, priced on the path Tokenomics uses (4294d055,
+    f22e17c9). A Codex agent's Retry and the agents explainer name what runs
+    (91edef55). The PR 4 user-facing sweep: app knowledge with its known
+    issues, mirrored in the User Guide; tips; the guided tour and the Feature
+    Guide; README; PRIVACY.md; Hello Codex's comparison row; and the 2.1.1
+    changelog lines (103a5b7b, 1948b98a). The training screenshot tool runs
+    the app on a home of its own and seeds both assistants (480dcba1,
+    046c50e8, d3c62bc6); the README image staging works only in a marked
+    staging root of its own (c65d0b19, 9390b986, 113b3dc7, 62ae30ee). Each
+    line written for a question's default is checked again when the owner
+    answers.
+  - *Reviews.* The code review: every commit spec and quality PASS, no blocker
+    or major; its findings fixed in 2cf39a0b, bb034979 and f22e17c9, verified
+    spec and quality PASS; P411-4 (a latent count) closed by 59dd48c7; one nit
+    (P411-8) left. The copy review: 103a5b7b spec FAIL on lines that said more
+    than ships (one major, four minor), fixed in 1948b98a, all closed. The
+    capture tools: the training capture PASS; the README staging quality FAIL
+    on its isolation from the operator's own folders, fixed in 113b3dc7 and
+    62ae30ee, verified spec and quality PASS. The dependency floors: below, in
+    9.7.
+  - *Listed, not built at this record; settled by the owner's answers of
+    2026-10-04 and built since.* A Cloud Agents card in the Feature Guide, for both
+    assistants with the Codex Auto limit (0dc8c08e; its image comes from the
+    recapture). The tips: no provider filter, by the owner's answer; each tip
+    about one assistant carries that assistant's mark (0dc8c08e; the dock's
+    tip row in 5c3c62dd). gpt-5.2 stays in the Codex model list while a
+    supported Codex version lists it (the owner's answer; nothing to build).
+    Sonnet 5's fallback price at Anthropic's reference, 2/10, re-checked on
+    2026-10-04 (bf9bdd31). The model picker's Opus hint without a context
+    size (bf9bdd31). The help folder's Codex skill text, which names the
+    account it is installed for (785b886e). The README's Telemetry row with
+    Sentinel's reads and the Codex usage check, as PRIVACY.md has them
+    (5c3c62dd).
+  - *The images.* First recaptured at the final-head run (9.7, c65d0b19)
+    for the owner's review. The README and Feature Guide images that ship
+    were then recaptured on the 2.1.1-beta.2 candidate, Windows and macOS,
+    approved by the owner on 2026-10-07 and committed. `step-snap.jpg` is
+    retaken with the tool fixed in 59dd48c7.
+  - *Owed.* `step-snap.jpg`; the Cloud Agents card's own image
+    (`step-cloud-agents.jpg`, which the capture script takes since
+    5c3c62dd; the card shows `v2-shell-hero.jpg` until it is approved). The owner's answers to
+    questions 5 to 8 came on 2026-10-04, and this sweep's lines were checked
+    against them in that round (9.7). ADR-009: N (copy, UI, a pricing fallback and
+    dev tools). SSH radius: N.
+
+### 9.5 Owner-gated items
+
+Queued now (none blocks the start; each blocks one later step):
+- **OR1 (P4.10, rows 4, 6 and 15).** Hosts per OS (Windows, macOS, Linux Ubuntu 24.04 or
+  newer), two disposable ChatGPT identities and a throwaway OpenAI API key, and
+  timing; then the owner-run gates on the final build, done before merge (OD20
+  D8): real sign-in, status and sign-out per OS (rows 4 and 15), the native
+  keyring smoke, a real two-account run (row 6), the packaged smoke of the PR
+  4 build. The owner confirmed the scope on 2026-10-04: rows 4 and 6 on every
+  OS before merge, with row 15's keyring smoke and the packaged smoke per OS
+  at the final build. The keyring smoke needs the store configured: Codex keeps
+  credentials in a file in `CODEX_HOME` by default, and uses the keyring only
+  when the realm's `config.toml` sets `cli_auth_credentials_store` to
+  `keyring` (or `auto` where a keyring is available). The entries to check
+  and clear (`tests/wp1/fixtures/codex-keyring-source.json`): on macOS and
+  Linux (Direct) service `Codex Auth`, account `cli|<16 hex>` (sha256 of the
+  canonical `CODEX_HOME`); on Windows (Secrets) service `codex`, account
+  `secrets|<16 hex>`, holding the key of `<CODEX_HOME>/secrets/codex_auth.age`.
+  Sign-out removes the credential (and on Windows also any Direct entry), but
+  the Secrets key entry stays by design, with no credential behind it; the
+  residue check looks for both names and expects only that one.
+- **OR2 (P4.6), one run.** The sign-in window is built ahead of it (decided
+  2026-10-04: OR2a, a run before the build, moved into this run), fail-closed
+  on the three values only a real sign-in shows (the session cookie name, the
+  identity read, the sign-in methods' hosts). On the final build, on a
+  disposable identity: open a Codex account's menu in Settings, Accounts,
+  choose Sign in to chatgpt.com and sign in by email (and by Google, Apple or
+  phone where there is a disposable identity for it), leaving the window open
+  until it closes by itself (once the sign-in and the email are confirmed, or
+  after five minutes; closing it by hand can cut its log line short), noting
+  for each method
+  whether the window closed and the row read signed in as that email; open
+  chatgpt.com in that account's Codex tab's browser pane and confirm it shows
+  signed in; choose Sign out of chatgpt.com, sign in once more, archive the
+  account, confirm the pane and the row read signed out, and review the
+  screenshots. A method that does not complete leaves one log line with the
+  cookie names on chatgpt.com, whether the named one matched, how many
+  identity reads ran, the identity answer's HTTP status and the key path to
+  an email-shaped value, and the off-site hosts the window saw (never values
+  or query strings); a values-only fix and a re-run follow from it. PB7: the page loads with its sign-in
+  form under both user agents, no challenge; PB7b (credential-free, on the
+  VM) narrows the values first.
+- **OR3 (P4.7, P4.6).** One batched render on the Agent Canvas: the Insights
+  mockup (made from the current code) and the artifacts section 19 record.
+  Approve the mockup; sign or reject the record. *Record (2026-10-05):* done.
+  The owner approved the Insights mockup (v1, no notes), choosing C1 = A, and
+  with it D12, D13 and D14; and signed the artifacts record, alternative A.
+- **OR4 (real-model checks).** What the fake model cannot show, on a working
+  model: P4.1 and P4.2, a real model choosing to use the canvas and the
+  browser tools, and, where Claude Code's documentation does not settle it,
+  whether a real Claude session in Auto mode asks before the app's canvas,
+  vision and browser tools (it informs question 8); P4.1 again,
+  unless OR6 part 2's window already checked it: on Windows, with Codex's
+  administrator sandbox set up on that account as the app advises, whether
+  the model reads the managed account's staged canvas skill (PB8 left that
+  read untested); P4.3, a real answer from the help workspace; P4.5, a real
+  agent's output and cost; P4.7, a real report's content; P4.4, the real
+  `MEMORY.md` and `memory_summary.md` (PB6 made the layout only), and the
+  delete check if the agent's run is inconclusive; P4.10, rows 18 and 49, and
+  rows 27 and 50 if the fake model cannot make their evidence.
+- **OR5 (P4.1, P4.3).** The owner runs `npm run test:live:ssh` at PR 4's final
+  head on their hosts; the matrix is reported in the PR before merge.
+- **OR6 (the test VM's Codex sandbox), in this order.** Part 2 first, and
+  only if P4.5's edit case with the non-admin sandbox fails: Codex's
+  administrator sandbox setup once on a throwaway managed account on the VM,
+  then P4.5's administrator edit check and, in the same window, the fake
+  model's read of that account's staged canvas skill under the
+  administrator sandbox (P4.1; PB8 left it untested). Part 1 last, after OR4
+  too if OR4's account takes the administrator setup: repair, or accept as it
+  is, the state the probe incident left (the VM user's own `~/.codex` holds
+  stale sandbox passwords; the CodexSandbox accounts' passwords, firewall rules
+  and Temp folder permissions were changed). Any administrator setup resets the
+  shared sandbox accounts, so a repair made before one would go stale again;
+  if one happens after the repair, the repair is redone. Agents never touch
+  that state, and no agent check uses the VM user's own `~/.codex` (9.2), so
+  nothing waits on part 1.
+
+Questions for the owner (section 10): answered on 2026-10-04. Question 6
+(row 53) and question 7 (row 57): A, kept as built; question 8 (rows 51,
+52): B, kept as built; question 5 (row 51): C, superseding the default A,
+built in PR 4 (785b886e, 5c3c62dd). Rows 51, 52, 53 and 57 left PARTIAL
+with them. The answers fed P4.11 (its lines re-checked in that round's
+sweep) and P4.10 (its evidence is taken after them).
+
+Later: the per-phase VM screenshot galleries (section 6, gate 6), reviewed
+image by image; every recaptured image (P4.11), the Mac ones included; the
+ADR-009 PASS markers (self-approval is blocked), the Desktop test gate and the
+word to merge, after #625 and #626.
+
+Not PR 4's, but bearing on it: questions 2, 3 and 4 of section 10 were
+answered on 2026-10-04 (A each, kept as built); P4.1's live loop rests on
+question 4's A (until an account's hooks are trusted, a marker waits on
+Codex's screen, P4.1).
+
+### 9.6 Findings the build should know (facts, not decisions)
+
+1. **The canvas comment is stale.** `conductor-mcp-server.ts:1104-1108` says
+   Codex has no bound session id, but `/mcp` binds one (:1367). No test asserts
+   canvas withholding today, so P4.1's failing test is a new case.
+2. **Roots stay in pty-manager.** The 2026-08-15 adversarial fix moved root
+   registration out of `pty-handlers.ts` because that site sees the raw and the
+   resume folder (`pty-handlers.ts:952-967`); a Codex session's resume folder
+   comes from its rollout (P3.5) and is no safer.
+3. **Codex does not submit a single write of text and Enter** (evidence addenda
+   13 and 15). The marker queue (`pty-manager.ts:6278`, `index.ts:907-916`) and
+   Ask's live hand-off (`askConductor.ts:182`) both write that shape. PB3:
+   never, on either version, for any of its four texts.
+4. **The npm `.cmd` route refuses whitespace in any argument**
+   (`spawn.ts:149`, :177-180), so a path-valued `-c` fails there whenever the
+   path holds a space. It decides P4.3's carrier per route and limits P4.1's
+   channel on that route.
+5. **The traceability candidate check is unsatisfiable as written**
+   (`traceability.test.ts:148`; `boundHead` lives under `tests/`). P4.10 fixes
+   it test-side.
+6. **Thirteen files cited as WP1 evidence do not exist** (P4.10's table).
+7. **`mode-matrix.md` predates `codex-reconfirm-upgrade.spec.ts`;** its "Not
+   covered: upgrade" is out of date (P4.9).
+8. **The "claude.ai in the app." What's New line keeps its `needsClaude` flag**
+   (`WhatsNewV2Step.tsx:120`; P4.6, P4.11).
+9. **The fake-model harness covers more than PR 3 used it for.** Extended for
+   the probes with tool search and MCP calls, it drives the tool calls,
+   approvals, the render and review, the browser push, the live loop and
+   `codex exec` on the VM, and it stays there; only a real model's quality and
+   choices stay owner-only (OR4).
+10. **Linux.** The suite last ran on Linux green at beta of 2026-09-20; the WP2
+    stack's tests have not run there yet (P4.8).
+11. **Long text folds.** An 8,000-character write shows only
+    `[Pasted Content N chars]` (N in code points of what was received), 2.5 to
+    3.3 s after the write; an Enter before it is swallowed, one after it
+    submits (PB3, PB4). PB9 measured where folding starts and how a text is
+    taken back (item 23).
+12. **Characters outside the BMP are dropped by Codex's composer** on both
+    versions and routes, written plainly or as a bracketed paste; argv (PB4)
+    and stdin (PB5) keep them; U+2014, U+00B7, accented Latin and CJK arrive
+    (PB3). It feeds question 6; no marker line is affected.
+13. **Screens before the composer.** The composer is drawn before the
+    folder-trust prompt (PB1). 0.155.1's trust prompt reads "1. Yes, continue /
+    2. No, quit / Press enter to continue and create a sandbox...". In the
+    sandbox-setup menu a digit only moves the selection and Enter confirms; the
+    MCP approval form submits on a digit at once (PB2, PB4). Typing into a
+    screen that is not the ready composer is how the probe incident happened.
+14. **Codex's MCP tools are deferred.** They are reached through
+    `tool_search` (namespace `mcp__<server>`, deferred loading), not offered up
+    front; a fake model driving the canvas, vision or browser tools through the
+    real Codex must search first (PB2; P4.1, P4.2, P4.9).
+15. **Codex needs an approval before every call of an MCP tool without
+    annotations.** It asks under every preset that can ask, and PB2's probe
+    server saw it ask under Auto too; approving once writes nothing;
+    `tools.<tool>.approval_mode=approve` lifts it per tool on both versions
+    (PB2). Under the app's own Auto launch (`--ask-for-approval never`)
+    Codex cannot ask: the VM checkpoint at 956df1a3 saw it refuse vision,
+    browser and `canvas_render` calls with no prompt, on both versions
+    (P4.1's per-preset rule, P4.2; section 10, question 8).
+16. **`codex exec`** (PB5): `--skip-git-repo-check` is required in a non-git
+    folder (otherwise exit 1, no request); `danger-full-access` writes a
+    project trust entry into `config.toml` on every run, whatever the flags;
+    every run writes Codex's runtime databases in the home, and `--ephemeral`
+    only drops the rollout; a refused edit exits 0, with the refusal only on
+    stderr and in the model's reply; without `-m`, the requests to the fake
+    provider carried no tools (P4.5, P4.7).
+17. **Memories** (PB6): `memories/` is a git repository, so the listing skips
+    `.git/` and delete never touches it; the database tables differ by
+    version; with memories on, Codex makes its own model requests at start-up
+    (2 per run here), on the account's allowance (P4.4).
+18. **Every npm Codex install on Windows ships its own `codex.exe` beside the
+    `.cmd` shim,** for both supported versions (the probe survey). It bears on
+    questions 5 and 6, option D.
+19. **The app's own folders and Codex's non-admin sandbox.** The canvas
+    plugin folder and the help folder carry an explicit user-and-SYSTEM access
+    list (`canvas-plugin.ts:733-748`, `help-workspace.ts:141`); a managed
+    realm inherits the resources folder's (`realm-folders.ts:26-29`). Under
+    the non-admin sandbox all three are readable to the model's commands (PB8,
+    both versions, Read Only and Standard). Under the administrator sandbox,
+    which the app advises on Windows (`tips-library.ts:1113`), the reads are
+    untested; on Windows the app inlines what this computer's sign-in and Ask
+    need (P4.1, P4.3), and a managed account's realm skills are checked in
+    OR6 part 2's window or OR4.
+20. **No path rides a Codex CLI argv.** `cliCommandLine` refuses any element
+    outside `PLAIN_ARG` (`cli-runner.ts:146`, :160); a run in a folder takes
+    it as its working folder, as `review.ts:129-130` does (P4.5, P4.7).
+21. **The first-launch session does not hold its preset.** In the session in
+    which Codex's first-launch screens (folder trust, sandbox setup) are
+    answered, Codex ran with approval OnRequest and sandbox WorkspaceWrite
+    although launched with `--sandbox read-only`, and ran approved commands
+    outside the sandbox, on both versions; later launches honoured Read Only
+    (PB8). Ask's first launch is such a session in the help folder (P4.1,
+    P4.3, ADR-009).
+22. **Codex makes the working folder writable to its sandbox.** Codex grants
+    its sandbox Modify on the session's working folder: at a first launch even
+    under Read Only, and on the hardened help folder under Standard. A mirror
+    of the app's re-hardening could not remove that grant (icacls error
+    1332), so after Codex has run there the sandboxed model can write into the
+    help folder (PB8; P4.3 rebuilds it before every Ask launch).
+23. **Codex's composer, measured** (PB9, both versions): a text folds into
+    `[Pasted Content N chars]` from 1,001 code points; the composer is at
+    most the pane's rows minus 4 high, and a taller visible text cannot be
+    confirmed on screen; a draw takes up to about 2.9 s at 8,000 code points,
+    during which the composer also looks empty; Ctrl+U clears every state, and
+    Ctrl+C quits Codex when the composer is empty as it is handled (P4.1).
+24. **Under the non-admin sandbox on Windows, PowerShell does not start.**
+    `powershell.exe`, Codex's default shell, and `whoami.exe` fail at
+    start-up (exit 0xC0000142); `cmd.exe` built-ins and `findstr.exe` run
+    (PB8, on WINDOWS_1; P3.15's known issue, sharper; P4.5).
+
+### 9.7 PR 4 package gates (section 6, applied)
+
+1. **Implemented.** Every row to its record; row 58's artifacts half DONE or
+   carrying the signed section 19 record; every declared deviation recorded
+   with its probe's evidence; row 15's owner-run gates (OR1) done before merge
+   (OD20 D8); questions 5 to 8 answered and any change they bring built
+   (answered on 2026-10-04; question 5's C built, 9.7's record of that day).
+2. **Tested.** Failing tests first; named host-safe test files only, the header
+   grepped for HOST QUARANTINE before every run, never a directory, never
+   `-t`; `npm run typecheck` plus a test typecheck (it does not cover
+   `tests/`); the WP1 gate (legacy-codex, traceability, boundary,
+   conformance). The full suite and every file headed HOST QUARANTINE run on
+   CI and the Windows test VM, never on the owner's machine. The WP1 gates run
+   at the manifest's phase (`gate0`; the legacy gate is at the candidate
+   already); the full candidate is a stable release's, and what it refuses
+   today is listed in section 7.
+3. **Reviewed.** Spec and quality reviews for each phase; fixes re-reviewed;
+   the sha each verdict covers recorded.
+4. **ADR-009.** P4.1 to P4.7: one bounded round and a confirmation by the same
+   attackers each. S0's IPC and preload entries are attacked with the phase
+   each one serves. A product fix P4.8 finds, or a product seam P4.10 needs,
+   is its own recorded change whose ADR-009 and SSH flags are set by its paths
+   (an unclear case counts as yes). Then a PR-level pass on the final head.
+   The attackers are also briefed with any scope notes held privately. The
+   owner posts the marker.
+5. **SSH live matrix.** The owner runs `npm run test:live:ssh` at PR 4's final
+   head on their hosts (OR5): P4.1 and P4.3 edit `pty-manager.ts`. The matrix
+   is reported in the PR before merge.
+6. **VM verified.** The e2e suite on the Windows test VM at the final head (the
+   one pre-existing e2e failure, reproduced on beta, routed privately, is not
+   waived); PB8 and PB9 as run on 2026-10-02 (9.2); the real-CLI
+   walks with the fake model under 9.2's VM rules, none of them using the VM
+   user's own `~/.codex`; Sentinel's analysis under the dead proxy for both
+   assistants, with in-app timestamps, Claude Code on 2.1.278 and on the
+   current version (review E-S5); screenshots of new or changed screens
+   reviewed by the owner, image by image.
+7. **CI green** at the final head on Windows, macOS and Linux (from P4.8), the
+   Desktop test gate aside until the owner attests (#309).
+8. **Recorded.** The checklist rows moved in the commit that does the work; a
+   `CONTEXT.d/` fragment for PR 4; the WP1 ledger and traceability; section 9's
+   phase records; the user-facing sweep; a PR body current for its head.
+
+*Record (2026-10-03): VM checkpoints 1 and 2*, run together at 956df1a3 on
+WINDOWS_1 (a packaged build installed over be6ee406; Codex 0.155.1 and
+0.153.4 on both routes; the fake model). PASS: the unit suite there, apart
+from seven environment failures (two load timeouts that pass alone, four
+cases that need git history and pass in a repository made from the
+archive, and the legacy-codex gate's baseline case, which the VM cannot
+run); the native suite; the typecheck; the HOST QUARANTINE files; the
+real-CLI conformance suite on both versions; the e2e suite, 94 of 94 twice;
+the real launch's first screens at the pane size. Checkpoint 1 (P4.1, P4.2):
+the render, annotate and review loop; a marker filed mid-turn; Read Only,
+Standard and Plan asking before the app's tools and Unrestricted running
+them all; A42-5; vision and the push; the pointer guidance's encoding.
+Checkpoint 2 (P4.3 to P4.6): a question on the launch line held behind the
+trust, hooks and sandbox screens and then arriving whole; the typed routes
+after those screens; the inline `AGENTS.md` whole, with no parent file;
+Ask with Codex only and with both on, a revive, a hand-off mid-turn, a
+resumed Ask and a Restart; the help folder's rebuild; the pointer skill's
+read; emoji removed; memories; the `log_dir` folder; agents on both
+versions and routes with `config.toml` and `auth.json` unchanged; C-1's
+Stop and quit; P4.6's first half; the log folders' Windows path forms (an
+8.3 name, a subst drive, a mapped share, a UNC `log_dir`) refused, and a
+home named in another case. Four findings, each fixed: on the Auto preset
+Codex refuses the app's tools rather than asking (5e5d0478 says so in the
+Feature Guide, 3e9ae9d6 names every such tool; question 8); the guidance
+did not reach a launch through the resume picker (aa581eda; 758cb407 gives
+the canvas page the picker's state); a test now holds the help folder's
+link-safe removal on every platform (5dfb19b8); the Codex compat test ran
+in the VM user's own Codex folder (f102dd70: a fresh Codex home, and the
+file is headed HOST QUARANTINE). OR6: P4.5's edit case under the non-admin
+sandbox fails even after Codex's setup. OR4: the memory delete check was
+inconclusive (consolidation did not run), so delete stays hidden. Not run:
+the kill check of a process whose parent id is stale (no pid reuse came up
+in two attempts) and row 42's leftover-kill log line (the release notes
+were unreachable); macOS and Linux. Row 38's midnight UTC check is
+scheduled on the VM. VM owed since: a launch through the resume picker
+showing the inline text in a new conversation; the compat test leaving
+`~/.codex` untouched; an Ask Restart resuming on both assistants.
+
+*Record (2026-10-03): CI on macOS and Linux.* PR 4's first CI run at
+956df1a3 failed on POSIX in tests only, fixed by beee8507 (the Codex Cloud
+Agent tests used a Windows project path, which a POSIX run refuses as not
+a full path) and 7fd211ed (tests that delete a file or folder and make it
+again at once expected another identity; the replacement is now made
+beside the original and renamed in). Recorded as a limit of the app's
+identity checks: on ext4 a file deleted and made again at once keeps its
+inode, so those checks cannot tell it from the first (a rename over it is
+caught).
+
+*Record (2026-10-03): the final-head VM run*, at c65d0b19 on WINDOWS_1 (a
+packaged build installed over 956df1a3; the fake model, fictional accounts).
+PASS: the e2e suite, 94 of 94, with the real home untouched; the guidance
+through the resume picker on this computer's sign-in, reaching a new
+conversation started in the session's folder whole; the Codex compat test, 5
+of 5, leaving `~/.codex` untouched; an Ask Restart resuming its conversation
+on Codex and on Claude Code; the Auto preset refusing the app's tools with no
+prompt, and the Feature Guide line saying so; P411-3's host safety (the
+training capture left the real Claude and Codex folders and the app's real
+data untouched, also with a temp folder whose path holds a space). Seen there
+and fixed since: on Claude Code an Ask Restart started afresh when the app's
+data folder was spelled in another case than on disk (c1c34f1f holds an Ask
+resume by both folders' real paths); the picker line said less than Codex does
+for a resumed conversation that had no instructions (c1c34f1f makes it true);
+the boot chain (59dd48c7, below). Row 38's midnight UTC check had not fired by
+the run's end and stays scheduled on the VM.
+The images were recaptured there for the owner's review; none from this run
+was committed (the README and Feature Guide images that ship were recaptured
+on the 2.1.1-beta.2 candidate and approved on 2026-10-07, P4.11). Each would
+have replaced, under `src/renderer/assets/training/`:
+`step-security.jpg`, `step-vision.jpg`, `step-memory.jpg`,
+`step-session-options.jpg`, `step-tokenomics.jpg`, `step-tips.jpg`,
+`step-dynamic-workflows.jpg`, `step-codex.jpg`, `step-excalidraw.jpg`,
+`step-logs.jpg`, `step-insights.jpg`, `step-combined.jpg`, `github-panel.jpg`
+and `v2-shell-hero.jpg`; under `docs/screenshots/`: `settings.jpg`,
+`vision.jpg`, `memory.jpg`, `session-config.jpg`, `tokenomics.jpg`,
+`shortcuts.jpg`, `dynamic-workflows.jpg` and `v2-shell-hero.jpg`, and the
+README's `shot-sessions.png`, `shot-canvas.png`, `shot-tokenomics.png` and
+`shot-memory.png`. Two more are for review only (the boot screen, and the
+Settings Codex accounts). `src/renderer/assets/training/step-snap.jpg` needs a
+recapture too: the tool could not find the Snap button by its old title until
+59dd48c7. The `-mac` images are taken on the Mac.
+
+*Record (2026-10-03): the boot chain (59dd48c7)*, latent since 2.1.0. A tour
+version with a prerelease (`2.1.1-beta.2`) read as `2.1.0`, so the newest
+cards counted as unseen, and the boot chain still waited on an unseen card
+although nothing has opened the tour by itself since ba6b0df9 (2026-08-21,
+shipped in 2.1.0 and 2.1.1-beta.1). So every gate below it (the Codex
+question, the consent notice, the resume prompt, the Multi Spawn page, Hello
+Codex) and the GitHub page waited for good. No shipped path hit it: every
+install, upgrade and downgrade runs the onboarding harness, which stamps the
+build's own release version first; the VM's staging seed had written a
+prerelease stamp. Fixed: the chain and the GitHub page wait on no tour, a
+prerelease reads as its release, and a walkthrough with no card to draw for
+the assistants in use closes as a close does.
+
+*Record (2026-10-03): dependency floors.* 7d1deeed and 1be6f8c6 raise the
+override floors of ip-address, undici (node-gyp's own too), fast-uri,
+dompurify and brace-expansion past their advisories, inside their current
+majors (lockfile only; reviewed SPEC PASS, QUALITY PASS). What `npm audit`
+still reports needs a major change, the electron-builder 26 chain and the
+excalidraw build chain, and is left for the owner (section 7, items 4 and 5).
+
+*Record (2026-10-04): the owner's answers, built.* Five lanes built the
+owner's answers of that day on f9f9bfc6, and the integration commit 5c3c62dd
+applied their shared-file changes (section 10 records each answer):
+- Lane A (be38c516, 99d6a1a1, 4f5264cd): the nine deep imports routed
+  through the provider interfaces, reached from the registry, each operation
+  delegating unchanged; the deep-import, cross-package reach and
+  package-orphan allowlists emptied. An esbuild metafile of
+  `src/main/index.ts` before and after shows the same module set (with the
+  adapter's new file) and no new import cycle, and the modules that reach
+  the authority manifest at start gain only that file, inside the Claude
+  package. The Claude adapter's
+  `cli.discovery`, `auth.status` and `auth.logout` completed, reusing the
+  existing Claude code. Review fix pass (FA): status and sign-out run the
+  executable discovery proved, with no shell; a sign-out of this computer's
+  own sign-in (the primary profile, and every profile on macOS, where each
+  runs on the Mac's one keychain sign-in under the app's setup, D2) needs the
+  user's acknowledgement; the macOS platform carve-out is gone. be38c516
+  builds only together with 99d6a1a1, which moves the `ClaudeProvider`
+  closing brace back; the PR squash-merges.
+  Ownership, recorded: rule R3 lets a shared module reach a provider package
+  only through the registry, so lane A also edited
+  `src/main/providers/types.ts`, `src/main/providers/compose.ts`,
+  `tests/wp1/cross-package-reach-allowlist.json` and
+  `tests/wp1/package-orphans-allowlist.json` (removals only), files no lane
+  row listed; the orchestrator approved it after the fact.
+- Lane B (785b886e, 1f607839): question 5 answered C. For this computer's
+  own sign-in the app copies its three canvas skills into the Codex skills
+  folder of the launch's prepared home, after noting that folder in a record
+  in its data folder; it writes or removes only the skill folders carrying
+  its mark, never through a link and never a same-named skill of the user's,
+  which the canvas page names; the copies are removed when Codex or the
+  built-in tools are turned off and refreshed while both are on. Option A's
+  developer instructions, settings scan and picker record are removed. Codex
+  on Windows is found in PATH order: the first `codex.exe` or `codex.cmd`,
+  PATHEXT order within a folder, with no shell and no process, reading only
+  fully qualified PATH folders (a drive or a share, as a terminal does), each
+  named as Windows names it when it runs a program from it.
+- Lane C (0dc8c08e, bf9bdd31, 85ffb170, 0c80dbdd): the tip marks; the Cloud
+  Agents card; Sonnet 5's fallback price; the Opus hint; the Close sessions
+  clear retried at each later save, exit flush and load; the credential
+  delete skipped quietly for an id that cannot hold a stored credential.
+- Lane C review fixes (9d606305): the Close sessions clear is kept across a
+  restart; a clear the read-failure latch refused is not retried; the
+  GitHub sidebar reads nothing while a clear is owed; the credential delete
+  still warns when the store holds an entry under an id outside the key
+  shape (written by an older build) or cannot be read to tell; the Cloud
+  Agents card promises a cost only where the page shows one; the Memory
+  activity chart drawn at its own width.
+- Lane D (eb6c9a02): the sass override (the dependency record below).
+- Lane E (12e53c99): the Sentinel chase. On the VM the release notes were
+  read; the wait was the analysis agent, which could not reach its model
+  behind the dead proxy and was tried twice under its 180 s cap. A failure
+  that never reached the service is not tried again and is said as
+  unreachable, naming the account where there is one, and a changelog answer
+  other than 200 is never analysed as notes; a Codex analysis stops once
+  Codex says it is waiting for the network (the review.ts half, in
+  5c3c62dd). Measured in the app on the VM for Codex alone: 6 min 05 s
+  before, 40.7 s after, the connection refused by a dead proxy port. Claude
+  Code's basis is the CLI probe with Sentinel's argv and the unit replay,
+  not an in-app run. Recorded: a network that silently drops packets is not
+  detected early (a Feature Guide known issue).
+- The review fix pass for lane E (fa79af12, 9a3fd42f). Lane E bounded
+  Claude Code's retries with CLAUDE_CODE_MAX_RETRIES 5, and that one setting
+  also cut how long an analysis rode out an answered overload (429, 5xx,
+  529). The pinned 2.1.288 CLI tells the two apart in its stream format: an
+  `api_retry` line before each retry, its `error_status` null when no answer
+  came back. So the analysis now runs with `--output-format stream-json
+  --verbose`, and stops after five retries in a row that got no answer
+  (about 13 s in by the VM probe's backoff); an answered retry keeps Claude
+  Code's own schedule (9a3fd42f, with an optional stdout callback on the
+  headless spawner), up to a retry backstop of 8 (2cb791d4, below). The
+  Codex early stop reacts only while its run streams and before a turn
+  completes, so a finished reply is kept, and it
+  carries its tree kill (killSettled). Both runners' "could not reach" words
+  come from one source. The changelog read closes a non-200 answer's
+  connection and declares its timer first. The title-bar chip says a failed
+  analysis did not complete instead of "no issues found" (fa79af12). The
+  merge gate (9.7 gate 6) ran on the VM at bb1b5e4a: the panel and a Re-run
+  behind the dead proxy, Codex 39.0 s and 38.9 s, Claude Code 2.1.278 9.7 s
+  and 9.4 s and 2.1.280 9.2 s and 9.9 s (five retries that got no answer,
+  then the early stop), in-app timestamps; the link cases moved to the HOST
+  QUARANTINE suite `sentinel-analysis-folders-links.test.ts`, 3 of 3 there.
+  Owed (owner): one real-model
+  Claude Code analysis on the stream format (row 42's completed real
+  analysis).
+- The bounded final round for lane E (2cb791d4). The analysis keeps its
+  watch and sets CLAUDE_CODE_MAX_RETRIES 8 as a backstop: a Claude Code that
+  prints no `api_retry` line (the pinned 2.1.287 to 2.1.289 print one; the
+  VM run checks 2.1.278, the managed floor) gives its own reason inside the
+  180 s cap, one attempt, said as
+  unreachable. That is an estimate, not a measurement: 95.5 s of backoff,
+  about 120 s with its 25% jitter, plus about 3 s per refused request. An
+  answered overload is ridden out for up to 8 retries instead of 10 (the
+  two dropped fall about 128 to 160 s into the backoff, where the cap ends
+  most runs). A retry that waited for a reply that never came
+  (`no_response`) counts as unanswered; the shared "could not reach" words
+  are escaped in the check's pattern; the headless spawner decodes stdout
+  across chunks. The title-bar chip says "did not complete" only after an
+  analysis that failed (`lastAnalysisFailed`: notes unreadable, a runner
+  that could not start for a reason other than the launch rule, or a failed
+  run), not for unmatched findings, carried problems or refusals. Polish
+  pass: only a retry the CLI labels "unknown" (no answer at all: a refused
+  connection, or the first-byte watchdog's `no_response`) counts; an error
+  the service sent after answering 200 carries no HTTP status but a named
+  kind (overloaded, rate_limit, server_error), and is an answer, as the
+  pinned binary's labels show; an unexpected error in the start-up check or
+  a Re-run marks the check failed.
+- The integration (5c3c62dd): lane B's launch, PTY, start-up and copy
+  patches; the picker flag (`viaPicker`) and the discovered version
+  (`cliVersion`) retired, and the launch route port
+  (`SessionProvider.launchRoute`, the Codex package's `launchRoute`,
+  `codexLaunchRoute`) removed, none with a consumer left; lane E's review.ts
+  half with its test and its copy; lane C's README row, Feature Guide copy,
+  capture shot and dock mark; the WP1 ledger (12 new rows, app-knowledge's
+  P04, three claudeTestChanges mappings for baseline files whose case names
+  changed).
+- Owed: the SSH live matrix at the final head, which covers lane A's
+  `pty-manager.ts` and `statusline-watcher.ts` hunks (import lines, call
+  sites and one registry-lookup helper, `claudeSshSurface`;
+  `resolveClaudeForPty` now throws on a null resolve; the
+  `healGlobalStatusline` wrapper) and lane B's `pty-manager.ts` hunk in the
+  local Codex branch (the developer-instructions spawn option removed, which
+  changes that branch's argv), with these cases: End remote on a container
+  runtime with and without a saved sudo password, the End remote tmux kill,
+  and a non-persistent teardown (`remoteSessionCleanupCommand`); on the VM,
+  a PATH with an npm `codex.cmd` before a `codex.exe` (question 5's HOST
+  QUARANTINE link files, the copy and its removal on this computer's
+  sign-in, the packaged canvas run and the Cloud Agents card's image ran at
+  bb1b5e4a, the record "the VM run at bb1b5e4a" below; the image waits for
+  the owner's review). The reviews and the ADR-009 delta pass, their
+  confirmations included, all passed (the record "the review fix pass"
+  below).
+
+*Record (2026-10-04): the CI and VM runs in the rows.*
+- Row 59, DONE: CI run 37134624406 (f4d98918, 2026-10-03) ran the whole
+  suite green on `ubuntu-latest`, the WP2 stack's first green Linux run,
+  after which 60b39238 made the Linux job blocking; CI run 37156412028
+  (f9f9bfc6) was green on every job bar the Desktop test gate, Linux
+  included (`docs/wp1/evidence/ci-matrix.md`).
+- Row 60, PARTIAL: the six `codex-conformance` legs green in both runs, the
+  runner's own Codex home untouched, and the prove-red dispatch, CI run
+  37155296304 (90fa4048), red on all six legs as designed: on each, 6 of the
+  suite's 9 cases failed (detection in both cases, the model list with both
+  soft checks, the flags, the features and the help), 2 passed and 1 was
+  skipped; recorded in `ci-matrix.md`'s "Shown red once" table. The
+  release-candidate leg runs at release.
+- Row 67, DONE: every cell's e2e spec passed on WINDOWS_1, the 26 specs 94 of
+  94, twice at 956df1a3 (runs e2e-956df1a3 and e2e-956df1a3-run2) and at
+  c65d0b19 (run e2e-c65d0b19), the real launch of 0.153.4 (`codex.cmd`) and
+  0.155.1 (`codex.exe`) included, the VM user's own Codex and Claude folders
+  unchanged. The review fix pass recorded these runs in
+  `docs/wp1/evidence/mode-matrix.md`; WP1.1 and WP1.60 stay `planned`
+  until the traceability binding records that file (P4.10, row 16).
+- Row 38: the midnight UTC check passed on the VM on 2026-10-04 (run
+  cp4-row38; real Codex 0.155.1 on the loopback fake model, fictional data;
+  the VM-side logs are kept with the run): the status line followed the tab
+  across 00:00 UTC (381,011, then 763,033, then 1,146,055 input tokens), a
+  Restart ran `codex resume` with the same conversation id and the turn after
+  it updated, and the rollout stayed in its day folder and grew.
+
+*Record (2026-10-04): dependencies, the owner's option 1.* The owner's words:
+keep the Sass override scoped and pinned, verify the dependency tree, run
+the stated checks, and record the remaining HTTP-cache advisory as an
+explicit 2.1.1 exception, not as fixed or universally harmless; no
+downgrade of a main package to clear the audit report.
+- The sass override (eb6c9a02): `"overrides"` gains
+  `"@excalidraw/excalidraw": { "sass": "1.79.4" }`, nested under excalidraw
+  only, an exact version, with no top-level sass override and no direct
+  dependency changed. It clears GHSA-vfj7-8cjw-p6xm (braces, high; every
+  published braces release is affected, so there is no braces fix to take)
+  by moving excalidraw's sass from 1.51.0 to 1.79.4, which uses chokidar 4
+  and so drops braces, in the same sass major; 1.79.4 accepts the immutable 4
+  line the existing top-level override pins and adds no native optional
+  dependency. The lock changes the sass subtree only (14 packages out, 3 in;
+  picomatch and fsevents now dev-only). npm audit: the runtime set 4 high to
+  0, the full tree 12 high to 8, all of them the exception below (1 since
+  http-cache-semantics 4.3.0 was published, below). Checks:
+  `npm ls` clean; `npm run build` green, with no sass output and the
+  excalidraw CSS and fonts in the build; the 27 canvas and excalidraw unit
+  files, 415 tests, passed; no production package requires a removed package
+  (380 packages scanned). Excalidraw's prebuilt files never load sass, so
+  runtime behaviour is expected to be the same; the packaged canvas run on
+  the VM is the remaining check. npm hoists sass, so vite's optional sass
+  peer is now satisfied by it; the repository has no .scss or .sass file, so
+  nothing uses it. Exit condition: drop the override when excalidraw
+  declares sass >= 1.79 (an exact, name-keyed pin would otherwise hold a
+  newer excalidraw's sass back at 1.79.4).
+- The explicit 2.1.1 exception: GHSA-ch52-4w7c-c8xp (http-cache-semantics,
+  high, CVSS 7.5, CWE-524, max-stale handling that can disclose cross-user
+  cached responses). Not fixed, and not claimed harmless in general.
+  - Path: electron-builder 26.15.3 (a dev dependency), app-builder-lib
+    26.15.3, @electron/get 3.1.0, got 11.8.6, cacheable-request 7.0.4,
+    http-cache-semantics 4.2.0. At e4493707 npm audit counted it 8 times,
+    once for each package up that chain and for dmg-builder and
+    electron-builder-squirrel-windows, which take app-builder-lib too; it is
+    one advisory. Since 4.3.0 was published (below), the same lock reports it
+    once, high, with `npm audit fix` offered.
+  - Build path only: electron-builder packages production dependencies only,
+    `npm audit --omit=dev` reports 0, and the installed 2.1.1-beta.1
+    app.asar contains none of that chain. It runs only while
+    electron-builder packages the app (the release workflow's runners and a
+    local `npm run package`), where @electron/get downloads the Electron
+    release zip and electron-builder's tool binaries.
+  - Exposure assessment: the advisory needs a shared HTTP cache serving
+    several users. On this path got builds its cache layer, the only user of
+    the library's policy, only for a request that carries got's `cache`
+    option; @electron/get 3.1.0 passes none and this project sets no
+    `electronDownload` options, so the policy never runs. Even if it did,
+    the responses are public release files, the same for every requester,
+    fetched by a single-user build, and the Electron zip is checked against
+    the release's SHASUMS256. Residual: a future build configuration that
+    turned on got caching with a shared cache store; none exists.
+  - Why clearing it needs a major change: every http-cache-semantics
+    release up to 4.2.0 is affected, and 4.3.0 is unverified as a fix
+    (below), so no in-range bump is known to clear it; the chain must drop
+    got 11. @electron/get 5 has, but app-builder-lib
+    declares @electron/get ^3 through the newest 26.x, and only electron-builder
+    27 prereleases take @electron/get 5. npm's suggested fix, electron-builder
+    26.5.0, is a downgrade of a direct dependency, which the owner ruled out,
+    and forcing @electron/get 5 under app-builder-lib would be a cross-major
+    override on the signing and release path.
+  - 4.3.0, not taken: http-cache-semantics 4.3.0 was published on
+    2026-10-04 at 02:56 UTC, after the records commit, and npm audit now
+    reads the advisory's range as up to 4.2.0 and offers `npm audit fix`
+    (cacheable-request 7.0.4 takes ^4.0.0, so it would be an in-range lock
+    bump). The lock keeps 4.2.0: 4.3.0 was hours old, the GitHub advisory
+    then listed no patched version, and the 4.2.0 to 4.3.0 diff touches Vary
+    matching and a status accessor, not the max-stale handling the advisory
+    describes. So every release up to 4.2.0 is affected and 4.3.0 is
+    unverified as a fix; the exception stands as recorded.
+  - Follow-up for 2.2, aicc_planning#127: move electron-builder to
+    the first stable release whose app-builder-lib uses @electron/get 5 or
+    later, done when npm audit no longer reports GHSA-ch52-4w7c-c8xp, the
+    release workflow is green on all three OSes, signing and notarisation are
+    unchanged, and the packaged smoke passes per OS.
+
+*Record (2026-10-04): the review fix pass.* The round's spec and quality
+reviews (groups A1, A2, B, C, E, INT and D) and its ADR-009 delta pass (four
+lenses) ran at e4493707. Nine of the twelve reviews passed with findings and
+three failed on major findings (group A2's spec review, three; group B's
+quality review, one; group C's spec review, one, an owner item). The ADR-009
+delta pass returned FINDINGS: its one major, L1-1, was fixed in aaa6990e and
+confirmed, PASS, at 43066c4f. Every later confirmation and re-review passed,
+across the four lenses (L1 to L4) and the reviewers, with no open BLOCKER or
+MAJOR: the second round at 8b4f8c14, the polish pass at 4ed7bc1b and the
+final nits at dc1915f2, the final reviewed tree. Four fixers fixed or
+recorded each finding on disjoint files, test-first, with every guard they
+added or changed mutation-proved (one mutant, FA-M15, is owed on CI and the
+VM): fa79af12 and 9a3fd42f (lane E's files, Sentinel), 9d606305 (lane C's
+and lane T's), aaa6990e (lane B's), a831b860 and b8192838 (lane A's). The
+integration commit after them applied their shared-file changes and WP1
+ledger rows. A bounded second round followed, on the re-review's and the
+confirmation's findings: 1e11f4db (lane B's), 5dc19c55 (lane C's), 2cb791d4
+(lane E's), a9c5d0ed and b2561bde (lane A's), integrated in the commit after
+them. What each changed is in the record "the owner's answers, built" above
+and in section 10. Recorded with it:
+- b8192838's subject is 127 characters, over commitlint's 120. CI lints only
+  the PR title and the PR squash-merges, so it is recorded here and not
+  rewritten. 99d6a1a1's message says `auth.browser` is left undeclared; it
+  is declared unknown.
+- Two follow-ups after the integration, each a commit of its own. The WP1
+  managed-launch check (`tests/wp1/managed-launch.test.ts`) failed four
+  cases after a831b860, because the Claude sign-in check and sign-out built
+  their environment through a helper the check cannot read; cf2a502a builds
+  it in the managed-launch shape at each call site, behaviour unchanged, the
+  macOS mutants re-proved. The GitHub sidebar defect below, which the
+  integration step left open, landed in 0683b134.
+- A polish pass closed six MINORs, each in its own commit: a Sentinel retry
+  for an overload reported after a 200 counts as answered, and the chip
+  marks a check failed after an unexpected error (10c6f431); an owed clear
+  ignores a marker dated in the future and moves a damaged saved file aside
+  (9a3a38ff); kept-aside skill records never block the switch-off pass
+  (930c191d); the Claude lookup names PATH folders as Windows does, and its
+  discovery refuses a path with a name ending in a dot or a space (6a0e8f83;
+  the helpers shared with the Codex lookup in 205e670d). Their targeted
+  re-review and re-attack passed (4ed7bc1b).
+- The final review nits, one commit after the polish pass: both PATH lookups
+  read their folders by one shared rule (a drive, or a share spelled with
+  two leading slashes; review L3), so the Claude lookup reads the same
+  folders as the Codex one; a Sentinel check that fails with a thrown value
+  that is not an Error keeps that value's text, so the chip says it did not
+  complete (E-Q15); the What's New line drops a note meant for the VM run
+  (E-Q14); and comments, test names and records about the lookups now say
+  what each one reads. Their re-review and confirmation passed at dc1915f2.
+- Before this round's first push, the unpushed commits were rewritten to
+  tidy wording; the final tree is byte-identical to the reviewed head, and
+  every commit reference in these records was updated.
+- Known limits, recorded with no change made:
+  - For developers only: a dev build and the installed app running together
+    share `~/.codex`. Either one's switch-off removes the other's skill
+    copies, each launch rewrites the copies with its own build's skill text,
+    and one build's staging sweep can remove the other's staging folder in
+    flight (that launch then says the skills could not be put in place).
+  - Uninstalling the app leaves its skill copies in the Codex skills folder:
+    a known issue in the Feature Guide and the user guide, with the
+    workaround (turn Codex or the built-in tools off first, or delete the
+    three folders afterwards).
+  - A recorded `CODEX_HOME` on a network share that does not answer can
+    still hold the start pass and a settings save for as long as Windows
+    waits for it (those reads are synchronous). A PATH folder on a network
+    share that does not answer can hold the app up the same way, once per
+    such folder, every time it looks Codex up: the check, and before every
+    Codex launch, sign-in or sign-out and model-list read (a known issue, with
+    the workaround; review B-Q13); share folders are read, as a terminal reads
+    them (round 2, review B-S10).
+  - The marker that keeps a Close sessions clear owed across a restart holds
+    the time of the user's clear (a retry that fails never moves it) and
+    never removes a state saved after it: one that cannot be read, does not
+    parse or holds no time stands at its own modification time, and when
+    even that, or the saved file itself, cannot be read, nothing is removed
+    or offered and saves are held for that start until a later load can tell
+    (re-review R-1 and R-2, 5dc19c55). A marker dated in the future (a time
+    later than now, or a time in its content later than its own modification
+    time) is dropped with nothing removed, and while a clear is owed a
+    damaged session file is moved aside, never deleted (9a3a38ff). A clock
+    set back between the clear and a later save could make that save look
+    older, which matters only if every save of that run also failed to
+    remove the marker; so could a marker whose content is damaged and whose
+    modification time a copy or restore moved past a later save (but not
+    past the present). If the marker can be written neither at the clear nor
+    at any retry in that run, and no retry removes the set either, the next
+    start offers the set again (Don't open dismisses it). With the data
+    folder on a network share whose clock runs behind this computer's, the
+    marker's own time can read as later than its modification time, so it is
+    dropped and the discarded set is offered once more. A damaged copy of a
+    cleared set stays beside the file as `session-state.json.corrupt-<time>`,
+    which nothing reads.
+  - The Claude lookup trims the spaces around a PATH entry, which cmd.exe's
+    own reading of PATH does not do in the same way, so for an entry ending in
+    a space the two can read different folders; the app still runs the exact
+    file it found and checked (review A2-R6).
+  - Sentinel on a network that silently drops traffic still runs up to its
+    old limit (a known issue). The evidence for Claude Code's early stop
+    (9a3fd42f): in the pinned 2.1.288 CLI, read as text and never run,
+    CLAUDE_CODE_MAX_RETRIES (default 10, at most 15) covers every retried
+    error, so a cap also cut the retries of an answered overload; the print
+    mode's stream format writes a system `api_retry` event before each
+    retry, its `error_status` null when no answer came back and the HTTP
+    status when the service answered, while the json format prints only the
+    final result. The two cases can be told apart only in the stream, which
+    the analysis now reads.
+- Pre-existing, not moved (outside the fixers' files):
+  `tests/unit/scripts/codex-resume-picker-worktrees.test.ts`,
+  `tests/unit/main/help-workspace-skill.test.ts` and
+  `tests/unit/resources-dir-hardening.test.ts` plant links without a HOST
+  QUARANTINE header, so they are not run on the owner's machine.
+- Closed (0683b134): the GitHub sidebar's session reads go through a pure
+  read (`peekSessionState`) that never sets or resets the read-failure
+  latch, so a sidebar read after a start whose load failed no longer lets a
+  close with no tabs remove the unread file; a read that fails gives the
+  sidebar nothing, and a sidebar save whose read fails writes nothing.
+- The HOST QUARANTINE files ran on the VM at bb1b5e4a (the record below):
+  all 22, 21 passed and the real-CLI conformance file 8 of 9 on each version
+  (its one skip the placeholder for a run with no CLI). FA-M15 is recorded
+  as an equivalent mutant: dropping `st.isSymbolicLink() ||` from
+  `removeProfileIdentityCredentials` (`src/main/account-profiles.ts:2045`)
+  changes nothing, because Node's lstat reports a link or junction as not a
+  directory, so `!st.isDirectory()` refuses the same links. On CI: CI run
+  37198938793 was red on three test expectations, fixed in f272b194 (the
+  Claude sign-out tests follow each platform's sign-in model) and a8da03e6
+  (the picker worktree test, its link cases moved to the HOST QUARANTINE
+  file `tests/unit/scripts/codex-resume-picker-links.test.ts`); its re-run
+  is pending, and with it the run id of the Sonnet 5 fallback price's native
+  test (`tests/unit/native/tk-db-sonnet5-price.native.test.ts`), owed before
+  that price counts as tested on the real pricing path.
+- Done on the VM at bb1b5e4a (the record below): the copy and its removal on
+  this computer's sign-in, a same-named skill of the user's left alone and
+  named, and a copy held open while the tools were turned off (no copy left
+  without its mark at the skill's name, the folder kept in the record;
+  released and turned off again, all three gone and the record empty); the
+  Sentinel merge gate for both assistants, Claude Code on 2.1.278 and
+  2.1.280; the Codex lookup with a share that does not answer; the
+  Tokenomics Cost over time and Memory activity charts; the packaged canvas
+  run; the Cloud Agents card's image, recaptured (the owner's review of it
+  owed). Still owed on the VM: A2-R1, sign out the primary Claude profile
+  with the acknowledgement, restart the app, and confirm the primary profile
+  and its `identity/.credentials.json` stay signed out
+  (`syncPrimaryCredentialsWithGlobal` must not copy the global credentials
+  back; if it does, the sign-out must also stop that sync for the profile);
+  a PATH with an npm `codex.cmd` before a `codex.exe`. OR4 (owner, a real
+  model): a copied `SKILL.md` under `%USERPROFILE%\.codex\skills` read from
+  the Windows sandbox on this computer's sign-in.
+- Owed by the owner: on a Mac, a sign-out of a Claude account through the
+  provider-neutral sign-out with the acknowledgement, confirming that Claude
+  Code in Terminal is signed out too, that the sign-in check before it read
+  signed in, and that the Accounts panel row reads the Mac's real state; on
+  a Mac that still carries several legacy profiles, that every Accounts
+  panel row reads the Mac's one Claude Code sign-in (intended, D2; it also
+  ends the #117 keychain dialog in the panel; A2-R5); one real-model Claude
+  Code analysis on the stream format (review E-S5); the SSH live matrix at
+  the final head with the cases in the record "the owner's answers, built".
+
+*Record (2026-10-04): the VM run at bb1b5e4a.* On WINDOWS_1, a packaged
+build of bb1b5e4a installed over c65d0b19 (unsigned), the fake model,
+fictional accounts, isolated Codex and Claude folders; the VM user's own
+folders were the same at the end as at the start.
+- E2e suite: the 26 specs, 94 of 94, none skipped or flaky, the real launch
+  of 0.153.4 (`codex.cmd`) and 0.155.1 (`codex.exe`) included; the one
+  pre-existing failure did not occur in this run.
+- HOST QUARANTINE files: all 22 (19 headed, and three that only name the
+  words), 21 passed, 205 tests, and the real-CLI conformance file 8 of 9 on
+  each version; FA-M15 an equivalent mutant (above).
+- Question 5's C on this computer's sign-in: the three skills copied on
+  launch with their marks and the folder recorded; with `agent-canvas` held
+  open, turning the tools off removed the other two and left it whole, marked
+  and recorded, and the next on and off removed all three and emptied the
+  record; a same-named skill of the user's (`canvas-plan`) left byte for
+  byte and named on the canvas page; turning Codex off removed the copies.
+- Sentinel behind the dead proxy, start-up check then Re-run, in-app
+  timestamps: Codex 39.0 s and 38.9 s (stopped once Codex said it was
+  waiting for the network); Claude Code 2.1.278 9.7 s and 9.4 s, and 2.1.280
+  9.2 s and 9.9 s (five retries that got no answer, then the early stop); the
+  Claude Code chip said the analysis did not complete.
+- The Codex lookup with a share that does not answer first in PATH: one
+  check per folder in each lookup, about 1.1 s the first time for a server
+  name that does not exist, then cached by Windows.
+- Tokenomics Cost over time on All, 7d and 30d at a narrow and a wide window:
+  drawn at its own width, round dots, date labels spaced; the Memory activity
+  chart's dots round at both widths; the tips' marks on the card and in the
+  dock row; the Cloud Agents card's image recaptured.
+- The packaged canvas with sass 1.79.4: a render, a rectangle drawn, a note
+  and a review the agent fetched with its image; the installed asar holds
+  sass 1.79.4 and chokidar 4.0.3, and none of braces or the
+  http-cache-semantics chain.
+- Three observations went to the owner's queue: the chip's order after a
+  failed Codex analysis with an open notice, the gpt-5.2 notice, and the
+  panel header's version after a failed Claude Code run.
+
 ## 10. Unresolved UX decisions
 
 ### How each candidate was checked
@@ -4520,14 +8131,18 @@ Notes that bind the build:
 |---|---|---|
 | 52 Browser and vision tools | `conductor-mcp-server.ts:911-913` withholds vision from Codex on a call of 2026-07-02 worded "Claude-only for now"; `:1042` withholds `open_in_app_browser` to match. A Claude session gets both. The later owner decisions (the 2.1.1 gate of zero unsupported shared features; OD26 P1) end a "for now". No record asks to keep them Claude only | **Settled by parity.** A one-line notice to the owner, not a question: Codex sessions get the vision and in-app browser tools in PR 4. |
 | 53 Ask Conductor | Ask is a real Claude session (`askConductor.ts:255` pins the provider; `help-workspace.ts` stages a `CLAUDE.md`), blocked with Claude Code off (`askConductorGate.ts`). Design section 2: the app works fully in Codex-only mode | **Codex only: settled** (Ask runs on the one provider that is on). **Both on: decided by the owner** on 2026-09-27 (OD27 M4, option B), below. There was no Claude behaviour to copy (OD26 P1, second case). |
-| 58 Web sign-in and artifacts | `src/main/account-web/artifacts.ts` opens claude.ai artifacts as an account; `account-pane.ts` gives the browser pane an account surface on claude.ai; the checklist's limits: nothing assumes a CLI sign-in gives ChatGPT browser cookies or an artifacts equivalent | **Web session: settled by parity** (chatgpt.com in the pane's account surface, signed in per Codex account). **Artifacts: not a UX choice.** No Codex equivalent is known (the checklist assumes none), so this is a section 19 record for the owner to sign, with the command lists of 0.153.4 and 0.155.1 as its evidence (P3.1). Should P3.1 find an equivalent, parity settles it instead. |
-| 68 Insights | `insights-runner.ts:234-237` types Claude Code's own `/insights` into a terminal and reads the report it writes; `InsightsPage.tsx:277-296` tells a Codex-only user that Insights come from Claude sessions. The parity reset of 2026-09-26 resolved it in its "Resolved by parity" list (sessions batch): a Conductor-native Codex report, run with `codex exec`; it was not one of that day's open questions | **Settled by parity (2026-09-26).** A one-line notice to the owner, not a question: Insights gets a Codex report the app makes with `codex exec`, shown in the page's existing layout, figures and run history, on the account's own Codex allowance as Claude's report uses Claude's. A mockup goes on the Agent Canvas before the build (P4.7), made from `src/renderer/components/InsightsPage.tsx`, `src/main/insights-runner.ts` and `src/main/insights-cross-account.ts` (ADR-013). |
+| 58 Web sign-in and artifacts | `src/main/account-web/artifacts.ts` opens claude.ai artifacts as an account; `account-pane.ts` gives the browser pane an account surface on claude.ai; the checklist's limits: nothing assumes a CLI sign-in gives ChatGPT browser cookies or an artifacts equivalent | **Web session: settled by parity** (chatgpt.com in the pane's account surface, signed in per Codex account). **Artifacts: not a UX choice.** No Codex equivalent is known (the checklist assumes none), so this is a section 19 record for the owner to sign, with the command lists of 0.153.4 and 0.155.1 as its evidence (P3.1). Should P3.1 find an equivalent, parity settles it instead. **Signed by the owner on 2026-10-05: alternative A** (`docs/wp2/evidence/codex-artifacts-section-19-record.md`). |
+| 68 Insights | `insights-runner.ts:234-237` types Claude Code's own `/insights` into a terminal and reads the report it writes; `InsightsPage.tsx:277-296` tells a Codex-only user that Insights come from Claude sessions. The parity reset of 2026-09-26 resolved it in its "Resolved by parity" list (sessions batch): a Conductor-native Codex report, run with `codex exec`; it was not one of that day's open questions | **Settled by parity (2026-09-26).** A one-line notice to the owner, not a question: Insights gets a Codex report the app makes with `codex exec`, shown in the page's existing layout, figures and run history, on the account's own Codex allowance as Claude's report uses Claude's. A mockup goes on the Agent Canvas before the build (P4.7), made from `src/renderer/components/InsightsPage.tsx`, `src/main/insights-runner.ts` and `src/main/insights-cross-account.ts` (ADR-013). **The mockup was approved on 2026-10-05 (v1, no notes), with C1 = A; built in P4.7.** |
 | 69 Plan mode | Claude's launch options include "Plan mode" (`claude-cli-options.ts:85`), a launch option only; the Codex form offers permission presets only (`CodexFormFields.tsx:162-170`); the capability leads say Codex documents a plan command | **Decidable by parity.** Codex gets Plan mode as a launch option, as Claude has it (P3.8), once P3.1 confirms the command on the supported versions. If it is absent, that is a section 19 record, not a UX question. **Settled and built (P3.8 round 1, caef0d42; round 2, f1783110):** the VM probe found `/plan` on both versions and no launch flag, so the choice launches READ-ONLY and types `/plan` into Codex's first ready prompt only. **Deviation, recorded** (as P3.5's F7 menu): Claude's Plan mode starts in plan (`--permission-mode plan`) and its accepted plan moves on to the mode the user picks; Codex's accepted plan leaves Plan mode but not read-only, and the user widens what Codex may do with its own `/permissions` ("choose what Codex is allowed to do"; on the VM it opens "Update Model Permissions": Read Only, Ask for approval, Approve for me, Full Access, on both versions). |
-| 22 Switch account: a declined confirm | P3.6 VM finding V3: Cancel on Codex's confirm-at-launch question after a Switch left the tab on the new account. A Claude switch never asks at launch, so there is no Claude behaviour to copy | **Parity cannot settle it.** Built as the default pending the owner's decision: question 3 below. |
-| 63 Codex hook trust | Claude Code runs the app's hooks with no prompt: the app writes them into the per-session settings Claude reads. Codex asks the user to review hooks given at launch, once per account folder, and runs none until they are trusted (VM, evidence addendum 14) | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 4 below. |
-| 41 Mid-session model and effort | Claude's pill switches model and effort in one step, live. The VM probe (evidence addendum 13): Codex has no one-line form (`/model <slug>` and `/model <slug> <effort>` are sent as a message; `/effort` is unrecognised); its own route is a two-step picker opened by a bare `/model`, which keeps the conversation | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 2 below. |
+| 22 Switch account: a declined confirm | P3.6 VM finding V3: Cancel on Codex's confirm-at-launch question after a Switch left the tab on the new account. A Claude switch never asks at launch, so there is no Claude behaviour to copy | **Parity cannot settle it.** Decided by the owner on 2026-10-04: A, kept as built (question 3 below). |
+| 63 Codex hook trust | Claude Code runs the app's hooks with no prompt: the app writes them into the per-session settings Claude reads. Codex asks the user to review hooks given at launch, once per account folder, and runs none until they are trusted (VM, evidence addendum 14) | **Parity cannot carry over as it is.** Decided by the owner on 2026-10-04: A, kept as built (question 4 below). |
+| 41 Mid-session model and effort | Claude's pill switches model and effort in one step, live. The VM probe (evidence addendum 13): Codex has no one-line form (`/model <slug>` and `/model <slug> <effort>` are sent as a message; `/effort` is unrecognised); its own route is a two-step picker opened by a bare `/model`, which keeps the conversation | **Parity cannot carry over as it is.** Decided by the owner on 2026-10-04: A, kept as built (question 2 below). |
+| 51 Canvas and vision instructions, this computer's sign-in | PB1 (2026-10-02): no channel adds to Codex's instructions on both launch routes without writing into the user's Codex folder or replacing a setting the user made | **Parity cannot carry over as it is.** Decided by the owner on 2026-10-04: C, superseding the default A, and built in PR 4 (question 5 below). |
+| 53 Ask on Codex, characters outside the BMP | PB3 and PB4 (2026-10-02): Codex's prompt drops them on both versions; only the direct route's launch argument keeps them | **Parity cannot carry over as it is.** Decided by the owner on 2026-10-04: A, kept as built (question 6 below). |
+| 51, 52 Codex's Auto preset and the app's tools | The VM checkpoint at 956df1a3: Codex's Auto starts with `--ask-for-approval never`, so it cannot ask before the app's tools and refuses them; Claude's Auto sends each such call to its own classifier, not a fixed per-tool answer, and the app pre-approves only the canvas snapshot and review for both | **Parity cannot carry over as it is.** Decided by the owner on 2026-10-04: B, kept as built (question 8 below). |
+| 57 Cloud Agents, the skip-permissions choice | Claude's choice runs `--dangerously-skip-permissions` (Bypass, `cloud-agent-manager.ts:305`), which matches Codex's Unrestricted; PB5 (2026-10-02): Unrestricted writes the project's trust entry into the account's `config.toml` on every run | **Parity cannot carry over as it is.** Decided by the owner on 2026-10-04: A, kept as built (question 7 below). |
 
-Three decisions are open: question 2 (row 41), question 3 (row 22) and question 4 (row 63), each built as a default pending the owner's decision. Question 1 below was decided by the owner
+No decision is open. Questions 2 to 8 were decided by the owner on 2026-10-04: questions 2 (row 41), 3 (row 22), 4 (row 63), 6 (row 53) and 7 (row 57) A, and question 8 (rows 51, 52) B, each kept as built; question 5 (row 51) C, superseding the default A, and built in PR 4. Question 1 below was decided by the owner
 on 2026-09-27: option B, approved as drawn (`docs/wp1/owner-decisions-2026-09-27.md`,
 M4; canvas "Ask Conductor provider choice" v1, no notes).
 
@@ -4564,7 +8179,7 @@ Show Ask Conductor switches), `src/renderer/stores/settingsStore.ts:274, 453`
 `src/main/help-workspace.ts` (the help workspace, which Codex would read
 through `AGENTS.md`).
 
-### Question 2 (row 41), open: built as the default, pending the owner's decision. How does a live Codex session change model and effort?
+### Question 2 (row 41), resolved: A. How does a live Codex session change model and effort?
 
 Claude's pill switches model and effort in one step and keeps the
 conversation. Codex offers no one-line form on 0.153.4 or 0.155.1 (evidence
@@ -4586,7 +8201,9 @@ no restart, and it depends on no picker layout. B is the fallback if the owner
 wants the app's own list on a live session. The owner reviews A in the VM
 gallery of round 1.
 
-### Question 3 (row 22), open: built as the default, pending the owner's decision. A Switch whose launch asks for confirmation, declined
+**Decided: A** (owner, 2026-10-04). Kept as built.
+
+### Question 3 (row 22), resolved: A. A Switch whose launch asks for confirmation, declined
 
 A Switch restarts a Codex session on the new account. When that launch asks
 Codex's confirm-at-launch question (the account signed in on this computer)
@@ -4603,7 +8220,9 @@ launch, so parity cannot settle it (P3.6 VM finding V3).
 leaves the session running where it was. The owner reviews it in the P3.6 VM
 gallery (a declined confirm after a Switch).
 
-### Question 4 (row 63), open: built as the default, pending the owner's decision. How do the app's Codex hooks come to be trusted?
+**Decided: A** (owner, 2026-10-04). Kept as built.
+
+### Question 4 (row 63), resolved: A. How do the app's Codex hooks come to be trusted?
 
 Claude Code runs the app's hooks with no prompt. Codex asks the user to review
 hooks given at launch, once per account folder ("Hooks need review": review
@@ -4614,7 +8233,10 @@ attention dot and no exact claim (P3.10's limits).
 - **A (built, the default).** Codex's own review: the first Codex launch on
   each account shows it, and the user trusts once. The app's hooks are the
   same for every launch, so Codex does not ask again until the app changes
-  them. The Hooks gateway's settings text says so.
+  them. The Hooks gateway's settings text says so. Under A, until an
+  account's hooks are trusted, the Agent Canvas's markers to a Codex session
+  wait for Codex's ready prompt on screen instead of its turn-end hook (P4.1;
+  a declared deviation).
 - **B.** The app records the trust for its own six hooks in the account's
   Codex settings itself, so no review shows. One step fewer, but it writes
   Codex's own trust record in a format Codex does not document, which a Codex
@@ -4626,6 +8248,206 @@ attention dot and no exact claim (P3.10's limits).
 **Recommendation: A.** It keeps Codex's own check, asks once per account, and
 depends on no undocumented format. B is the fallback if the owner wants no
 screen at all. The owner reviews the review screen in the P3.10 VM gallery.
+
+**Decided: A** (owner, 2026-10-04). Kept as built.
+
+### Question 5 (row 51), resolved: C. How do the Agent Canvas and vision instructions reach a Codex session on this computer's own sign-in?
+
+Claude Code gets the app's three instruction skills (agent-canvas,
+canvas-plan and conductor-vision) from a plugin the app passes at launch;
+they tell the model when and how to use the canvas and browser tools, and
+nothing is written into the user's own files. A Codex account the app
+manages gets the same skills in its own folder, which is the app's (PB1).
+This computer's own sign-in uses the user's own Codex folder, and the VM
+probe (PB1, 2026-10-02, 0.153.4 and 0.155.1, both launch routes) found no
+channel that adds to Codex's instructions on both routes without writing
+into that folder or replacing a setting the user may have made:
+- its skills folder is the user's own `~/.codex/skills`;
+- `-c developer_instructions` writes nothing and arrives as Codex's
+  developer message, but it replaces the user's own developer instructions
+  when they set one, and the npm `.cmd` route refuses any launch argument
+  holding a space;
+- `-c model_instructions_file` and `-c instructions` replace Codex's own
+  base instructions entirely;
+- `skills.config` only selects skills that already exist.
+
+The tools reach every Codex session whatever is chosen; this is about the
+guidance only.
+
+- **A (built, the default).** On the direct route, when no settings file
+  Codex reads (the user's settings and their profiles, a trusted project's
+  own settings, the managed settings) names developer instructions, the app
+  passes its own: on Windows a condensed text of the three skills inline
+  (Codex's Windows sandbox may run the model's commands as accounts that
+  cannot read the app's folders, so nothing there depends on a file read);
+  on macOS and Linux a short instruction naming the three skills and where
+  their full text is in the app's own folder, as Codex lists its own skills,
+  so the model reads the full text when it needs it (the full text, about
+  29,000 characters, is close to Windows' launch-line limit and would sit in
+  every request). Otherwise, and on the npm `.cmd` route, the session gets the tools and
+  their descriptions without the skills' guidance, and the canvas page says
+  so in one line.
+- **B.** As A, but when the user has their own developer instructions, the
+  app passes the user's text followed by its own, so neither is lost. The
+  app must then reproduce how Codex picks that value (profiles, settings
+  files), which Codex does not document.
+- **C.** The app copies its skills into the user's `~/.codex/skills` and
+  removes them when Codex or the built-in tools are turned off. They reach
+  every route, but this writes into the user's own folder, and the skills
+  show in every Codex session the user runs, inside the app or not.
+- **D.** The app launches the `codex.exe` that the npm package installs
+  beside its `.cmd` shim (both supported versions have it; the probes ran
+  it), so launch arguments lose the space limit. This combines with A or B.
+  It changes how every npm install is launched and needs its own ADR-009
+  pass; what the npm wrapper adds to Codex's environment must be checked
+  first.
+
+**Recommendation: A.** It writes nothing, replaces nothing the user set, and
+relies on no undocumented resolution order. D is the option that would also
+lift question 6's route limit. Mockup: none (one line on the canvas page).
+
+Built meanwhile: everything in P4.1 and P4.2, with A for this computer's
+sign-in. Waits on the answer: only the delivery to this computer's sign-in
+(B or C changes that step; D, with question 6, changes how npm installs are
+launched). The canvas page's line and the known-issues entry are worded for
+A and re-checked in P4.11.
+
+**Decided: C** (owner, 2026-10-04), superseding the default A. The owner's
+reason: the canvas is an MCP server the app registers, so while the app is
+not open it is not active, and skills outside the app are no problem. Built
+in PR 4 (785b886e, wired and integrated in 5c3c62dd): for this computer's
+own sign-in the app copies its three canvas skills into the Codex skills
+folder of the launch's prepared home (`~/.codex/skills`, or the one in the
+folder `CODEX_HOME` names), after noting that folder in a record in its own
+data folder; it writes or removes only the skill folders carrying its mark,
+never through a link, and never a skill of the user's own with the same
+name, which the canvas page names in one line; the copies are removed when
+Codex or the built-in tools are turned off and kept current while both are
+on. A managed account's skills stay in its own folder, as before. Option A's
+developer instructions, its settings scan, the picker record and the launch
+route port only A used are removed. The known issue, the User Guide and
+PRIVACY.md say where the skills go and when they leave.
+
+### Question 6 (row 53), resolved: A. Ask Conductor on Codex: characters Codex's prompt cannot take
+
+Claude gets Ask's opening question whole: up to 8,000 characters of any
+kind. The VM probe (PB3 and PB4, 2026-10-02, 0.153.4 and 0.155.1) showed:
+- On the direct route, the question as a launch argument after `--` arrives
+  whole on both versions: 8,000 characters, an emoji included, and a
+  question starting with "-" stays the question.
+- Typed into Codex's prompt, every character outside the Basic Multilingual
+  Plane (emoji, some rare CJK, mathematical letters) is lost on both
+  versions; everything else arrives (7,998 of 8,000 units; the gap was the
+  one emoji). The prompt is the only carrier on the npm `.cmd` route, which
+  refuses launch arguments with spaces, and the only one for an Ask tab that
+  is already open, on either route.
+- So nothing carries such a question whole on the `.cmd` route, or to a
+  live tab.
+- PB9 (2026-10-02) found every length either confirmed or reliably taken
+  back from Codex's prompt, so this question has no second part.
+
+- **A (built, the default).** The carrier as PB4 settled it: the launch
+  argument on the direct route, the prompt elsewhere. Before typing, the app
+  removes the characters Codex's prompt would drop; when it removed any, Ask
+  says so in one line (for example: "Codex cannot take emoji typed into its
+  prompt; 1 removed").
+- **B.** As A, but each removed character becomes a visible stand-in
+  (U+FFFD), so the model sees that something was there.
+- **C.** Launch the npm package's own `codex.exe` directly (question 5,
+  option D), so every Windows install can take the opening question as an
+  argument. A live tab still uses the prompt, with A or B.
+- **D.** Refuse to send such a question to Codex, and ask the user to
+  remove those characters.
+
+Not known: whether Claude Code's own prompt keeps these characters when a
+live Ask tab's question is typed into it (`askConductor.ts:182`); it was not
+probed. If it does not, the live-tab half is already at parity.
+
+**Recommendation: A.** Nothing is lost silently, and only two code paths
+(argv and the primitive) are involved. Mockup: none (one line in the Ask
+dock).
+
+Built meanwhile: all of P4.3, with A. Waits on the answer: only the
+handling of those characters on the `.cmd` route and for a live tab (B
+changes the same step; C waits with question 5's D; D swaps the removal
+for a refusal).
+
+**Decided: A** (owner, 2026-10-04). Kept as built: the characters Codex's
+prompt drops are removed, and the Ask dock says how many in one line.
+
+### Question 7 (row 57), resolved: A. What does a Codex Cloud Agent's "skip permission prompts" choice run as?
+
+A Claude Cloud Agent's "Skip permission prompts for this run"
+(`NewAgentDialog.tsx:214`) runs `--dangerously-skip-permissions`
+(`cloud-agent-manager.ts:305`), Claude's Bypass mode ("Skip every
+permission prompt", `claude-cli-options.ts:92`): the agent edits anywhere
+and asks nothing. The app pairs Claude's Bypass with Codex's Unrestricted
+preset (P4.1), but the VM probe (PB5, 2026-10-02, 0.153.4 and 0.155.1, both
+routes) showed that a Codex background run under Unrestricted
+(`danger-full-access`) writes the project's trust entry into the account's
+`config.toml` on every run, whatever the flags. On this computer's own
+sign-in that is the user's own file. This plan's acceptance for a
+background agent, taken from the Claude agent it copies, is that a run
+changes none of the account's settings, so Claude's behaviour cannot
+carry over as it is.
+
+- **A (built, the default).** Auto (`workspace-write`, "Workspace writes,
+  no prompts"): the agent asks nothing but is confined to its project; on
+  Windows it makes no edits at all until Codex's sandbox has been set up
+  for that account (PB5; the app's known issue and tip say how), and under
+  the non-admin sandbox its shell commands fail, since PowerShell does not
+  start there (PB8); `config.toml` is untouched.
+- **B.** Unrestricted (`danger-full-access`), parity with Claude's Bypass:
+  the agent edits anywhere, and Codex writes the project's trust entry
+  into the account's `config.toml` on every run (on this computer's
+  sign-in, the user's own file). The app never undoes it, since a restore
+  could discard the user's own trust answers.
+
+**Recommendation: A.** It meets the plan's acceptance (a run changes none
+of the account's settings), at the cost of the project limit. Mockup: none
+(the agent dialog's checkbox wording).
+
+Built meanwhile: all of P4.5, with A. Waits on the answer: only the mapping
+step and the checkbox's wording.
+
+**Decided: A** (owner, 2026-10-04). Kept as built: a Codex Cloud Agent's
+skip-prompts tick runs Auto, and `config.toml` is untouched.
+
+### Question 8 (rows 51, 52), resolved: B. What should Codex's Auto preset do about the app's own tools?
+
+The app's MCP tools (the Agent Canvas, Vision, the push to the in-app
+browser, the host screenshot fetch and the Claude review) declare no
+annotations, so Codex needs an approval before each call unless a per-tool
+key approves it (PB2). Codex's Auto preset ("Workspace writes, no
+prompts") starts Codex with `--ask-for-approval never`, so on Auto Codex
+cannot ask: the VM checkpoint at 956df1a3 saw it refuse those calls with no
+prompt on both supported versions. P4.1 pairs Codex's Auto with Claude's
+Auto ("Auto-accept most actions"), and Claude's Auto does not give these
+tools a fixed answer either way: Claude Code's documentation says it sends
+each such call to its own classifier, which decides call by call. The app
+pre-approves only the canvas snapshot and review, in every mode, for both
+assistants. Codex has no such classifier, so Claude's behaviour cannot
+carry over as it is, and OR4's check of a real Claude session in Auto mode
+can inform the choice but not make it.
+
+- **A.** Give Auto the same per-tool keys Unrestricted gets: every offered
+  tool runs on Auto with no prompt. That is wider than Claude's Auto, which
+  still decides each call.
+- **B (built, the default).** No per-tool keys on Auto: those tools are
+  refused there, the canvas snapshot and review still run, and the Feature
+  Guide's known issues say to use the Standard or Unrestricted preset for
+  them.
+- **C.** Another mapping: for example a key for some of the tools only, or
+  Auto paired with a different Claude mode for these tools.
+
+**Recommendation: B.** It refuses what Claude's Auto would still judge call
+by call, rather than run it unchecked. Mockup: none (the known issue's
+wording). Built meanwhile: all of P4.1 and P4.2, with B. Waits on
+the answer: only the Auto preset's keys and the known issue's wording.
+
+**Decided: B** (owner, 2026-10-04). Kept as built: no per-tool keys on
+Auto, those tools refused there, and the Feature Guide points to Standard or
+Unrestricted.
 
 ### One-line notices to the owner (not questions)
 
@@ -4639,7 +8461,8 @@ screen at all. The owner reviews the review screen in the P3.10 VM gallery.
   `-m gpt-5.2`). The owner may judge otherwise. P3.9's live read
   (`codex debug models`, built in 3a4ed400) resolves it per installed version:
   with 0.155.1 installed, Sentinel says gpt-5.2 is a model that version no
-  longer lists.
+  longer lists. Decided by the owner on 2026-10-04: gpt-5.2 stays while a
+  supported Codex version lists it, as built.
 
 ### Owner actions that are not UX decisions
 
@@ -4660,6 +8483,88 @@ screen at all. The owner reviews the review screen in the P3.10 VM gallery.
   model, the SSH live matrix, the screenshot review, macOS and Linux, the Desktop test gate).
 - Section 7: a disposition for each C defect not fixed; the security report;
   the desktop attestation; the word to merge each PR.
+- The WP1 candidate at a stable release (section 7, P4.10): settled by the
+  owner's answers of 2026-10-04. The 9 deep-import allowlist entries are
+  routed through the provider interfaces (PR 4, be38c516; the allowlist is
+  empty), and Claude's `cli.discovery`, `auth.status` and `auth.logout` are
+  wired and declared supported on every platform, a sign-out of this
+  computer's own sign-in (the primary profile; every profile on macOS) with
+  the user's acknowledgement (PR 4, 99d6a1a1 and the review fix pass). A
+  stable release's test steps stay red only for the traceability items still
+  `planned`.
+- The release order (section 7, item 12): the final `2.1.1` version and
+  changelog entry before the signed beta-channel cut whose build carries the
+  WP1.63 smoke, and that tree promoted to stable. Agreed by the owner on
+  2026-10-04.
+
+### The owner's other answers of 2026-10-04
+
+Besides questions 2 to 8, the owner answered every other open PR 4 item on
+2026-10-04. Each is built or recorded where named (9.7's records of that
+day):
+
+- **The WP1 candidate's nine deep imports**: all routed through the provider
+  interfaces in a narrow, behaviour-preserving change, no exemption kept
+  (be38c516; section 7). The SSH live matrix at the final head covers it.
+- **Claude's `cli.discovery`, `auth.status` and `auth.logout`**: the Claude
+  adapter completed, reusing the existing Claude code (99d6a1a1; section 7).
+  The review fix pass replaced the macOS sign-out carve-out: on a Mac every
+  profile runs on the Mac's one keychain sign-in under the app's setup (D2;
+  withProfileHome, #117; in the pinned 2.1.289 binary the keychain item is
+  named without a per-folder suffix unless CLAUDE_SECURESTORAGE_CONFIG_DIR or
+  CLAUDE_CONFIG_DIR is set, and the app sets neither on macOS), so a sign-out
+  there is this computer's own sign-in for every profile and runs only with
+  the user's acknowledgement. Owed on a Mac (owner queue): sign out a Claude
+  account through the provider-neutral sign-out with the acknowledgement and
+  confirm Claude Code in Terminal is signed out too, and that the sign-in
+  check before it read signed in; and, on a Mac that still carries several
+  legacy profiles, that every Accounts panel row reads the Mac's one Claude
+  Code sign-in (intended, D2).
+- **The release order**: agreed (above).
+- **Dependencies**: option 1, the sass override scoped and pinned (dropped
+  once excalidraw declares sass >= 1.79), and the HTTP-cache advisory an
+  explicit 2.1.1 exception (eb6c9a02); http-cache-semantics 4.3.0, published
+  after the records commit, is not taken, being unverified as a fix (9.7);
+  the follow-up is aicc_planning#127.
+- **Tips**: no provider filter; each tip about one assistant carries that
+  assistant's mark (0dc8c08e; the dock's tip row in 5c3c62dd).
+- **The Feature Guide**: a Cloud Agents card for both assistants, the Codex
+  Auto limit noted (0dc8c08e); its image comes from the recapture.
+- **gpt-5.2**: kept while a supported Codex version lists it, as built.
+- **Sonnet 5's fallback price**: Anthropic's reference, re-checked on
+  2026-10-04 (2 and 10 per million, cache reads 0.2, cache writes 2.5),
+  tested on the pricing path Tokenomics uses (bf9bdd31).
+- **The Opus picker hint**: the context size dropped, since the `opus` alias
+  does not mean one size on every provider (bf9bdd31).
+- **The help folder's Codex skill text**: it names the account it is
+  installed for (785b886e).
+- **The README Telemetry row**: Sentinel's reads and Codex's own usage
+  check, as PRIVACY.md has them (5c3c62dd).
+- **Codex on Windows**: PATH order wins, the first `codex.exe` or
+  `codex.cmd` as a terminal finds it (1f607839).
+- **Rows 59, 60 and 67**: rows 59 and 67 VERIFIED with their runs, row 60
+  PARTIAL until the release-candidate leg (section 4).
+- **OR1's scope**: confirmed, rows 4 and 6 on every OS before merge, with row
+  15's keyring smoke and the packaged smoke per OS at the final build (9.5).
+- **PR 3's questions 2, 3 and 4**: A each, kept as built (above).
+- **A Close sessions clear held by a scanner**: retried at each later save,
+  exit flush and load, and at the next start, until it succeeds or a later
+  save replaces the set; nothing is offered meanwhile (85ffb170; kept
+  across a restart in 9d606305).
+- **Sentinel showing analyzing for minutes with its assistant unreachable**:
+  chased on the VM with per-step timestamps and fixed test-first; when the
+  connection is refused the panel says so within a minute, measured in the
+  app on the VM for Codex and, for Claude Code, from the pinned CLI's stream
+  format as read from its binary and the unit replay (the CLI probe gives
+  only the backoff schedule; the early stop has not yet run against a real
+  CLI, VM owed); a Claude Code that prints no retry lines gives up on its own
+  inside the 180 s cap (estimated; the VM run checks 2.1.278); a network that silently drops traffic is not
+  stopped early (a known issue) (12e53c99, the Codex half in 5c3c62dd; the
+  review fixes in fa79af12, 9a3fd42f and 2cb791d4).
+- **The `[credentials] delete refused` warning**: the delete is skipped
+  quietly for an id outside the key shape that the store holds nothing
+  under, and still warns when the store holds one (written by an older
+  build) or cannot be read to tell (0c80dbdd, 9d606305).
 
 ## 11. Nothing silently deferred
 

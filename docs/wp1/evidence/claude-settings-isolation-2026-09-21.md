@@ -2204,7 +2204,7 @@ changed.
 ## VM gates on WINDOWS_1, and the defect they found (2026-09-23)
 
 The two packaged-app gates (PR gates 1 and 2), run on the Hyper-V guest
-WINDOWS_1 (Windows 11 22621, hostname WinDev2407Eval) against the INSTALLED
+WINDOWS_1 (Windows 11 22621) against the INSTALLED
 app, never in the owner's session.
 
 **Setup.** Installer built at `c9c908a5` (`AI-Code-Conductor-2.1.1-beta.1.exe`,
@@ -2279,9 +2279,9 @@ earlier ("the probe had not answered yet") was wrong.
 - On Windows the CLI is found by an **in-process, async PATH walk**
   (`findClaudeOnWindowsPath`), in the order the launch asks `where` for it, and
   no longer through `where`, which answers in the OEM code page and mangled
-  every non-ASCII profile path. The walk skips relative, drive-relative,
-  unexpanded and device-namespace entries, and never asks an unreachable folder
-  twice.
+  every non-ASCII profile path. The walk reads only fully qualified folders
+  (a drive or a share) with nothing unexpanded, and asks an unreachable folder
+  once.
 - A probe that does not answer is **settled at its deadline**, whatever still
   holds its streams. Its tree is killed with the absolute `taskkill /T /F`
   BEFORE cmd.exe, and nothing is killed once the child has exited.
@@ -2320,7 +2320,7 @@ PATH walk froze the main thread for 21 s on a dead network entry. Both were
 fixed. Round 3 and a final confirmation of the post-review delta: **PASS on
 both lenses, nothing open at BLOCKER or MAJOR.** Every guard is pinned by a
 test that goes red under its mutant (below). A final Fable ADR review:
-**HOLDS**. Seven theses were each tied to a named test that asserts it (no second command from a folder name; no planted node or cmd.exe from the working directory; a hung probe always settles and kills nothing after exit; the walk never blocks and never searches the current directory; no false "supported" across the pin, install and version matrix; the launch path still cannot throw; the startup import boundary is unchanged). The MQ-q equivalence (below) was confirmed. Two nits, neither required: a synchronous taskkill throw would skip the stream destroys, and a ComSpec path with spaces goes on the command line unquoted, as in Node's own shell:true.
+**HOLDS**. Seven theses were each tied to a named test that asserts it (no second command from a folder name; node and cmd.exe only from fully qualified folders; a hung probe always settles and kills nothing after exit; the walk never blocks and reads only fully qualified folders; no false "supported" across the pin, install and version matrix; the launch path still cannot throw; the startup import boundary is unchanged). The MQ-q equivalence (below) was confirmed. Two nits, neither required: a synchronous taskkill throw would skip the stream destroys, and a ComSpec path with spaces goes on the command line unquoted, as in Node's own shell:true.
 
 **Double review (Opus, independent).** The spec review confirmed that every
 fix item is implemented and nothing out of scope was added (the one scope

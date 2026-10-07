@@ -165,6 +165,9 @@ function launchCodex(resumeUuid, sourceCwd) {
     }
     return spawnSync(target.file, target.args, { stdio: 'inherit', windowsHide: false, windowsVerbatimArguments: target.verbatim, env, ...(retarget.cwd ? { cwd: retarget.cwd } : {}) })
   }
+  // Every Codex the picker starts gets the app's flags as they came: the
+  // app passes no launch-time guidance (its canvas skills are in the
+  // account's own skills folder), so nothing depends on the folder.
   const result = run(lib.buildResumeArgs(resumeUuid, forwarded))
 
   // spawnSync failed to launch (ENOENT, EACCES, etc.). status is null when

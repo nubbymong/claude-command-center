@@ -438,11 +438,16 @@ describe('the one-off Codex account attribution (usage track MP9)', () => {
     let seen = false
     const unreadWhenCleared: number[] = []
     const totals: number[] = []
+    const counts: Array<[number, number]> = []
     b.fake.onMessage((m) => {
       b.msgs.push(m)
       if (m.type !== 'index-progress') return
-      const r = (m as { accountReread?: { stage: string; total: number } | null }).accountReread
-      if (r) { seen = true; if (r.stage === 'reread' && r.total > 0) totals.push(r.total) } else if (seen) unreadWhenCleared.push(unread())
+      const r = (m as { accountReread?: { stage: string; done: number; total: number } | null }).accountReread
+      if (r) {
+        seen = true
+        if (r.stage === 'reread' && r.total > 0) totals.push(r.total)
+        if (r.stage === 'reread') counts.push([r.done, r.total])
+      } else if (seen) unreadWhenCleared.push(unread())
     })
     await b.settle()
     expect(named).toBe(true)
@@ -452,6 +457,9 @@ describe('the one-off Codex account attribution (usage track MP9)', () => {
     // Stage 1 counts every rollout it will read: this computer's and the account's.
     expect(totals.length).toBeGreaterThan(0)
     expect(totals.every((t) => t === 3)).toBe(true)
+    // [CI] and never says it has read more than it counted.
+    expect(counts.length).toBeGreaterThan(0)
+    expect(counts.filter(([done, total]) => !(Number.isInteger(done) && done >= 0 && done <= total))).toEqual([])
     expect(await b.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:acct-a' }, { provider: 'codex', accountKey: 'codex:external' }])
     expect((await b.ask('index-status')).accountReread).toBeNull()
   })

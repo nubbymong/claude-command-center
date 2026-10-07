@@ -416,6 +416,31 @@ describe('the agent marker leaves through the queue', () => {
     delete api.canvas.agentMarker
   })
 
+  // [host] P4.11 review (P411-5): the submit path itself writes the one-note
+  // form, not only the helper: a review filed with one note says "1 note".
+  it('a review sent back with one note delivers "1 note" in its marker line', async () => {
+    const agentMarker = vi.fn(async () => ({ delivery: 'sent' as const }))
+    const api = (globalThis as any).window.electronAPI
+    api.canvas.agentMarker = agentMarker
+    // Main answers a submit with the session's whole review state.
+    const filed = draftState(CID, ['Q1: use the ladder.'])
+    filed.reviews = filed.reviews.map((r) => ({ ...r, status: 'submitted' }) as Review)
+    reviewSubmit.mockImplementationOnce((async () => filed) as never)
+    try {
+      await render(plan())
+      await pushNotes(['Q1: use the ladder.'])
+      act(() => revise().click())
+      await act(async () => {
+        submit().click()
+        await new Promise((r) => setTimeout(r, 0))
+      })
+      expect(reviewSubmit).toHaveBeenCalledTimes(1)
+      expect(agentMarker).toHaveBeenCalledWith({ sessionId: SID, canvasId: CID, line: 'Review #1 — 1 note · canvas_review R1' })
+    } finally {
+      delete api.canvas.agentMarker
+    }
+  })
+
   it('never throws, and never leaves an unhandled rejection, if delivery fails', async () => {
     const api = (globalThis as any).window.electronAPI
     api.canvas.agentMarker = vi.fn(async () => { throw new Error('IPC gone') })

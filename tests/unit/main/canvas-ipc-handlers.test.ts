@@ -214,7 +214,7 @@ describe('canvas:agentMarker', () => {
     // the rest typed at the prompt.
     const spy = vi.spyOn(await import('../../../src/main/canvas/canvas-marker-delivery'), 'deliverCanvasMarker')
     await marker({ sessionId: SID, canvasId: CID, line: 'Review #3\r\nrm -rf something · canvas_review R3' })
-    expect(spy).toHaveBeenCalledWith(SID, 'Review #3 rm -rf something · canvas_review R3')
+    expect(spy).toHaveBeenCalledWith(SID, 'Review #3 rm -rf something · canvas_review R3', CID)
     spy.mockRestore()
   })
 

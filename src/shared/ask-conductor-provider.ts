@@ -4,8 +4,9 @@
 // Claude Code by default; turning a provider off never rewrites the saved
 // choice. With both on, Sentinel's analysis runs on the provider this names
 // (completion plan, P3.9). The Settings row and Ask on Codex are built with
-// row 53 (PR 4); until then the key is absent and the answer is Claude Code,
-// the decided default. The one reading of the saved key, for both.
+// row 53 (PR 4, P4.3); until the row writes the key it reads as Claude Code
+// (DEFAULT_SETTINGS holds 'claude'), the decided default. The one reading
+// of the saved key, for both.
 export type AskConductorProvider = 'claude' | 'codex'
 
 /** The saved key, as PR 4's Settings row writes it. */
@@ -26,3 +27,11 @@ export function sentinelAnalysisProvider(claudeOn: boolean, codexOn: boolean, se
   if (claudeOn && codexOn) return askConductorProviderChoice(settings)
   return claudeOn ? 'claude' : codexOn ? 'codex' : null
 }
+
+/** What Ask Conductor says when its help folder cannot be rebuilt before a
+ *  start (P4.3): the dock's line for a first launch or a revive, and the Ask
+ *  tab's for a Restart, Past discussions or a restored tab. A fixed sentence:
+ *  the file system's own message names the path and an entry a session chose,
+ *  so it goes to neither, and the app log keeps only its code (review RASK-2). */
+export const ASK_HELP_FOLDER_FAILED =
+  "Could not rebuild Ask Conductor's help folder. Usually something still has a file open in it, such as a program Codex started in an earlier Ask session that is still running: end it, then try again. If it keeps failing, delete the help folder in your resources directory, or check that the resources directory is writable."

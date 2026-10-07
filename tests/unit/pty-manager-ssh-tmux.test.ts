@@ -2797,3 +2797,39 @@ describe('spawnPty SSH branch — watchdog arms at claude-running, not at spawn'
     killPty(sessionId)
   })
 })
+
+// WP2 PR 4 review fix pass (A1-Q1): before the launch command is written the
+// SSH flow reads the screen strictly, so a remote shell prompt that draws the
+// composer glyph or a vertical bar (starship, powerline, many zsh themes) is
+// never taken for the UI. The latch passes `claudeSent`; the SSH surface now
+// requires it, and this pins the reading the latch gets. [host]
+describe('spawnPty SSH branch -- a shell prompt with UI glyphs before the launch is not the UI', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('a prompt chunk with the composer glyph and vertical bars before claude is written leaves the flow short of claude-running; the same chunk after the launch latches it', () => {
+    const sessionId = 's-prompt-glyph-a1q1'
+    const states: string[] = []
+    const win = {
+      webContents: { send: (ch: string, d: { state?: unknown } | undefined) => { if (ch === `ssh:flowState:${sessionId}`) states.push(String(d?.state)) } },
+      isDestroyed: () => false,
+    } as never
+    const glyph = String.fromCodePoint(0x276f)
+    const bar = String.fromCodePoint(0x2502)
+    const promptChunk = `${bar} dev@box ~ ${bar}\r\ndev@box ~ ${glyph} `
+    onDataListeners.length = 0
+    spawnPty(win, sessionId, { ssh: SSH } as never)
+    feedPtyData(promptChunk)
+    expect(states, 'a pre-launch prompt was read as the UI').not.toContain('claude-running')
+    expect(watchdogStub.startWatchdog).not.toHaveBeenCalledWith(sessionId, expect.anything())
+    // Control: once the launch command is written, the same chunk is the UI.
+    getSshFlow(sessionId)!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel(sessionId, 'setup ok {NONCE} tmux=path\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    feedPtyData(promptChunk)
+    expect(states).toContain('claude-running')
+    killPty(sessionId)
+  })
+})

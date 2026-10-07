@@ -122,8 +122,9 @@ describe('the page (screen 1 of the approved mockup)', () => {
     expect(page.querySelector('.h2')!.textContent).toBe('Do you use Codex?')
     expect(page.querySelector('.p2-sub')!.textContent).toBe('Codex now has accounts of its own in this app. Choose again: your earlier Codex setting does not carry over.')
     const yes = byTest('codex-reconfirm-yes')!
-    expect(yes.querySelector('.as-t')!.textContent).toBe('Yes, set up CodexBeta')
-    expect(yes.querySelector('.as-beta')!.textContent).toBe('Beta')
+    // P4.11 (row 54): no Beta label on the Codex card.
+    expect(yes.querySelector('.as-t')!.textContent).toBe('Yes, set up Codex')
+    expect(yes.querySelector('.as-beta')).toBeNull()
     expect(yes.querySelector('.as-sub')!.textContent).toBe('Use the Codex sign-in on this computer, or add a Codex account')
     // The app's own Codex mark (ProviderMark), drawn as Claude's is: an SVG glyph, not a coloured square.
     expect(yes.querySelector('.as-marks svg')).not.toBeNull()

@@ -2027,6 +2027,36 @@ export function restoreProfileIdentityFromCanonical(id: string): boolean {
   return true
 }
 
+/** Remove the credential copy in a profile's canonical identity folder
+ *  (`<profile>/identity/.credentials.json`), after a sign-out of the profile
+ *  ran (WP2 PR 4): a signed-out account keeps no copy of its tokens. The rest
+ *  of the identity (its `.claude.json`) stays, so the account's name and email
+ *  still show. Link-safe, as restoreProfileIdentityFromCanonical is: the
+ *  profile folder and the identity folder are app-created, so a link or
+ *  junction at either is refused and nothing is removed; a link AT the file
+ *  is removed as the link, never its target. True when no copy is left. */
+export function removeProfileIdentityCredentials(id: string): boolean {
+  if (!isValidProfileId(id)) return false
+  const home = getProfileConfigDir(id)
+  const idDir = getAccountIdentityDir(id)
+  for (const dir of [home, idDir]) {
+    let st: fs.Stats
+    try { st = fs.lstatSync(dir) } catch { return true } // absent: no copy to remove
+    if (st.isSymbolicLink() || !st.isDirectory()) {
+      logWarn(`[profiles] ${id}: the identity folder is not a plain folder; its credential copy was left in place`)
+      return false
+    }
+  }
+  const cred = path.join(idDir, '.credentials.json')
+  // `recursive` so a folder planted at the file's name goes too; rmSync on a
+  // link removes the link itself.
+  try { fs.rmSync(cred, { force: true, recursive: true }) } catch { /* reported below */ }
+  let left = false
+  try { fs.lstatSync(cred); left = true } catch { left = false }
+  if (left) logWarn(`[profiles] ${id}: the identity credential copy could not be removed`)
+  return !left
+}
+
 /** Snapshot a profile's CURRENT per-account-home identity into its canonical
  *  backup, so it can be restored later. Best-effort; no-op if the home has no
  *  identity yet. Only reads/writes under the profile dir.

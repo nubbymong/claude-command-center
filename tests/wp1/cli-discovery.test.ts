@@ -9,6 +9,9 @@ import {
   CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION, CODEX_MAX_TESTED_VERSION,
 } from '../../src/main/providers/codex'
 import { EventEmitter } from 'node:events'
+import { readFileSync } from 'node:fs'
+import { resolve as resolvePath } from 'node:path'
+import { makeCodexProcessListerSync } from '../../src/main/providers/codex/cli-runner'
 import { codexLeftoverPids, codexChainAlone, codexRecordRunMembers, CODEX_EXEC_EXIT_SETTLE_MS, CODEX_OBSERVE_AT_MS, CODEX_OBSERVE_MAX_READS, CODEX_OBSERVE_MAX_IN_FLIGHT, CODEX_OBSERVE_QUIET_READS } from '../../src/main/providers/codex'
 import type { CodexRunMember } from '../../src/main/providers/codex'
 import { codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse, makeCodexKillTree, extractMarkedPath, CODEX_TREE_PRIME_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, codexWrapperLinePids } from '../../src/main/providers/codex'
@@ -873,6 +876,85 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
     expect([a.calls, n.calls]).toEqual([[], []])
   })
 
+  // [host] PR 4 review C-1: an exec run's stop takes its whole tree (scope
+  // 'tree': a Cloud Agent's model may have started a long command). At quit
+  // the flush used to kill only the chain it knew and drop the tree step, so
+  // the command outlived the app. It now ends the tree as a Claude agent is
+  // ended at quit: taskkill /T on its root, still running, on Windows; its
+  // process group elsewhere.
+  it('at app quit, a tree kill still reading ends its root\'s whole tree: taskkill /F /T naming its root, a call apart from the chains (no /T for those), nothing for a root that has exited', async () => {
+    flushPendingCodexKills(() => {})
+    const syncCalls: Array<{ file: string; args: string[]; opts: Record<string, unknown> }> = []
+    const runSync = (file: string, args: string[], opts: Record<string, unknown>) => { syncCalls.push({ file, args, opts }) }
+    const never = () => new Promise<CodexProcessEntry[]>(() => {})
+    // A tree kill with an earlier table: still its root alone, with /T.
+    const t = taskkills()
+    const kt = makeCodexKillTree('win32', t.spawn, 'C:\\Windows', never, async () => table)
+    const ct = child(10)
+    kt.prime!(ct as never)
+    await new Promise((r) => setTimeout(r, 0))
+    void kt(ct as never, { scope: 'tree' })
+    // A tree kill with no table yet.
+    const t2 = taskkills()
+    void makeCodexKillTree('win32', t2.spawn, 'C:\\Windows', never)(child(60) as never, { scope: 'tree' })
+    // A chain kill (a sign-in, whose browser is the user's).
+    const c = taskkills()
+    void makeCodexKillTree('win32', c.spawn, 'C:\\Windows', never)(child(30) as never)
+    // A tree kill whose root has exited since: nothing by pid.
+    const g = taskkills()
+    const cg = child(40)
+    void makeCodexKillTree('win32', g.spawn, 'C:\\Windows', never)(cg as never, { scope: 'tree' })
+    cg.exitCode = 0
+    flushPendingCodexKills(runSync)
+    expect(syncCalls).toHaveLength(2)
+    const tree = syncCalls.find((x) => x.args.includes('/T'))!
+    const chain = syncCalls.find((x) => !x.args.includes('/T'))!
+    expect(tree.file).toBe('C:\\Windows\\System32\\taskkill.exe')
+    expect(tree.args.slice(0, 2)).toEqual(['/F', '/T'])
+    expect(named(tree.args)).toEqual(new Set([10, 60]))
+    expect(chain.args[0]).toBe('/F')
+    expect(named(chain.args)).toEqual(new Set([30]))
+    for (const x of syncCalls) {
+      expect(x.opts).toMatchObject({ cwd: 'C:\\Windows', windowsHide: true })
+      expect(x.opts.timeout as number).toBeGreaterThan(0)
+      expect(x.opts.timeout as number).toBeLessThanOrEqual(5000)
+    }
+    expect([t.calls, t2.calls, c.calls, g.calls]).toEqual([[], [], [], []])
+  })
+
+  it('a quit-time tree taskkill that fails makes sure of each tree root; the chains\' call still runs', () => {
+    flushPendingCodexKills(() => {})
+    const never = () => new Promise<CodexProcessEntry[]>(() => {})
+    const ct = child(80)
+    void makeCodexKillTree('win32', taskkills().spawn, 'C:\\Windows', never)(ct as never, { scope: 'tree' })
+    const cc = child(81)
+    void makeCodexKillTree('win32', taskkills().spawn, 'C:\\Windows', never)(cc as never)
+    const seen: string[][] = []
+    expect(() => flushPendingCodexKills((_f, args) => { seen.push(args); if (args.includes('/T')) throw new Error('ETIMEDOUT') })).not.toThrow()
+    expect(seen).toHaveLength(2)
+    expect(ct.kill).toHaveBeenCalled()
+    expect(cc.kill).not.toHaveBeenCalled()
+  })
+
+  it('at app quit on POSIX, a tree kill still reading signals its run\'s process group (the run leads it); a chain kill does not; neither once its root has exited', () => {
+    flushPendingCodexKills(() => {})
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      const groups: number[] = []
+      const never = () => new Promise<CodexProcessEntry[]>(() => {})
+      const noSpawn = (() => { throw new Error('no spawn') }) as never
+      const posix = () => makeCodexKillTree('linux', noSpawn, undefined, never, null, (gid) => { groups.push(gid) })
+      void posix()(child(70) as never, { scope: 'tree' })
+      void posix()(child(71) as never)
+      const gone = child(72)
+      void posix()(gone as never, { scope: 'tree' })
+      gone.exitCode = 0
+      flushPendingCodexKills(() => { throw new Error('no taskkill on POSIX') })
+      expect(groups).toEqual([70])
+      expect(killSpy.mock.calls.map((x) => x[0]).sort()).toEqual([70, 71])
+    } finally { killSpy.mockRestore() }
+  })
+
   it('an early table that is not a list (even an iterable of rows) counts as a failed read', async () => {
     const { calls, spawn } = taskkills()
     const kill = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => { throw new Error('timed out') }, async () => new Set(table) as never)
@@ -1585,6 +1667,40 @@ describe('an exec run settles after its root exits (P3.9 round 2)', () => {
     } finally { vi.useRealTimers() }
   })
 
+  // [host] PR 4 review C-2: a stop inside the settle window used to settle at
+  // once, skipping the leftovers step, so a command codex had left running
+  // kept going (a Cloud Agent's Stop in the two seconds after codex exits).
+  it('a stop after the root has exited (inside the settle window) still ends the leftovers first, once, for the root\'s own lifetime, and keeps the root\'s exit code', async () => {
+    vi.useFakeTimers()
+    try {
+      const { deps, spawned, killed } = fakeDeps()
+      const windows: Array<{ since: number; until: number }> = []
+      const killTree = Object.assign((c: unknown) => { killed.push(c as never) }, { leftovers: async (_c: unknown, w: { since: number; until: number }) => { windows.push(w) } })
+      const ac = new AbortController()
+      let settled = false
+      const p = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000, signal: ac.signal }, { ...deps, killTree }).then((r) => { settled = true; return r })
+      await vi.advanceTimersByTimeAsync(100)
+      const exitAt = Date.now()
+      spawned[0].child.emit('exit', 0)
+      await vi.advanceTimersByTimeAsync(500)
+      expect(settled).toBe(false)
+      ac.abort()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(settled).toBe(true)
+      const r = await p
+      expect(r).toMatchObject({ exitCode: 0, timedOut: false, stopped: 'cancel' })
+      expect(r.spawnError).toBeUndefined()
+      expect(windows).toHaveLength(1)
+      expect(windows[0].until).toBe(exitAt)
+      expect(windows[0].since).toBeLessThanOrEqual(windows[0].until)
+      // Nothing killed by pid: the root had exited.
+      expect(killed).toEqual([])
+      // The settle timer that was pending does not run the step again.
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(windows).toHaveLength(1)
+    } finally { vi.useRealTimers() }
+  })
+
   it('a leftovers kill that never answers does not hold the run past its bound; an unusable grace starts nothing', async () => {
     vi.useFakeTimers()
     try {
@@ -2227,5 +2343,252 @@ describe('one discovery per provider at a time (WP1.17; WP2 commit 6g)', () => {
     expect((await probed).ok).toBe(true)
     expect(h.discoveries()).toBe(1)
     expect(h.service.snapshot().providers.find((p) => p.providerId === 'codex')!.discoveryState).toBe('found')
+  })
+})
+
+// [host] PR 4 ADR-009 round 1 (L4-2, L4-3): what an exec run's Stop and the
+// app's quit reach. A tree stop on POSIX signals the run's own process group
+// while its root runs, as the quit does; after a tree stop, and at quit on
+// Windows, what the records taken while the run ran prove is left of it is
+// ended by the identity checks its own exit uses (codexLeftoverPids). PURE:
+// every spawn, taskkill, table read and signal is a fake; the pids are
+// 9001xx-9003xx and never signalled for real.
+describe('a tree stop and the quit: what they reach', () => {
+  const FT = 11_644_473_600_000
+  type Entry = CodexProcessEntry
+  const runChild = (pid: number) => Object.assign(new EventEmitter(), {
+    pid, exitCode: null as number | null, signalCode: null as string | null, kill: vi.fn(),
+    stdout: new EventEmitter(), stderr: new EventEmitter(), stdin: null,
+  })
+  const noSpawn = (() => { throw new Error('no spawn') }) as never
+  const quiet = () => {}
+  const never = () => new Promise<Entry[]>(() => {})
+
+  it('POSIX: a tree stop signals the run\'s own process group first, while its root runs, then each pid; a chain stop never does, nor one whose root exited while the table was read', async () => {
+    const events: string[] = []
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((p) => { events.push(`pid ${p}`); return true })
+    try {
+      // codex (root, leads its group) -> bash; a command whose shell has
+      // exited, reparented (ppid 1) but still in the run's group.
+      const table: Entry[] = [
+        { pid: 900100, ppid: 4242, name: 'codex', created: 100 },
+        { pid: 900101, ppid: 900100, name: 'bash', created: 110 },
+        { pid: 900102, ppid: 1, name: 'sleep', created: 120 },
+      ]
+      for (const platform of ['linux', 'darwin'] as const) {
+        const kt = () => makeCodexKillTree(platform, noSpawn, undefined, async () => table, null, (g) => { events.push(`group ${g}`) }, quiet)
+        events.length = 0
+        await kt()(runChild(900100) as never, { scope: 'tree' })
+        expect(events[0], platform).toBe('group 900100')
+        expect(new Set(events.slice(1)), platform).toEqual(new Set(['pid 900100', 'pid 900101']))
+        events.length = 0
+        await kt()(runChild(900100) as never)
+        expect(events.filter((e) => e.startsWith('group')), platform).toEqual([])
+        events.length = 0
+        const gone = runChild(900100)
+        await makeCodexKillTree(platform, noSpawn, undefined, async () => { gone.exitCode = 0; return table }, null, (g) => { events.push(`group ${g}`) }, quiet)(gone as never, { scope: 'tree' })
+        expect(events, platform).toEqual([])
+      }
+    } finally { killSpy.mockRestore() }
+  })
+
+  it('a tree stop ends the run\'s leftovers once the kill has landed and the root has exited, for the root\'s own lifetime; a chain stop never', async () => {
+    vi.useFakeTimers()
+    try {
+      const cmd = { file: 'C:\\x\\codex.exe', args: ['exec'], verbatim: false, cwd: 'C:\\x' }
+      for (const killScope of ['tree', 'chain'] as const) {
+        const { deps } = fakeDeps()
+        const windows: Array<{ since: number; until: number }> = []
+        const order: string[] = []
+        const killTree = Object.assign((c: EventEmitter) => { order.push('kill'); queueMicrotask(() => c.emit('exit', null, 'SIGKILL')) }, { leftovers: async (_c: unknown, w: { since: number; until: number }) => { order.push('leftovers'); windows.push(w) } })
+        const ac = new AbortController()
+        const p = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000, killScope, signal: ac.signal }, { ...deps, killTree: killTree as never })
+        await vi.advanceTimersByTimeAsync(100)
+        ac.abort()
+        await vi.advanceTimersByTimeAsync(0)
+        const r = await p
+        expect(r, killScope).toMatchObject({ stopped: 'cancel', exitCode: null })
+        if (killScope === 'tree') {
+          expect(order).toEqual(['kill', 'leftovers'])
+          expect(windows).toHaveLength(1)
+          expect(windows[0].since).toBeLessThanOrEqual(windows[0].until)
+          expect(windows[0].until).toBe(Date.now())
+        } else {
+          expect(order).toEqual(['kill'])
+        }
+      }
+    } finally { vi.useRealTimers() }
+  })
+
+  // [host] PR 4 ADR-009 round 2: on POSIX a stop that signalled the run's
+  // group while its root ran runs no leftovers step after (it would signal
+  // again at a reaped root's id). PR 4 review (R-ADRFIX-2): one whose kill
+  // found the root already gone signalled nothing, so it runs the step, as
+  // the run's own exit does.
+  it('POSIX: a tree stop that signalled the group runs no leftovers step once the root has exited; one that did not, and its own exit, unstopped, do', async () => {
+    vi.useFakeTimers()
+    try {
+      const cmd = { file: '/usr/bin/codex', args: ['exec'], verbatim: false, cwd: '/home/me/p' }
+      for (const platform of ['linux', 'darwin'] as const) {
+        const unsignalled = fakeDeps()
+        const stepped = vi.fn(async () => {})
+        const quiet = Object.assign((c: EventEmitter) => { queueMicrotask(() => c.emit('exit', null, 'SIGKILL')) }, { leftovers: stepped, groupSignalled: () => false })
+        const ac0 = new AbortController()
+        const p0 = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000, killScope: 'tree', signal: ac0.signal }, { ...unsignalled.deps, platform, killTree: quiet as never })
+        await vi.advanceTimersByTimeAsync(100)
+        ac0.abort()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(await p0, platform).toMatchObject({ stopped: 'cancel' })
+        expect(stepped, platform).toHaveBeenCalledTimes(1)
+        const { deps } = fakeDeps()
+        const leftovers = vi.fn(async () => {})
+        const killTree = Object.assign((c: EventEmitter) => { queueMicrotask(() => c.emit('exit', null, 'SIGKILL')) }, { leftovers, groupSignalled: () => true })
+        const ac = new AbortController()
+        const p = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000, killScope: 'tree', signal: ac.signal }, { ...deps, platform, killTree: killTree as never })
+        await vi.advanceTimersByTimeAsync(100)
+        ac.abort()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(await p, platform).toMatchObject({ stopped: 'cancel' })
+        expect(leftovers, platform).not.toHaveBeenCalled()
+        // Its own exit (no stop): the step runs, as before.
+        const own = fakeDeps()
+        const q = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000, killScope: 'tree' }, { ...own.deps, platform, killTree: killTree as never })
+        own.spawned[0].child.emit('exit', 0)
+        await vi.advanceTimersByTimeAsync(2010)
+        expect(await q, platform).toMatchObject({ exitCode: 0 })
+        expect(leftovers, platform).toHaveBeenCalledTimes(1)
+      }
+    } finally { vi.useRealTimers() }
+  })
+
+  // [host] PR 4 review (R-ADRFIX-2), with the real kill: the root exits on its
+  // own while the stop's kill reads the table, so the kill signals nothing;
+  // the stop then runs the run's leftovers step, which signals the group
+  // while a process the records saw still runs (as at the run's own exit),
+  // and not once none does. A stop whose kill found the root running
+  // signals the group once, from the kill, and no step follows.
+  it('POSIX: a stop whose kill finds the root already gone runs the run\'s own leftovers step; one whose kill signalled the group runs none', async () => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      const cmd = { file: '/usr/bin/codex', args: ['exec'], verbatim: false, cwd: '/home/me/p' }
+      const root: CodexProcessEntry = { pid: 900800, ppid: 1, name: 'codex', created: 100 }
+      const helper: CodexProcessEntry = { pid: 900801, ppid: 900800, name: 'sleep', created: 110 }
+      for (const [race, helperLives, groupsWanted, pidKills] of [[true, true, [900800], 0], [true, false, [], 0], [false, true, [900800], 2]] as const) {
+        killSpy.mockClear()
+        const c = Object.assign(new EventEmitter(), { pid: 900800, exitCode: null as number | null, signalCode: null, kill: vi.fn(), stdout: new EventEmitter(), stderr: new EventEmitter(), stdin: null })
+        let phase: 'observe' | 'kill' | 'after' = 'observe'
+        const killRead: { answer: ((t: CodexProcessEntry[]) => void) | null } = { answer: null }
+        const lister = () => (phase === 'kill' ? new Promise<CodexProcessEntry[]>((res) => { killRead.answer = res }) : Promise.resolve(phase === 'observe' ? [root, helper] : helperLives ? [{ ...helper, ppid: 1 }] : []))
+        const groups: number[] = []
+        const kt = makeCodexKillTree('linux', (() => { throw new Error('no spawn') }) as never, undefined, lister, null, (g) => { groups.push(g) }, () => {})
+        const ac = new AbortController()
+        const p = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000, killScope: 'tree', signal: ac.signal }, { spawn: (() => c) as never, platform: 'linux', killTree: kt })
+        await new Promise((r) => setTimeout(r, 20))
+        phase = 'kill'
+        ac.abort()
+        await new Promise((r) => setTimeout(r, 5))
+        expect(killRead.answer, 'the kill is reading').not.toBeNull()
+        if (race) { c.exitCode = 0; c.emit('exit', 0, null) }
+        killRead.answer?.([root, helper])
+        phase = 'after'
+        if (!race) { await new Promise((r) => setTimeout(r, 5)); c.exitCode = 1; c.emit('exit', null, 'SIGKILL') }
+        expect(await p).toMatchObject({ stopped: 'cancel' })
+        expect(groups, `race ${race}, helper ${helperLives}`).toEqual(groupsWanted)
+        expect(killSpy.mock.calls.length, `race ${race}`).toBe(pidKills)
+      }
+    } finally { killSpy.mockRestore() }
+  })
+
+  it('Windows: a tree stop ends a process of the run whose parent had exited (the records name it), never a stranger', async () => {
+    const t0 = Date.now()
+    const root: Entry = { pid: 900300, ppid: 777, name: 'codex.exe', created: FT + t0 }
+    const shell: Entry = { pid: 900301, ppid: 900300, name: 'powershell.exe', created: FT + t0 + 1 }
+    const server: Entry = { pid: 900302, ppid: 900301, name: 'server.exe', created: FT + t0 + 2 }
+    const stranger: Entry = { pid: 900399, ppid: 4, name: 'explorer.exe', created: FT + t0 - 3_600_000 }
+    const c = runChild(900300)
+    let stopped = false
+    // While it runs: codex -> powershell (a model command) -> server.exe. At
+    // the stop the command's powershell has returned; server.exe runs on,
+    // its parent id naming the exited powershell. Once the root is gone: no root.
+    const lister = async () => (c.exitCode !== null ? [server, stranger] : stopped ? [root, server, stranger] : [root, shell, server, stranger])
+    const taskkill: Array<readonly string[]> = []
+    const spawnTaskkill = ((_f: string, args: readonly string[]) => {
+      taskkill.push(args)
+      const k = new EventEmitter()
+      queueMicrotask(() => {
+        if (args.includes('900300') && c.exitCode === null) { c.exitCode = 1; c.emit('exit', 1, null) }
+        k.emit('exit', 0)
+      })
+      return k
+    }) as never
+    const kt = makeCodexKillTree('win32', spawnTaskkill, 'C:\\Windows', lister, lister, undefined, quiet)
+    const ac = new AbortController()
+    const p = runCodexCli({ file: 'C:\\x\\codex.exe', args: ['exec'], verbatim: false, cwd: 'C:\\x' }, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000, killScope: 'tree', signal: ac.signal }, { spawn: (() => c) as never, platform: 'win32', killTree: kt })
+    await new Promise((r) => setTimeout(r, 30))
+    stopped = true
+    ac.abort()
+    expect(await p).toMatchObject({ stopped: 'cancel' })
+    expect(taskkill).toEqual([['/F', '/PID', '900300'], ['/F', '/PID', '900302']])
+  })
+
+  it('Windows quit: after /T on a tree kill\'s root, one synchronous read ends what the run\'s records prove is left; nothing for a run with no records, a chain kill or a root pid another process now holds; an unreadable table only skips the step', async () => {
+    flushPendingCodexKills(() => {})
+    const t0 = Date.now()
+    const root: Entry = { pid: 900300, ppid: 777, name: 'codex.exe', created: FT + t0 }
+    const shell: Entry = { pid: 900301, ppid: 900300, name: 'powershell.exe', created: FT + t0 + 1 }
+    const server: Entry = { pid: 900302, ppid: 900301, name: 'server.exe', created: FT + t0 + 2 }
+    const stranger: Entry = { pid: 900399, ppid: 4, name: 'explorer.exe', created: FT + t0 - 3_600_000 }
+    /** A kill still reading at quit, for a run observed once (or not). */
+    const pendingKill = async (sync: (() => Entry[]) | null, scope: 'tree' | 'chain' = 'tree', observe = true) => {
+      let mode: 'observe' | 'kill' = 'observe'
+      const lister = () => (mode === 'observe' ? Promise.resolve([root, shell, server, stranger]) : never())
+      const kt = makeCodexKillTree('win32', noSpawn, 'C:\\Windows', lister, lister, undefined, quiet, sync)
+      const c = runChild(900300)
+      if (observe) { kt.observe!(c as never, t0 - 10, 'start'); await new Promise((r) => setTimeout(r, 10)) }
+      mode = 'kill'
+      void kt(c as never, scope === 'tree' ? { scope: 'tree' } : undefined)
+    }
+    const flush = () => { const calls: string[][] = []; flushPendingCodexKills((_f, args) => { calls.push(args) }); return calls }
+    let reads = 0
+    // The root is set aside by the start time recorded; server.exe is the run's.
+    await pendingKill(() => { reads++; return [root, server, stranger] })
+    expect(flush()).toEqual([['/F', '/T', '/PID', '900300'], ['/F', '/PID', '900302']])
+    expect(reads).toBe(1)
+    // A root pid another process now holds: nothing named.
+    await pendingKill(() => [{ ...root, created: root.created! + 50_000 }, server, stranger])
+    expect(flush()).toEqual([['/F', '/T', '/PID', '900300']])
+    // No records, a chain kill, or no reader: no read, the kill's own call alone.
+    reads = 0
+    const counted = () => { reads++; return [server] }
+    await pendingKill(counted, 'tree', false)
+    expect(flush()).toEqual([['/F', '/T', '/PID', '900300']])
+    await pendingKill(counted, 'chain')
+    expect(flush()).toEqual([['/F', '/PID', '900300']])
+    await pendingKill(null)
+    expect(flush()).toEqual([['/F', '/T', '/PID', '900300']])
+    expect(reads).toBe(0)
+    // An unreadable table: the tree call stands, nothing throws.
+    await pendingKill(() => { throw new Error('ETIMEDOUT') })
+    expect(flush()).toEqual([['/F', '/T', '/PID', '900300']])
+  })
+
+  it('the quit\'s table read: the absolute PowerShell\'s CIM query, bounded, synchronous, parsed; none off Windows or with no usable root', () => {
+    const calls: Array<{ file: string; args: string[]; opts: Record<string, unknown> }> = []
+    const read = makeCodexProcessListerSync('win32', 'C:\\Windows', (file, args, opts) => { calls.push({ file, args, opts }); return '900302,900301,133000000000000000,server.exe\r\n' })
+    expect(read!()).toEqual([{ pid: 900302, ppid: 900301, name: 'server.exe', created: 13300000000000 }])
+    expect(calls[0].file).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+    expect(calls[0].args).toEqual(['-NoProfile', '-NonInteractive', '-Command', WINDOWS_PROCESS_QUERY])
+    expect(calls[0].opts).toMatchObject({ timeout: CODEX_PROCESS_TABLE_TIMEOUT_MS, windowsHide: true, cwd: 'C:\\Windows' })
+    for (const [platform, root] of [['linux', '/'], ['darwin', '/'], ['win32', 'Windows'], ['win32', undefined]] as const) {
+      expect(makeCodexProcessListerSync(platform, root, () => { throw new Error('never') }), `${platform} ${root}`).toBeNull()
+    }
+  })
+
+  it('the runner\'s own kill is built with the quit\'s table read', () => {
+    const src = readFileSync(resolvePath(__dirname, '../../src/main/providers/codex/cli-runner.ts'), 'utf8').replace(/\r\n/g, '\n')
+    const at = src.indexOf('export function defaultCodexRunDeps(')
+    expect(at).toBeGreaterThan(0)
+    const body = src.slice(at, src.indexOf('\n}\n', at))
+    expect(body).toMatch(/makeCodexKillTree\([^\n]*makeCodexProcessListerSync\(platform, systemRoot\)\)/)
   })
 })

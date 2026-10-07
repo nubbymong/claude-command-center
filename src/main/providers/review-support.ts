@@ -65,7 +65,7 @@ export const DEPTH_GUARD_PREFIXES = ['CCC_', 'CONDUCTOR_', 'CLAUDE_MULTI_']
 
 /** The environment a reviewer runs with, from its prepared launch's: no
  *  Conductor variable (depth one), only absolute PATH entries, and on
- *  Windows a cmd.exe that does not search its current folder first. */
+ *  Windows NoDefaultCurrentDirectoryInExePath=1 for cmd.exe. */
 export function reviewerEnv(source: Readonly<Record<string, string>> | undefined, platform: NodeJS.Platform): Record<string, string> {
   const win32 = platform === 'win32'
   const env: Record<string, string> = {}
@@ -76,7 +76,7 @@ export function reviewerEnv(source: Readonly<Record<string, string>> | undefined
     env[k] = v
   }
   // Only absolute PATH entries reach the reviewer, and cmd.exe (a .cmd
-  // shim) does not search its current directory before PATH.
+  // shim) gets NoDefaultCurrentDirectoryInExePath=1.
   for (const k of Object.keys(env)) {
     if ((win32 ? k.toUpperCase() : k) !== 'PATH') continue
     const sep = win32 ? ';' : ':'

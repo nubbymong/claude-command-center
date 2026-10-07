@@ -8,12 +8,14 @@ import { PROVIDER_IDS } from '../../shared/providers'
 import type { ProviderPackageFactory } from './core'
 import { registerProviderPackage, listProviderPackages, tryGetProviderPackage } from './core'
 import { createClaudePackage } from './claude'
-import type { ClaudeLegacyAccountsIo, ClaudeReviewPorts } from './claude'
+import type { ClaudeLegacyAccountsIo, ClaudeReviewPorts, ClaudeAuthPorts } from './claude'
 import { createCodexPackage, cliCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps, flushPendingCodexKills } from './codex'
-import type { CodexRealmSource } from './codex'
+import type { CodexRealmSource, CodexCommand, CodexRunOptions, CodexRunResult } from './codex'
 import { findRealm, realmOperable } from '../../shared/providers'
 import { readProfilesStrict, updateProfilesStrict, mkdirSecure, profileRealmLaunch, profileReviewRefusal, recordProfileReviewPreflight } from '../account-profiles'
 import { holdProfileForRun } from '../profile-consumers'
+import { readClaudeCliAuth, logoutClaudeCli } from '../account-web/claude-cli-auth'
+import type { ClaudeCliAuthRunner } from '../account-web/claude-cli-auth'
 import { resolveClaudeExecutable } from '../claude-cli-version'
 import { readConfigChecked } from '../config-manager'
 import { getAccountRegistry, getAccountRegistryResourcesDir, REGISTRY_DIRNAME } from '../provider-account-registry'
@@ -91,11 +93,52 @@ export const claudeReviewPorts: ClaudeReviewPorts = {
   run: (cmd, opts) => runCodexCli(cmd, opts, defaultCodexRunDeps()),
 }
 
+/** How the Claude sign-in status and sign-out run the CLI (WP2 PR 4): the
+ *  executable the Claude package's discovery proved, through the reviewer's
+ *  runner -- no shell (an npm shim through an absolute cmd.exe with a
+ *  constant argument line), in the executable's own folder, and the whole
+ *  process tree stopped at the time limit. `run` is replaceable for a test. */
+export function claudeCliAuthRunner(
+  executable: string,
+  platform: NodeJS.Platform = process.platform,
+  run: (cmd: CodexCommand, opts: CodexRunOptions) => Promise<CodexRunResult> = (cmd, opts) => runCodexCli(cmd, opts, defaultCodexRunDeps()),
+): ClaudeCliAuthRunner {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix
+  const cwd = typeof executable === 'string' && executable ? pathApi.dirname(executable) : ''
+  return {
+    cwd,
+    run: async (args, env, timeoutMs) => {
+      const cmd = cliCommandLine(executable, args, platform, codexShellEnv(env, platform), 'Claude Code')
+      if ('refused' in cmd) return { refused: cmd.refused, exitCode: null, stdout: '', timedOut: false }
+      // The whole tree: an auth run starts no program of the user's.
+      const r = await run({ ...cmd, cwd }, { env, timeoutMs, killScope: 'tree' })
+      return {
+        exitCode: r.exitCode,
+        stdout: r.stdout,
+        timedOut: r.timedOut === true || r.stopped === 'deadline',
+        ...(r.spawnError !== undefined ? { spawnError: r.spawnError } : {}),
+        ...(r.killSettled instanceof Promise ? { killSettled: r.killSettled } : {}),
+      }
+    },
+  }
+}
+
+/** The Claude sign-in ports (WP2 PR 4, owner answers 2026-10-04): the app's
+ *  own `claude auth status` probe (the one the Accounts panel uses) and the
+ *  sign-out beside it, both keyed by profile and run from the executable the
+ *  package hands over; the package resolves a realm to its profile through
+ *  the same snapshot read the reviewer uses. */
+export const claudeAuthPorts: ClaudeAuthPorts = {
+  lookupRealm: (ref) => claudeReviewPorts.lookupRealm(ref),
+  readStatus: (profileId, executable) => readClaudeCliAuth(profileId, claudeCliAuthRunner(executable)),
+  logout: (profileId, input) => logoutClaudeCli(profileId, { runner: claudeCliAuthRunner(input.executable), acknowledgeComputerSignIn: input.acknowledged === true }),
+}
+
 /** Keyed by `ProviderId`, so a provider added to the union but not composed
  *  here is a compile error rather than one that silently never registers.
  *  Exactly one package per provider: the Codex realm locks live in it. */
 const PACKAGE_FACTORIES: Readonly<Record<ProviderId, ProviderPackageFactory>> = {
-  claude: () => createClaudePackage({ legacyAccountsIo: claudeLegacyAccountsIo, review: claudeReviewPorts }),
+  claude: () => createClaudePackage({ legacyAccountsIo: claudeLegacyAccountsIo, review: claudeReviewPorts, auth: claudeAuthPorts }),
   codex: () => createCodexPackage({ realms: codexRealmSource, auth: { takeSecret: (handle) => takeProviderSecret(handle) }, carryMarksPort }),
 }
 

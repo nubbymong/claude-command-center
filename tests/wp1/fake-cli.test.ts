@@ -4,6 +4,10 @@
 // process -- on Windows through a real npm-style `.cmd` shim and cmd.exe,
 // which is where quoting and CVE-2024-27980 handling actually break.
 //
+// WP1.69: FAKE below is one of the fakes the versioned oracle
+// (tests/wp1/fake-cli/oracle.json) holds to the real CLI; the comparison is
+// tests/wp1/fake-cli-oracle.test.ts, which reads FAKE as text.
+//
 // HOST QUARANTINE: this suite writes a temp directory and starts processes. It
 // runs in CI and on the VM, never on the owner's workstation. It touches no
 // ACL, no junction, no real home and no real Codex.
@@ -136,7 +140,7 @@ if (a === 'app-server') {
   return
 }
 if (a === 'login --with-api-key') {
-  if (process.stdin.isTTY) { process.stderr.write('refuses a TTY\\n'); process.exit(2) }
+  if (process.stdin.isTTY) { process.stderr.write('refuses a TTY\\n'); process.exit(1) }
   let d = ''
   process.stdin.on('data', (c) => { d += c })
   process.stdin.on('end', () => {
@@ -155,9 +159,8 @@ beforeAll(() => {
   fs.writeFileSync(path.join(dir, 'fake-codex.js'), FAKE)
   if (IS_WIN) {
     // npm's own cmd-shim template: no node.exe beside it, so it runs a BARE
-    // `node` -- which cmd.exe would look for in the current folder first,
-    // were NoDefaultCurrentDirectoryInExePath not set. A planted node.cmd in
-    // that folder must never run.
+    // `node`, which cmd.exe resolves from PATH with
+    // NoDefaultCurrentDirectoryInExePath=1: the node that runs is PATH's.
     exe = path.join(dir, 'codex.cmd')
     fs.writeFileSync(exe, [
       '@ECHO off', 'GOTO start', ':find_dp0', 'SET dp0=%~dp0', 'EXIT /b', ':start', 'SETLOCAL', 'CALL :find_dp0',
@@ -344,7 +347,7 @@ describe('the model catalogue read against the fake Codex CLI (real processes; P
 })
 
 describe('the Codex reviewer against the fake Codex CLI (real processes)', () => {
-  it('the request arrives intact on stdin, in the project, with no Conductor variable; relative PATH entries and a node in the project are never used', async () => {
+  it('the request arrives intact on stdin, in the project, with no Conductor variable; the node and the CLI that run come from the absolute PATH entries', async () => {
     const project = path.join(dir, 'project')
     fs.mkdirSync(project, { recursive: true })
     const marker = path.join(dir, 'PROJECT-NODE-RAN')

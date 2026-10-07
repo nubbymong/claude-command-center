@@ -52,7 +52,7 @@ const CONFIGS = [
     sessionType: 'local', provider: 'claude', pinned: true, sectionId: 'sec-web', profileKey: 'alex',
     claudeOptions: { model: 'fable', effortLevel: 'max', permissionMode: 'acceptEdits', loggingEnabled: true, agentIds: [] } },
   { id: 'cfg-docs', label: 'docs-site', workingDirectory: 'C:\\dev\\web\\docs-site', color: '#f5c2e7', identityColorKey: 'pink',
-    sessionType: 'local', provider: 'codex', sectionId: 'sec-web', profileKey: 'sam',
+    sessionType: 'local', provider: 'codex', sectionId: 'sec-web', codexAccountKey: 'website',
     codexOptions: { model: 'gpt-5.5', reasoningEffort: 'high', permissionsPreset: 'standard' } },
   { id: 'cfg-pipe', label: 'pipeline', workingDirectory: 'C:\\dev\\data\\pipeline', color: '#a6e3a1', identityColorKey: 'violet',
     sessionType: 'local', provider: 'claude', sectionId: 'sec-data', profileKey: 'jordan',
@@ -75,14 +75,14 @@ const CONFIGS = [
 const SESSIONS = [
   { id: 'a4f0c2d19e7b6358a1c0d2e4', configKey: 'cfg-store', label: 'storefront', customName: 'promo codes', accountKey: 'alex',
     provider: 'claude', model: 'fable', effort: 'max', scenario: 'promo', resumeUuid: '6d3f2a41-8c9e-4b17-9f52-0a1b2c3d4e5f',
-    status: { model: 'Fable 5', modelId: 'claude-fable-5', ctxPct: 61, ctxWindow: 1000000, inTok: 608412, outTok: 41219, cost: 14.82, durMs: 2 * HOUR + 7 * MIN, added: 412, removed: 96 } },
+    status: { model: 'Fable 5.1', modelId: 'claude-fable-5-1', ctxPct: 61, ctxWindow: 1000000, inTok: 608412, outTok: 41219, cost: 14.82, durMs: 2 * HOUR + 7 * MIN, added: 412, removed: 96 } },
   { id: 'b7e1d3f40a8c2957b3d1e5f6', configKey: 'cfg-api', label: 'api-gateway', accountKey: 'sam',
     provider: 'claude', model: 'fable', effort: 'high', scenario: 'ratelimit', resumeUuid: '2b8e4c17-5f3a-4d92-a6c1-7e0d9f2b3a45',
-    status: { model: 'Fable 5', modelId: 'claude-fable-5', ctxPct: 34, ctxWindow: 1000000, inTok: 338905, outTok: 22876, cost: 8.11, durMs: 1 * HOUR + 22 * MIN, added: 188, removed: 41 } },
+    status: { model: 'Fable 5.1', modelId: 'claude-fable-5-1', ctxPct: 34, ctxWindow: 1000000, inTok: 338905, outTok: 22876, cost: 8.11, durMs: 1 * HOUR + 22 * MIN, added: 188, removed: 41 } },
   { id: 'c9a2e4b51f0d3a68c4e2f6a7', configKey: 'cfg-pipe', label: 'pipeline', accountKey: 'jordan',
     provider: 'claude', model: 'opus', effort: 'max', scenario: 'dedupe', resumeUuid: '9f1c7e23-0a4b-4c58-b2d7-3e6f8a1c9d02',
-    status: { model: 'Opus 4.8', modelId: 'claude-opus-4-8', ctxPct: 78, ctxWindow: 200000, inTok: 156311, outTok: 18402, cost: 5.63, durMs: 3 * HOUR + 41 * MIN, added: 731, removed: 264 } },
-  { id: 'd1b3f5a62e0c4b79d5f3a7b8', configKey: 'cfg-docs', label: 'docs-site', accountKey: 'sam',
+    status: { model: 'Opus 5.5', modelId: 'claude-opus-5-5', ctxPct: 78, ctxWindow: 1000000, inTok: 156311, outTok: 18402, cost: 5.63, durMs: 3 * HOUR + 41 * MIN, added: 731, removed: 264 } },
+  { id: 'd1b3f5a62e0c4b79d5f3a7b8', configKey: 'cfg-docs', label: 'docs-site', codexAccountKey: 'website',
     provider: 'codex', model: 'gpt-5.5', scenario: 'codex' },
   { id: 'e2c4a6b73f1d5c80e6a4b8c9', configKey: 'cfg-infra', label: 'infra', accountKey: 'alex', shellOnly: true },
 ]
@@ -135,7 +135,7 @@ const SCENARIOS = {
       { tool: 'Update', input: { file_path: 'src/checkout/Summary.tsx' }, result: ['Updated src/checkout/Summary.tsx with 6 additions and 1 removal'] },
       { tool: 'Bash', input: { command: 'npm test -- checkout', description: 'Re-run the checkout suites' },
         result: ['PASS src/checkout/__tests__/Summary.test.tsx', 'PASS src/checkout/__tests__/PromoField.test.tsx', 'Tests: 25 passed, 25 total', 'Time:  4.97 s'] },
-      { text: 'Both in. The row slides in over 180 ms and respects `prefers-reduced-motion`; an expired code now reads "This code expired on 12 Aug" instead of the generic message. Want me to render the three field placements on the canvas so you can pick one?', done: '1m 02s' },
+      { text: 'Both in. The row slides in over 180 ms and respects `prefers-reduced-motion`; an expired code now reads "This code expired on 28 Sep" instead of the generic message. Want me to render the three field placements on the canvas so you can pick one?', done: '1m 02s' },
       { user: 'Yes — show me the options on the canvas' },
       { spinner: 'Sketching' },
     ],
@@ -166,8 +166,8 @@ const SCENARIOS = {
       { text: "I'll trace an event through ingest and see where a retry can land twice." },
       { tool: 'Read', input: { file_path: 'pipeline/ingest/step.py' }, result: ['Read 211 lines'] },
       { tool: 'Read', input: { file_path: 'pipeline/ingest/sink.py' }, result: ['Read 96 lines'] },
-      { tool: 'Bash', input: { command: 'python -m pipeline.tools.sample --date 2026-08-17 --limit 5', description: 'Sample five raw events from yesterday' },
-        result: ['{"source":"pos","event_id":"e-88121","ts":"2026-08-17T02:14:09Z"}', '{"source":"pos","event_id":"e-88121","ts":"2026-08-17T02:14:11Z"}', '… +3 lines'] },
+      { tool: 'Bash', input: { command: 'python -m pipeline.tools.sample --date 2026-10-05 --limit 5', description: 'Sample five raw events from yesterday' },
+        result: ['{"source":"pos","event_id":"e-88121","ts":"2026-10-05T02:14:09Z"}', '{"source":"pos","event_id":"e-88121","ts":"2026-10-05T02:14:11Z"}', '… +3 lines'] },
       { text: 'Confirmed: the retry carries the same `event_id`, two seconds later. A bloom filter per batch catches the intra-batch case cheaply, and a `(source, event_id)` unique index on the staging table catches cross-batch retries with `ON CONFLICT DO NOTHING`.' },
       { tool: 'Update', input: { file_path: 'pipeline/ingest/step.py' }, result: ['Updated pipeline/ingest/step.py with 27 additions and 6 removals'] },
       { tool: 'Write', input: { file_path: 'migrations/0042_staging_dedupe.sql' }, result: ['Wrote 9 lines to migrations/0042_staging_dedupe.sql'] },
@@ -196,8 +196,8 @@ const SCENARIOS = {
     project: 'notes', cwd: 'C:\\dev\\notes', title: 'weekly summary',
     turns: [
       { user: 'Summarise this week\'s notes into a short update for the team channel.' },
-      { tool: 'Glob', input: { pattern: '2026-08-1*.md' }, result: ['Found 5 files'] },
-      { tool: 'Read', input: { file_path: '2026-08-17.md' }, result: ['Read 41 lines'] },
+      { tool: 'Glob', input: { pattern: '2026-10-0*.md' }, result: ['Found 5 files'] },
+      { tool: 'Read', input: { file_path: '2026-10-05.md' }, result: ['Read 41 lines'] },
       { text: 'Three themes this week: promo codes shipped to staging, the gateway limiter is in review, and ingest dedupe is benchmarked. Draft below — trimmed to five lines.' },
       { done: '38s' },
     ],
@@ -223,29 +223,29 @@ function history() {
   const rows = []
   const plan = [
     // configKey, accountKey, scenario, model, days ago (fractional), turns cap
-    ['cfg-store', 'alex', 'promo', 'claude-fable-5', 0.9, 99],
-    ['cfg-store', 'alex', 'promo', 'claude-fable-5', 2.4, 12],
-    ['cfg-store', 'alex', 'promo', 'claude-opus-4-8', 6.1, 9],
+    ['cfg-store', 'alex', 'promo', 'claude-fable-5-1', 0.9, 99],
+    ['cfg-store', 'alex', 'promo', 'claude-fable-5-1', 2.4, 12],
+    ['cfg-store', 'alex', 'promo', 'claude-opus-5-5', 6.1, 9],
     ['cfg-store', 'alex', 'promo', 'claude-fable-5', 9.7, 17],
     ['cfg-store', 'alex', 'promo', 'claude-opus-4-8', 15.2, 12],
     ['cfg-store', 'alex', 'promo', 'claude-opus-4-8', 22.5, 17],
     ['cfg-store', 'alex', 'promo', 'claude-sonnet-4-6', 31.3, 9],
-    ['cfg-api', 'sam', 'ratelimit', 'claude-fable-5', 1.2, 99],
-    ['cfg-api', 'sam', 'ratelimit', 'claude-fable-5', 4.6, 8],
+    ['cfg-api', 'sam', 'ratelimit', 'claude-fable-5-1', 1.2, 99],
+    ['cfg-api', 'sam', 'ratelimit', 'claude-fable-5-1', 4.6, 8],
     ['cfg-api', 'sam', 'ratelimit', 'claude-opus-4-8', 11.8, 11],
     ['cfg-api', 'sam', 'ratelimit', 'claude-opus-4-8', 18.3, 12],
     ['cfg-api', 'sam', 'ratelimit', 'claude-opus-4-8', 27.9, 8],
-    ['cfg-auth', 'sam', 'auth', 'claude-opus-4-8', 3.3, 99],
+    ['cfg-auth', 'sam', 'auth', 'claude-opus-5-5', 3.3, 99],
     ['cfg-auth', 'sam', 'auth', 'claude-opus-4-8', 13.4, 6],
     ['cfg-auth', 'sam', 'auth', 'claude-sonnet-4-6', 25.1, 9],
-    ['cfg-pipe', 'jordan', 'dedupe', 'claude-opus-4-8', 1.6, 99],
-    ['cfg-pipe', 'jordan', 'dedupe', 'claude-opus-4-8', 5.2, 10],
-    ['cfg-pipe', 'jordan', 'dedupe', 'claude-fable-5', 8.8, 12],
+    ['cfg-pipe', 'jordan', 'dedupe', 'claude-opus-5-5', 1.6, 99],
+    ['cfg-pipe', 'jordan', 'dedupe', 'claude-opus-5-5', 5.2, 10],
+    ['cfg-pipe', 'jordan', 'dedupe', 'claude-fable-5-1', 8.8, 12],
     ['cfg-pipe', 'jordan', 'dedupe', 'claude-opus-4-8', 16.9, 7],
     ['cfg-pipe', 'jordan', 'dedupe', 'claude-opus-4-8', 21.4, 12],
     ['cfg-pipe', 'jordan', 'dedupe', 'claude-opus-4-8', 29.6, 10],
-    ['cfg-notes', 'alex', 'notes', 'claude-sonnet-4-6', 2.1, 99],
-    ['cfg-notes', 'alex', 'notes', 'claude-sonnet-4-6', 9.0, 99],
+    ['cfg-notes', 'alex', 'notes', 'claude-sonnet-5-5', 2.1, 99],
+    ['cfg-notes', 'alex', 'notes', 'claude-sonnet-5-5', 9.0, 99],
     ['cfg-notes', 'alex', 'notes', 'claude-sonnet-4-6', 16.0, 99],
     ['cfg-notes', 'alex', 'notes', 'claude-sonnet-4-6', 23.0, 99],
     ['cfg-notes', 'alex', 'notes', 'claude-sonnet-4-6', 30.0, 99],
@@ -264,14 +264,68 @@ function histUuid(n) {
   return `${h}-4a1b-4c2d-8e3f-${String(n).padStart(12, '0')}`
 }
 
+// -- Codex accounts (2.1.1: the app's account registry) --
+// Written by codex-registry.ts with the app's own registry transitions. Ids
+// are the app's opaque shape (prefix + lowercase hex). The first is the
+// default (the docs-site config runs under it) and keeps a few memories; the
+// second is the reviewer. Example domains only.
+const CODEX_ACCOUNTS = [
+  { key: 'website', identityId: 'idn-5ea51de0000000000000c0d1', accountId: 'acct-5ea51de0000000000000c0d1', realmId: 'realm-5ea51de0000000000000c0d1',
+    name: 'Website', colourKey: 'rose', label: 'sam.rivera@example.io', plan: 'Plus', reviewer: false, memories: true },
+  { key: 'reviews', identityId: 'idn-5ea51de0000000000000c0d2', accountId: 'acct-5ea51de0000000000000c0d2', realmId: 'realm-5ea51de0000000000000c0d2',
+    name: 'Reviews', colourKey: 'orchid', label: 'jordan@example.co', plan: 'Pro', reviewer: true, memories: false },
+]
+// Codex's own memory files (a heading, not frontmatter), for the first account.
+const CODEX_MEMORIES = {
+  'MEMORY.md': '# Memory\n\nThe docs site builds from openapi/gateway.yaml; reference pages are generated, never edited by hand.\nAnchors follow the operationId, lower-case with dashes.\n',
+  'raw_memories.md': '# Raw memories\n\nSam prefers one pull request per regenerated section.\nThe link checker runs after `npm run build`, not before.\n',
+  'rollout_summaries/2026-09-29-reference-anchors.md': '# Fixed broken anchors in the API reference\n\nRegenerated 14 reference pages and mapped the old anchors to the new operationIds.\n',
+}
+
 // ── Codex rollouts (tokenomics only) ───────────────────────────────────────
 const CODEX_HISTORY = [
-  { daysAgo: 0.6, turns: 14, model: 'gpt-5.5', cwd: 'C:\\dev\\web\\docs-site' },
-  { daysAgo: 3.8, turns: 9, model: 'gpt-5.5', cwd: 'C:\\dev\\web\\docs-site' },
-  { daysAgo: 7.4, turns: 22, model: 'gpt-5.3-codex', cwd: 'C:\\dev\\web\\docs-site' },
-  { daysAgo: 12.9, turns: 11, model: 'gpt-5.5', cwd: 'C:\\dev\\web\\docs-site' },
-  { daysAgo: 19.2, turns: 16, model: 'gpt-5.5', cwd: 'C:\\dev\\web\\docs-site' },
-  { daysAgo: 26.7, turns: 8, model: 'gpt-5.3-codex', cwd: 'C:\\dev\\web\\docs-site' },
+  { account: 'website', daysAgo: 0.6, turns: 14, model: 'gpt-5.5', cwd: 'C:\\dev\\web\\docs-site' },
+  { account: 'website', daysAgo: 3.8, turns: 9, model: 'gpt-5.5', cwd: 'C:\\dev\\web\\docs-site' },
+  { account: 'website', daysAgo: 7.4, turns: 22, model: 'gpt-5.3-codex', cwd: 'C:\\dev\\web\\docs-site' },
+  { account: 'website', daysAgo: 12.9, turns: 11, model: 'gpt-5.5', cwd: 'C:\\dev\\web\\docs-site' },
+  { account: 'website', daysAgo: 19.2, turns: 16, model: 'gpt-5.5', cwd: 'C:\\dev\\web\\docs-site' },
+  { account: 'website', daysAgo: 26.7, turns: 8, model: 'gpt-5.3-codex', cwd: 'C:\\dev\\web\\docs-site' },
+  // Reviews: second-opinion code reviews of the Claude sessions' work
+  { account: 'reviews', daysAgo: 1.3, turns: 5, model: 'gpt-5.5', cwd: 'C:\\dev\\platform\\api-gateway' },
+  { account: 'reviews', daysAgo: 3.4, turns: 4, model: 'gpt-5.5', cwd: 'C:\\dev\\platform\\auth-service' },
+  { account: 'reviews', daysAgo: 9.1, turns: 6, model: 'gpt-5.5', cwd: 'C:\\dev\\web\\storefront' },
+  { account: 'reviews', daysAgo: 16.5, turns: 4, model: 'gpt-5.3-codex', cwd: 'C:\\dev\\data\\pipeline' },
+]
+
+// -- Codex conversations for the Logs page (provider 'codex' runs, Website account) --
+// Rows as the app's Codex rollout parser files them: a prompt, the agent's messages, its shell and
+// apply_patch calls. Fictional, like everything here.
+const CODEX_LOG_RUNS = [
+  { daysAgo: 0.6, model: 'gpt-5.5', turns: [
+    { user: 'Regenerate the API reference pages from the OpenAPI spec and fix the broken anchors.' },
+    { text: 'I will read the spec and the generator config, then regenerate and run the link checker.' },
+    { tool: 'shell', input: { command: 'cat openapi/gateway.yaml | head -40' } },
+    { tool: 'shell', input: { command: 'npm run gen:reference' } },
+    { tool: 'apply_patch', input: { file_path: 'docs/reference/_anchors.ts' } },
+    { tool: 'shell', input: { command: 'npm run build && npm run check:links' } },
+    { text: 'Regenerated 14 reference pages. Anchors now follow the operationId (lower case, dashes); the 9 old anchors redirect. Build and link check are clean.' },
+  ] },
+  { daysAgo: 3.8, model: 'gpt-5.5', turns: [
+    { user: 'Add a "Rate limits" page under Guides that explains the new RateLimit headers.' },
+    { text: 'Reading the gateway changelog and the existing guides index first.' },
+    { tool: 'shell', input: { command: 'ls docs/guides' } },
+    { tool: 'apply_patch', input: { file_path: 'docs/guides/rate-limits.mdx' } },
+    { tool: 'apply_patch', input: { file_path: 'docs/guides/_index.json' } },
+    { tool: 'shell', input: { command: 'npm run build' } },
+    { text: 'Added the Rate limits guide with the three headers, Retry-After on 429s, and a per-tenant override note. Linked from the Guides index.' },
+  ] },
+  { daysAgo: 12.9, model: 'gpt-5.5', turns: [
+    { user: 'The search index misses the changelog pages. Find out why.' },
+    { tool: 'shell', input: { command: 'grep -n "exclude" search.config.js' } },
+    { text: 'The changelog folder is excluded from the index by an old rule. Removing it and rebuilding the index.' },
+    { tool: 'apply_patch', input: { file_path: 'search.config.js' } },
+    { tool: 'shell', input: { command: 'npm run search:index' } },
+  ] },
 ]
 
 // ── Memory notes (~/.claude/projects/<slug>/memory/*.md) ───────────────────
@@ -279,7 +333,7 @@ const CODEX_HISTORY = [
 const MEMORY = {
   storefront: [
     ['feedback-run-checkout-suite-before-claiming-done', 'feedback', 'Always run the full checkout suite before saying a change is done — a passing PromoField test alone hid a Summary regression once.', 'Run `npm test -- checkout` (both suites), not the single file. **Why:** the totals row is shared state. **How to apply:** quote the pass count in the summary.', 1],
-    ['project-promo-codes-scope', 'project', 'Promo codes: validate on blur, 300 ms debounce, discount row only after the API accepts; expired codes get a dated message.', 'Shipped 2026-08-18 to staging. Open: pick the field placement (A inline / B link / C modal) on the canvas.', 1],
+    ['project-promo-codes-scope', 'project', 'Promo codes: validate on blur, 300 ms debounce, discount row only after the API accepts; expired codes get a dated message.', 'Shipped 2026-10-02 to staging. Open: pick the field placement (A inline / B link / C modal) on the canvas.', 1],
     ['project-checkout-totals-are-derived', 'project', 'Never store a total; Summary derives it from line items minus discount at render time.', 'Storing totals caused the double-discount bug in June. Derive, do not persist.', 4],
     ['reference-design-tokens', 'reference', 'Colour and spacing tokens live in `src/theme/tokens.css`; success tone is `--tone-success`.', 'Use tokens, never hex, in components. Tone names: neutral, success, warning, danger.', 9],
     ['feedback-no-inline-styles', 'feedback', 'Owner rejects inline style props in JSX — use the token classes.', '**Why:** the theme switch reads classes. **How to apply:** `className="tone-success"`, not `style={{color}}`.', 12],
@@ -357,12 +411,12 @@ const PAD_TITLES = [
 
 // ── Insights (report.html + kpis.json for the primary account) ─────────────
 const INSIGHTS = {
-  runId: '2026-08-18-071233-014411',
-  timestamp: Date.parse('2026-08-18T07:12:33Z'),
+  runId: '2026-10-05-071233-014411',
+  timestamp: Date.parse('2026-10-05T07:12:33Z'),
   accountKey: 'alex',
   html: `<!doctype html><html><head><meta charset="utf-8"><title>Claude Code Insights</title></head><body>
 <h1>Claude Code Insights</h1>
-<p class="subtitle">1,912 messages across 128 sessions (211 total) | 2026-07-20 to 2026-08-18</p>
+<p class="subtitle">1,912 messages across 128 sessions (211 total) | 2026-09-05 to 2026-10-04</p>
 <section class="at-a-glance"><h2>At a glance</h2>
 <div class="glance-section">What's working: you run Claude Code as a disciplined delivery pipeline — a task goes in with acceptance criteria, Claude reads before it writes, runs the affected suites, and reports numbers. Your habit of asking for a before/after measurement on anything performance-adjacent (the ingest benchmark, the LCP budget) keeps regressions from slipping in unnoticed, and the canvas review loop for UI placement decisions cut a whole round of screenshot-and-describe back-and-forth.</div>
 </section>
@@ -371,7 +425,7 @@ const INSIGHTS = {
 <p>The friction that remains is mostly environmental: a suite that is slow to start, a Redis that is not running locally, a migration that needed a manual step. When those hit, you tend to fix the environment yourself and re-prompt rather than let Claude flail, which is the right call.</p>
 </section>
 <section class="big-wins">
-<div class="big-win"><div class="big-win-title">Tests before claims</div><div class="big-win-desc">Every completed task this period ended with a real test run and a quoted pass count. Zero "it should work" endings — a change from June, when a third of sessions closed without a run.</div></div>
+<div class="big-win"><div class="big-win-title">Tests before claims</div><div class="big-win-desc">Every completed task this period ended with a real test run and a quoted pass count. Zero "it should work" endings — a change from August, when a third of sessions closed without a run.</div></div>
 <div class="big-win"><div class="big-win-title">Measured performance changes</div><div class="big-win-desc">The dedupe work and the CDN cutover both shipped with before/after numbers in the transcript. You asked for the benchmark; Claude produced it unprompted the second time.</div></div>
 <div class="big-win"><div class="big-win-title">Visual decisions on the canvas</div><div class="big-win-desc">Three UI placement questions were settled by rendering options to the canvas and annotating, instead of describing layouts in prose. Each closed in one review round.</div></div>
 </section>
@@ -392,13 +446,13 @@ const INSIGHTS = {
 <section class="horizon"><div class="horizon-card"><div class="horizon-title">Next month</div><div class="horizon-possible">With the environment pre-flight in place and conventions in memory, the remaining friction is test speed. A watch-mode runner for the gateway suite is the single highest-leverage change available.</div></div></section>
 </body></html>`,
   kpis: {
-    period: { start: '2026-07-20', end: '2026-08-18', days: 30 },
+    period: { start: '2026-09-05', end: '2026-10-04', days: 30 },
     summary: {
       improvements: [
         'Sessions ending with a real test run went from 66% to 100% — every completed task this period quoted a pass count.',
         'Correction turns per session fell from 1.9 to 0.7 as the read → plan → edit → test shape became the default.',
-        'Three UI placement decisions closed in a single canvas review round each, versus two to three prose rounds in July.',
-        'Memory now covers test placement and the no-inline-style rule; neither was re-explained after 2026-08-06.',
+        'Three UI placement decisions closed in a single canvas review round each, versus two to three prose rounds in August.',
+        'Memory now covers test placement and the no-inline-style rule; neither was re-explained after 2026-09-18.',
       ],
       regressions: [
         'Six sessions stalled on a local Redis or Postgres that was not running (up from two).',
@@ -424,13 +478,57 @@ const INSIGHTS = {
       Friction: {
         retryRate: { value: 0.09, label: 'Retry Rate', format: 'percent', goodDirection: 'down' },
         envStalls: { value: 6, label: 'Environment stalls', format: 'number', goodDirection: 'down' },
-        medianFirstEdit: { value: 71, label: 'Median time to first edit (s)', format: 'duration', goodDirection: 'down' },
+        medianFirstEdit: { value: 71000, label: 'Median time to first edit', format: 'duration', goodDirection: 'down' },
       },
     },
     lists: {
       tools: [{ name: 'Read', count: 1412 }, { name: 'Edit', count: 903 }, { name: 'Bash', count: 871 }, { name: 'Grep', count: 512 }, { name: 'Write', count: 388 }],
       languages: [{ name: 'TypeScript', count: 96 }, { name: 'Python', count: 24 }, { name: 'SQL', count: 8 }],
     },
+  },
+}
+
+// -- Codex Insights (P4.7): one run for the Website Codex account, one day before the Claude run --
+const CODEX_INSIGHTS = {
+  accountKey: 'website',
+  runId: '2026-10-04-064015-012230',
+  timestamp: Date.parse('2026-10-04T06:40:15Z'),
+  report: {
+    version: 1,
+    title: 'Codex Insights',
+    subtitle: '96 turns across 14 sessions | 2026-09-05 to 2026-10-03',
+    sections: [
+      { kind: 'at-a-glance', title: 'At a glance', body: 'Working: docs changes go in as one generated pass plus a link check, so reviews stay short.\nHindering: two sessions stalled on a stale OpenAPI spec that had not been pulled.\nQuick win: pull the spec before regenerating, as the first step of every reference task.' },
+      { kind: 'narrative', title: 'How you use Codex', paragraphs: [
+        'Most sessions on the docs site are maintenance: regenerate reference pages, fix anchors, add one guide. You ask for a build and a link check at the end and Codex runs both.',
+        'You keep Codex read-only for questions about the search index and switch to editing only once the cause is clear, which kept every edit session to one patch set.',
+      ] },
+      { kind: 'big-wins', items: [
+        { title: 'Zero broken links shipped', desc: 'Every reference regeneration ended with a clean link check: 1,204 links on the last run.' },
+        { title: 'Anchors that survive renames', desc: 'Anchors now follow the operationId, with redirects for the nine old ones.' },
+      ] },
+      { kind: 'friction', items: [
+        { title: 'Stale spec', desc: 'Two regenerations used an OpenAPI file older than the gateway release and had to be redone.' },
+      ] },
+      { kind: 'features', items: [
+        { title: 'Code review by Codex', oneliner: 'A second opinion on a Claude session\'s diff.', why: 'Your Reviews account already does this for the gateway; the docs site would catch spec drift the same way.' },
+      ] },
+      { kind: 'patterns', items: [
+        { title: 'Read-only first', summary: 'Questions run read-only; edits come after.', detail: 'Sessions that started read-only needed no second patch set.' },
+      ] },
+      { kind: 'horizon', title: 'Next month', body: 'Pull the spec automatically before each regeneration and the remaining friction is gone.' },
+    ],
+  },
+  kpis: {
+    period: { start: '2026-09-05', end: '2026-10-03', days: 29 },
+    summary: { improvements: ['Every regeneration ended with a clean link check.'], regressions: ['Two runs used a stale OpenAPI spec.'], suggestions: ['Pull the spec before regenerating.'] },
+    kpis: {
+      Volume: { sessions: { value: 14, label: 'Sessions', format: 'number', goodDirection: 'up' }, turns: { value: 96, label: 'Turns', format: 'number', goodDirection: 'up' }, toolCalls: { value: 211, label: 'Tool Calls', format: 'number', goodDirection: 'neutral' } },
+      Outcomes: { tasksCompleted: { value: 0.93, label: 'Tasks Completed', format: 'percent', goodDirection: 'up' } },
+      Friction: { sandboxRefusals: { value: 1, label: 'Sandbox Refusals', format: 'number', goodDirection: 'down' }, failedCommands: { value: 4, label: 'Failed Commands', format: 'number', goodDirection: 'down' } },
+      Performance: { medianTurnTime: { value: 38000, label: 'Median Turn Time', format: 'duration', goodDirection: 'down' } },
+    },
+    lists: { 'Top Tools': [{ name: 'shell', count: 141 }, { name: 'apply_patch', count: 70 }], 'Top Languages': [{ name: 'MDX', count: 9 }, { name: 'TypeScript', count: 5 }] },
   },
 }
 
@@ -551,5 +649,5 @@ function statusFor(session, nowMs, homeDir, drift) {
 module.exports = {
   DAY, HOUR, MIN,
   ACCOUNTS, SECTIONS, GROUPS, CONFIGS, SESSIONS, ACTIVE_SESSION_ID,
-  SCENARIOS, CODEX, history, CODEX_HISTORY, MEMORY, PAD_TITLES, INSIGHTS, CANVAS, canvasHtml, statusFor,
+  SCENARIOS, CODEX, CODEX_ACCOUNTS, CODEX_MEMORIES, history, CODEX_HISTORY, CODEX_LOG_RUNS, MEMORY, PAD_TITLES, INSIGHTS, CODEX_INSIGHTS, CANVAS, canvasHtml, statusFor,
 }

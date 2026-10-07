@@ -93,8 +93,11 @@ describe('a read failure latches save and clear off', () => {
     expect(readFileSync(file(), 'utf-8')).toBe(before)
     expect(JSON.parse(readFileSync(file(), 'utf-8')).sessions).toHaveLength(2)
 
-    expect(clearSessionState()).toEqual({ ok: false, bakRemoved: false })
+    // Refused, and said to be (PR 4 review C-Q1): the caller treats it as no
+    // clear at all, never as a held file to retry, and nothing is owed.
+    expect(clearSessionState()).toEqual({ ok: false, bakRemoved: false, refused: true })
     expect(existsSync(file())).toBe(true)
+    expect(existsSync(file() + '.clear-owed')).toBe(false)
   })
 
   it('the latch clears on the next successful load, and saving works again', () => {

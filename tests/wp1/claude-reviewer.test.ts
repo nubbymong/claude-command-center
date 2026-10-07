@@ -394,7 +394,15 @@ describe('the review-only Claude launch (WP1.38, WP1.46)', () => {
     expect(packageRegistrationProblem(pkg)).toBeNull()
     expect(pkg.launch?.kinds).toEqual(['review'])
     expect(typeof pkg.review?.run).toBe('function')
-    expect(pkg.capabilities['cli.discovery'].state).toBe('unknown')
+    // WP2 PR 4: setup.discover exists with these ports, so the declaration
+    // says so (it was left unknown while the operation was already wired);
+    // no sign-in ports were handed over, so no auth operations and no claim.
+    expect(typeof pkg.setup?.discover).toBe('function')
+    expect(pkg.capabilities['cli.discovery'].state).toBe('supported')
+    expect(pkg.auth).toBeUndefined()
+    expect(pkg.capabilities['auth.status'].state).toBe('unknown')
+    expect(pkg.capabilities['auth.logout'].state).toBe('unknown')
+    expect(bare.capabilities['cli.discovery'].state).toBe('unknown')
   })
 })
 

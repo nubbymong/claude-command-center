@@ -127,7 +127,7 @@
   {
     "id": "cli-print-mode",
     "area": "sessions",
-    "contract": "Headless (non-interactive) invocations use -p (or --print) combined with --output-format json to get structured JSON output from the CLI. The Conductor's Sentinel analysis runner and insights runner use this mode via spawnClaude / claude -p.",
+    "contract": "Headless (non-interactive) invocations use -p (or --print) combined with --output-format json to get structured JSON output from the CLI; the Conductor's insights runner uses this mode via claude -p. Sentinel's analysis runner uses -p with --output-format stream-json --verbose: it reads the api_retry events (error_status null when no answer came back) to end a run whose service cannot be reached, and the final result event as its envelope.",
     "files": [
       "src/main/insights-runner.ts"
     ],

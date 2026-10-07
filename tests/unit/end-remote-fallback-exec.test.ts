@@ -38,6 +38,11 @@ vi.mock('child_process', async (importOriginal) => ({
 }))
 
 const { endSshRemote, _setSshTargetForTest } = await import('../../src/main/pty-manager')
+const { registerProvider } = await import('../../src/main/providers')
+const { ClaudeProvider } = await import('../../src/main/providers/claude')
+// End remote reaches the Claude SSH helpers through the registered provider
+// (WP2 PR 4): the real one, as the app registers it.
+registerProvider(new ClaudeProvider())
 
 /** Resolve the exec immediately with a clean exit, like a host that answered. */
 const execOk = () => execFile.mockImplementation((_bin: string, _args: string[], _opts: unknown, cb: (e: unknown) => void) => {
@@ -62,6 +67,21 @@ describe('endSshRemote — a fallback target reaches the host', () => {
     // spawn-time target, so End dispatched nothing and the remote lived on.
     await expect(endSshRemote('detached1')).resolves.toBe('no-target')
     expect(execFile).not.toHaveBeenCalled()
+  })
+
+  it('[host] the remote command comes from the registered Claude provider\'s SSH surface (WP2 PR 4: no deep import)', async () => {
+    const asked: string[] = []
+    registerProvider(Object.assign(Object.create(ClaudeProvider.prototype) as object, {
+      id: 'claude', displayName: 'Claude',
+      remoteTmuxKillCommand: (sid: string) => { asked.push(sid); return 'ROUTED-KILL' },
+    }) as never)
+    try {
+      await expect(endSshRemote('routed1', KEY_TARGET)).resolves.toBe('completed')
+      expect(asked).toEqual(['routed1'])
+      expect(remoteCommand()).toBe('ROUTED-KILL')
+    } finally {
+      registerProvider(new ClaudeProvider())
+    }
   })
 
   it('with a fallback target it DOES dispatch the kill, to the saved host and user', async () => {

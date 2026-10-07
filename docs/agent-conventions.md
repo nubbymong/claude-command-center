@@ -46,6 +46,58 @@ npm run test:e2e     # Playwright
   must be a no-op when packaged. New long-lived ports must be split dev/prod (see
   `resolveHooksPort` / `resolveConductorMcpPort` / `resolveCdpPort`). See ADR-001.
 
+## Tests and probes never act on a real home
+
+- **Every vitest run is home-isolated.** `tests/helpers/home-isolation.ts` is the
+  first setup file of `vitest.config.ts` and `vitest.native.config.ts` (both run
+  in forks): the home variables (HOME, USERPROFILE, APPDATA, LOCALAPPDATA, both CLI
+  config-folder overrides, and the XDG folders off Windows) point at a fresh
+  folder per worker, re-asserted before every test, and the app's data folder
+  (`CCC_E2E_DATA_DIR`) is pinned per test file under the worker's temp folder. The
+  guard in `tests/helpers/home-guard-core.mjs` then throws
+  `TEST_ISOLATION_VIOLATION`, even when the code under test catches it, for: the
+  wrapped fs calls (deletes, moves, writes, creates, write-flag opens and reads, fd
+  and FileHandle calls on a real-home file) aimed at a real home; child_process,
+  ChildProcess and node-pty spawns whose working folder, child environment (home,
+  temp, XDG, git and npm config variables, and the CLI and app
+  config-folder variables) or a path written in an argument is in a real home; a
+  `cd` / `chdir` / `pushd` (glued forms such as `cd/d`, `cd\` and `cd..`
+  included) or PowerShell `Set-Location` / `sl` / `Push-Location` into or above a
+  real home, a drive or filesystem root that holds one included, in a shell line
+  (exec, `shell: true`, `cmd /c`, `sh -c`, `pwsh -Command`); worker_threads
+  Workers other than a toolchain worker (a script in the project's own
+  `node_modules`, such as esbuild's, which starts with the guard loaded first and
+  no preload in its execArgv); `process.execve`; and `process.binding('fs')`. The
+  executable itself is allowed, and so are the running node binary as the command
+  word of a hook command written in an argument (never as an operand), a node
+  script and the command word (that position only) of a `cmd /c` / `sh -c` line
+  inside the real npm or nvm folder. The temp folder, a CI runner's `RUNNER_TEMP`
+  (only `<work>/_temp` beside the checkout; a CI step's own home inside it stays
+  protected) and the checkout are not real homes. An unlink, rm or rename acts on a
+  link itself, so a link into a home as the last component, written without a
+  trailing separator, is not refused there.
+  Node children load the same guard through NODE_OPTIONS, and a child env that omits
+  a home or temp variable gets it filled in.
+- **Not covered:** native addons (they write natively); a non-node child beyond
+  its environment, working folder and arguments (a native tool that finds the
+  profile through the OS, e.g. to expand `~`, reaches the real one); shell
+  re-assembly of an argument (quotes or carets inside a word, `%VAR%` / `$VAR`, a
+  PowerShell `-EncodedCommand`, a relative path after a `cd` the guard did not
+  see); anything started outside these entry points; a refusal inside a toolchain
+  worker fails that worker's call but is not recorded in the test. Keep those on
+  temporary folders yourself.
+- Never loosen the guard to make a test pass: use `os.homedir()` / `os.tmpdir()`
+  (already isolated) or mock the code that reaches the real location.
+  `originalHomeEnv()` is for locating tools, never for writing.
+- **Probes and fake CLIs outside vitest** start with
+  `node --import <file URL of tests/helpers/probe-guard.mjs>` and an env from
+  `isolatedProbeEnv(root)` (a fresh env with every home variable inside `root`),
+  never the inherited `process.env`. On Windows `--import` needs a `file:` URL or
+  a `./relative` path. A probe vitest config (`--config`) does not inherit
+  `vitest.config.ts`: it must list `tests/helpers/home-isolation.ts` first in its
+  `setupFiles` and set `pool: 'forks'`.
+- `vitest.live.config.ts` is deliberately not covered (real ssh, real keys).
+
 ## Session isolation (parallel agents)
 
 - **One session = one worktree = one branch.** Several agents run against this

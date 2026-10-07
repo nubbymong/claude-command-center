@@ -176,4 +176,71 @@ describe('the one-off re-read waits for the account folders (defect 4)', () => {
       expect(totals.at(-1)).toBe(files.length)
     }, 30_000)
   }
+
+  // [host] With no first index on record, the sweep whose file list predates
+  // the naming of the account folders has not read them: it never reports
+  // the first index complete. The follow-up sweep that reads them does, once.
+  for (const [how, knownAtOpen] of [['not named at open', false], ['named as none at open', true]] as const) {
+    it(`with no first index on record, only the sweep that reads the named folders completes it (${how})`, async () => {
+      const home = path.join(tmp, 'home-codex')
+      const realm = path.join(tmp, 'realms', 'a', 'sessions')
+      const files = [
+        writeRollout(path.join(home, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-h.jsonl', 'cx-h', 2),
+        writeRollout(path.join(realm, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-a.jsonl', 'cx-a', 3),
+      ]
+      for (const f of files) {
+        const st = fs.statSync(f)
+        db.cursors.set(f, { path: f, size: st.size, mtime: st.mtimeMs, lastOffset: 0, scannedTo: 0, accountReread: 1, accountKey: '', codexTurns: 0 })
+      }
+      for (let i = 0; i < 48; i++) writeRollout(path.join(home, '2026', '07', '01'), `rollout-2026-07-01T00-00-00-x${i}.jsonl`, `cx-x${i}`, 1)
+      db.meta.set('accountReread', 'pending')
+      expect(db.meta.has('firstIndexComplete')).toBe(false)
+
+      const fake = new FakeTkWorkerTransport()
+      let named = false
+      const late = new Proxy(fs, {
+        get(target, k) {
+          if (k === 'readdirSync') return (p: string, o: unknown) => {
+            const listed = (fs.readdirSync as (p: string, o: unknown) => unknown)(p, o)
+            if (!named && path.resolve(String(p)) === path.resolve(home)) {
+              named = true
+              fake.post({ type: 'set-codex-realm-dirs', dirs: [{ dir: realm, accountKey: 'codex:acct-a' }] })
+            }
+            return listed
+          }
+          return (target as unknown as Record<PropertyKey, unknown>)[k]
+        },
+      })
+      const readyFirst: boolean[] = []
+      const completes: Array<{ firstIndex: boolean; drained: boolean; unread: number }> = []
+      let completed: () => void = () => {}
+      const firstIndexOnce = new Promise<void>((resolve) => { completed = resolve })
+      fake.onMessage((m: FromTkWorker) => {
+        if (m.type === 'ready') readyFirst.push(m.firstIndexComplete)
+        if (m.type !== 'index-complete') return
+        completes.push({ firstIndex: m.firstIndex, drained: m.drained, unread: files.filter((f) => !db.read.has(f)).length })
+        if (m.firstIndex) completed()
+      })
+      const w = createTokenomicsWorker(fake.asWorkerSide(), { fs: late as unknown as typeof fs, watchDebounceMs: 0 })
+      stop = () => w.stop()
+      fake.post({ type: 'open', dbPath: path.join(tmp, 'tk.db'), pricing: {}, configs: [], claudeProjectsDir: path.join(tmp, 'claude'), codexSessionsDir: home, codexRealmSessionsDirs: [], codexRealmDirsKnown: knownAtOpen })
+      let bound: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        firstIndexOnce,
+        new Promise<void>((_, fail) => { bound = setTimeout(() => fail(new Error('the first index never completed')), 20_000) }),
+      ]).finally(() => clearTimeout(bound))
+      expect(named).toBe(true)
+      expect(readyFirst).toEqual([false])
+      const at = completes.findIndex((c) => c.firstIndex)
+      // The sweep listed before the naming came first: not drained, not the
+      // first index, with the account's rollout still unread.
+      expect(at).toBeGreaterThan(0)
+      expect(completes[0]).toMatchObject({ firstIndex: false, drained: false })
+      expect(completes[0].unread).toBeGreaterThan(0)
+      expect(completes.slice(0, at).every((c) => !c.firstIndex)).toBe(true)
+      // The first index completes with a drained sweep that read every rollout.
+      expect(completes[at]).toEqual({ firstIndex: true, drained: true, unread: 0 })
+      expect(db.meta.get('firstIndexComplete')).toBe('1')
+    }, 30_000)
+  }
 })

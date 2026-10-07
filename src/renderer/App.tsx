@@ -14,6 +14,7 @@ import { useWebviewStore } from './stores/webviewStore'
 import { usePaneOcclusionStore, useOccludesNativePanes } from './stores/paneOcclusionStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
 import { setupCanvasListener } from './stores/canvasStore'
+import { setupCodexMarkerNoticeListener } from './stores/codexMarkerNoticeStore'
 import { setupCanvasReviewListener } from './stores/canvasReviewStore'
 import { setupCanvasSnapshotHost } from './canvas/canvas-snapshot-host'
 import { useLogsStore } from './stores/useLogsStore'
@@ -34,7 +35,7 @@ import { grantLaunchAcknowledgement } from './stores/launchAckStore'
 import NewAccountPrompt from './components/NewAccountPrompt'
 import SentinelPanel from './components/sentinel/SentinelPanel'
 import { useAddAccount } from './hooks/useAddAccount'
-import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
+import TrainingWalkthrough from './components/TrainingWalkthrough'
 import SessionDialog from './components/SessionDialog'
 import GuidedTour from './components/GuidedTour'
 import FeatureGuidePage from './components/FeatureGuidePage'
@@ -717,6 +718,9 @@ export default function App() {
       setupSleepListeners()
       setupActiveListeners()
       setupCanvasListener()
+      // WP2 PR 4, P4.1 (review A-1): canvas markers a Codex session did not get, kept
+      // while the canvas page is closed.
+      setupCodexMarkerNoticeListener()
       setupCanvasReviewListener()
       setupCanvasSnapshotHost()
       useGitHubStore.getState().loadConfig()
@@ -803,7 +807,9 @@ export default function App() {
     // onboarding completes.
     if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
     if (whatsNewOnly || showTraining || showTrainingAll) return
-    if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
+    // Not on the tour: nothing opens it by itself, so waiting on an unseen
+    // card would never arm this page and hold the boot chain (PR 4 VM final).
+    if (shouldShowWhatsNew()) return
     const t = setTimeout(() => setShowGitHubOnboarding(true), 120)
     return () => clearTimeout(t)
   }, [githubConfig, logsWipeBytes, whatsNewOnly, showTraining, showTrainingAll, needsCliSetup])
@@ -1320,7 +1326,6 @@ export default function App() {
     multiSpawnIntroDue,
     helloCodexOpen: helloCodexTakeoverOpen,
     whatsNewDue: shouldShowWhatsNew(),
-    trainingDue: shouldShowTraining() || isFirstInstall(),
     githubOnboardingDue: isGitHubOnboardingDue(),
   }
   // bootChain: the gate that renders now, and for the Codex introduction

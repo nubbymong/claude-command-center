@@ -887,12 +887,19 @@ describe('carryCodexRollout sweeps what a stopped carry left', () => {
     writeFileSync(stale, 'x'.repeat(64))
     utimesSync(stale, old, old)
     let swapped = false
+    const ids: string[] = []
+    const idOf = (p: string) => { const st = lstatSync(p, { bigint: true }); return `${st.dev}:${st.ino}` }
     const realNative = realpathSync.native
     const spy = vi.spyOn(realpathSync, 'native').mockImplementation(((p: string, o?: unknown) => {
       if (!swapped && String(p).toLowerCase() === stale.toLowerCase()) {
         swapped = true
-        unlinkSync(stale)
-        writeFileSync(stale, 'another file\n')
+        // Another file: made while the stale one still exists, then renamed
+        // over it. Removing it and writing the name again is not another file
+        // on Linux, where ext4 hands the freed inode number straight on.
+        ids.push(idOf(stale))
+        writeFileSync(`${stale}.next`, 'another file\n')
+        renameSync(`${stale}.next`, stale)
+        ids.push(idOf(stale))
       }
       return (realNative as (p: string, o?: unknown) => string)(p, o)
     }) as never)
@@ -902,6 +909,8 @@ describe('carryCodexRollout sweeps what a stopped carry left', () => {
       spy.mockRestore()
     }
     expect(swapped).toBe(true)
+    expect(ids).toHaveLength(2)
+    expect(ids[1]).not.toBe(ids[0])
     expect(readFileSync(stale, 'utf8')).toBe('another file\n')
   })
 })

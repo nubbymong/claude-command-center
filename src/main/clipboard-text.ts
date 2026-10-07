@@ -26,6 +26,11 @@ import { clipboard } from 'electron'
  * ~400ms) because they are outlasting the same 50-200ms Windows sync window.
  * On success it short-circuits, so the common case costs one read and no delay.
  *
+ * Electron 44: `clipboard.readText()` returns a Promise. Each read is awaited
+ * inside the guard, so a rejected read counts as empty (and is retried), and
+ * the answer is always the clipboard's text, never the Promise object itself
+ * (a Promise is truthy, so an un-awaited read would end the retry at once).
+ *
  * @param attempts total number of reads to try (>= 1)
  * @param delayMs  delay between reads in milliseconds
  * @param sleep    injectable timer (tests pass a no-op resolver)
@@ -43,7 +48,8 @@ export async function readClipboardTextWithRetry(
     // to "nothing to paste", never break the paste keybinding.
     let text = ''
     try {
-      text = clipboard.readText() || ''
+      const read: unknown = await clipboard.readText()
+      text = typeof read === 'string' ? read : ''
     } catch {
       text = ''
     }

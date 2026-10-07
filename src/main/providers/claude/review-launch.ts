@@ -47,6 +47,15 @@ export interface ClaudeReviewPorts extends ClaudeCliPorts {
 
 const VERSION_TIMEOUT_MS = 10_000
 
+/** The profile behind a realm record: a Claude profile-home realm whose
+ *  reference names a valid profile id, else null. One rule for the reviewer
+ *  and for sign-in status and sign-out (auth-operations.ts). */
+export function claudeProfileOfRealm(r: AuthRealm): string | null {
+  if (r.kind !== 'claude-config-home' || typeof r.pathRef !== 'string' || !r.pathRef.startsWith(CLAUDE_PROFILE_PATH_REF_PREFIX)) return null
+  const id = r.pathRef.slice(CLAUDE_PROFILE_PATH_REF_PREFIX.length)
+  return isValidProfileId(id) ? id : null
+}
+
 type Refusal = { ok: false; code: AuthFailureCode; message?: string }
 const refuse = (code: AuthFailureCode, message?: string): Refusal => ({ ok: false, code, ...(message ? { message } : {}) })
 
@@ -65,6 +74,10 @@ export function createClaudeReviewLaunch(ports: ClaudeReviewPorts): {
   setup: ProviderSetupOperations
   launch: ProviderLaunchOperations
   review: ProviderReviewOperations
+  /** The executable a run starts: the file discovery last proved, checked
+   *  again now (see currentExecutable). The package hands it to its sign-in
+   *  status and sign-out (WP2 PR 4); it is not a package member. */
+  executable(): Promise<{ ok: true; executable: string } | Refusal>
 } {
   const platform = ports.platform ?? process.platform
   const files = ports.fileStat ?? realFileStat()
@@ -115,13 +128,7 @@ export function createClaudeReviewLaunch(ports: ClaudeReviewPorts): {
     return { ok: true, executable: again.executable }
   }
 
-  /** The profile behind a realm: a live Claude profile-home realm whose
-   *  reference names a valid profile id, else null. */
-  const profileOfRecord = (r: AuthRealm): string | null => {
-    if (r.kind !== 'claude-config-home' || typeof r.pathRef !== 'string' || !r.pathRef.startsWith(CLAUDE_PROFILE_PATH_REF_PREFIX)) return null
-    const id = r.pathRef.slice(CLAUDE_PROFILE_PATH_REF_PREFIX.length)
-    return isValidProfileId(id) ? id : null
-  }
+  const profileOfRecord = claudeProfileOfRealm
   const profileOf = async (realm: RealmRef): Promise<string | null> => {
     let found: Awaited<ReturnType<ClaudeReviewPorts['lookupRealm']>>
     try { found = await ports.lookupRealm({ authRealmId: realm.authRealmId }) } catch { return null }
@@ -130,6 +137,7 @@ export function createClaudeReviewLaunch(ports: ClaudeReviewPorts): {
   }
 
   return {
+    executable: currentExecutable,
     // Nothing to install through the app yet: the capability stays unknown.
     setup: { discover, installRecipes: () => [] },
     launch: {

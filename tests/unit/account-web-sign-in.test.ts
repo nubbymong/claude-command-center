@@ -135,6 +135,24 @@ describe('runSignIn', () => {
     expect(s.error).toMatch(/unexpected profile id/)
     expect(spawned.length).toBe(0)
   })
+
+  // [host] WP2 PR 4 P4.6 (row 58): a registry account id (the `account` id
+  // class) has a web session of its own, in its own partition, filled only by
+  // a sign-in inside an app window. Claude's sign-in refuses it on BOTH routes,
+  // the system browser whose cookies are copied (sso) and the in-app window,
+  // before anything is launched, read or written.
+  it('refuses a registry account id on both routes, before launching, copying or wiping anything', async () => {
+    _setCdpForTest(fakeCdp('me@example.com', [sessionCookie]))
+    for (const method of ['sso', 'claudeai', 'console'] as const) {
+      const s = await runSignIn({ profileId: 'acct-0123456789abcdef', dataDir: 'C:/data', timeoutMs: 120, pollMs: 5, method })
+      expect(s.phase, method).toBe('failed')
+      expect(s.error, method).toMatch(/unexpected profile id/)
+    }
+    expect(spawned.length).toBe(0)
+    expect(runInAppSignInMock).not.toHaveBeenCalled()
+    expect(cookiesSet).not.toHaveBeenCalled()
+    expect(clearStorageData).not.toHaveBeenCalled()
+  })
 })
 
 describe('runSignIn — routing by auth method (#265 follow-up)', () => {

@@ -13,6 +13,7 @@ import { act } from 'react'
 const { default: ConfigContextMenu } = await import('../../../src/renderer/components/sidebar/ConfigContextMenu')
 const { default: SessionContextMenu } = await import('../../../src/renderer/components/sidebar/SessionContextMenu')
 const { PIN_WHILE_RUNNING_HINT, WATCHDOG_RUNTIME_HINT, WATCHDOG_UNAVAILABLE_HINT } = await import('../../../src/renderer/components/sidebar/sessionsPanelState')
+const { default: SIDEBAR_SOURCE } = await import('../../../src/renderer/components/Sidebar.tsx?raw')
 
 describe('sidebar context menus — Quick Start + running lock', () => {
   let container: HTMLDivElement; let root: Root
@@ -129,5 +130,91 @@ describe('sidebar context menus — Quick Start + running lock', () => {
     expect(rate.disabled).toBe(false)
     act(() => { rate.click() })
     expect(onToggleWatchdogCheck).toHaveBeenCalledWith('rateLimit')
+  })
+
+  // [host] WP2 PR 4 P4.6 (row 58): Claude's account items (Open artifacts,
+  // Authenticate claude.ai, Sign in to Claude Code) act on a Claude account's
+  // claude.ai session and CLI. On a Codex tab they acted on ANOTHER account,
+  // the primary Claude profile (the #216 fallback; P3.6 V5), so a Codex row
+  // never gets them, whatever its caller passes. Whether a Codex item takes
+  // Open artifacts' place is the signed artifacts record's to decide.
+  const claudeItems = {
+    onOpenArtifacts: vi.fn(), onAuthenticateWeb: vi.fn(), onSignInCode: vi.fn(), hasWebSession: true, codeSignedIn: false,
+  }
+  const accountItemTexts = () => Array.from(container.querySelectorAll('button, [data-testid="session-menu-claude-code-not-checked"]'))
+    .map((b) => b.textContent ?? '')
+    .filter((t) => /artifacts|claude\.ai|Claude Code/i.test(t))
+
+  it("session menu: a Codex row never gets Claude's account items, even when every callback is passed", () => {
+    renderSessionMenu({ session: { ...session, provider: 'codex' }, ...claudeItems })
+    expect(accountItemTexts()).toEqual([])
+    renderSessionMenu({ session: { ...session, provider: 'codex' }, ...claudeItems, hasWebSession: false, codeSignedIn: true })
+    expect(accountItemTexts()).toEqual([])
+    renderSessionMenu({ session: { ...session, provider: 'codex' }, ...claudeItems, codeNotChecked: { label: 'Claude Code is off', reason: 'off' } })
+    expect(accountItemTexts()).toEqual([])
+    // Nor a divider left behind for an empty block: only the one above Close.
+    expect(container.querySelectorAll('.my-1.border-t')).toHaveLength(1)
+  })
+
+  it("session menu: a Claude row keeps Claude's account items (the control)", () => {
+    renderSessionMenu({ ...claudeItems })
+    expect(accountItemTexts()).toEqual(['Open artifacts', 'Re-authenticate claude.ai...', 'Sign in to Claude Code'])
+    expect(container.querySelectorAll('.my-1.border-t')).toHaveLength(2)
+    // A session with no provider recorded is Claude.
+    renderSessionMenu({ session: { ...session, provider: undefined }, ...claudeItems })
+    expect(accountItemTexts()).toHaveLength(3)
+  })
+
+  it('the sidebar resolves the acting account with the provider check, and a Codex row prefetches no Claude status', () => {
+    // The acting profile comes from the one helper (claudeWebActionProfileId,
+    // tests/unit/renderer/claude-web-targets.test.ts), not the old local
+    // fallback to the primary profile.
+    expect(SIDEBAR_SOURCE).toContain('const actionProfileId = claudeWebActionProfileId(s, primaryProfileId, accountProfiles)')
+    expect(SIDEBAR_SOURCE).not.toMatch(/\(s\.profileId \?\? primaryProfileId\)\s*:\s*sshProfileId/)
+    // The right-click prefetch reads the same helper, so it refreshes only the
+    // account the menu acts on: none for a Codex row (the full read runs
+    // `claude auth status`), nor for a row whose menu has no account items.
+    // Both refresh helpers do nothing for an undefined id.
+    expect(SIDEBAR_SOURCE).toContain('const prefetchId = claudeWebActionProfileId(session, primaryProfileId, accountProfiles); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId)')
+    expect(SIDEBAR_SOURCE).not.toContain('?? (session.profileId ?? primaryProfileId)')
+  })
+
+  // [host] WP2 PR 4, P4.6 second half (row 58): a Codex row's own web-session
+  // item: the account is the one the session runs under (the sidebar resolves
+  // it with codexWebActionAccountId), and the item names no sign-in method.
+  const codexItem = () => container.querySelector('[data-testid="session-ctx-codex-web"]') as HTMLButtonElement | null
+
+  it('session menu: a Codex row gets its own chatgpt.com sign-in item; clicking it runs and dismisses', () => {
+    const onCodexWebSignIn = vi.fn(); const onDismiss = vi.fn()
+    renderSessionMenu({ session: { ...session, provider: 'codex' }, onCodexWebSignIn, onDismiss })
+    expect(codexItem()!.textContent).toBe('Sign in to chatgpt.com...')
+    act(() => { codexItem()!.click() })
+    expect(onCodexWebSignIn).toHaveBeenCalledTimes(1)
+    expect(onDismiss).toHaveBeenCalledTimes(1)
+    renderSessionMenu({ session: { ...session, provider: 'codex' }, onCodexWebSignIn, codexWebSignedIn: true })
+    expect(codexItem()!.textContent).toBe('Sign in to chatgpt.com again...')
+    // Signing in again on a live session keeps that session: the tooltip says
+    // how to use a different one instead of promising a replacement.
+    expect(codexItem()!.title).toMatch(/sign out of chatgpt\.com first/)
+    expect(codexItem()!.title).not.toMatch(/replace/i)
+    // Never Claude's items beside it.
+    expect(accountItemTexts()).toEqual([])
+    // While the account's records were written by a newer version of the app,
+    // the item is a line that says so instead of a sign-in.
+    renderSessionMenu({ session: { ...session, provider: 'codex' }, onCodexWebSignIn, codexWebUnavailable: "This account's chatgpt.com records were written by a newer version of the app." })
+    expect(codexItem()).toBeNull()
+    expect(container.querySelector('[data-testid="session-ctx-codex-web-unavailable"]')!.textContent).toBe("chatgpt.com: This account's chatgpt.com records were written by a newer version of the app.")
+  })
+
+  it('session menu: a Claude row never gets the Codex item, even when the callback is passed', () => {
+    renderSessionMenu({ ...claudeItems, onCodexWebSignIn: vi.fn() })
+    expect(codexItem()).toBeNull()
+    renderSessionMenu({ session: { ...session, provider: undefined }, onCodexWebSignIn: vi.fn() })
+    expect(codexItem()).toBeNull()
+  })
+
+  it("the sidebar wires the Codex item from the session's own registry account", () => {
+    expect(SIDEBAR_SOURCE).toContain('const codexWebId = codexWebActionAccountId(s, accountsSnapshot)')
+    expect(SIDEBAR_SOURCE).toContain('onCodexWebSignIn={codexWebId ? () => { void useCodexWebStore.getState().signIn(codexWebId) } : undefined}')
   })
 })

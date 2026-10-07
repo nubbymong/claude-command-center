@@ -9,6 +9,23 @@ on:
     branches: [main, beta, 'release/**']
   push:
     branches: [main]
+  # Release level (P4.8; OD20 D7, WP1.71): the release-candidate Codex CLI is
+  # checked on its own, dispatched with its version, besides the minimum and
+  # pinned ones every run checks. On a dispatch the codex-conformance job runs,
+  # with the always-on changelog check; every other job's condition skips it.
+  # The inputs reach a step through env, never a shell line.
+  workflow_dispatch:
+    inputs:
+      codex_rc_version:
+        description: 'Release-candidate Codex CLI version to check as well (a plain semver, for example 0.160.0); empty checks the minimum and pinned only'
+        type: string
+        required: false
+        default: ''
+      conformance_prove_red:
+        description: 'Run every real-CLI conformance check against a deliberately wrong expectation: the job must go red, each check named'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -92,6 +109,11 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'ci-run')
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Linux joined the matrix with P4.8 (OD20 D5) and was non-blocking until
+    # its first green run (CI run 37134624406, recorded in
+    # docs/wp1/evidence/ci-matrix.md). It blocks now: a Linux failure fails
+    # the run like any other (PR 4 package gate 7 needs Windows, macOS and
+    # Linux green).
     strategy:
       fail-fast: false
       matrix:
@@ -99,7 +121,8 @@ jobs:
         # windows-latest now redirects to ships ONLY Visual Studio 2026 ("18"),
         # which @electron/node-gyp cannot use yet -> better-sqlite3 rebuild fails.
         # Unpin once the electron toolchain supports VS 2026.
-        os: [windows-2025, macos-latest]
+        # ubuntu-latest takes the native rebuild path below, as macOS does.
+        os: [windows-2025, macos-latest, ubuntu-latest]
 
     steps:
       - uses: actions/checkout@v7
@@ -204,6 +227,153 @@ jobs:
           path: dist/*.dmg
           if-no-files-found: error
           retention-days: 14
+
+  # Real-CLI conformance (P4.8; rows 59, 60; OD20 D7, WP1.71). Each supported
+  # Codex CLI version is installed into a prefix of its own on each OS and run
+  # with no sign-in, each run in a fresh, empty Codex home: the app's discovery
+  # (row 2's detection evidence per OS), the help of every command line the
+  # app runs, the model list against the registry, the feature list, and the
+  # flag-drift suite. P3.1's help captures are made again, uploaded, and
+  # asserted against the normalised fixtures as each OS reads them: the
+  # captures of each OS were reviewed (CI run 37134624406) and only the
+  # differences reviewed are accepted (CCC_CODEX_HELP_ASSERT). See
+  # tests/integration/codex-real-cli-conformance.test.ts and
+  # docs/wp1/evidence/ci-matrix.md.
+  #
+  # PR and push runs check the minimum and the pinned version, both read from
+  # src/main/providers/codex/cli-contract.ts. The release candidate is a
+  # dispatch input (PR runs have none), checked at release level. The job
+  # holds no secrets and installs only the published @openai/codex package.
+  # Gated like the test matrix: the `ci-run` label on a PR, every push to main.
+  codex-conformance:
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'ci-run')
+    name: Codex CLI ${{ matrix.cli }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-latest, ubuntu-latest]
+        cli: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.codex_rc_version != '' && '["minimum","pinned","rc"]' || '["minimum","pinned"]') }}
+    env:
+      CCC_CODEX_CONFORMANCE_KIND: ${{ matrix.cli }}
+      CCC_CODEX_CONFORMANCE_PROVE_RED: ${{ inputs.conformance_prove_red && '1' || '0' }}
+      # '1' since the help captures of each OS were reviewed (P4.10; the
+      # differences accepted are in tests/integration/codex-conformance-lib.ts).
+      CCC_CODEX_HELP_ASSERT: '1'
+    steps:
+      # No git operation in this job needs the token, so it is not left on
+      # disk for the third-party install below.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - uses: actions/setup-python@v7
+        if: runner.os != 'Windows'
+        with:
+          python-version: '3.12'
+
+      - name: Install Python setuptools
+        if: runner.os != 'Windows'
+        run: pip install setuptools
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # The suite imports the Codex package, whose module graph loads node-pty;
+      # as in the test job, Windows uses the shipped prebuilds and macOS and
+      # Linux rebuild it. No Electron binary is needed: vitest mocks electron.
+      - name: Rebuild native modules
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          node -e "
+          const { rebuild } = require('@electron/rebuild');
+          rebuild({
+            buildPath: process.cwd(),
+            electronVersion: require('./node_modules/electron/package.json').version,
+            onlyModules: ['node-pty', 'better-sqlite3']
+          }).then(() => console.log('rebuild done')).catch(e => { console.error(e); process.exit(1) })
+          "
+
+      - name: Resolve this run's Codex version
+        id: ver
+        env:
+          RC_VERSION: ${{ inputs.codex_rc_version }}
+        run: node tests/integration/codex-conformance-ci.mjs version ${{ matrix.cli }}
+
+      # Codex prepares its home before it parses even --version, so every run
+      # of the CLI in this job gets a fresh, empty CODEX_HOME: the suite makes
+      # one per run, these steps make the PATH check's and the flag-drift
+      # suite's, and the last step proves the runner's own home untouched.
+      - name: The runner's own Codex home, before
+        run: node tests/integration/codex-conformance-ci.mjs own-home record "${{ runner.temp }}/own-codex-home.txt"
+
+      # The package and its platform packages declare no install scripts
+      # (0.153.4, 0.155.1), so none runs; the tarballs go to a cache of their
+      # own, not the npm cache the job saves under the lockfile's key.
+      - name: Install Codex ${{ steps.ver.outputs.version }} into its own prefix
+        shell: bash
+        env:
+          CODEX_VERSION: ${{ steps.ver.outputs.version }}
+          PREFIX: ${{ runner.temp }}/codex-${{ matrix.cli }}
+          NPM_CACHE: ${{ runner.temp }}/npm-codex-cache
+        run: npm install --global --prefix "$PREFIX" --ignore-scripts --cache "$NPM_CACHE" --no-audit --no-fund "@openai/codex@$CODEX_VERSION"
+
+      - name: Locate the installed CLI
+        id: bin
+        run: node tests/integration/codex-conformance-ci.mjs bin "${{ runner.temp }}/codex-${{ matrix.cli }}"
+
+      - name: Fresh Codex homes for the PATH check and the flag-drift suite
+        id: homes
+        run: node tests/integration/codex-conformance-ci.mjs homes onpath compat
+
+      # The flag-drift suite skips itself when no codex is on PATH: prove the
+      # install is the one PATH finds, so that suite cannot pass by skipping.
+      - name: The installed CLI is the one on PATH
+        shell: bash
+        env:
+          CODEX_VERSION: ${{ steps.ver.outputs.version }}
+          CODEX_HOME: ${{ steps.homes.outputs.onpath }}
+        run: |
+          out="$(codex --version | tr -d '\r')"
+          echo "$out"
+          [ "$out" = "codex-cli $CODEX_VERSION" ] || { echo "::error::codex on PATH printed '$out', not codex-cli $CODEX_VERSION"; exit 1; }
+
+      - name: Real-CLI conformance (the app's discovery, runner and readers)
+        env:
+          CCC_CODEX_CONFORMANCE_BIN: ${{ steps.bin.outputs.bin }}
+          CCC_CODEX_CONFORMANCE_VERSION: ${{ steps.ver.outputs.version }}
+          CCC_CODEX_CONFORMANCE_OUT: ${{ runner.temp }}/codex-conformance
+        run: npx vitest run tests/integration/codex-real-cli-conformance.test.ts
+
+      - name: Flag-drift suite against this install
+        env:
+          CODEX_HOME: ${{ steps.homes.outputs.compat }}
+        run: npx vitest run tests/integration/codex-cli-compat.test.ts
+
+      - name: No run of the CLI touched the runner's own Codex home
+        if: ${{ !cancelled() }}
+        run: node tests/integration/codex-conformance-ci.mjs own-home check "${{ runner.temp }}/own-codex-home.txt"
+
+      - name: Upload the help captures and the run report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-conformance-${{ matrix.os }}-${{ matrix.cli }}
+          path: ${{ runner.temp }}/codex-conformance
+          if-no-files-found: warn
+          retention-days: 30
 
   # SSH multi-session smoke (#24 regression gate; aicc_planning#28). Real `ssh`
   # against an EPHEMERAL localhost sshd — no external hosts or credentials, so

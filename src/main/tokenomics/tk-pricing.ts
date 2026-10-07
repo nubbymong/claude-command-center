@@ -4,8 +4,6 @@
  * Exports:
  *  - registryFallbackPricing(): registry-derived Claude pricing (per 1M tokens)
  *  - fetchModelPricing(): fetches/caches live pricing from LiteLLM
- *  - getPricing(model): resolves per-model pricing at runtime
- *  - getPricingWithSource(model): resolves pricing with a source tag
  *  - normalizeModelForPricing(model, keys): longest-prefix key match
  *  - getAllPricing(): merged Claude + Codex map for query-time cost CTE
  */
@@ -15,10 +13,7 @@ import * as https from 'https'
 import * as path from 'path'
 import { getConfigDir, ensureConfigDir } from '../config-manager'
 import { logInfo } from '../debug-logger'
-import {
-  codexPricingKeys, priceForModel, codexCachedInputPer1M,
-  parseLiteLlmOpenAiPricing, parseCachedCodexPricing, serializeCodexPricing, setLiveCodexPricing,
-} from '../providers/codex/pricing'
+import { tryGetProviderPackage } from '../providers/core'
 import { isPlainPriceId, checkedPer1M, listPricePer1M, isFreshCopy, isPriceRecord } from './price-checks'
 import { getRegistry } from '../model-registry-service'
 import type { TkPricing } from './tk-types'
@@ -31,8 +26,6 @@ export interface ModelPricing {
   cacheRead: number
   cacheWrite: number
 }
-
-export type PricingSource = 'live' | 'fallback' | 'prefix' | 'guess'
 
 // ── Registry-derived fallback pricing (per 1M tokens) ──
 // Replaces the old hardcoded FALLBACK_PRICING literal. Derived from the
@@ -56,6 +49,12 @@ let livePricing: Record<string, ModelPricing> | null = null
  *  (providers/codex/pricing.ts), beside Claude's model-pricing.json. */
 const OPENAI_CACHE_FILE = 'openai-model-pricing.json'
 const CLAUDE_CACHE_FILE = 'model-pricing.json'
+
+/** Codex's prices, through the registered package (WP2 PR 4: no deep import
+ *  into the package); null before the providers are composed. */
+function codexPricing() {
+  return tryGetProviderPackage('codex')?.pricing ?? null
+}
 
 /**
  * The Claude models of a LiteLLM price list, per 1M tokens, read through the
@@ -153,9 +152,10 @@ async function fetchModelPricingOnce(): Promise<void> {
   let openAiFresh = false
   try {
     const text = freshCopy(OPENAI_CACHE_FILE)
-    if (text !== null) {
-      const saved = parseCachedCodexPricing(JSON.parse(text))
-      setLiveCodexPricing(saved)
+    const codex = codexPricing()
+    if (text !== null && codex) {
+      const saved = codex.parseSaved(JSON.parse(text))
+      codex.setLive(saved)
       logInfo(`[tokenomics] Loaded cached OpenAI model pricing (${saved.size} models)`)
       openAiFresh = true
     }
@@ -202,52 +202,25 @@ async function fetchModelPricingOnce(): Promise<void> {
   // Saved even when it holds none, so the day's window holds and the list is
   // not fetched again on every call.
   try {
-    const openAi = parseLiteLlmOpenAiPricing(allModels)
-    setLiveCodexPricing(openAi)
-    saveCopy(OPENAI_CACHE_FILE, serializeCodexPricing(openAi))
-    logInfo(`[tokenomics] Fetched pricing for ${openAi.size} OpenAI models`)
+    const codex = codexPricing()
+    if (codex) {
+      const openAi = codex.parseList(allModels)
+      codex.setLive(openAi)
+      saveCopy(OPENAI_CACHE_FILE, codex.serialize(openAi))
+      logInfo(`[tokenomics] Fetched pricing for ${openAi.size} OpenAI models`)
+    }
   } catch (err: any) {
     logInfo(`[tokenomics] OpenAI pricing not read: ${err?.message}`)
   }
 }
 
-// Safe terminal default for the guess branch: sonnet-tier rates. Literal, not a
-// registry lookup, so a future baseline rename can never make costs NaN.
-const GUESS_DEFAULT: ModelPricing = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 }
+// P4.11 review (P411-1): getPricing / getPricingWithSource, which nothing in
+// the app called, are gone. Tokenomics prices a Claude turn by the keys of
+// getAllPricing() (tk-parse.ts toPriceModel: its own key, else the longest key
+// it starts with), so a family whose members differ in price (Opus 5.5 and
+// Sonnet 5.5 below the versions before them) prices each dated id as its own
+// version.
 
-const guessedModels = new Set<string>()
-
-export function getPricingWithSource(model: string): { pricing: ModelPricing; source: PricingSource } {
-  const fallback = registryFallbackPricing()
-  const sources: Array<[Record<string, ModelPricing>, PricingSource]> =
-    livePricing ? [[livePricing, 'live'], [fallback, 'fallback']] : [[fallback, 'fallback']]
-  for (const [db, src] of sources) {
-    if (db[model]) return { pricing: db[model], source: src }
-    // LONGEST base wins, not the first one that happens to match. Keys collapse
-    // to a base by dropping the trailing version (`claude-opus-4-8` ->
-    // `claude-opus`), so a short generic base can shadow a specific one purely
-    // by sitting earlier in the registry: `claude-opus-5` collapses to
-    // `claude-opus`, which prefixes `claude-opus-4-8-fast-20260601` and would
-    // have priced a Fast model at standard Opus rates. Registry order is a UI
-    // concern now (#385) and must not move prices.
-    let bestKey: string | null = null
-    let bestBase = ''
-    for (const key of Object.keys(db)) {
-      const base = key.replace(/-\d+[-\d]*$/, '')
-      if (model.startsWith(base) && base.length > bestBase.length) { bestBase = base; bestKey = key }
-    }
-    if (bestKey) return { pricing: db[bestKey], source: 'prefix' }
-  }
-  // Novel family: WARN + guess (spec §4) — same terminal numbers as before
-  // (sonnet rates) so totals don't shift, but tagged + logged, never silent.
-  if (!guessedModels.has(model)) {
-    guessedModels.add(model)
-    logInfo(`[tokenomics] no pricing for "${model}" — using guess (sonnet rates); Sentinel will propose a registry entry`)
-  }
-  return { pricing: fallback['claude-sonnet-4-6'] ?? GUESS_DEFAULT, source: 'guess' }
-}
-
-export function getPricing(model: string): ModelPricing { return getPricingWithSource(model).pricing }
 
 // ── normalizeModelForPricing ──
 
@@ -287,18 +260,21 @@ export function getAllPricing(): Record<string, TkPricing> {
 
   // Codex entries: the live list's and the table's, each at the price the
   // session strip uses (priceForModel), mapped to TkPricing (cacheWrite always 0)
-  for (const key of codexPricingKeys()) {
-    // A Claude model's price is Claude's: a Codex entry of the same name
-    // never replaces it.
-    if (Object.prototype.hasOwnProperty.call(out, key)) continue
-    const p = priceForModel(key)
-    if (!p) continue
-    out[key] = {
-      input: p.inputPer1M,
-      output: p.outputPer1M,
-      // MP11: no cached tier costs the full input rate, as in the strip.
-      cacheRead: codexCachedInputPer1M(p),
-      cacheWrite: 0,
+  const codex = codexPricing()
+  if (codex) {
+    for (const key of codex.keys()) {
+      // A Claude model's price is Claude's: a Codex entry of the same name
+      // never replaces it.
+      if (Object.prototype.hasOwnProperty.call(out, key)) continue
+      const p = codex.price(key)
+      if (!p) continue
+      out[key] = {
+        input: p.inputPer1M,
+        output: p.outputPer1M,
+        // MP11: no cached tier costs the full input rate, as in the strip.
+        cacheRead: codex.cachedInputPer1M(p),
+        cacheWrite: 0,
+      }
     }
   }
 

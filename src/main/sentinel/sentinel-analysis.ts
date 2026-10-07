@@ -5,9 +5,12 @@
 // old ~21KB manifest prompt (anthropics/claude-code#7263).
 import { z } from 'zod'
 import { randomBytes } from 'crypto'
+import * as fs from 'fs'
+import * as path from 'path'
 import type { SentinelFinding, SentinelProvider } from '../../shared/sentinel-types'
 import { stripSpoofableText } from '../../shared/safe-text'
 import { redactFailure } from '../providers/review-support'
+import { ANALYSIS_UNREACHABLE_WORDS } from '../../shared/sentinel-analysis-contract'
 import { evidenceIsQuoted, normaliseQuoteText, quoteKey, dropTokenRuns } from './sentinel-quote'
 
 export { evidenceIsQuoted } from './sentinel-quote'
@@ -60,20 +63,176 @@ export const CLAUDE_ANALYSIS_DENIED_TOOLS = [
  *  - `--strict-mcp-config` with no --mcp-config loads no MCP server;
  *  - the denied names are a second layer;
  *  - `--no-session-persistence` (round 3) keeps no transcript of the run in
- *    the account's projects folder.
+ *    the account's projects folder;
+ *  - `--output-format stream-json` with `--verbose` (the CLI takes the stream
+ *    only with both; owner answers review): the run's events as they come,
+ *    read while it runs (createClaudeRetryWatch); its last result line is the
+ *    envelope the json format prints alone (claudeResultLine).
  *  The run's working folder is an empty one of its own (sentinel/index.ts). */
 export const CLAUDE_ANALYSIS_ARGS: readonly string[] = [
-  '-p', '--model', 'sonnet', '--output-format', 'json', '--no-session-persistence', '--strict-mcp-config', '--setting-sources=', '--tools=', '--disallowedTools', CLAUDE_ANALYSIS_DENIED_TOOLS,
+  '-p', '--model', 'sonnet', '--output-format', 'stream-json', '--verbose', '--no-session-persistence', '--strict-mcp-config', '--setting-sources=', '--tools=', '--disallowedTools', CLAUDE_ANALYSIS_DENIED_TOOLS,
 ]
 
-/** Claude Code's own switches for the analysis run: no CLAUDE.md or memory
+/** Claude Code's own switches for a text-only run: no CLAUDE.md or memory
  *  file of any scope, no auto memory, and no git status or git instructions
- *  in its context. */
-export const CLAUDE_ANALYSIS_ENV: Readonly<Record<string, string>> = Object.freeze({
+ *  in its context. The analysis's (CLAUDE_ANALYSIS_ENV) and the Insights
+ *  roll-up's written analysis's (insights-cross-account.ts). */
+export const CLAUDE_TEXT_RUN_SWITCHES: Readonly<Record<string, string>> = Object.freeze({
   CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1',
 })
+
+/** Claude Code's own switches for the analysis run: the text-only run's
+ *  (CLAUDE_TEXT_RUN_SWITCHES), and its retry backstop. */
+export const CLAUDE_ANALYSIS_ENV: Readonly<Record<string, string>> = Object.freeze({
+  ...CLAUDE_TEXT_RUN_SWITCHES,
+  // PR 4 (owner answers review): a backstop for a Claude Code that prints no
+  // retry line (the pinned 2.1.287 to 2.1.289 print one; which older versions
+  // do not is unread, and the VM run checks 2.1.278, the managed floor), where
+  // the watch below sees nothing. Its
+  // default, 10 retries, outlasts the 3-minute cap when the service cannot be
+  // reached (Windows test VM: 192.7 s, then killed and tried again, 6 minutes
+  // in all). With 8 it gives its own reason inside the cap, said as
+  // unreachable, one attempt: 95.5 s of backoff, about 120 s with its 25%
+  // jitter, plus about 3 s for each of 9 refused requests (an estimate from
+  // that run). The one setting also covers answered retries (408, 409, 429,
+  // 5xx, 529): an analysis rides out an overloaded service for up to 8
+  // retries instead of 10; the two dropped would come about 128 to 160 s into
+  // the backoff, where the 3-minute cap ends most runs anyway.
+  CLAUDE_CODE_MAX_RETRIES: '8',
+})
+
+/** The largest settings file read for its transport variables (the CLI's own cap). */
+const SETTINGS_READ_MAX_BYTES = 2 * 1024 * 1024
+
+/** P3.9 round 3: a text-only run loads no settings file, so the network
+ *  settings its account's settings file sets (proxies, certificates: only
+ *  what the Claude package classifies as transport and keeps) are handed to
+ *  it as variables. The account's own settings file: its profile home's, or
+ *  the shared Claude folder for the default account. None when there is no
+ *  such file, it is too large, or the package cannot say. Never throws. The
+ *  one reader for the analysis and the Insights roll-up's written analysis. */
+export async function claudeSettingsTransportEnv(home: string | null): Promise<Readonly<Record<string, string>>> {
+  try {
+    const { tryGetProviderPackage } = await import('../providers/core')
+    const pick = tryGetProviderPackage('claude')?.managedLaunch?.transportSettingsEnv
+    if (typeof pick !== 'function') return {}
+    const { sharedRoot } = await import('../account-profiles')
+    const dir = home ? path.join(home, '.claude') : sharedRoot()
+    const file = path.join(dir, 'settings.json')
+    const st = fs.statSync(file)
+    if (!st.isFile() || st.size > SETTINGS_READ_MAX_BYTES) return {}
+    return pick(fs.readFileSync(file, 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+/** PR 4 (owner answers review): how many retries in a row that got no answer
+ *  from its service end a Claude Code analysis early. Claude Code prints one
+ *  `api_retry` line before each retry (the stream format, the pinned 2.1.288),
+ *  its `error_status` the HTTP status the service answered with, or null when
+ *  no answer came back. With its default 10 retries it gave up only after
+ *  192.7 s, past the 3-minute cap (Windows test VM, every proxy a dead port:
+ *  the run was killed and tried again, 6 minutes in all); its first failed
+ *  request is reported about 6 s in and its backoff doubles from 0.5 s, so the
+ *  fifth comes about 13 s in. An answered retry (408, 409, 429, 5xx, 529)
+ *  keeps Claude Code's own schedule, up to the retry backstop in
+ *  CLAUDE_ANALYSIS_ENV. */
+export const CLAUDE_UNANSWERED_RETRIES_STOP = 5
+
+/** The reason a Claude Code analysis ended that way gives. It carries
+ *  ANALYSIS_UNREACHABLE_WORDS, so Sentinel says it as unreachable and does
+ *  not try again. */
+export const CLAUDE_UNREACHABLE_TEXT = `Claude Code ${ANALYSIS_UNREACHABLE_WORDS} its service (no answer to ${CLAUDE_UNANSWERED_RETRIES_STOP} tries in a row)`
+
+/** The longest stream line kept while it arrives; a longer one is skipped. */
+const STREAM_LINE_MAX = 1024 * 1024
+
+/** One top-level stream line as an object, or null. */
+function streamEvent(raw: string): Record<string, unknown> | null {
+  const l = raw.trim()
+  if (!l.startsWith('{')) return null
+  try {
+    const ev: unknown = JSON.parse(l)
+    return ev && typeof ev === 'object' && !Array.isArray(ev) ? ev as Record<string, unknown> : null
+  } catch { return null }
+}
+
+/** Reads a Claude Code analysis's stream as it arrives and decides when it
+ *  ends early: after `stopAfter` retries in a row that got no answer: no HTTP
+ *  status and the error kind "unknown", the pinned CLI's label for a request
+ *  nothing answered (a refused connection; a reply that never came,
+ *  `no_response`, counts too). The service can also send an error after it
+ *  answered 200 (no HTTP status then): the CLI names its kind (overloaded,
+ *  rate_limit, server_error, ...), and that is an answer. An answered retry,
+ *  of either shape, or a model message resets the
+ *  count, and once the result line has come nothing ends the run. Only the
+ *  CLI's own top-level lines count: model text rides inside them, escaped.
+ *  `push` is true once, when the stop is decided. Memory is bounded by one
+ *  line. */
+export function createClaudeRetryWatch(stopAfter = CLAUDE_UNANSWERED_RETRIES_STOP): { push(chunk: string): boolean; stopped(): boolean } {
+  let partial = ''
+  let skipping = false
+  let unanswered = 0
+  let done = false
+  let stopped = false
+  const line = (raw: string) => {
+    const e = streamEvent(raw)
+    if (!e) return
+    if (e.type === 'result') { done = true; return }
+    if (e.type === 'assistant') { unanswered = 0; return }
+    if (e.type !== 'system' || e.subtype !== 'api_retry') return
+    if (typeof e.error_status === 'number' || (typeof e.error === 'string' && e.error !== 'unknown')) { unanswered = 0; return }
+    if (e.error_status === null && (e.error === 'unknown' || e.no_response !== undefined)) unanswered++
+  }
+  return {
+    push(chunk: string) {
+      let start = 0
+      for (let nl = chunk.indexOf('\n'); nl >= 0; nl = chunk.indexOf('\n', start)) {
+        if (skipping) skipping = false
+        else line(partial + chunk.slice(start, nl))
+        partial = ''
+        start = nl + 1
+      }
+      if (!skipping) {
+        partial += chunk.slice(start)
+        if (partial.length > STREAM_LINE_MAX) { partial = ''; skipping = true }
+      }
+      if (stopped || done || unanswered < stopAfter) return false
+      stopped = true
+      return true
+    },
+    stopped: () => stopped,
+  }
+}
+
+/** The last top-level `result` line of a Claude Code stream (the envelope the
+ *  json format prints alone), or null when the run printed none. */
+export function claudeResultLine(stdout: string): string | null {
+  const lines = stdout.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (streamEvent(lines[i])?.type === 'result') return lines[i].trim()
+  }
+  return null
+}
+
+/** What a Claude Code analysis run hands runAnalysis: its result line as the
+ *  stdout, as the json format printed it; or, for a run its watch ended after
+ *  unanswered retries (createClaudeRetryWatch), an error envelope carrying
+ *  CLAUDE_UNREACHABLE_TEXT. A run Sentinel cancelled itself is cut off before
+ *  its watch decides anything, so it reads as the plain failure it is (and
+ *  Sentinel drops a cancelled analysis's result). */
+export function claudeAnalysisOutcome(
+  res: { code: number; stdout: string; stderr: string },
+  stoppedUnanswered: boolean,
+): { code: number; stdout: string; stderr: string } {
+  if (stoppedUnanswered) {
+    return { code: 1, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: CLAUDE_UNREACHABLE_TEXT }), stderr: res.stderr }
+  }
+  return { code: res.code, stdout: claudeResultLine(res.stdout) ?? res.stdout, stderr: res.stderr }
+}
 
 /** How many fresh markers are tried before the notes are refused (round 2). */
 export const ANALYSIS_MARK_TRIES = 8
@@ -254,7 +413,7 @@ const CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/g
  * not complete" with no hint that it was a usage limit or that Re-run was futile
  * until reset (#430).
  */
-export function envelopeError(stdout: string): { rateLimited: boolean; reason: string } | null {
+export function envelopeError(stdout: string): { rateLimited: boolean; unreachable: boolean; reason: string } | null {
   // Parse the RAW top-level envelope — NOT unwrapPayload, which peels `.result`,
   // and on an error envelope `.result` is the human string ("You've hit your
   // weekly limit …"), not nested JSON. The error envelope's is_error /
@@ -274,8 +433,25 @@ export function envelopeError(stdout: string): { rateLimited: boolean; reason: s
   const raw = typeof env.result === 'string' ? plainErrorReason(env.result) : ''
   const reason = raw || (status !== null ? `the account returned HTTP ${status}` : 'the account could not be reached')
   const rateLimited = status === 429 || /\blimit\b/i.test(reason)
-  return { rateLimited, reason }
+  // An HTTP status is an answer from the service, so it never counts as unreachable.
+  const unreachable = status === null && !rateLimited && UNREACHABLE_REASON.test(reason)
+  return { rateLimited, unreachable, reason }
 }
+
+/** Text matched as itself in a regular expression (owner answers review):
+ *  every character a pattern treats specially is escaped. */
+function plainPattern(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** PR 4 (owner answers, the Sentinel chase): a failure that never got an
+ *  answer from the assistant's service (no network, or a proxy or firewall in
+ *  the way). Claude Code says "Connection refused ... (ECONNREFUSED)" or
+ *  "Connection error"; a runner that stopped such a run itself says
+ *  ANALYSIS_UNREACHABLE_WORDS (plain words: Codex's reviewer, once Codex is
+ *  waiting for the network; Sentinel's Claude Code runner, after retries
+ *  that got no answer, CLAUDE_UNREACHABLE_TEXT). */
+const UNREACHABLE_REASON = new RegExp(String.raw`\b(?:ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)\b|\bconnection (?:refused|error)\b|\bwaiting for network\b|(?<!\w)` + plainPattern(ANALYSIS_UNREACHABLE_WORDS) + String.raw`(?!\w)`, 'i')
 
 /** The message a JSON error body carries, if it has one. */
 function jsonErrorMessage(body: string): string | null {
@@ -321,13 +497,18 @@ export function plainErrorReason(text: string): string {
 // the fix is in Settings, not Re-run.
 export function analysisFailureMessage(
   stderr: string,
-  envErr?: { rateLimited: boolean; reason: string } | null,
+  envErr?: { rateLimited: boolean; unreachable?: boolean; reason: string } | null,
   accountLabel?: string | null,
 ): string {
   const who = accountLabel ? ` (${accountLabel})` : ''
   if (envErr) {
     if (envErr.rateLimited) {
       return `The Sentinel analysis account${who} has hit its usage limit — ${envErr.reason}. Pick a different account in Settings → Sentinel, or Re-run once it resets. The deterministic checks still ran.`
+    }
+    // PR 4: the service could not be reached; said as that, not as a busy
+    // account or a large update.
+    if (envErr.unreachable) {
+      return `AI analysis could not reach its service${who}: ${envErr.reason}. Check the network, a proxy or a firewall, then use Re-run. The deterministic checks still ran.`
     }
     return `AI analysis could not complete: ${envErr.reason}. The deterministic checks still ran. Use Re-run to try again.`
   }
@@ -350,7 +531,7 @@ export async function runAnalysis(opts: {
   if (prompt === null) return { ok: false, error: ANALYSIS_UNFENCED }
   const args = [...CLAUDE_ANALYSIS_ARGS]
   let lastStderr = ''
-  let lastEnvErr: { rateLimited: boolean; reason: string } | null = null
+  let lastEnvErr: { rateLimited: boolean; unreachable: boolean; reason: string } | null = null
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await opts.runner(args, 180000, prompt)          // 3-minute cap
     lastStderr = res.stderr
@@ -361,8 +542,9 @@ export async function runAnalysis(opts: {
     } else {
       lastEnvErr = envelopeError(res.stdout)
       // A usage limit will not clear on an immediate retry — stop and report it
-      // rather than burning the second attempt on the same wall.
-      if (lastEnvErr?.rateLimited) break
+      // rather than burning the second attempt on the same wall. PR 4: nor will
+      // a service that could not be reached (the CLI has already retried it).
+      if (lastEnvErr?.rateLimited || lastEnvErr?.unreachable) break
     }
   }
   return { ok: false, error: analysisFailureMessage(lastStderr, lastEnvErr, opts.accountLabel) }

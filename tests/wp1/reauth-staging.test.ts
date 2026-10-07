@@ -464,7 +464,7 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect(findRealm(d, newRealm)).toMatchObject({ lifecycle: 'active', ownerProviderAccountId: a })
     expect(d.journals).toEqual([])
     expect(h.service.snapshot().accounts[0]).toMatchObject({ oldSignInLeft: 'kept', operationalState: 'attention' })
-    expect(h.service.consumersOf(a)).toEqual({ session: 0, review: 0, 'sign-in': 0, operation: 0 })
+    expect(h.service.consumersOf(a)).toEqual({ session: 0, review: 0, background: 0, 'sign-in': 0, operation: 0 })
     // Usable: attention is not a block.
     expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's1' })).ok).toBe(true)
     h.service.releaseLaunch('session', 's1')

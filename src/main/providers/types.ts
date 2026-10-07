@@ -1,4 +1,4 @@
-import type { CodexOptions, LegacyVersion, ProviderId, SshConfig, StatuslineData } from '../../shared/types'
+import type { CodexOptions, LegacyVersion, ProviderId, SshConfig, SshRuntime, StatuslineData, SubmitTextResult } from '../../shared/types'
 
 export interface SpawnOptions {
   sessionId: string
@@ -78,6 +78,13 @@ export interface SpawnOptions {
    *  app are on (ids), for the resume picker to say one is open in another
    *  tab. Set by main only. */
   codexOpenElsewhere?: string[]
+  /** Codex (WP2 PR 4, P4.3): this launch is an Ask Conductor session in the
+   *  app's help folder; the byte bound of the AGENTS.md written there
+   *  (help-workspace.ts askConductorProjectDocMaxBytes). The builder passes
+   *  `-c project_doc_max_bytes=<n>` and `-c project_root_markers=[]`, so
+   *  Codex reads that file whole and no parent folder's joins it. Set by main
+   *  only. */
+  askProjectDocMaxBytes?: number
 }
 
 /** What a provider's builder hands the PTY. `commandLine` (Windows only): the
@@ -105,6 +112,15 @@ export interface ProviderSpawnCommand {
   /** Codex (P3.10): the launch carries the app's hooks (see
    *  SpawnOptions.codexHooks). */
   hooksInstalled?: boolean
+  /** Codex (WP2 PR 4, P4.1): the launch line as the app's log may hold it,
+   *  built by the builder, which knows which values are long or private and
+   *  names them by length. Absent: main logs no argument. */
+  logLine?: string
+  /** Codex (WP2 PR 4, P4.3): the launch carries `askPrompt` as its prompt on
+   *  argv, after `--` (the direct route's fresh launch, PB4). Otherwise main
+   *  holds the question and types it through the run's pane at the first
+   *  ready, empty composer. */
+  askPromptOnArgv?: boolean
 }
 
 /** A folder as it was when made: what it is (its device and file id, exact)
@@ -191,10 +207,33 @@ export interface SessionProvider {
   resolveBinary(legacyVersion?: LegacyVersion): { cmd: string; args: string[] } | null
   /** See ProviderSpawnCommand. */
   buildSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand
-  detectUiRunning(data: string): boolean
+  /** Whether `data` shows the provider's UI running. `commandSent`: whether
+   *  the launch command has been written yet (Claude reads more of the screen
+   *  as its UI once it has; absent = it has). */
+  detectUiRunning(data: string, commandSent?: boolean): boolean
 
   /** Optional -- Claude only; Codex has no statusline shim. */
   deployStatuslineScript?(resourcesDir: string): Promise<void>
+  /** Optional -- Claude only (WP2 PR 4: offered here so no module outside the
+   *  package imports its statusline code). Strip the global statusLine stanza
+   *  and planted script an older build left in the user's own settings; the
+   *  boot heal, best-effort. */
+  healGlobalStatusline?(): void
+  /** Optional -- Claude only: hand one parsed statusline payload to the
+   *  session's telemetry subscribers (ingestSessionTelemetry). The app's
+   *  statusline dispatcher calls it for every payload. */
+  deliverStatusline?(data: StatuslineData): void
+  /** Optional -- Claude only: the `statusLine` value of a local session's
+   *  settings file, running the bundled bridge script with the session id and
+   *  the path of its status-URL file. */
+  statuslineSetting?(resourcesDir: string, sessionId?: string, statusUrlFile?: string): { type: 'command'; command: string }
+  /** Optional -- Claude only: the session's statusline POST URL on the
+   *  conductor MCP server ('' while the server is not bound or the MCP is off;
+   *  throws rather than build a URL that fails its charset guard). */
+  statusPostUrl?(sessionId: string, remoteMcpPort: number | undefined, mcpPort: number, includeConductorMcp: boolean): string
+  /** Optional -- Codex: remove the conductor block an older build wrote into
+   *  the user's own provider config; the MCP server asks at start and stop. */
+  removeLegacyMcpServerConfig?(): void
   /**
    * Optional -- copy the provider's resume-picker script into
    * `<resourcesDir>/scripts/`. Both providers implement this in P4. The
@@ -217,6 +256,15 @@ export interface SessionProvider {
    *  hook folders were not prepared (round 4, prepareHookFolders): nothing is
    *  started here. */
   prepareSessionHooks?(sessionId: string, port: number, secret: string): { hookFile: string; dispose(): void } | null
+  /** Optional -- Codex (P4.1): the skills folder of the provider home a
+   *  launch runs in when the app stages its skills there per launch (a
+   *  managed account's own folder, by path), else null (this computer's own
+   *  sign-in, whose copies the app keeps through its own record instead,
+   *  src/main/canvas/codex-user-skills.ts). Path arithmetic only. */
+  stagedSkillsDir?(home: string, resourcesDir: string): string | null
+  /** Optional -- Codex (P4.1, PB9): main's own reading of each run's screen
+   *  and the submit primitive that types into its composer. */
+  readonly runScreen?: SessionRunScreen
   /** Subscribe to live telemetry for a spawned session (see TelemetryOptions). */
   ingestSessionTelemetry(
     sessionId: string,
@@ -226,6 +274,32 @@ export interface SessionProvider {
   listHistorySessions(): Promise<HistorySession[]>
   resumeCommand(sessionId: string): { cmd: string; args: string[] }
   configureMcpServer(serverConfig: { name: string; url: string }): Promise<void>
+}
+
+/** WP2 PR 4, P4.1: main's own pane of a session's run (bounded, headless, fed
+ *  the run's output from its first byte) and the submit primitive, the one
+ *  door through which main types a text into the session's composer. Every
+ *  method is keyed by the app's session id; a respawn opens a new pane. */
+export interface SessionRunScreen {
+  /** Open the pane for a session's new run, replacing any earlier one.
+   *  `write`: one raw write into that run's process. `current`: whether that
+   *  process is still the session's. `clamp`: what every chunk goes through
+   *  before the pane parses it (the Watchdog's CSI clamp), with the pane's
+   *  own state across chunks. */
+  open(sessionId: string, opts: { cols: number; rows: number; write: (data: string) => void; current: () => boolean; clamp: (data: string, state: { residual: string }) => string }): void
+  /** The run's output, as its terminal receives it. */
+  feed(sessionId: string, data: string): void
+  /** Keep the pane at the real pane's size. */
+  resize(sessionId: string, cols: number, rows: number): void
+  /** The run ended or the session went: a submission still waiting reports
+   *  the session gone and types nothing more. */
+  close(sessionId: string): void
+  /** Whether main reads this session's screen now. */
+  has(sessionId: string): boolean
+  /** Type `text` into the composer and submit it, confirmed on screen, after
+   *  anything already in flight for the run; waits up to `readyWaitMs` for
+   *  the ready, empty composer. Never rejects. */
+  submit(sessionId: string, text: string, opts: { readyWaitMs: number }): Promise<SubmitTextResult>
 }
 
 export interface SshCapableProvider extends SessionProvider {
@@ -252,9 +326,47 @@ export interface SshCapableProvider extends SessionProvider {
     opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean; remoteMcpPort?: number } | undefined,
     nonce: string,
   ): string
+  /** configureRemoteSettings for a Windows remote (cmd.exe), same contract. */
+  windowsRemoteSetupCommand(
+    sessionId: string,
+    opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean; remoteMcpPort?: number } | undefined,
+    nonce: string,
+  ): string
+  /** The launch line on a Windows remote, every variable set cmd.exe's way. */
+  windowsLaunchCommand(input: { sessionId: string; envPrefixVars: string[]; extraFlags: string; continueFlag: string }): string
+  /** The line written down a non-persistent session's own PTY at teardown
+   *  that removes the per-session files it planted on the remote. */
+  remoteSessionCleanupCommand(sessionId: string): string
+  /** The line a persistent (tmux) session writes before its launch to point
+   *  the remote statusline at the staged tmux binary. */
+  tmuxBinPatchCommand(sessionId: string): string
+  /** End remote: kills exactly this session's tmux session and removes its
+   *  per-session files (run over its own ssh exec). */
+  remoteTmuxKillCommand(sessionId: string): string
+  /** End remote: the in-container kill for a container runtime, '' for none.
+   *  `sudoProbeNonce`: printed in a sentinel when sudo cannot elevate. */
+  containerKillCommand(sessionId: string, runtime: SshRuntime | undefined, opts?: { hasSudoPassword?: boolean; sudoProbeNonce?: string }): string
+  /** End remote: whether `output` carries this End's sudo sentinel. */
+  parseEndSudoSentinel(output: string, nonce: string): boolean
+  /** The last line of `data`, escapes stripped, as a shell-prompt candidate;
+   *  '' when it is too long to be one or is the provider's own composer. */
+  lastPromptLine(data: string): string
+  /** SessionProvider.detectUiRunning with `commandSent` REQUIRED on the SSH
+   *  surface: before the launch command is written only the strict reading
+   *  applies, so a remote shell prompt that draws the composer glyph or box
+   *  characters is never read as the UI. A call that drops the argument does
+   *  not compile here (WP2 PR 4 review, A1-Q1). */
+  detectUiRunning(data: string, commandSent: boolean): boolean
+  /** Whether the end of `data` is a bare shell prompt (the CLI has exited). */
+  looksLikeShellPromptTail(data: string): boolean
 }
 
-/** Type guard. */
+/** Type guard. It tells the one SSH-capable provider (Claude) apart from the
+ *  rest by three members only that provider has; it does not vouch for the
+ *  others. Every member is enforced at compile time on the class that
+ *  implements SshCapableProvider (ClaudeProvider), and a registered package's
+ *  session surface is that class; test fakes that drive only the spawn branch
+ *  carry these three. */
 export function isSshCapable(p: SessionProvider): p is SshCapableProvider {
   return 'getSshSettingsPath' in p && 'getSshMcpConfigPath' in p && 'configureRemoteSettings' in p
 }

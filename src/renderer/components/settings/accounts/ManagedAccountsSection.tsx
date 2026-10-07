@@ -27,6 +27,8 @@ import { AccountRow, AccountChip, LinkedLine, BlockerLine } from './AccountRow'
 import { IdentityEditor } from './IdentityEditor'
 import { RowMenu, type MenuItem } from '../../ui/RowMenu'
 import { AddProviderAccountDialog, SignInAgainDialog } from './AddProviderAccountDialog'
+import { useCodexWebStore } from '../../../stores/codexWebStore'
+import { isWebSessionAccountId } from '../../../../shared/account-web-session'
 
 type ExternalAck = 'logout' | 'archive' | 'sign-in-again'
 
@@ -93,6 +95,18 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
   // This computer's own sign-in is the provider CLI's to make: the app never
   // signs in to it, so a signed-out or expired one says how to fix it.
   const externalHint = manageable ? externalSignInHint(account, provider) : null
+  // WP2 PR 4, P4.6 (row 58): a Codex account's own chatgpt.com web session,
+  // offered while the provider is on and the account is not archived. The
+  // CLI's Sign out leaves it alone (as Claude's CLI sign-out leaves claude.ai);
+  // Archive clears it first. Only a registry account id (the one id class the
+  // codexWeb channels take) ever has one.
+  const webApplies = manageable && account.providerId === 'codex' && account.lifecycle !== 'archived' && isWebSessionAccountId(id)
+  const web = useCodexWebStore((s) => s.byAccount[id])
+  const webSigningIn = useCodexWebStore((s) => s.signingIn === id)
+  const webError = useCodexWebStore((s) => s.errors[id] ?? null)
+  useEffect(() => {
+    if (webApplies) void useCodexWebStore.getState().refresh(id)
+  }, [webApplies, id])
   const cannotReview = account.external || account.unverified
   const identity = snapshot.identities.find((i) => i.id === account.identityId)
   const tint = identity ? resolveIdentityColor(identity.colourKey as IdentityColorKey, theme) : 'var(--text-secondary)'
@@ -110,9 +124,13 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
     } catch {
       setBusy(false)
       setError('That did not work; try again.')
+      if (verb === 'archived' && webApplies) void useCodexWebStore.getState().refresh(id)
       return
     }
     setBusy(false)
+    // An archive clears the chatgpt.com sign-in before it changes anything, and
+    // may still be refused after that: the row reads the web status afresh.
+    if (verb === 'archived' && webApplies) void useCodexWebStore.getState().refresh(id)
     if (r.ok) return
     const holding = verb && r.code === 'consumers' ? blockerSessions(useSessionStore.getState().sessions, r.sessions) : []
     if (holding.length) {
@@ -176,6 +194,24 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
         label: 'Sign out',
         onSelect: () => { if (account.external) setAck('logout'); else void run(() => providerAccountActions.logout({ accountId: id })) },
       })
+    }
+    // P4.6: the account's chatgpt.com web session (the sign-in window).
+    if (webApplies) {
+      const webItems: MenuItem[] = []
+      // While the records were written by a newer version of the app the
+      // surface is inert: no Sign in (the row says why); Sign out stays.
+      if (!web?.unavailable) {
+        webItems.push({
+          key: 'chatgpt-sign-in',
+          label: web?.status === 'active' ? 'Sign in to chatgpt.com again' : 'Sign in to chatgpt.com',
+          onSelect: () => { void useCodexWebStore.getState().signIn(id) },
+        })
+      }
+      if (web?.status === 'active' || web?.status === 'expired' || web?.unavailable) {
+        webItems.push({ key: 'chatgpt-sign-out', label: 'Sign out of chatgpt.com', onSelect: () => { void useCodexWebStore.getState().signOut(id) } })
+      }
+      if (items.length && webItems.length) webItems[0] = { ...webItems[0], separated: true }
+      items.push(...webItems)
     }
     const lifecycle: MenuItem[] = []
     if (canOfferMakeInactive(snapshot, account)) {
@@ -253,6 +289,21 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
               snapshot that blocked the account. */}
           {checked && !blocked && <MutedLine testId={`account-checked-${id}`}>{signInCheckText(checked)}</MutedLine>}
           {account.signingIn && <MutedLine testId={`account-signing-in-${id}`}>Signing in now</MutedLine>}
+          {webApplies && webSigningIn && (
+            <MutedLine testId={`account-web-${id}`}>
+              chatgpt.com: finish the sign-in in its window.{' '}
+              <RowButton onClick={() => { void useCodexWebStore.getState().cancel(id) }} testId={`account-web-cancel-${id}`}>Cancel</RowButton>
+            </MutedLine>
+          )}
+          {webApplies && !webSigningIn && web?.status === 'active' && (
+            <MutedLine testId={`account-web-${id}`}>{web.accountEmail ? `chatgpt.com: signed in as ${web.accountEmail}` : 'chatgpt.com: signed in'}</MutedLine>
+          )}
+          {webApplies && !webSigningIn && web?.unavailable && (
+            <MutedLine testId={`account-web-${id}`}>{`chatgpt.com: ${web.unavailable}`}</MutedLine>
+          )}
+          {webApplies && !webSigningIn && web?.status === 'expired' && (
+            <MutedLine testId={`account-web-${id}`}>chatgpt.com: the sign-in has expired. Sign in again.</MutedLine>
+          )}
           {externalHint && <MutedLine testId={`account-external-hint-${id}`}>{externalHint}</MutedLine>}
           {account.oldSignInLeft && !blocked && manageable && <MutedLine testId={`account-old-sign-in-${id}`}>{oldSignInText(account.oldSignInLeft, provider.displayName)}</MutedLine>}
           <RunningPill count={account.runningSessions} testId={`account-running-${id}`} />
@@ -274,6 +325,7 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
       )}
     >
       {error && <ErrorLine testId={`account-error-${id}`}>{error}</ErrorLine>}
+      {webApplies && webError && <ErrorLine testId={`account-web-error-${id}`}>chatgpt.com: {webError}</ErrorLine>}
       {blocker && <BlockerLine name={name} verb={blocker.verb} sessions={blocker.sessions} more={blocker.more} testId={`account-blocker-${id}`} />}
       {ack && <ExternalAckDialog kind={ack} provider={provider} onConfirm={confirmAck} onCancel={() => setAck(null)} />}
       {signingInAgain && (
@@ -456,6 +508,11 @@ function ExternalAdoptionBlock({ providerId, provider }: { providerId: ProviderI
 export function ManagedAccountsSection({ providerId }: { providerId: ProviderId }) {
   const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const [dialog, setDialog] = useState<AddAccountDialogState | null>(null)
+  // P4.6: a chatgpt.com sign-in main is running (this page reopened, or the
+  // window reloaded) shows on its row again, with its Cancel.
+  useEffect(() => {
+    if (providerId === 'codex') void useCodexWebStore.getState().restore()
+  }, [providerId])
   const provider = providerView(snapshot, providerId)
   if (!snapshot || !provider || !provider.managedAccounts) return null
 

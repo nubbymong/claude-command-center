@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { isAllowedBrowserUrl, type WebviewNavState } from '../../shared/browser-url'
+import type { AccountPaneStateView } from '../../shared/account-web-session'
 // A deliberate import cycle (altPane reads this store too): the one-surface
 // rule is enforced HERE, at the two writes that open the pane, so no caller can
 // bypass it. Only ever called inside actions, never at module evaluation.
@@ -29,6 +30,12 @@ import { closeOtherAltPanes } from './altPane'
  * not the door in.
  */
 export type WebviewStatus = 'idle' | 'pending' | 'available' | 'failed'
+
+/** The pane's account surface: a Claude profile's claude.ai view, or (WP2 PR 4,
+ *  P4.6, row 58) a Codex account's chatgpt.com view, keyed by its registry id. */
+export type AccountPaneMode =
+  | { service?: undefined; profileId: string; accountId?: undefined; authed: boolean | null; email: string | null }
+  | { service: 'codex'; accountId: string; profileId?: undefined; authed: boolean | null; email: string | null }
 
 export interface WebviewPageState {
   url: string
@@ -72,9 +79,11 @@ export interface WebviewSessionState {
    * The pane's ACCOUNT surface (#439/#475): non-null while the pane shows the
    * claude.ai view bound to this account's partition instead of the ordinary
    * browser view. The two are mutually exclusive — main enforces it too.
-   * `authed` is null until the first cookie read lands.
+   * `authed` is null until the first cookie read lands. A Codex account's
+   * chatgpt.com surface (P4.6, row 58) is the same mode, told apart by
+   * `service: 'codex'` and keyed by its registry account id.
    */
-  accountPane: { profileId: string; authed: boolean | null; email: string | null } | null
+  accountPane: AccountPaneMode | null
   /**
    * Monotonically-incremented per session on every `startActivation`.
    * Long-running pollers capture this token and pass it back to
@@ -151,10 +160,12 @@ interface Actions {
   /** Show the account surface (#439/#475). Opens the pane; the WebviewPane
    *  component closes the ordinary view and opens the account view via IPC. */
   openAccountPane: (sessionId: string, profileId: string) => void
+  /** The same for a Codex account's chatgpt.com surface (P4.6, row 58). */
+  openCodexAccountPane: (sessionId: string, accountId: string) => void
   /** Back to the ordinary browser. The component closes the account view. */
   closeAccountPane: (sessionId: string) => void
   /** Main's push of the account surface's auth state. */
-  setAccountPaneState: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void
+  setAccountPaneState: (state: AccountPaneStateView) => void
   /** Main's report of where the view actually is. */
   setPage: (state: WebviewNavState) => void
   /** Session-scoped home (not persisted). */
@@ -363,6 +374,18 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
       },
     }))
   },
+  openCodexAccountPane: (sessionId, accountId) => {
+    // Exactly as openAccountPane (one surface at a time, `page` dropped,
+    // `atStartPage` kept), for a Codex account's chatgpt.com view.
+    closeOtherAltPanes(sessionId, 'browser')
+    const cur = get().bySessionId[sessionId] || defaultState()
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [sessionId]: { ...cur, isOpen: true, page: null, accountPane: { service: 'codex', accountId, authed: null, email: null } },
+      },
+    }))
+  },
   closeAccountPane: (sessionId) => {
     const cur = get().bySessionId[sessionId]
     if (!cur?.accountPane) return
@@ -377,11 +400,21 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     const cur = get().bySessionId[state.sessionId]
     // Only while the surface is showing, and only for the account it shows — a
     // late push from a replaced view must not repaint the new account's strip.
-    if (!cur?.accountPane || cur.accountPane.profileId !== state.profileId) return
+    // A push for the other service's surface never matches either.
+    const pane = cur?.accountPane
+    if (!cur || !pane) return
+    const next: AccountPaneMode | null = pane.service === 'codex'
+      ? (state.service === 'codex' && state.accountId === pane.accountId
+          ? { service: 'codex', accountId: pane.accountId, authed: state.authed, email: state.email }
+          : null)
+      : (state.service !== 'codex' && state.profileId === pane.profileId
+          ? { profileId: pane.profileId, authed: state.authed, email: state.email }
+          : null)
+    if (!next) return
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
-        [state.sessionId]: { ...cur, accountPane: { profileId: state.profileId, authed: state.authed, email: state.email } },
+        [state.sessionId]: { ...cur, accountPane: next },
       },
     }))
   },

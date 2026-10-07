@@ -24,7 +24,8 @@ export interface TkIndexProgress { filesDone: number; filesTotal: number; events
 export interface TkIndexCompleteEvent { firstIndex: boolean; drained: boolean; filesFailed: number; eventsTotal: number }
 
 const BACKOFFS = [250, 1000, 4000, 4000, 4000]
-/** Session attributions kept for a restarted worker (MP10), oldest dropped. */
+/** Session attributions kept for the next worker that is ready (MP10),
+ *  oldest dropped. */
 const SESSION_ACCOUNTS_KEPT = 4096
 const DEFAULT_QUERY_TIMEOUT_MS = 15_000
 
@@ -50,8 +51,9 @@ export class TokenomicsSupervisor {
   private lastIndexAt: number | null = null
   /** MP9: the one-off account attribution, as the worker last reported it. */
   private lastAccountReread: TkAccountReread | null = null
-  /** MP10: each Claude session's latest attribution, sent again to a
-   *  restarted worker (one that died before storing it). */
+  /** MP10: each Claude session's latest attribution, sent whole on each
+   *  ready: to a worker that was not listening when it was made, and again
+   *  to a restarted worker (one that died before storing it). */
   private sessionAccounts = new Map<string, TkAccountKey>()
   /** MP9 round 1 (Q-4): the Codex account folders have been named (given at
    *  construction, or set since); a restarted worker is told so. */
@@ -81,13 +83,7 @@ export class TokenomicsSupervisor {
     this.listening = false
     w.transport.onMessage((m) => this.onMessage(m))
     w.onExit(() => this.onExit())
-    // MP10: every attribution kept, once, when the worker is ready (the
-    // index ignores one it already has). Queued before the open: its ready
-    // may come back at once.
-    this.buffer = [
-      ...this.buffer.filter((m) => m.type !== 'set-session-account'),
-      ...[...this.sessionAccounts].map(([sessionId, accountKey]) => ({ type: 'set-session-account' as const, sessionId, accountKey })),
-    ]
+    // MP10: the attributions kept are sent when this worker is ready (below).
     w.transport.post({
       type: 'open', dbPath: this.opts.dbPath, pricing: this.opts.pricing, configs: this.opts.configs,
       claudeProjectsDir: this.opts.claudeProjectsDir, codexSessionsDir: this.opts.codexSessionsDir,
@@ -109,6 +105,9 @@ export class TokenomicsSupervisor {
         const buf = this.buffer
         this.buffer = []
         for (const msg of buf) this.worker?.transport.post(msg)
+        // MP10: every attribution kept, once (the index ignores one it
+        // already has): the latest per session, within the bound.
+        for (const [sessionId, accountKey] of this.sessionAccounts) this.worker?.transport.post({ type: 'set-session-account', sessionId, accountKey })
         return
       }
       case 'index-progress': {
@@ -192,7 +191,9 @@ export class TokenomicsSupervisor {
   reindex(): void { this.sendOrBuffer({ type: 'reindex' }) }
   /** Usage track MP10: a Claude session id and the account it runs under
    *  now. The same again sends nothing; another account applies from then
-   *  on (MP10 round 1); anything not well formed is dropped. */
+   *  on (MP10 round 1); anything not well formed is dropped. Sent at once to
+   *  a worker that listens; otherwise only kept (the latest per session,
+   *  within the bound) for the next ready to send. */
   setSessionAccount(sessionId: string, accountKey: TkAccountKey): void {
     if (this.shuttingDown || !tkSessionUuidOk(sessionId) || !tkClaudeAccountKeyOk(accountKey)) return
     if (this.sessionAccounts.get(sessionId) === accountKey) return
@@ -202,7 +203,7 @@ export class TokenomicsSupervisor {
       const oldest = this.sessionAccounts.keys().next()
       if (!oldest.done) this.sessionAccounts.delete(oldest.value)
     }
-    this.sendOrBuffer({ type: 'set-session-account', sessionId, accountKey })
+    if (this.listening && this.worker) this.worker.transport.post({ type: 'set-session-account', sessionId, accountKey })
   }
 
   onIndexProgress(cb: (p: TkIndexProgress) => void): () => void { this.progressSubs.add(cb); return () => { this.progressSubs.delete(cb) } }

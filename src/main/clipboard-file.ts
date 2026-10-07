@@ -2,50 +2,109 @@ import { clipboard } from 'electron'
 import { statSync, copyFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
+import { fileURLToPath } from 'url'
 
 // Reading copied FILE references off the clipboard (Unit 5 W1 / BUG-8).
-// `clipboard.readImage()` is bitmap-only, so an image FILE copied in Explorer
-// (Windows CF_HDROP) or Finder (macOS public.file-url) is invisible to it.
-// These helpers recover the file path(s). The format strings go through
-// Electron's experimental readBuffer/read/availableFormats APIs (stable in
-// practice on Electron 42); every read is guarded against empty/short buffers.
+// A bitmap read sees only bitmaps, so an image FILE copied in Explorer or
+// Finder is invisible to it. These helpers recover the file path(s).
+//
+// Electron 44 reads the clipboard through `clipboard.read()` (ClipboardItem[],
+// W3C shaped). Copied files arrive as `text/uri-list`, which Electron maps to
+// the platform's own copied-files format (CF_HDROP on Windows, the file
+// pasteboard type on macOS): an RFC 2483 list of file:// URIs. That is the
+// only format read for them: Electron 44 does not offer Windows' FileNameW.
+// Every read is guarded: a failure is "no file", never an error into the paste
+// path.
+
+/** The MIME type Electron 44 gives copied files (an RFC 2483 file:// URI list). */
+export const URI_LIST_TYPE = 'text/uri-list'
 
 /**
- * Decode a `file://` URL (macOS `public.file-url`) to an absolute path.
- * Strips the scheme + an optional `localhost` host, then percent-decodes.
- * Returns null for empty or non-file input.
+ * UNC share names that are not file shares on any Windows server: a stat of a
+ * path under one opens a named pipe or a mailslot (on this computer or
+ * another) instead of reading a file's attributes. Upper case: Windows
+ * compares names by converting them to upper case, so a share name is
+ * converted the same way before it is looked up here (`p\u0131pe` and
+ * `mail\u017flot`, with a dotless i or a long s, are PIPE and MAILSLOT).
  */
-export function parseFileUrl(url: string): string | null {
-  if (!url || !url.startsWith('file://')) return null
-  let p = url.slice('file://'.length)
-  if (p.startsWith('localhost')) p = p.slice('localhost'.length)
-  try { p = decodeURIComponent(p) } catch { /* keep raw on malformed escapes */ }
-  return p || null
+const NON_FILE_SHARES = new Set(['PIPE', 'MAILSLOT', 'IPC$'])
+
+/**
+ * A path the paste may stat and copy from. Refused: a path that is empty or
+ * holds a NUL. On Windows (`/` read as `\`) only a drive path (`C:\...`) or a
+ * UNC share path (`\\server\share...`) passes, as a file copied in Explorer
+ * always did, and of those it refuses a path in a device namespace (two
+ * separators, then `.` or `?`, then a separator), where a stat could open a
+ * pipe or a raw device, and a UNC path whose share is `pipe`, `mailslot` or
+ * `IPC$`, in any case and with any trailing dots or spaces (which Windows
+ * drops), on any server (`localhost`, `127.0.0.1`, this computer's name or
+ * another). Elsewhere only an absolute `/` path passes.
+ */
+export function isClipboardFilePath(p: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (typeof p !== 'string' || p.length === 0 || p.includes('\0')) return false
+  if (platform === 'win32') {
+    const w = p.replace(/\//g, '\\')
+    if (/^\\\\[.?]\\/.test(w)) return false
+    if (/^[A-Za-z]:\\/.test(w)) return true
+    const unc = /^\\\\[^\\]+\\([^\\]+)/.exec(w)
+    return unc !== null && !NON_FILE_SHARES.has(unc[1].replace(/[. ]+$/, '').toUpperCase())
+  }
+  return p.startsWith('/')
 }
 
 /**
- * Decode a Windows DROPFILES (CF_HDROP) buffer into file paths.
- * Layout (the DROPFILES struct, 20 bytes): pFiles (UInt32LE at offset 0) = offset
- * to the path list, pt (two 4-byte coordinates, offset 4), fNC (4 bytes, offset
- * 12), fWide (4 bytes, offset 16; non-zero = UTF-16LE, zero = 8-bit), then a
- * null-separated, double-null-terminated list. Returns [] on a malformed or
- * too-short buffer, or a pFiles inside the header (the header read as paths).
- * Reads up to the list's end (its first empty entry): the clipboard block can
- * be larger than the list, and what follows it is not a path.
+ * Windows hands a file copied from `\\localhost\<share>` over as
+ * `file://localhost/<share>/...`, and the URL standard reads the host
+ * `localhost` as no host at all, so fileURLToPath takes the share for a drive
+ * and refuses it. Such a URI is converted with this stand-in host, which then
+ * gives way to `localhost`; everything else fileURLToPath checks still applies.
  */
-export function parseHdropBuffer(buf: Buffer): string[] {
-  if (!buf || buf.length < 20) return []
-  const start = buf.readUInt32LE(0)
-  if (start < 20 || start >= buf.length) return []
-  const wide = buf.readUInt32LE(16) !== 0
-  const list = buf.subarray(start).toString(wide ? 'ucs2' : 'latin1')
+const LOCALHOST_STAND_IN = 'localhost-share.invalid'
+
+/** One `file:` URI as a path under `platform`'s rules; throws when it does not convert. */
+function fileUriToPath(uri: string, platform: NodeJS.Platform): string {
+  const windows = platform === 'win32'
+  try {
+    return fileURLToPath(uri, { windows })
+  } catch (err) {
+    const local = windows ? /^file:\/\/localhost(\/.*)$/i.exec(uri) : null
+    if (!local) throw err
+    const p = fileURLToPath(`file://${LOCALHOST_STAND_IN}${local[1]}`, { windows })
+    const lead = `\\\\${LOCALHOST_STAND_IN}\\`
+    if (!p.startsWith(lead)) throw err
+    return `\\\\localhost\\${p.slice(lead.length)}`
+  }
+}
+
+/**
+ * Turn an RFC 2483 URI list (`text/uri-list`) into the absolute paths it names.
+ * Lines end in CRLF (a bare LF is tolerated); a line starting with `#` is a
+ * comment; only `file:` URIs count. Each is converted with `url.fileURLToPath`
+ * under `platform`'s rules, which percent-decodes, refuses an encoded slash or
+ * backslash, and on Windows turns a host into a UNC path (`file://localhost/`
+ * included, see fileUriToPath; elsewhere a host other than localhost is
+ * refused). A URI that does not convert, or converts to a path
+ * isClipboardFilePath refuses, is dropped.
+ */
+export function uriListToPaths(list: string, platform: NodeJS.Platform = process.platform): string[] {
+  if (typeof list !== 'string' || list.length === 0) return []
   const paths: string[] = []
-  for (const entry of list.split('\0')) {
-    if (entry === '') break
-    const p = entry.trim()
-    if (p) paths.push(p)
+  for (const raw of list.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line || line.startsWith('#')) continue
+    if (!/^file:/i.test(line)) continue
+    let p: string
+    try { p = fileUriToPath(line, platform) } catch { continue }
+    if (isClipboardFilePath(p, platform)) paths.push(p)
   }
   return paths
+}
+
+/** The text of a ClipboardItem payload (a Blob), or '' for anything else. */
+async function payloadText(payload: unknown): Promise<string> {
+  if (!payload || typeof (payload as Blob).text !== 'function') return ''
+  const t: unknown = await (payload as Blob).text()
+  return typeof t === 'string' ? t : ''
 }
 
 const ALLOWED_IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'])
@@ -60,51 +119,51 @@ export type PasteableImage = { path: string } | { error: 'no-image' | 'too-large
 
 /**
  * Pick the first clipboard file that's a pasteable raster image, enforcing the
- * 10 MB cap. Pure (size injected) so it's unit-testable. (Unit 5 W1)
+ * 10 MB cap. `sizeOf` gives a file's size, or null when it cannot be read (the
+ * file is gone) or is not a plain file, which is no image rather than too
+ * large. Pure (size injected) so it's unit-testable. (Unit 5 W1)
  */
-export function pickPasteableImage(paths: string[], sizeOf: (p: string) => number): PasteableImage {
+export function pickPasteableImage(paths: string[], sizeOf: (p: string) => number | null): PasteableImage {
   const images = paths.filter((p) => ALLOWED_IMAGE_EXTS.has(extOf(p)))
   if (images.length === 0) return { error: 'no-image' }
   const first = images[0]
-  if (sizeOf(first) > MAX_IMAGE_BYTES) return { error: 'too-large' }
+  const size = sizeOf(first)
+  if (size === null) return { error: 'no-image' }
+  if (size > MAX_IMAGE_BYTES) return { error: 'too-large' }
   return { path: first }
 }
 
-/** Read image-file paths off the clipboard, per platform (best-effort, guarded). */
-export function readClipboardFilePaths(): string[] {
+/**
+ * Read copied file paths off the clipboard, on Windows and macOS (as before;
+ * Linux has no copied-file paste), from `text/uri-list`. Best-effort: never
+ * throws.
+ */
+export async function readClipboardFilePaths(): Promise<string[]> {
+  if (process.platform !== 'win32' && process.platform !== 'darwin') return []
   try {
-    const formats = clipboard.availableFormats()
-    if (process.platform === 'win32') {
-      if (formats.includes('CF_HDROP')) {
-        const paths = parseHdropBuffer(clipboard.readBuffer('CF_HDROP'))
-        if (paths.length) return paths
-      }
-      if (formats.includes('FileNameW')) {
-        const p = clipboard.readBuffer('FileNameW').toString('ucs2').replace(/\0/g, '').trim()
-        return p ? [p] : []
-      }
-      return []
-    }
-    if (process.platform === 'darwin' && formats.includes('public.file-url')) {
-      const p = parseFileUrl(clipboard.read('public.file-url'))
-      return p ? [p] : []
-    }
-  } catch { /* experimental clipboard formats — never throw into the paste path */ }
+    const items = await clipboard.read()
+    const uriItem = items.find((it) => Array.isArray(it?.types) && it.types.includes(URI_LIST_TYPE))
+    if (uriItem) return uriListToPaths(await payloadText(await uriItem.getType(URI_LIST_TYPE)))
+  } catch { /* clipboard formats: never throw into the paste path */ }
   return []
 }
 
 /**
- * BUG-8 fallback: when clipboard.readImage() is empty, recover a copied image
+ * BUG-8 fallback: when the clipboard holds no bitmap, recover a copied image
  * FILE, copy it (format-preserving) into the screenshots dir, and return its
  * path. Returns {error} for no usable image / oversize. (Unit 5 W1)
  */
-export function readClipboardImageFilePath(screenshotsDir: string): PasteableImage {
-  const picked = pickPasteableImage(readClipboardFilePaths(), (p) => {
-    try { return statSync(p).size } catch { return Number.POSITIVE_INFINITY }
+export async function readClipboardImageFilePath(screenshotsDir: string): Promise<PasteableImage> {
+  // One stat gives both answers: a path that is not a plain file (a folder
+  // named like an image, a device) is no image, the same as one that is gone.
+  const picked = pickPasteableImage(await readClipboardFilePaths(), (p) => {
+    try {
+      const st = statSync(p)
+      return st.isFile() ? st.size : null
+    } catch { return null }
   })
   if (!('path' in picked)) return picked
   try {
-    if (!statSync(picked.path).isFile()) return { error: 'no-image' }
     mkdirSync(screenshotsDir, { recursive: true })
     const dest = join(screenshotsDir, `clipboard-${Date.now()}-${randomBytes(4).toString('hex')}${extOf(picked.path)}`)
     copyFileSync(picked.path, dest)

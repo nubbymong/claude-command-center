@@ -113,10 +113,23 @@ describe('pty:spawn and command secrets', () => {
     acct.service = { prepareLaunch }
     await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'read-only' }, codexLaunch: forged })
     expect(spawnPty).toHaveBeenCalledTimes(2)
-    expect(spawnPty.mock.calls[1][2].codexLaunch).toEqual({ lease, executable: 'C:/proven/codex.exe', env: { CODEX_HOME: 'C:/res/r1' }, sessionsDir: 'C:/res/r1/sessions' })
+    // WP2 PR 4, P4.1: with the realm's Codex folder the service prepared, for
+    // the canvas skills.
+    expect(spawnPty.mock.calls[1][2].codexLaunch).toEqual({ lease, executable: 'C:/proven/codex.exe', env: { CODEX_HOME: 'C:/res/r1' }, sessionsDir: 'C:/res/r1/sessions', home: 'C:/res/r1' })
     // P3.2: the lease names the session it runs for, so a refused
     // inactivate or archive can offer "Go to" that session.
     expect(prepareLaunch.mock.calls[0][0]).toMatchObject({ kind: 'session', providerId: 'codex', sessionId: SID })
+  })
+
+  it.each([
+    ['an app-managed account', false, 'conductor-managed'],
+    ["this computer's own sign-in", true, 'external-default'],
+  ] as const)('[host] the launch carries the realm ownership of %s (P4.1 review A-2)', async (_name, external, ownership) => {
+    const lease = { release: vi.fn(), accountId: 'acct-1' }
+    const prepareLaunch = vi.fn(async () => ({ ok: true, lease, binding: {}, realmOnly: false, home: 'C:/res/r1', executable: 'C:/proven/codex.exe', env: {}, sessionsDir: 'C:/res/r1/sessions' }))
+    acct.service = { prepareLaunch, snapshot: () => ({ providers: [], accounts: [{ id: 'acct-0', external: !external }, { id: 'acct-1', external }] }) }
+    await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'read-only' } })
+    expect(spawnPty.mock.calls[spawnPty.mock.calls.length - 1][2].codexLaunch.ownership).toBe(ownership)
   })
 
   it('rebuilds them from the commands file on disk and the keychain, for a SHELL spawn with a config', async () => {

@@ -37,6 +37,10 @@ function AskHeaderLead({ session }: { session: Session }) {
   return (
     <>
       <BrandMark className="w-6 h-6 shrink-0" />
+      {/* P4.3: an Ask session on Codex wears the Codex mark, as every Codex
+          session header does; a Claude one stays unmarked, like every Claude
+          header (the approved Ask Conductor provider mockup). */}
+      {session.provider === 'codex' && <ProviderMark providerId="codex" size={16} title="Codex" />}
       <span className="min-w-0 flex-1 leading-tight">
         <span className="block text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
           {ASK_LABEL}
@@ -45,11 +49,13 @@ function AskHeaderLead({ session }: { session: Session }) {
           Knows this app at v{__APP_VERSION__} -- features, settings, known issues. Not your code.
         </span>
       </span>
-      {/* Restart already marks the session for the resume picker, so this is the
-          ordinary "pick an older conversation" path, not a second mechanism. */}
+      {/* The ordinary "pick an older conversation" path, not a second mechanism:
+          a Restart that opens the resume picker. Asked for outright, because
+          only Claude's plain Restart opens it; a Codex one carries on with the
+          conversation the tab is on (canvas F7; P4.3). */}
       <button
         data-ux-id="ask-band-history"
-        onClick={() => restart()}
+        onClick={() => restart(undefined, { pickConversation: true })}
         className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium shrink-0 focus-ring transition-colors"
         style={{
           color: 'var(--brand)',

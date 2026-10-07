@@ -323,6 +323,27 @@ export interface ProviderLaunchOperations {
    *  home linked into another realm's is never read as its own). A path
    *  only: no CLI, no executable check. */
   sessionsDir(realm: RealmRef): Promise<string | null>
+  /** WP2 PR 4, P4.4 (rows 55, 56): the realm's own folders the app shows the
+   *  user (ProviderAccountFolders), or null exactly when sessionsDir would
+   *  be: located the same way and held to the same canonical-home check.
+   *  Paths only: no CLI, nothing read or made. Absent: the provider shows
+   *  none (Claude keeps one memory store for every account, and its own log
+   *  folder is the app's). */
+  accountFolders?(realm: RealmRef): Promise<ProviderAccountFolders | null>
+}
+
+/** A realm's folders the Memory page and Settings, Debug Logging show (P4.4):
+ *  main only, never sent to a renderer. What is read inside them is checked
+ *  by the reader itself (no link, no `.git`, a local folder). */
+export interface ProviderAccountFolders {
+  /** Where the provider writes its own logs by default (Codex: `log/`, where
+   *  the sign-in log always lands). */
+  logDir: string
+  /** Where the provider keeps the account's memories (Codex: `memories/`). */
+  memoriesDir: string
+  /** The settings file that may name another log folder (Codex:
+   *  `config.toml`'s root-level `log_dir`). */
+  configFile: string
 }
 
 /** One reviewer invocation (plan: provider review through MCP): a fresh,
@@ -364,6 +385,73 @@ export type ReviewRunResult =
 
 export interface ProviderReviewOperations {
   run(input: ReviewRunInput): Promise<ReviewRunResult>
+}
+
+/** WP2 PR 4, P4.5 (row 57): one headless background run (a Cloud Agent): a
+ *  fresh, non-interactive process of the provider, run from a launch the
+ *  accounts service prepared (kind `background`), in the project. */
+export interface BackgroundRunInput {
+  /** From the prepared launch: the executable setup proved. */
+  executable: string
+  /** From the prepared launch: the realm's environment. */
+  env: Readonly<Record<string, string>>
+  /** The project: the process's working directory, never an argument. */
+  cwd: string
+  /** The task, handed to the process on stdin, never as argv. */
+  prompt: string
+  /** The New agent dialog's per-run "skip permission prompts" choice; the
+   *  package maps it onto its own permission setting, and refuses a run it
+   *  cannot map. Never kept. */
+  skipPermissions: boolean
+  /** The config's model and reasoning effort, as an interactive launch of it
+   *  passes them; absent, the provider's own default. The package refuses a
+   *  value it would not pass to a launch. */
+  model?: string
+  effort?: string
+  signal?: AbortSignal
+  /** Each reply the run makes, as it completes. Never throws into the run. */
+  onText?: (text: string) => void
+  /** The process's diagnostic output as it arrives, kept with the reply (a
+   *  refused edit may show only there). Never throws into the run. */
+  onDiagnostic?: (text: string) => void
+}
+
+/** `killSettled`: a stopped run whose kill was still under way when it
+ *  settled says when that kill has finished; it never rejects. The caller
+ *  holding the account's lease lets go only then. `costUsd`: only when the
+ *  model run is known and priced. */
+export type BackgroundRunResult =
+  | { ok: true; usage?: ReviewUsage; costUsd?: number }
+  | { ok: false; code: 'cancelled' | 'failed' | 'not-started'; message: string; usage?: ReviewUsage; costUsd?: number; killSettled?: Promise<void> }
+
+export interface ProviderBackgroundOperations {
+  run(input: BackgroundRunInput): Promise<BackgroundRunResult>
+}
+
+/** WP2 PR 4, P4.7 (row 68): the one text-only model run of an Insights
+ *  report the app makes from an account's own sessions, from a launch the
+ *  accounts service prepared (kind `background`). */
+export interface InsightsRunInput {
+  /** From the prepared launch: the executable setup proved. */
+  executable: string
+  /** From the prepared launch: the realm's environment. */
+  env: Readonly<Record<string, string>>
+  /** The empty folder the caller made for this run, never a project. */
+  cwd: string
+  /** The instructions and the material, handed over on stdin, never argv. */
+  prompt: string
+  signal?: AbortSignal
+}
+
+/** `killSettled`: as BackgroundRunResult's; the caller holding the account's
+ *  lease lets go only once it has settled. */
+export type InsightsRunResult =
+  | { ok: true; text: string; usage?: ReviewUsage }
+  | { ok: false; code: 'not-started' | 'failed' | 'timed-out' | 'cancelled' | 'no-output'; message: string; usage?: ReviewUsage; killSettled?: Promise<void> }
+
+/** The package's report run, under its own deadline. Never rejects. */
+export interface ProviderInsightsOperations {
+  run(input: InsightsRunInput): Promise<InsightsRunResult>
 }
 
 /** An account's allowance as a package reports it: provider-neutral buckets
@@ -435,6 +523,35 @@ export interface ProviderRealmOperations {
   realmEnvPatch(realm: RealmRef): RealmEnvPatch
 }
 
+/** One model's price, per million tokens. `cachedInputPer1M`: null when the
+ *  model has no cached tier. */
+export interface ModelPrice {
+  inputPer1M: number
+  cachedInputPer1M: number | null
+  outputPer1M: number
+}
+
+/** A package's model prices, for Tokenomics (WP2 PR 4: reached through the
+ *  registry, never by deep import). The live list is the part of the shared
+ *  LiteLLM price list the package prices, held by the package; the static
+ *  table ships with it. Pure apart from `setLive`. */
+export interface ProviderPricingOperations {
+  /** Every priced model once: the live list's and the table's. */
+  keys(): string[]
+  /** A model's price: the live list's, else the table's, else null. */
+  price(model: string): ModelPrice | null
+  /** The rate cached input costs: the cached tier, else the full input rate. */
+  cachedInputPer1M(p: ModelPrice): number
+  /** The package's part of a fetched LiteLLM price list, checked. */
+  parseList(all: unknown): ReadonlyMap<string, ModelPrice>
+  /** A saved copy of that part, checked. */
+  parseSaved(saved: unknown): ReadonlyMap<string, ModelPrice>
+  /** That part as it is saved. */
+  serialize(map: ReadonlyMap<string, ModelPrice>): unknown
+  /** Replace the live list (null clears it). */
+  setLive(map: ReadonlyMap<string, ModelPrice> | null): void
+}
+
 /** Managed-launch hardening a provider supplies for launches the APP owns.
  *
  *  Separate from `realms` on purpose. `realmEnvPatch` answers "which identity
@@ -490,11 +607,25 @@ export interface ProviderPackage {
   /** Present when the provider can review a change for another provider's
    *  session (plan: provider review through MCP). */
   readonly review?: ProviderReviewOperations
+  /** Present when the provider runs Cloud Agents through the accounts
+   *  service (WP2 PR 4, P4.5): its launch kinds list `background`. Absent for
+   *  a provider whose agents keep their own path (Claude Code's `claude -p`,
+   *  cloud-agent-manager.ts). */
+  readonly background?: ProviderBackgroundOperations
+  /** Present when the app writes the provider's Insights report itself, from
+   *  an account's own sessions (WP2 PR 4, P4.7): the report's model run.
+   *  Absent for a provider whose own CLI writes its report (Claude Code's
+   *  /insights, insights-runner.ts). */
+  readonly insights?: ProviderInsightsOperations
   readonly realms?: ProviderRealmOperations
   /** Present when the package reports its accounts' allowances (the
    *  `account.usage` capability's backing): Codex, once the registry's realms
    *  are wired. Absent for a provider whose usage lives elsewhere (Claude). */
   readonly usage?: ProviderUsageOperations
+  /** Present when the package prices its models for Tokenomics (Codex: the
+   *  OpenAI part of the shared price list and its static table). Absent for
+   *  a provider whose prices live elsewhere (Claude's, in tk-pricing). */
+  readonly pricing?: ProviderPricingOperations
   /** Present when the provider's managed accounts each get an app-managed
    *  folder (Codex); absent for providers that keep their own (Claude). */
   readonly realmFolders?: ProviderRealmFolderOperations

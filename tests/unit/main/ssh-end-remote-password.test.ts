@@ -113,13 +113,26 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
   registerCodexReviewSession: () => {},
   registerClaudeReviewSession: () => {},
   unregisterCodexReviewSession: () => {},
+  releaseMcpSessionProvider: () => {},
 }))
-vi.mock('../../../src/main/providers', () => ({
-  getProvider: () => ({
-    buildSpawnCommand: () => ({ cmd: 'pwsh', args: [], env: {} }),
-    ingestSessionTelemetry: () => ({ stop: () => {} }),
-  }),
-}))
+vi.mock('../../../src/main/providers', async () => {
+  // End remote reaches the Claude SSH helpers through the registered provider
+  // (WP2 PR 4): this fake hands it the real ones.
+  const shim = await vi.importActual<typeof import('../../../src/main/providers/claude/ssh-shim')>('../../../src/main/providers/claude/ssh-shim')
+  return {
+    getProvider: () => ({
+      buildSpawnCommand: () => ({ cmd: 'pwsh', args: [], env: {} }),
+      ingestSessionTelemetry: () => ({ stop: () => {} }),
+      getSshSettingsPath: shim.remoteSessionSettingsPath,
+      getSshMcpConfigPath: shim.remoteSessionMcpConfigPath,
+      configureRemoteSettings: shim.getRemoteSetupCommand,
+      containerKillCommand: shim.buildContainerKillCommand,
+      parseEndSudoSentinel: shim.parseEndSudoSentinel,
+      remoteTmuxKillCommand: shim.buildRemoteTmuxKillCommand,
+      remoteSessionCleanupCommand: shim.buildRemoteSessionCleanupCommand,
+    }),
+  }
+})
 vi.mock('../../../src/main/providers/claude/spawn', () => ({
   resolveClaudeBinary: () => ({ cmd: 'claude', source: 'system' }),
   resolveHostColorScheme: () => 'dark',

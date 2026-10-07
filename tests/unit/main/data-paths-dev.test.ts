@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { join } from 'path'
 
 // Test the REAL data-paths (the global setup mocks it); keep debug-logger mocked
@@ -11,10 +11,19 @@ vi.unmock('../../../src/main/ipc/setup-handlers')
 // resets modules and re-imports with the env pre-set.
 describe('data-paths DEV isolation (CCC_DEV_DATA_DIR)', () => {
   const OLD = process.env.CCC_DEV_DATA_DIR
+  // The test home guard pins CCC_E2E_DATA_DIR for every worker (tests/helpers/home-isolation.ts),
+  // and it outranks the DEV override: each case starts without it and gets it back after.
+  const OLD_E2E = process.env.CCC_E2E_DATA_DIR
+
+  beforeEach(() => {
+    delete process.env.CCC_E2E_DATA_DIR
+  })
 
   afterEach(() => {
     if (OLD === undefined) delete process.env.CCC_DEV_DATA_DIR
     else process.env.CCC_DEV_DATA_DIR = OLD
+    if (OLD_E2E === undefined) delete process.env.CCC_E2E_DATA_DIR
+    else process.env.CCC_E2E_DATA_DIR = OLD_E2E
     vi.resetModules()
   })
 
