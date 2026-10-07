@@ -10,7 +10,7 @@
 // here rather than start a process. The account's sessions are real rollout
 // files in a temp folder.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, statSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, statSync, utimesSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, dirname, basename } from 'path'
 
@@ -40,7 +40,19 @@ const h = vi.hoisted(() => ({
   logged: [] as string[],
   /** Every fence marker a prompt draws, when set (Sentinel's analysisNonce). */
   fixedNonce: null as null | string,
+  /** A small byte limit for the sessions read, when set (0: the real one). */
+  maxTotalBytes: 0,
 }))
+
+// The REAL sessions read; only its byte limit is made small when a test sets one.
+vi.mock('../../../src/main/insights-codex', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../src/main/insights-codex')>()
+  return {
+    ...real,
+    readCodexSessions: (dir: string, opts: Parameters<typeof real.readCodexSessions>[1]) =>
+      real.readCodexSessions(dir, h.maxTotalBytes ? { ...opts, maxTotalBytes: h.maxTotalBytes } : opts),
+  }
+})
 
 vi.mock('../../../src/main/sentinel/sentinel-analysis', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../src/main/sentinel/sentinel-analysis')>()
@@ -159,6 +171,7 @@ beforeEach(() => {
   h.noInsightsPort = false
   h.deepCalls = 0
   h.fixedNonce = null
+  h.maxTotalBytes = 0
   putSession('a', join(tmpRoot, 'projects', 'one'))
   putSession('b', join(tmpRoot, 'projects', 'two'))
   putSession('c', join(tmpRoot, 'projects', 'three'), h.sessionsDirs[ACCT2], 'ACCOUNT-TWO-MARK review the diff')
@@ -319,6 +332,50 @@ describe('a Codex report that does not complete', () => {
     rmSync(h.sessionsDir, { recursive: true, force: true })
     const id = await runCodexInsights(win, { accountId: ACCT }) as string
     expect(runOf(id)).toMatchObject({ status: 'failed', error: 'This account has no Codex sessions from the last 30 days to report on.' })
+    expect(h.execCalls).toEqual([])
+  })
+
+  /** A session of two complete turns, the second written after `limit`
+   *  bytes, and an older one-turn session that fits; returns the limit. */
+  function largeAndSmall(withSmall: boolean): number {
+    rmSync(h.sessionsDir, { recursive: true, force: true })
+    const day = join(h.sessionsDir, '2026', '01', '01')
+    mkdirSync(day, { recursive: true })
+    const at = new Date().toISOString()
+    const head = rolloutLines(join(tmpRoot, 'projects', 'big'), at, 'BIG-SESSION-MARK first turn')
+    const tail = [
+      { timestamp: at, type: 'event_msg', payload: { type: 'task_started' } },
+      { timestamp: at, type: 'event_msg', payload: { type: 'user_message', message: 'BIG-SESSION-MARK second turn', kind: 'plain' } },
+      { timestamp: at, type: 'event_msg', payload: { type: 'task_complete', last_agent_message: 'Second turn done.', duration_ms: 3000 } },
+    ].map((l) => JSON.stringify(l)).join('\n') + '\n'
+    const small = rolloutLines(join(tmpRoot, 'projects', 'small'), at)
+    writeFileSync(join(day, 'rollout-big.jsonl'), head + tail)
+    if (withSmall) {
+      writeFileSync(join(day, 'rollout-small.jsonl'), small)
+      const older = new Date(Date.now() - 3_600_000)
+      utimesSync(join(day, 'rollout-small.jsonl'), older, older)
+    }
+    const limit = Math.max(head.length, small.length) + 10
+    expect(statSync(join(day, 'rollout-big.jsonl')).size).toBeGreaterThan(limit)
+    return limit
+  }
+
+  it('a session larger than the read limit is left out whole and the prompt says so; the report counts the whole sessions only (release review) [host]', async () => {
+    h.maxTotalBytes = largeAndSmall(true)
+    const id = await runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(id).status).toBe('complete')
+    const prompt = h.execCalls[0].prompt
+    expect(prompt).toContain('over the 1 most recent sessions; 1 session in the last 30 days was left out: it is larger than the read limit (256 MB), and a session is counted whole or not at all):')
+    expect(prompt).toContain('Turns: 1\n')
+    expect(prompt).not.toContain('BIG-SESSION-MARK')
+    expect(parseCodexStoredReport(getInsightsReport(id))?.subtitle).toMatch(/^1 turn across 1 session\b/)
+    expect((getInsightsKpis(id) as any).kpis.Volume.turns.value).toBe(1)
+  })
+
+  it('every session larger than the read limit: failed with that reason, and no model run (release review) [host]', async () => {
+    h.maxTotalBytes = largeAndSmall(false)
+    const id = await runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: 'This account has no Codex sessions from the last 30 days to report on: 1 session was left out because it is larger than the read limit (256 MB), and a session is counted whole or not at all.' })
     expect(h.execCalls).toEqual([])
   })
 

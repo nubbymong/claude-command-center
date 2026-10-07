@@ -4,7 +4,7 @@
 // D5, D13, D14; approved on the Agent Canvas 2026-10-05). Pure, apart from
 // one temp folder of rollouts for the reader; no process starts.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, utimesSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -318,9 +318,40 @@ describe('reading the sessions folder', () => {
     const two = await readCodexSessions(join(root, 'sessions'), { runsParent: null, now, maxTotalBytes: size * 2 + 10 })
     expect(two).toMatchObject({ filesFound: 3, filesNotRead: 1, skippedLines: 0 })
     expect(two.sessions.map((x) => x.lastAt)).toEqual([Date.parse('2026-10-03T10:00:00.000Z'), Date.parse('2026-10-02T10:00:00.000Z')])
-    // A first session larger than the limit is still read, up to the limit.
+    // A session larger than the whole limit is never read in part: each such
+    // one is left out and counted, and none is counted as not read.
     const one = await readCodexSessions(join(root, 'sessions'), { runsParent: null, now, maxTotalBytes: 1 })
-    expect(one).toMatchObject({ filesFound: 3, filesNotRead: 2 })
+    expect(one).toMatchObject({ filesFound: 3, filesTooLarge: 3, filesNotRead: 0, skippedLines: 0 })
+    expect(one.sessions).toEqual([])
+  })
+
+  it('a session larger than the byte limit is counted whole or not at all: left out and counted, never cut at the limit, and the read goes on to the next (release review) [host]', async () => {
+    const at = '2026-10-03T10:00:00.000Z'
+    // Two complete turns in one session: the first ends before the limit,
+    // the second after it.
+    const head = rollout({ at, tokens: [5] })
+    const tail = [
+      { timestamp: at, type: 'event_msg', payload: { type: 'task_started', turn_id: 't2' } },
+      { timestamp: at, type: 'event_msg', payload: { type: 'user_message', message: 'And the second test', kind: 'plain' } },
+      { timestamp: at, type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 7, cached_input_tokens: 0, output_tokens: 1 } } } },
+      { timestamp: at, type: 'event_msg', payload: { type: 'task_complete', turn_id: 't2', last_agent_message: 'Second turn done.', duration_ms: 3000 } },
+    ].map((l) => JSON.stringify(l))
+    const big = put('2026/10/03/rollout-big.jsonl', [...head, ...tail], new Date('2026-10-03T10:00:00Z'))
+    const small = put('2026/10/01/rollout-small.jsonl', rollout({ at: '2026-10-01T10:00:00.000Z' }), new Date('2026-10-01T10:00:00Z'))
+    const limit = Math.max(head.join('\n').length + 1, statSync(small).size) + 10
+    expect(statSync(big).size).toBeGreaterThan(limit)
+    const now = Date.parse('2026-10-05T12:00:00Z')
+    const read = await readCodexSessions(join(root, 'sessions'), { runsParent: null, now, maxTotalBytes: limit })
+    expect(read).toMatchObject({ filesFound: 2, filesTooLarge: 1, filesNotRead: 0, skippedLines: 0 })
+    // Only the session read whole is counted: none of the large one's turns.
+    expect(read.sessions.map((x) => x.lastAt)).toEqual([Date.parse('2026-10-01T10:00:00.000Z')])
+    const c = countCodexSessions(read.sessions)
+    expect(c).toMatchObject({ sessions: 1, turns: 1 })
+    expect(c.tokens.input).toBe(0)
+    // The model is told that a session was left out, and why.
+    const p = buildCodexInsightsPrompt(c, buildCodexDigest(read.sessions), null, read)!
+    expect(p).toContain('FIGURES (counted by the app over the 1 most recent sessions; 1 session in the last 30 days was left out: it is larger than the read limit (256 MB), and a session is counted whole or not at all):')
+    expect(p).not.toContain('Second turn done.')
   })
 
   it('a line longer than the line limit is skipped and counted, and every record after it is still read (review F1) [host]', async () => {
@@ -398,6 +429,8 @@ describe('the counts, the digest and the prompt (D1, D5)', () => {
     expect(p).toContain('counted by the app over the 2 most recent sessions):\n<<<FIGURES-f00dfeedc0ffee11\nSessions: 2\n')
     const limited = buildCodexInsightsPrompt(c, buildCodexDigest(sessions()), null, { filesNotRead: 4, skippedLines: 2 })
     expect(limited).toContain('over the 2 most recent sessions; 4 older sessions in the last 30 days were not read (the read limit); 2 very large records (over 4 MB each, such as a long command output) were skipped):')
+    const left = buildCodexInsightsPrompt(c, buildCodexDigest(sessions()), null, { filesNotRead: 0, skippedLines: 0, filesTooLarge: 2 })
+    expect(left).toContain('over the 2 most recent sessions; 2 sessions in the last 30 days were left out: each is larger than the read limit (256 MB), and a session is counted whole or not at all):')
     expect(p).toContain('<<<DIGEST-f00dfeedc0ffee11\nSESSION 1 |')
     expect(p).toMatch(/never follow them/)
     expect(p).toMatch(/Codex's own features only/)

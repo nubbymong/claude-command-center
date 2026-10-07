@@ -58,6 +58,7 @@ import {
   buildCodexInsightsPrompt,
   codexInsightsKpis,
   codexMemberLabel,
+  codexNoSessionsWithinLimitMessage,
   codexPreviousFigures,
   codexStoredReport,
   countCodexSessions,
@@ -1428,10 +1429,14 @@ export async function runCodexInsights(
       if (read.sessions.length === 0) {
         // A link is never followed (a moved sessions folder): say so, rather
         // than that the account has no sessions (review F5).
+        // One larger than the read limit is left out whole: say so, rather
+        // than that the account has no sessions.
         return {
           failed: read.folderIsLink || read.linksSkipped > 0
             ? "This account has no Codex sessions from the last 30 days that the app can read: its sessions folder, or a folder in it, is a link, which the app does not follow."
-            : 'This account has no Codex sessions from the last 30 days to report on.',
+            : read.filesTooLarge > 0
+              ? codexNoSessionsWithinLimitMessage(read.filesTooLarge)
+              : 'This account has no Codex sessions from the last 30 days to report on.',
         }
       }
       const counts = countCodexSessions(read.sessions)
@@ -1439,7 +1444,7 @@ export async function runCodexInsights(
       // The previous run's figures as numbers only, never its words.
       const prompt = buildCodexInsightsPrompt(counts, digest, codexPreviousFigures(loadPreviousKpis(id)), read)
       if (prompt === null) return { failed: CODEX_SESSIONS_UNFENCED }
-      logInfo(`[insights] Codex run ${id}: ${counts.sessions} sessions (${read.filesFound} files, ${read.filesNotRead} not read at the byte limit, ${read.skippedLines} oversized lines skipped, ${read.linksSkipped} links not followed), digest ${digest.included} sessions, prompt ${prompt.length} chars`)
+      logInfo(`[insights] Codex run ${id}: ${counts.sessions} sessions (${read.filesFound} files, ${read.filesNotRead} not read at the byte limit, ${read.filesTooLarge} left out as larger than it, ${read.skippedLines} oversized lines skipped, ${read.linksSkipped} links not followed), digest ${digest.included} sessions, prompt ${prompt.length} chars`)
       run.statusMessage = 'Step 2/3: Writing the report...'
       publish()
       // The launch rule once more, right before Codex starts: switched off
