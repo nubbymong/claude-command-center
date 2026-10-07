@@ -100,8 +100,9 @@ held in the DOM: terminals, other `<canvas>` drawings, and frames of another ori
 Agent Canvas page). Each scan logs those as NOT SCANNED with a count, so a clean scan never
 means they were checked: their text comes from the fictional workspace and the fake CLIs,
 and they are checked by eye. The patterns in the repo
-(`stage/scan-text.js`) are generic only: a user-folder path on a drive (either slash), a
-`/home/` or macOS `/Users/` path, an IPv4 address (a version number such as `v2.1.1.4` is
+(`stage/scan-text.js`) are generic only: a user-folder path on a drive (either slash,
+any case, JSON-escaped too), a `/home/` or macOS `/Users/` path (also after a colon, as in a
+`PATH` list), an IPv4 address (a version number such as `v2.1.1.4` is
 not one), a host on `.internal` / `.local` / `.lan` / `.corp`, and any e-mail address
 outside the fictional `example.dev` / `example.io` / `example.co`.
 

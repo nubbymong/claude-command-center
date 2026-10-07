@@ -2,7 +2,8 @@
 // CommonJS with no dependencies, so it can be tested on its own.
 //
 // The repo holds only generic patterns: a user-folder path on a drive (either
-// slash), a /home or macOS /Users path, an IPv4 address (not a version
+// slash, any case, JSON-escaped too), a /home or macOS /Users path, an IPv4
+// address (not a version
 // number), a host on a private-looking suffix, and any
 // e-mail address outside the fictional example.dev / example.io / example.co
 // the staging uses (content.js). Names that are private to the operator
@@ -16,10 +17,12 @@ const fs = require('fs')
 const path = require('path')
 
 const GENERIC = [
-  { name: 'user-folder path', re: /\b[A-Za-z]:[\\/]Users[\\/][^\s"'<>|]+/g },
+  // Any case, and separators doubled as JSON escapes them (C:\\Users\\alice).
+  { name: 'user-folder path', re: /\b[A-Za-z]:[\\/]+Users[\\/]+[^\s"'<>|]+/gi },
   { name: 'home path', re: /\/home\/[^\s"'<>|]+/g },
   // A path's own root only: not src/Users/..., a web path, or C:/Users (above).
-  { name: 'macOS user folder', re: /(?<![\w.:-])\/Users\/[^\s"'<>|]+/g },
+  // After a colon it counts (path:/Users/..., a PATH list), after a drive letter not.
+  { name: 'macOS user folder', re: /(?<![\w.-])(?<!\b[A-Za-z]:)\/Users\/[^\s"'<>|]+/g },
   // Four octets of 0-255, not one run of a longer dotted number, and not a
   // version (v2.1.1.4, "version 2.1.1.4").
   { name: 'IPv4 address', re: /(?<![\w.])(?<!\b[Vv]ersion[\s:=]*)(?:(?:25[0-5]|2[0-4]\d|[01]?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d?\d)(?!\.?\w)/g },

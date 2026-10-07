@@ -51,6 +51,17 @@ describe('user folders', () => {
     }
   })
 
+  // The page text shows a path as the app holds it: in any case, escaped once
+  // inside JSON, or as one entry of a colon-separated list.
+  it.each([
+    ['in lower case', 'c:\\users\\alice\\proj'],
+    ['JSON-escaped', '{"cwd":"C:\\\\Users\\\\alice\\\\proj"}'],
+    ['after a label and a colon', 'path:/Users/alice/proj'],
+    ['inside a PATH list', '/usr/bin:/Users/alice/bin'],
+  ])('a user folder %s is caught', (_how, s) => {
+    expect(hits(s), s).not.toEqual([])
+  })
+
   it('a project folder, a relative Users folder and a web path are not a user folder', () => {
     for (const s of ['C:\\dev\\web\\storefront', 'C:/dev/notes', '~/.claude.json', '/Applications/AI Code Conductor.app', 'src/components/Users/List.tsx', 'https://api.example.dev/Users/42']) {
       expect(hits(s), s).toEqual([])
