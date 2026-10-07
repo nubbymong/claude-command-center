@@ -18,6 +18,7 @@ import {
   normalizeModelLabel,
   type ModelRegistry,
   type ModelPickerRow,
+  type ModelProvider,
 } from '../../shared/model-registry'
 
 export interface OptionItem {
@@ -35,9 +36,11 @@ export interface ModelOptionGroup {
 // Registry-derived model and effort lists. Components should derive these via
 // useRegistryStore((s) => s.registry) so dropdowns hot-reload on registry updates.
 
-/** Picker rows grouped for a popover or a <select> with <optgroup>s. */
-export function modelGroupsFromRegistry(reg: ModelRegistry): ModelOptionGroup[] {
-  return groupPickerRows(buildModelPickerRows(reg)).map((g) => ({
+/** Picker rows grouped for a popover or a <select> with <optgroup>s. `provider`
+ *  (P3.8, row 39): whose models; Claude Code's unless a caller names another
+ *  provider. */
+export function modelGroupsFromRegistry(reg: ModelRegistry, provider: ModelProvider = 'claude'): ModelOptionGroup[] {
+  return groupPickerRows(buildModelPickerRows(reg, provider)).map((g) => ({
     title: g.title,
     items: g.rows.map((r: ModelPickerRow) => ({ label: r.label, value: r.value, hint: r.hint })),
   }))
@@ -47,13 +50,15 @@ export function modelGroupsFromRegistry(reg: ModelRegistry): ModelOptionGroup[] 
  * Effort rows for a specific model, each carrying `disabled` for a level that
  * model does not support. Levels are disabled rather than dropped so the list
  * keeps a stable shape; an unknown or fuzzily-matched model enables everything
- * (see buildEffortRows).
+ * (see buildEffortRows). `provider` (P3.8, row 40): whose levels; Claude
+ * Code's unless a caller names another provider.
  */
 export function effortsForModel(
   reg: ModelRegistry,
   modelId: string | undefined | null,
+  provider: ModelProvider = 'claude',
 ): (OptionItem & { disabled?: boolean })[] {
-  return buildEffortRows(reg, modelId).map((e) => ({
+  return buildEffortRows(reg, modelId, provider).map((e) => ({
     label: e.label, value: e.value, hint: e.hint,
     ...(e.supported ? {} : { disabled: true }),
   }))

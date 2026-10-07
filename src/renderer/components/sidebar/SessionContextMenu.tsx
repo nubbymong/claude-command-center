@@ -2,11 +2,12 @@ import React, { useLayoutEffect, useRef, useState } from 'react'
 import { Session } from '../../stores/sessionStore'
 import { useClickOutside } from '../../hooks/useClickOutside'
 import { placeMenu, type MenuPlacement } from '../../utils/menuPlacement'
-import { isAccountActive, type AccountProfile } from '../../../shared/account-types'
-import { resolveAccountName, middleTruncateEmail } from '../../../shared/account-chip-color'
-import { pinMenuLabel, PIN_WHILE_RUNNING_HINT, WATCHDOG_CHECK_ITEMS, WATCHDOG_RUNTIME_HINT } from './sessionsPanelState'
+import type { SwitchAccountItem } from '../../utils/switchAccountItems'
+import { pinMenuLabel, PIN_WHILE_RUNNING_HINT, WATCHDOG_CHECK_ITEMS, WATCHDOG_RUNTIME_HINT, WATCHDOG_UNAVAILABLE_HINT } from './sessionsPanelState'
 
 export type WatchdogCheckKey = 'rateLimit' | 'overload' | 'safeguard'
+
+const MIDDOT = String.fromCharCode(0xb7)
 
 interface SessionContextMenuProps {
   x: number
@@ -24,13 +25,13 @@ interface SessionContextMenuProps {
   onPinConfig?: () => void
   /** Multi-account switch: gated by the caller. When false the item is hidden. */
   canSwitchAccount?: boolean
-  /** All known account profiles, for the Switch Account sub-chooser. */
-  profiles?: AccountProfile[]
-  /** User aliases (canonical email -> name), for friendly labels. */
-  accountAliases?: Record<string, string>
-  /** Switch this session to the chosen account (undefined = default account).
-   *  No-op upstream when it equals the current account. */
-  onSwitchAccount?: (profileId: string | undefined) => void
+  /** The Switch Account sub-chooser's rows, for the session's provider
+   *  (utils/switchAccountItems: Claude's profiles, or a Codex session's
+   *  Codex accounts; P3.6). */
+  switchItems?: SwitchAccountItem[]
+  /** Switch this session to the chosen account (a Claude profile id, or a
+   *  registry account id). No-op upstream when it equals the current account. */
+  onSwitchAccount?: (accountId: string | undefined) => void
   /** #216: open claude.ai artifacts as THIS session's account. Hidden when undefined. */
   onOpenArtifacts?: () => void
   /** #216: acquire this account's claude.ai web session (opens the system browser). */
@@ -53,20 +54,22 @@ interface SessionContextMenuProps {
   watchdogChecks?: Record<WatchdogCheckKey, boolean>
   /** #605: flip one check for THIS running session. Runtime only. */
   onToggleWatchdogCheck?: (key: WatchdogCheckKey) => void
+  /** P3.10: checks this session's CLI has no patterns for: shown off, not switchable. */
+  watchdogUnavailable?: WatchdogCheckKey[]
 }
 
 export default function SessionContextMenu({
   x, y, session, hasGroup, onRename, onRemoveFromGroup, onClose, onDismiss,
   configPinned, onPinConfig,
-  canSwitchAccount, profiles, accountAliases, onSwitchAccount,
+  canSwitchAccount, switchItems, onSwitchAccount,
   onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession, codeSignedIn, codeNotChecked,
-  watchdogChecks, onToggleWatchdogCheck,
+  watchdogChecks, onToggleWatchdogCheck, watchdogUnavailable,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, onDismiss)
   const [accountOpen, setAccountOpen] = useState(false)
 
-  const showSwitch = !!canSwitchAccount && !!profiles && profiles.length > 1 && !!onSwitchAccount
+  const showSwitch = !!canSwitchAccount && !!switchItems && switchItems.length > 1 && !!onSwitchAccount
 
   // Keep the menu inside the window. This one is the tallest in the app and
   // still grows -- the #605 Watchdog block, and Switch Account expanding to one
@@ -166,14 +169,19 @@ export default function SessionContextMenu({
           <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
             Watchdog auto-retry
           </div>
-          {WATCHDOG_CHECK_ITEMS.map(({ key, label }) => (
+          {WATCHDOG_CHECK_ITEMS.map(({ key, label }) => {
+            const unavailable = watchdogUnavailable?.includes(key) === true
+            return (
             <button
               key={key}
               onClick={() => onToggleWatchdogCheck(key)}
               role="menuitemcheckbox"
               aria-checked={watchdogChecks[key]}
-              className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
-              style={{ color: 'var(--text-primary)' }}
+              aria-disabled={unavailable || undefined}
+              disabled={unavailable}
+              title={unavailable ? WATCHDOG_UNAVAILABLE_HINT : undefined}
+              className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2${unavailable ? ' cursor-default' : ' hover:bg-[var(--surface-overlay)]'}`}
+              style={{ color: unavailable ? 'var(--text-muted)' : 'var(--text-primary)' }}
               data-testid={`session-ctx-watchdog-${key}`}
             >
               <span
@@ -190,9 +198,10 @@ export default function SessionContextMenu({
                   </svg>
                 )}
               </span>
-              {label}
+              {unavailable ? `${label} (not available)` : label}
             </button>
-          ))}
+            )
+          })}
           <div className="px-3 pb-1 pl-8 text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
             {WATCHDOG_RUNTIME_HINT}
           </div>
@@ -293,28 +302,31 @@ export default function SessionContextMenu({
           </button>
           {accountOpen && (
             <div className="pl-2">
-              {profiles!.map((p) => {
-                const isCurrent = p.id === session.profileId
-                // Inactive accounts stay visible but can't be selected. The current
-                // account is always shown selectable (choosing it is a harmless no-op)
-                // even in the edge case where it was deactivated while in use.
-                const selectable = isAccountActive(p) || isCurrent
+              {switchItems!.map((item) => {
+                const isCurrent = item.active
+                // Inactive accounts (and a Codex account that needs attention)
+                // stay visible but can't be selected. The current account is
+                // always shown selectable (choosing it is a harmless no-op) even
+                // in the edge case where it was deactivated while in use.
+                // P3.6 (row 22): one list for every provider
+                // (utils/switchAccountItems).
+                const selectable = !item.disabled
                 return (
                   <button
-                    key={p.id}
+                    key={item.value}
                     disabled={!selectable}
-                    onClick={() => { if (selectable) { onSwitchAccount?.(p.id); onDismiss() } }}
+                    onClick={() => { if (selectable) { onSwitchAccount?.(item.value); onDismiss() } }}
                     className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 ${selectable ? 'hover:bg-[var(--surface-overlay)]' : 'cursor-default'}`}
                     style={{ color: !selectable ? 'var(--text-muted)' : (isCurrent ? 'var(--text-primary)' : 'var(--text-secondary)') }}
-                    title={selectable ? p.accountEmail : `${p.accountEmail} (inactive)`}
+                    title={item.state && !selectable ? `${item.title} (${item.state})` : item.title}
                   >
                     <span className="w-3 shrink-0" style={{ color: 'var(--status-success)' }}>{isCurrent ? String.fromCodePoint(0x2713) : ''}</span>
                     <span className="flex flex-col min-w-0">
                       <span className="truncate">
-                        {resolveAccountName(p.accountEmail, p.name, accountAliases)}
-                        {!isAccountActive(p) && <span style={{ color: 'var(--text-muted)' }}> · inactive</span>}
+                        {item.label}
+                        {item.state && <span style={{ color: 'var(--text-muted)' }}>{` ${MIDDOT} ${item.state}`}</span>}
                       </span>
-                      <span className="truncate" style={{ fontSize: 10, lineHeight: '13px', color: 'var(--text-muted)' }}>{middleTruncateEmail(p.accountEmail)}</span>
+                      {item.detail && <span className="truncate" style={{ fontSize: 10, lineHeight: '13px', color: 'var(--text-muted)' }}>{item.detail}</span>}
                     </span>
                   </button>
                 )

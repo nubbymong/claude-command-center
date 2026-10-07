@@ -57,7 +57,7 @@ export default function SentinelDot() {
 
   const tooltip =
     state === 'analyzing'
-      ? 'Sentinel: analyzing Claude Code update…'
+      ? snap?.analyzingProvider === 'codex' ? 'Sentinel: analyzing the Codex update...' : 'Sentinel: analyzing Claude Code update\u2026'
       : state === 'high' || state === 'findings'
       ? `Sentinel: ${reachingCount} change${reachingCount !== 1 ? 's' : ''} affecting your setup`
       : state === 'reviewed'

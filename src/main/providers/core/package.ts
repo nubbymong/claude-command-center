@@ -14,7 +14,7 @@ import type {
   ProviderCapabilities, CapabilityPlatform, RealmEnvPatch, AuthMethod, KnownAuthState, DiscoveryState, Compatibility,
   SanitizedManagedSettings, ManagedLaunchPreflightInput, ManagedLaunchPreflight, RealmKind, AuthRealm,
 } from '../../../shared/providers'
-import type { UsageBucket } from '../../../shared/usage-types'
+import type { AllowanceCredits, UsageBucket } from '../../../shared/usage-types'
 import type { SessionProvider } from '../types'
 import type { LegacyAccountsPort } from './account-registry-store'
 import type { LaunchLeaseKind } from './consumer-leases'
@@ -101,6 +101,9 @@ export interface AuthOperationResult {
   providerAuthorityId?: string
   providerLabel?: string
   planLabel?: string
+  /** A sign-out: its CLI ran (whatever followed), so the realm may have
+   *  changed even when the result says why it could not be read back. */
+  ran?: boolean
 }
 
 /** The CLI discovery last resolved, for a package whose update commands
@@ -111,11 +114,39 @@ export interface InstalledCli {
   executable?: string
 }
 
+/** One model the installed CLI offers in its own model picker (P3.9, row 39). */
+export interface ModelCatalogueEntry {
+  id: string
+  label: string
+}
+
+/** Why a model catalogue read gave no list (P3.9). */
+export type ModelCatalogueFailureCode =
+  | 'not-proven'           // discovery has not proven a CLI this run
+  | 'unsupported-version'  // the proven CLI's version may not be used
+  | 'executable-changed'   // PATH now resolves another file, or the file was replaced
+  | 'not-started'          // the CLI could not be run
+  | 'failed'               // it ran and failed, timed out or was stopped
+  | 'unreadable'           // its output was not a list this app reads
+
+/** The models the installed CLI offers, read from the CLI itself (P3.9),
+ *  with the version that answered; or why there is no list. */
+export type ModelCatalogueResult =
+  | { ok: true; version: string; models: ModelCatalogueEntry[] }
+  | { ok: false; code: ModelCatalogueFailureCode; detail: string }
+
 export interface ProviderSetupOperations {
   discover(): Promise<DiscoveryResult>
   /** `installed`: what discovery last resolved, so an update command updates
    *  that same install (the one sessions run). */
   installRecipes(platform: CapabilityPlatform, installed?: InstalledCli): readonly InstallRecipe[]
+  /** The versions the app's managed flows support (P3.9: Sentinel names the
+   *  range in a version finding). Absent: the package states no range. */
+  readonly supportedVersions?: { minimum: string; maximumTested: string }
+  /** Present when the CLI can list the models its own picker offers without
+   *  a sign-in or the network (P3.9: Sentinel's live model check). It runs
+   *  only the executable discovery last proved, in no account's folder. */
+  modelCatalogue?(opts?: { signal?: AbortSignal }): Promise<ModelCatalogueResult>
 }
 
 export interface AuthLoginInput {
@@ -132,6 +163,10 @@ export interface AuthLoginInput {
    *  after every wait. Once the login has run, its result is confirmed as
    *  before: stopping then would lose what it left in the realm. */
   mayStart?: () => boolean
+  /** This computer's own home is signed in again in place only with the
+   *  user's acknowledgement that it reaches every app using it (design 9.2,
+   *  last paragraph). Without it a login there is refused. */
+  acknowledgeExternalRealm?: boolean
 }
 
 /** A status check's options. */
@@ -171,6 +206,10 @@ export type RealmFolderFailureCode =
   | 'not-empty'              // an empty-only removal found something inside
   | 'unsafe-contents'        // a removal found a link, another volume or too much: nothing removed
   | 'changed'                // the folder changed while in use, and the operation stopped
+  | 'too-large'              // a history copy found more than it carries over: nothing changed
+  | 'cancelled'              // a history copy stopped on request
+  | 'conversation-missing'   // a conversation copy found no transcript of it in the source realm
+  | 'conversation-differs'   // a conversation copy found a transcript of it in the destination that went its own way: left as it is
   | 'io-failed'
 
 export interface RealmFolderResult {
@@ -198,8 +237,47 @@ export interface ProviderRealmFolderOperations {
    *  stored sign-in is refused, never deleted; one kept in an OS keyring is
    *  invisible here), and removes the folder BEFORE it abandons the setup,
    *  keeping the journal when this fails: the folder is only ever found
-   *  through its realm record. `removed: false` means nothing was there. */
-  remove(realm: RealmRef, opts: { contents: 'empty-only' | 'all' }): Promise<RealmFolderResult>
+   *  through its realm record. `removed: false` means nothing was there.
+   *  `holdsHistory`: a sign in again's replacement, which may hold the
+   *  history carried over into it (copyHistory's bound, not the removal's). */
+  remove(realm: RealmRef, opts: { contents: 'empty-only' | 'all'; holdsHistory?: boolean }): Promise<RealmFolderResult>
+  /** A staged sign in again (design 9.2): copy an account's conversation
+   *  history (the provider's session transcripts and its prompt history) from
+   *  its realm in use into the replacement being set up, before the switch,
+   *  so resume and usage keep the earlier conversations. Only plain files and
+   *  folders on one volume, each at its own canonical path, bounded; nothing
+   *  in the source changes; a file already in the replacement is never
+   *  overwritten. It never holds the main process (asynchronous, a batch at
+   *  a time). A file is carried over only when every name it has is one the
+   *  app gave it (`earlier`: the account's earlier realms, compared only);
+   *  others are `skipped`. `copied` counts the files carried over, `linked`
+   *  those that became a second name of the same file. `signal` stops it at
+   *  the next batch (cancelled). Absent: the provider keeps no such history. */
+  copyHistory?(from: RealmRef, to: RealmRef, opts?: { earlier?: readonly RealmRef[]; signal?: AbortSignal }): Promise<RealmFolderResult & { copied?: number; linked?: number; skipped?: number }>
+  /** A running session switched to another account of the same provider
+   *  (P3.6, row 22): copy one conversation's transcript from the realm of the
+   *  account it ran under into the realm of the account it moves to, so the
+   *  respawn resumes it there. Each is an app-managed folder in use or the
+   *  provider's own shared home (as every Claude profile shares one
+   *  conversations folder); the source is only read. Both realm locks are
+   *  held for the copy (no sign-in, sign-out or removal meanwhile); the
+   *  caller holds a lease on both accounts. The transcript is found by the
+   *  provider's own lookup in the source realm only, copied whole or not at
+   *  all, bounded and never through a link. A new copy replaces nothing;
+   *  the same transcript already there is `present`; an earlier copy that is
+   *  exactly the start of it is replaced under its own name only by the
+   *  whole copy (`extended`: another name of that file keeps what it had);
+   *  one that went its own way is refused (`conversation-differs`).
+   *  `current`: whether the caller still wants the copy, asked once both
+   *  locks are held and before each step of the file work (no: `cancelled`,
+   *  nothing left behind). Absent: the provider keeps no conversation a
+   *  session could carry. */
+  copyConversation?(from: RealmRef, to: RealmRef, conversation: { id: string; cwd?: string }, opts?: { current?: () => boolean }): Promise<RealmFolderResult & { carried?: 'copied' | 'present' | 'extended' }>
+  /** An account of this provider was removed (archived): forget whatever the
+   *  provider kept about its realm besides the folder (the marks of the
+   *  conversations carried into it, ADR-023). Never throws; absent: nothing
+   *  is kept. */
+  forget?(ref: RealmRef): void
 }
 
 /** What a launch in a bound realm needs, proven at launch time (plan A10):
@@ -264,6 +342,11 @@ export interface ReviewRunInput {
   /** From the prepared launch: the reviewer account's realm, for a provider
    *  that also holds the account's own credentials while it runs (Claude). */
   realm?: RealmRef
+  /** P3.9 round 1: `analysis` is a text-only run of a prompt that carries
+   *  all its material (Sentinel's check of an update's notes): no tools, no
+   *  project or user instructions, nothing the working folder holds. A
+   *  package that cannot run one that way refuses it. Absent: a review. */
+  purpose?: 'review' | 'analysis'
 }
 
 export interface ReviewUsage {
@@ -284,13 +367,16 @@ export interface ProviderReviewOperations {
 }
 
 /** An account's allowance as a package reports it: provider-neutral buckets
- *  (the package keys and labels them), when they were reported, and the
- *  plan's display name. No path or file name. */
+ *  (the package keys and labels them), when they were reported, the plan's
+ *  display name, and, when the provider reports them, the account's credits
+ *  (a count, not money; ADR-023). No path or file name. */
 export interface UsageReading {
   buckets: UsageBucket[]
   /** Epoch ms of the report; null when unknown. */
   readingAt: number | null
   planLabel: string | null
+  /** Omitted (no key) when the reading carries none. */
+  credits?: AllowanceCredits
 }
 
 /** A usage port's answer: `ok: false` when the realm is refused before
@@ -370,6 +456,12 @@ export interface ProviderManagedLaunchOperations {
   authoritySettingsKeys(raw: string): readonly string[]
   /** Report on one composed launch. A diagnostic, never the boundary. */
   preflight(input: ManagedLaunchPreflightInput): ManagedLaunchPreflight
+  /** P3.9 round 3: the network settings (proxies, certificates) a settings
+   *  file's `env` block sets, for a headless run that loads no settings file
+   *  yet must still reach the provider: only the names the provider
+   *  classifies as transport and keeps, canonically named, with plain string
+   *  values. Pure: takes text, returns the variables. */
+  transportSettingsEnv?(raw: string): Readonly<Record<string, string>>
 }
 
 export interface ProviderPackage {

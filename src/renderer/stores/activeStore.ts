@@ -3,11 +3,11 @@ import { useSessionStore } from './sessionStore'
 
 /**
  * Active sessions (the inverse of the sleep moon — owner call, 2026-08-27):
- * a Claude session whose PTY output is MOVING right now gets a subtle green
+ * an agent session (either assistant) whose PTY output is MOVING right now gets a subtle green
  * sweep on its context bar. Sourced in the RENDERER from the same `pty:data`
  * bytes the Watchdog observes (`pty-manager` sends them unconditionally per
  * session), so — unlike sleep, which rides the Watchdog and needs it enabled —
- * this works for every Claude session out of the box, and the main process is
+ * this works for every agent session out of the box, and the main process is
  * left untouched.
  *
  * The rules:
@@ -16,8 +16,9 @@ import { useSessionStore } from './sessionStore'
  *    re-renders on a TICK when the active SET changes, never per chunk.
  *  - MUTUALLY EXCLUSIVE with sleep by construction: sleep is 120 s of silence,
  *    active is output within ~2.5 s — the two windows can never both hold.
- *  - ATTENTION outranks it, and it is Claude-only: both enforced where the bar
- *    renders (SessionRow), not here — this store only answers "is output moving".
+ *  - ATTENTION outranks it, and it is for agent sessions only (either
+ *    assistant since P3.10; never a plain shell): both enforced where the bar
+ *    renders (SessionRow), not here -- this store only answers "is output moving".
  */
 
 /** Output seen within this window counts as "actively moving". */

@@ -8,6 +8,7 @@ import { resolve } from 'path'
 import {
   evaluateMilestone,
   evaluateModels,
+  evaluateCodexModels,
   formatReport,
   registryIdCovers,
   repoFromUrl,
@@ -21,6 +22,7 @@ import {
   EXCLUDED_LABEL,
   DEFAULT_REGISTRY_PATH,
   DEFAULT_EXPECTED_PATH,
+  DEFAULT_CODEX_EXPECTED_PATH,
 } from '../../../scripts/release-gate.mjs'
 
 type Issue = { number: number; title: string; labels?: Array<{ name: string } | string>; pull_request?: object; state?: string }
@@ -41,8 +43,17 @@ const REGISTRY_OK = {
     { id: 'claude-opus-4-8', family: 'opus', label: 'Opus 4.8' },
     { id: 'claude-sonnet-4-6', family: 'sonnet', label: 'Sonnet 4.6' },
     { id: 'claude-haiku-4-5', family: 'haiku', label: 'Haiku 4.5' },
-    { id: 'codex-family', family: 'codex', label: 'Codex' },
+    { id: 'codex-family', family: 'codex', label: 'Codex', pickable: false },
+    { id: 'gpt-5.5', family: 'codex', label: 'GPT-5.5' },
   ],
+}
+
+// The Codex half's list (P3.8 round 1, G1): resources/codex-model-catalogue.json's shape.
+const CODEX_EXPECTED = {
+  source: 'the model catalogue bundled with the Codex CLI',
+  cliVersions: ['0.155.1'],
+  fetchedAt: '2026-09-29',
+  models: [{ label: 'GPT-5.5', id: 'gpt-5.5' }],
 }
 
 /** A fake GitHub: one milestone list, issues keyed by milestone number. */
@@ -227,7 +238,7 @@ describe('release-gate evaluateModels', () => {
 describe('release-gate runGate', () => {
   it('clean milestone + covered registry → exit 0 with a PASS line', async () => {
     const gh = fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] })
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })
     expect(r.exitCode).toBe(EXIT_OK)
     expect(r.lines.at(-1)).toMatch(/^PASS/)
     expect(gh.calls).toEqual(['/repos/o/r/milestones?state=all', '/repos/o/r/issues?milestone=7&state=open'])
@@ -235,7 +246,7 @@ describe('release-gate runGate', () => {
 
   it('open issue → exit 1 and the issue is printed by number and title', async () => {
     const gh = fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [{ number: 377, title: 'Tips re-review', labels: [{ name: 'ux' }] }] })
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })
     expect(r.exitCode).toBe(EXIT_REFUSED)
     expect(r.lines.join('\n')).toMatch(/#377\s+Tips re-review\s+\[ux\]/)
     expect(r.lines.at(-1)).toMatch(/^REFUSED/)
@@ -243,14 +254,14 @@ describe('release-gate runGate', () => {
 
   it('excluded label ignored → exit 0, and the excluded issue is named in the OK line', async () => {
     const gh = fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [{ number: 374, title: 'GPU', labels: [{ name: 'excluded' }] }] })
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })
     expect(r.exitCode).toBe(EXIT_OK)
     expect(r.lines.join('\n')).toMatch(/excluded by the owner: #374/)
   })
 
   it('missing milestone → exit 1 (fails closed) and never queries issues', async () => {
     const gh = fakeGitHub([{ number: 8, title: '2.2' }], {})
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })
     expect(r.exitCode).toBe(EXIT_REFUSED)
     expect(r.lines.join('\n')).toMatch(/no GitHub milestone titled "2.1.0-beta.17"/)
     expect(gh.calls).toEqual(['/repos/o/r/milestones?state=all'])
@@ -259,7 +270,7 @@ describe('release-gate runGate', () => {
   it('model check fails → exit 1 even when the milestone is clean, with a diff of the missing ids', async () => {
     const gh = fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] })
     const registry = { models: REGISTRY_OK.models.filter((m) => m.id !== 'claude-opus-4-8') }
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })
     expect(r.exitCode).toBe(EXIT_REFUSED)
     const text = r.lines.join('\n')
     expect(text).toMatch(/OK\s+milestone/)
@@ -269,21 +280,87 @@ describe('release-gate runGate', () => {
 
   it('model check passes → the OK line says how many models are covered', async () => {
     const gh = fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] })
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })
     expect(r.lines.join('\n')).toMatch(/OK\s+model registry covers all 3 supported Claude Code models/)
   })
 
   it('GitHub unreachable → exit 2 (cannot evaluate), not a pass', async () => {
     const listAll = async () => { throw new Error('GitHub API 503 for /repos/o/r/milestones?state=all') }
-    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })
     expect(r.exitCode).toBe(EXIT_CANNOT_EVALUATE)
     expect(r.lines[0]).toMatch(/CANNOT EVALUATE/)
   })
 
   it('no version / no repo → exit 2', async () => {
     const gh = fakeGitHub([], {})
-    expect((await runGate({ version: '', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })).exitCode).toBe(EXIT_CANNOT_EVALUATE)
-    expect((await runGate({ version: '1.0.0', repo: null, listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, log: silent })).exitCode).toBe(EXIT_CANNOT_EVALUATE)
+    expect((await runGate({ version: '', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })).exitCode).toBe(EXIT_CANNOT_EVALUATE)
+    expect((await runGate({ version: '1.0.0', repo: null, listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })).exitCode).toBe(EXIT_CANNOT_EVALUATE)
+  })
+})
+
+// -- the Codex half (P3.8 round 1, G1) --
+describe('release-gate Codex models', () => {
+  const clean = () => fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] })
+
+  it('a Codex model the list names but the registry lacks -> exit 1, with a diff, even when everything else is clean', async () => {
+    const codexExpected = { ...CODEX_EXPECTED, models: [...CODEX_EXPECTED.models, { label: 'GPT-6-Astra', id: 'gpt-6-astra' }] }
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: clean().listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected, log: silent })
+    expect(r.exitCode).toBe(EXIT_REFUSED)
+    const text = r.lines.join('\n')
+    expect(text).toMatch(/OK\s+milestone/)
+    expect(text).toMatch(/OK\s+model registry covers all 3/)
+    expect(text).toMatch(/FAIL\s+Codex models: 1 model\(s\) the Codex CLI lists are not in the registry/)
+    expect(text).toMatch(/- gpt-6-astra\s+\(GPT-6-Astra\)/)
+    expect(r.codexResult.missing.map((m: { id: string }) => m.id)).toEqual(['gpt-6-astra'])
+  })
+
+  it('a Codex model the list no longer names is a WARNING, not a refusal', async () => {
+    const registry = { models: [...REGISTRY_OK.models, { id: 'gpt-5.2', family: 'codex', label: 'GPT-5.2' }] }
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: clean().listAll, registry, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })
+    expect(r.exitCode).toBe(EXIT_OK)
+    expect(r.lines.join('\n')).toMatch(/WARN\s+gpt-5\.2 \(GPT-5\.2\) is a Codex model in the registry but the Codex list no longer names it/)
+  })
+
+  it('the OK line says how many Codex models are covered and from which CLI versions', async () => {
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: clean().listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })
+    expect(r.exitCode).toBe(EXIT_OK)
+    expect(r.lines.join('\n')).toMatch(/OK\s+Codex models: the registry covers all 1 models Codex 0\.155\.1 lists \(list read 2026-09-29\)/)
+  })
+
+  it('FAILS CLOSED when the Codex list is missing or empty: a caller that forgets it cannot pass', async () => {
+    for (const codexExpected of [undefined, null, { models: [] }, { models: [{ id: '' }] }]) {
+      const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: clean().listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected, log: silent })
+      expect(r.exitCode).toBe(EXIT_REFUSED)
+      expect(r.lines.join('\n')).toMatch(/FAIL\s+Codex models: the expected Codex models list is empty or missing/)
+    }
+  })
+
+  it('a Codex id the registry lists twice refuses, and the report names it (round 2, GS)', async () => {
+    const registry = { models: [{ id: 'gpt-5.5', family: 'opus', label: 'x' }, ...REGISTRY_OK.models] }
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] }).listAll, registry, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })
+    expect(r.exitCode).toBe(EXIT_REFUSED)
+    expect(r.lines.join('\n')).toMatch(/gpt-5\.5 is listed more than once in resources\/model-registry\.json/)
+  })
+
+  it('a malformed Codex list refuses rather than throwing (round 2, GS)', async () => {
+    for (const codexExpected of [{ models: {} }, { models: 'gpt-5.5' }, { models: [{ id: 42 }] }]) {
+      const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] }).listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected, log: silent })
+      expect(r.exitCode, JSON.stringify(codexExpected)).toBe(EXIT_REFUSED)
+    }
+  })
+
+  it('only the codex family counts: a Claude-family entry with a Codex id does not cover it', () => {
+    const registry = { models: [{ id: 'gpt-5.5', family: 'opus', label: 'x' }] }
+    const r = evaluateCodexModels({ registry, expected: CODEX_EXPECTED })
+    expect(r.ok).toBe(false)
+    expect(r.missing.map((m: { id: string }) => m.id)).toEqual(['gpt-5.5'])
+  })
+
+  it('main reads the Codex list from the shipped catalogue by default', () => {
+    expect(resolve(DEFAULT_CODEX_EXPECTED_PATH)).toMatch(/resources[\\/]codex-model-catalogue\.json$/)
+    const list = JSON.parse(readFileSync(DEFAULT_CODEX_EXPECTED_PATH, 'utf-8'))
+    const registry = JSON.parse(readFileSync(DEFAULT_REGISTRY_PATH, 'utf-8'))
+    expect(evaluateCodexModels({ registry, expected: list }).ok).toBe(true)
   })
 })
 

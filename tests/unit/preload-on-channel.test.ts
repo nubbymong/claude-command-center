@@ -31,6 +31,7 @@ const api = el.exposed.electronAPI as {
   pty: {
     onData: (sessionId: string, cb: (data: string) => void) => () => void
     onExit: (sessionId: string, cb: (exitCode: number) => void) => () => void
+    kill: (sessionId: string, reason?: 'restart') => void
   }
 }
 const CH = IPC.WINDOW_MAXIMIZED_CHANGED
@@ -132,5 +133,20 @@ describe('preload bridge -- dynamic channels and the exposed surface', () => {
     expect(cb).not.toHaveBeenCalled()
     deliver(ptyExitChannel('sess-9'), 3)
     expect(cb).toHaveBeenCalledWith(3)
+  })
+
+  // P3.16a round 2 (Q5), fixer 3 (F5): main takes only the exact 'restart' as
+  // a Restart's kill and any other as a close, so the bridge must pass a
+  // Restart's reason on, and nothing else.
+  it('pty.kill sends a Restart\'s reason on pty:kill, and a close with no reason', () => {
+    el.ipcRenderer.send.mockClear()
+    api.pty.kill('sess-1', 'restart')
+    api.pty.kill('sess-2')
+    api.pty.kill('sess-3', 'close' as never)
+    expect(el.ipcRenderer.send.mock.calls).toEqual([
+      [IPC.PTY_KILL, 'sess-1', 'restart'],
+      [IPC.PTY_KILL, 'sess-2'],
+      [IPC.PTY_KILL, 'sess-3'],
+    ])
   })
 })

@@ -42,6 +42,7 @@ export const CAPABILITY_KEYS = [
   'auth.apiKey',
   'auth.status',
   'auth.logout',
+  'auth.retireReplaced',
   'realm.isolated',
   'account.labelFields',
   'account.usage',
@@ -76,6 +77,10 @@ export const CAPABILITY_OPERATION: Readonly<Record<CapabilityKey, CapabilityBack
   'auth.apiKey': { operations: 'auth' },
   'auth.status': { operations: 'auth' },
   'auth.logout': { operations: 'auth' },
+  // Signing out a realm an account moved off after a sign in again (design
+  // 9.2): the auth operations' sign-out, used there only once evidence shows
+  // it never signs the new realm out.
+  'auth.retireReplaced': { operations: 'auth' },
   'realm.isolated': { operations: 'realms' },
   'account.labelFields': { operations: 'auth' },
   // Per-account usage through the package's usage port (usage track MP3).

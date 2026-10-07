@@ -17,7 +17,7 @@ import type { Session } from '../stores/sessionStore'
 
 export type CommandTarget = 'claude' | 'partner'
 export type AgentId = 'claude' | 'codex'
-export type LogsEmptyReason = 'shell-only' | 'ssh' | 'codex'
+export type LogsEmptyReason = 'shell-only' | 'ssh'
 
 export type CapabilitySource = Pick<Session, 'provider' | 'sessionType' | 'shellOnly' | 'configId' | 'sshConfig' | 'kind'>
 
@@ -37,7 +37,8 @@ export interface SessionCapabilities {
   /** True on every SSH session: the two panes are on different computers. */
   panesOnDifferentMachines: boolean
   /** Mirrors LogsPane's structural predicate: a shell has no transcript; an SSH
-   *  transcript lives on the host; Codex transcripts are not indexed. */
+   *  transcript lives on the host. A local Codex session's rollout is indexed
+   *  as a Claude session's transcript is (P3.12). */
   logsEmptyReason: LogsEmptyReason | null
   canIndexLogs: boolean
   /** Snap types an English prompt into the main pane -- nonsense on a shell. */
@@ -63,7 +64,7 @@ export function sessionCapabilities(session: CapabilitySource | null | undefined
   const shellOnly = !!session?.shellOnly
   const ssh = session?.sessionType === 'ssh'
   const agent: AgentId | null = shellOnly ? null : provider
-  const logsEmptyReason: LogsEmptyReason | null = shellOnly ? 'shell-only' : ssh ? 'ssh' : provider === 'codex' ? 'codex' : null
+  const logsEmptyReason: LogsEmptyReason | null = shellOnly ? 'shell-only' : ssh ? 'ssh' : null
   const mainRunsOn: 'local' | 'remote' = ssh ? 'remote' : 'local'
   const runsOn = (target: CommandTarget): 'local' | 'remote' => (target === 'partner' ? 'local' : mainRunsOn)
   return {

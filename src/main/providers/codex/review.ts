@@ -99,13 +99,19 @@ export function parseCodexExecEvents(stdout: string): CodexExecOutcome {
   return reader.end()
 }
 
+/** How long an exec run waits for its output pipes to close after codex
+ *  has exited (P3.9 round 2): the last lines arrive well inside it. */
+export const CODEX_EXEC_EXIT_SETTLE_MS = 2_000
+
 export function createCodexReviewOperations(deps: { platform?: NodeJS.Platform; runDeps?: () => CodexRunDeps } = {}): ProviderReviewOperations {
   const platform = deps.platform ?? process.platform
   return {
     async run(input: ReviewRunInput): Promise<ReviewRunResult> {
       const win32 = platform === 'win32'
       const env = reviewerEnv(input.env, platform)
-      const cmd = codexCommandLine(input.executable, 'review', platform, codexShellEnv(env, platform))
+      // P3.9 round 1: a text-only analysis runs its own constant argv (no
+      // tools, no instructions from the folder; cli-runner.ts, `analysis`).
+      const cmd = codexCommandLine(input.executable, input.purpose === 'analysis' ? 'analysis' : 'review', platform, codexShellEnv(env, platform))
       if ('refused' in cmd) return { ok: false, code: 'not-started', message: `Codex could not be started: ${cmd.refused}.` }
       // cmd.exe cannot use a network path as its current directory: it would
       // start the shim in the Windows folder and Codex would review that.
@@ -122,7 +128,10 @@ export function createCodexReviewOperations(deps: { platform?: NodeJS.Platform; 
       }
       const r = await runCodexCli(
         { ...cmd, cwd: input.cwd },
-        { env, timeoutMs: input.timeoutMs, stdin: input.prompt, maxOutput: REVIEW_MAX_CAPTURE, onChunk, ...(input.signal ? { signal: input.signal } : {}) },
+        // P3.9 round 2: settle soon after codex exits, even while a process it
+        // started still holds the output pipes, and a stop takes everything
+        // below the root (an exec run starts no program of the user's).
+        { env, timeoutMs: input.timeoutMs, stdin: input.prompt, maxOutput: REVIEW_MAX_CAPTURE, onChunk, settleAfterExitMs: CODEX_EXEC_EXIT_SETTLE_MS, killScope: 'tree', ...(input.signal ? { signal: input.signal } : {}) },
         ...(deps.runDeps ? [deps.runDeps()] : []),
       )
       const out = reader.end()

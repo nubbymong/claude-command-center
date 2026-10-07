@@ -11,13 +11,29 @@ import { createClaudePackage } from './claude'
 import type { ClaudeLegacyAccountsIo, ClaudeReviewPorts } from './claude'
 import { createCodexPackage, cliCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps, flushPendingCodexKills } from './codex'
 import type { CodexRealmSource } from './codex'
-import { findRealm } from '../../shared/providers'
+import { findRealm, realmOperable } from '../../shared/providers'
 import { readProfilesStrict, updateProfilesStrict, mkdirSecure, profileRealmLaunch, profileReviewRefusal, recordProfileReviewPreflight } from '../account-profiles'
 import { holdProfileForRun } from '../profile-consumers'
 import { resolveClaudeExecutable } from '../claude-cli-version'
 import { readConfigChecked } from '../config-manager'
-import { getAccountRegistry, getAccountRegistryResourcesDir } from '../provider-account-registry'
+import { getAccountRegistry, getAccountRegistryResourcesDir, REGISTRY_DIRNAME } from '../provider-account-registry'
 import { takeProviderSecret } from '../provider-accounts'
+import { atomicWriteFileSync } from '../atomic-write'
+import { createCarryMarksFilePort } from '../carry-marks-port'
+import path from 'node:path'
+
+/** Where the conversations a Switch Account carried are marked between runs
+ *  (ADR-023): a small file in the app's `providers/` folder next to the
+ *  registry, never in an account's folder. Handed to the Codex package. */
+const carryMarksPort = createCarryMarksFilePort({
+  directory: () => {
+    const resources = getAccountRegistryResourcesDir()
+    return resources ? path.join(resources, REGISTRY_DIRNAME) : null
+  },
+  mkdirSecure: (dir) => mkdirSecure(dir),
+  atomicWrite: (file, data, options) => atomicWriteFileSync(file, data, options),
+  posix: process.platform !== 'win32',
+})
 
 /** Claude's profiles.json and settings, handed to the Claude package so the
  *  registry can mirror its accounts (WP2). Injected here, at the root, so the
@@ -35,14 +51,16 @@ const claudeLegacyAccountsIo: ClaudeLegacyAccountsIo = {
  *  directory is the one the registry was loaded from, where the managed
  *  folders live. */
 export const codexRealmSource: CodexRealmSource = {
-  lookup: async (ref) => {
+  lookup: async (ref, use) => {
     const doc = getAccountRegistry()?.current()
     const realm = doc ? findRealm(doc, ref.authRealmId) : undefined
     const resourcesDir = getAccountRegistryResourcesDir()
-    // Only a realm being set up or in use: a retired one (an archived
-    // account's) may name the same external home a newer account now uses,
+    // Only a realm being set up or in use; an app-managed one an account
+    // moved off whose sign-in is still to be removed (a sign in again) ONLY
+    // for its status check and sign-out. Never a retired one: an archived
+    // account's may name the same external home a newer account now uses,
     // and nothing may run there on the old record's behalf.
-    const live = realm?.lifecycle === 'pending' || realm?.lifecycle === 'active'
+    const live = realmOperable(realm, use)
     return realm && live && resourcesDir ? { ok: true, realm, resourcesDir } : { ok: false }
   },
   mkdirSecure: (dir) => mkdirSecure(dir),
@@ -78,7 +96,7 @@ export const claudeReviewPorts: ClaudeReviewPorts = {
  *  Exactly one package per provider: the Codex realm locks live in it. */
 const PACKAGE_FACTORIES: Readonly<Record<ProviderId, ProviderPackageFactory>> = {
   claude: () => createClaudePackage({ legacyAccountsIo: claudeLegacyAccountsIo, review: claudeReviewPorts }),
-  codex: () => createCodexPackage({ realms: codexRealmSource, auth: { takeSecret: (handle) => takeProviderSecret(handle) } }),
+  codex: () => createCodexPackage({ realms: codexRealmSource, auth: { takeSecret: (handle) => takeProviderSecret(handle) }, carryMarksPort }),
 }
 
 /** Idempotent against the registry itself (no separate flag that could desync

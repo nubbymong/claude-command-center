@@ -1,0 +1,30 @@
+exit=0
+--- stdout
+Apply the latest diff produced by Codex agent as a `git apply` to your local working tree
+
+Usage: codex apply [OPTIONS] <TASK_ID>
+
+Arguments:
+  <TASK_ID>
+          
+
+Options:
+  -c, --config <key=value>
+          Override a configuration value that would otherwise be loaded from `~/.codex/config.toml`.
+          Use a dotted path (`foo.bar.baz`) to override nested values. The `value` portion is parsed
+          as TOML. If it fails to parse as TOML, the raw string is used as a literal.
+          
+          Examples: - `-c model="o3"` - `-c 'sandbox_permissions=["disk-full-read-access"]'` - `-c
+          shell_environment_policy.inherit=all`
+
+      --enable <FEATURE>
+          Enable a feature (repeatable). Equivalent to `-c features.<name>=true`
+
+      --disable <FEATURE>
+          Disable a feature (repeatable). Equivalent to `-c features.<name>=false`
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+--- stderr
+

@@ -1,4 +1,4 @@
-// WP1.42 / WP1.29 -- WP2 commit 3 (design 12; plan A6): the Accounts IPC
+// WP1.42 / WP1.29 / WP1.52 -- WP2 commit 3 (design 12; plan A6): the Accounts IPC
 // boundary. Only the app's own window, top frame, is served. Every payload is
 // validated by a strict schema BEFORE the service sees it -- an identity id
 // where an account id belongs, an unknown provider, an unknown key, a
@@ -64,7 +64,7 @@ const CHANNELS: Array<[string, unknown]> = [
   [IPC.PROVIDER_ACCOUNTS_BEGIN_SETUP, { providerId: 'codex', method: 'browser' }],
   [IPC.PROVIDER_ACCOUNTS_ISSUE_SECRET_HANDLE, { accountId: ACC }],
   [IPC.PROVIDER_ACCOUNTS_SIGN_IN, { accountId: ACC, method: 'browser' }],
-  [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'device' }],
+  [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'device', sameAccount: true }],
   [IPC.PROVIDER_ACCOUNTS_CANCEL_SIGN_IN, { accountId: ACC }],
   [IPC.PROVIDER_ACCOUNTS_COMPLETE_SETUP, { accountId: ACC, identity: { mode: 'link', identityId: IDN } }],
   [IPC.PROVIDER_ACCOUNTS_ABANDON_SETUP, { accountId: ACC }],
@@ -166,6 +166,12 @@ describe('the Accounts IPC boundary (WP1.42)', () => {
       [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'apiKey', secretHandle: KEY }],
       [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'apiKey', apiKey: KEY }],
       [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'browser', home: 'C:/Users/victim/.codex' }],
+      // WP1.52 (P3.3 review round 1, T1): the user's answer is required, and only a yes.
+      [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'browser' }],
+      [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'browser', sameAccount: false }],
+      [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'browser', sameAccount: 'yes' }],
+      [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'browser', sameAccount: true, acknowledgeExternal: false }],
+      [IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: ACC, method: 'browser', sameAccount: true, separate: true }],
       // A conflict names a legacy record by its own id rule, one of two fields, and one of two answers.
       [IPC.PROVIDER_ACCOUNTS_RESOLVE_CONFLICT, { identityId: IDN, field: 'friendlyName', providerId: 'claude', legacyId: '..\\..\\x', keep: 'registry' }],
       [IPC.PROVIDER_ACCOUNTS_RESOLVE_CONFLICT, { identityId: IDN, field: 'email', providerId: 'claude', legacyId: 'profile-a1', keep: 'registry' }],
@@ -227,6 +233,41 @@ describe('the Accounts IPC boundary (WP1.42)', () => {
     const w = wire(null)
     expect(await w.call(IPC.PROVIDER_ACCOUNTS_SET_DEFAULT, { accountId: ACC })).toMatchObject({ ok: false, code: 'registry-unavailable' })
     expect(await w.call(IPC.PROVIDER_ACCOUNTS_SNAPSHOT)).toBeNull()
+  })
+})
+
+describe('a Switch account\'s carry is not the renderer\'s to ask for (P3.6, row 22; ADR-009 thesis 3)', () => {
+  it('no channel carries a conversation: main carries only the session it is respawning (pty:spawn), from its own record', async () => {
+    const { svc, reached } = spyService()
+    const w = wire(svc)
+    expect(Object.values(IPC).filter((c) => /carry/i.test(String(c)))).toEqual([])
+    expect([...w.invoke.keys(), ...w.on.keys()].filter((c) => /carry/i.test(c))).toEqual([])
+    // Whatever a channel is asked, with whatever a request adds, the service's
+    // carry is never reached from here.
+    for (const c of [...w.invoke.keys()]) {
+      try { await w.call(c, { sessionId: 's1', accountId: ACC, uuid: '019dd000-0006-7000-8000-0000000000c1' }) } catch { /* refused */ }
+    }
+    expect(reached.filter((r) => /carry/i.test(r))).toEqual([])
+  })
+})
+
+describe('Sign in again needs the answer of the user at the boundary (WP1.52; P3.3 review round 1, T1)', () => {
+  it('without the answer, or with anything but yes, nothing is signed in again; with it the account signs in again as itself', async () => {
+    const h = await harness()
+    const w = wire(h.service)
+    const a = await addCodexAccount(h, 'A')
+    const before = JSON.stringify(h.doc())
+    const runs = h.runs.length
+    for (const p of [{ accountId: a, method: 'browser' }, { accountId: a, method: 'browser', sameAccount: false }, { accountId: a, method: 'browser', sameAccount: 1 }]) {
+      expect(await w.call(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, p)).toMatchObject({ ok: false, code: 'invalid-request' })
+    }
+    expect(h.runs.length).toBe(runs)
+    expect(JSON.stringify(h.doc())).toBe(before)
+    expect(await w.call(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: a, method: 'browser', sameAccount: true })).toEqual({ ok: true, state: 'signed-in' })
+    expect(h.doc().accounts).toHaveLength(1)
+    // The step with no output of its own reaches the renderer that started
+    // it, on the same channel (P3.3 final review round, F3).
+    expect(w.wc.sent.filter(([c]) => c === IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT).map(([, e]) => e)).toContainEqual({ accountId: a, text: '', phase: 'carrying-history' })
   })
 })
 

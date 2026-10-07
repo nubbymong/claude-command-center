@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, copyFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { makeCodexRolloutNormalizer } from '../../../src/main/logging/codex-rollout-normalizer'
 
 // Helper module is plain Node.js (CommonJS); use require() to import.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -260,6 +261,106 @@ describe('codex-resume-picker isResumeId', () => {
     expect(lib.isResumeId('0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b')).toBe(true)
     for (const bad of ['uuid-abc', '', 'x & calc', '0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b&x', null, undefined, 42]) {
       expect(lib.isResumeId(bad), String(bad)).toBe(false)
+    }
+  })
+})
+
+// P3.12 round 1 (V3): the picker titles a conversation by its first user
+// message as the conversation index reads it (codex-rollout-normalizer): the
+// user's words from the events (legacy user_message of a plain kind,
+// paginated item_completed UserMessage), never the response items that carry
+// the context Codex injects (AGENTS.md, the environment). As Codex's own
+// /resume does. Only a head with no such event falls back to the response
+// items, skipping injected context there too.
+describe('codex-resume-picker parseRollout: the first user message as the index reads it (P3.12 round 1, V3)', () => {
+  const T = '2026-09-30T10:00:00.000Z'
+  const L = (o: object) => JSON.stringify(o)
+  const meta = L({ timestamp: T, type: 'session_meta', payload: { id: '019dd000-0001-7000-8000-00000000c0de', cwd: 'C:\\dev\\harbor' } })
+  const AGENTS = '# AGENTS.md instructions for C:\\dev\\harbor\n\n<INSTRUCTIONS>\nAlways answer in French.\n</INSTRUCTIONS>'
+  const injected = L({ timestamp: T, type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: AGENTS }] } })
+  const env = L({ timestamp: T, type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context><cwd>C:\\dev\\harbor</cwd></environment_context>' }] } })
+  const said = (text: string) => L({ timestamp: T, type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } })
+  const paginated = (text: string) => L({ timestamp: T, type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', id: 'u', content: [{ type: 'text', text }] } } })
+  const legacy = (message: string, kind?: string) => L({ timestamp: T, type: 'event_msg', payload: { type: 'user_message', message, ...(kind ? { kind } : {}) } })
+  const firstUserOfIndex = (ls: string[]): string | undefined => {
+    const n = makeCodexRolloutNormalizer()
+    for (const l of ls) for (const r of n.push(l)) if (r.role === 'user' && r.kind === 'message') return r.content.replace(/[\r\n]+/g, ' ').trim()
+    return undefined
+  }
+
+  const CASES: Record<string, string[]> = {
+    'AGENTS.md then a paginated prompt (0.155.1 shape)': [meta, injected, env, said('fix the flaky test'), paginated('fix the flaky test')],
+    'AGENTS.md then a legacy prompt': [meta, injected, env, said('fix the flaky test'), legacy('fix the flaky test')],
+    'a legacy user_instructions event, then a plain one (B6)': [meta, legacy(AGENTS, 'user_instructions'), legacy('<environment_context>x</environment_context>', 'environment_context'), legacy('fix the flaky test', 'plain')],
+  }
+
+  it('an AGENTS.md-shaped first message is never the title; the real first prompt is', () => {
+    for (const [name, ls] of Object.entries(CASES)) {
+      const r = lib.parseRollout(ls.join('\n') + '\n')
+      expect(r, name).not.toBeNull()
+      expect(r!.label, name).toBe('fix the flaky test')
+    }
+  })
+
+  it('the same title as the index\'s first user message, for the real rollouts and every case above (images too)', () => {
+    const real = [
+      join(__dirname, '..', '..', 'fixtures', 'codex', 'cli', '0.155.1', 'rollout-edit.jsonl'),
+      join(__dirname, '..', '..', 'fixtures', 'codex', 'cli', '0.153.4', 'rollout-exec-then-resume.jsonl'),
+      join(__dirname, '..', '..', 'fixtures', 'codex', 'rollout-sample.jsonl'),
+    ].map((f) => readFileSync(f, 'utf-8').split(/\r?\n/).filter(Boolean))
+    const images = [
+      [meta, injected, L({ timestamp: T, type: 'event_msg', payload: { type: 'user_message', message: 'what is this', images: ['data:image/png;base64,AA=='], local_images: [] } })],
+      [meta, injected, L({ timestamp: T, type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', id: 'u', content: [{ type: 'text', text: 'and this' }, { type: 'local_image', path: 'a.png' }] } } })],
+    ]
+    for (const ls of [...real, ...Object.values(CASES), ...images]) {
+      const expected = firstUserOfIndex(ls)
+      expect(expected).toBeTruthy()
+      expect(lib.parseRollout(ls.join('\n') + '\n')!.label).toBe(expected)
+    }
+  })
+
+  it('a head with no user event falls back to the response items, skipping injected context (AGENTS.md too)', () => {
+    const r = lib.parseRollout([meta, injected, env, said('fix the flaky test')].join('\n') + '\n')
+    expect(r!.label).toBe('fix the flaky test')
+    const only = lib.parseRollout([meta, injected, env].join('\n') + '\n')
+    expect(only!.label).toBe('(continued session)')
+  })
+})
+
+// P3.12 round 2 (Q2): the picker's title rule and the index read the same
+// records alike: for every record list here, the title is the index's first
+// user message; where the index has none, the title is never injected context.
+describe('codex-resume-picker parseRollout and the index: the same records, the same first user message (P3.12 round 2, Q2)', () => {
+  const L = (o: object) => JSON.stringify(o)
+  const meta = L({ type: 'session_meta', payload: { id: '019dd000-0001-7000-8000-000000000301', cwd: '/w' } })
+  const ri = (text: string) => L({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } })
+  const um = (message: string, extra: Record<string, unknown> = {}) => L({ type: 'event_msg', payload: { type: 'user_message', message, ...extra } })
+  const uc = (content: unknown[]) => L({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', id: 'u', content } } })
+  const indexFirst = (ls: string[]): string | undefined => {
+    const n = makeCodexRolloutNormalizer()
+    for (const l of ls) for (const r of n.push(l)) if (r.role === 'user' && r.kind === 'message') return r.content.replace(/[\r\n]+/g, ' ').trim()
+    return undefined
+  }
+  const CASES: Record<string, string[]> = {
+    agents_ri_then_event: [ri('# AGENTS.md instructions for /w\n<INSTRUCTIONS>rules</INSTRUCTIONS>'), ri('<environment_context>x</environment_context>'), um('real prompt')],
+    agents_as_event_no_kind: [um('# AGENTS.md instructions for /w <INSTRUCTIONS>rules</INSTRUCTIONS>')],
+    agents_as_event_kind: [um('# AGENTS.md instructions for /w', { kind: 'user_instructions' }), um('real prompt 2')],
+    env_event_kind: [um('<environment_context>x</environment_context>', { kind: 'environment_context' }), um('real 3')],
+    plain_kind: [um('plain one', { kind: 'plain' })],
+    blank_then_real: [um('   '), uc([{ type: 'text', text: '' }]), uc([{ type: 'text', text: 'second try' }])],
+    images_only: [um('', { images: ['a', 'b'] })],
+    text_and_image: [uc([{ type: 'input_text', text: 'look' }, { type: 'input_image', image_url: 'x' }])],
+    multiline: [um('line one\r\nline two\n\nline three')],
+    fallback_only_injected: [ri('# AGENTS.md instructions for /w'), ri('<environment_context>')],
+  }
+
+  it('the title is the index\'s first user message, record for record', () => {
+    for (const [name, ls] of Object.entries(CASES)) {
+      const lines = [meta, ...ls]
+      const index = indexFirst(lines)
+      const title = lib.parseRollout(lines.join('\n') + '\n')!.label
+      if (index !== undefined) expect(title, name).toBe(index)
+      else expect(title, name).toBe('(continued session)')
     }
   })
 })

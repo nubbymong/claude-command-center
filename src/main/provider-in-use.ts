@@ -10,10 +10,14 @@
 // "Launch Claude" (pty-handlers), and the first-run CLI setup terminal
 // (setup-handlers). Each is counted from the same step as its launch check,
 // so a switch-off either sees it or refuses it.
+//
+// Codex, besides its sessions and what an account lease covers (reviews,
+// sign-ins, operations), runs as Sentinel's version check, model list read
+// and an analysis on Codex (P3.9), counted the same way.
 import { countUnleasedAgentSessions } from './pty-manager'
 import { countClaudeAgentsInUse } from './cloud-agent-manager'
 import { countInsightsRunsInFlight } from './insights-runner'
-import { sentinelClaudeRunsInFlight } from './sentinel/index'
+import { sentinelClaudeRunsInFlight, sentinelCodexRunsInFlight } from './sentinel/index'
 import { countSshClaudeLaunches } from './ipc/pty-handlers'
 import { countCliSetupInUse } from './ipc/setup-handlers'
 import type { ProviderId } from '../shared/providers'
@@ -21,6 +25,7 @@ import type { ProviderId } from '../shared/providers'
 /** Each provider's CLI in use outside its sessions, by what runs it. */
 const OUTSIDE_SESSIONS: Partial<Record<ProviderId, ReadonlyArray<() => number>>> = {
   claude: [countClaudeAgentsInUse, countInsightsRunsInFlight, sentinelClaudeRunsInFlight, countSshClaudeLaunches, countCliSetupInUse],
+  codex: [sentinelCodexRunsInFlight],
 }
 
 /** How much of a provider runs without an account lease. A counter that

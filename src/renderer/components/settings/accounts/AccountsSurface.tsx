@@ -14,6 +14,8 @@ import AccountsPanel from '../../AccountsPanel'
 import { ProvidersCard } from './ProvidersCard'
 import { ManagedAccountsSection } from './ManagedAccountsSection'
 import { RowButton, ErrorLine } from './accounts-ui'
+import { useSettingsStore } from '../../../stores/settingsStore'
+import { claudeCodeOn } from '../../../onboarding/hello-codex'
 
 function ConflictBanner({ conflict, snapshot }: { conflict: IdentityConflictView; snapshot: AccountsSnapshot }) {
   const theme = useResolvedTheme()
@@ -58,12 +60,16 @@ export function AccountsSurface({ onAddClaudeAccount, children }: { onAddClaudeA
   const loaded = useProviderAccountsStore((s) => s.loaded)
   const ready = snapshot?.registry.mode === 'ready'
   const managed = ready ? snapshot.providers.filter((p) => p.managedAccounts && p.providerId !== 'claude') : []
+  // P3.4 (row 14): while Claude Code is off its accounts do not work, so the
+  // callout does not say they do.
+  const claudeEnabled = useSettingsStore((s) => s.settings.claudeEnabled)
+  const claudeOn = claudeCodeOn({ claudeEnabled }, snapshot)
   return (
     <>
       <ProvidersCard />
       {loaded && !ready && (
         <DialogCallout tone="warning" testId="accounts-registry-callout" role="status">
-          The account list is not available right now. Your Claude accounts below still work.
+          The account list is not available right now.{claudeOn ? ' Your Claude accounts below still work.' : ''}
         </DialogCallout>
       )}
       {ready && snapshot.conflicts.map((c) => (

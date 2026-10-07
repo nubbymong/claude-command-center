@@ -28,6 +28,9 @@ import { BuildIdentityLine } from './BuildIdentityLine'
 import { shortSha } from '../../shared/build-identity'
 import { usesClaude, usesCodex } from '../onboarding/provider-choice'
 import { ProviderMark } from './sidebar/Badges'
+import { sentinelAnalysisProvider } from '../../shared/ask-conductor-provider'
+import { sentinelSettingsText } from './sentinel/sentinel-report-text'
+import { useProviderAccountsStore, sentinelCodexAccountChoices, accountDisplayName } from '../stores/providerAccountsStore'
 import { FOOTER_BARE_LABEL_PROVIDER, footerHiddenLabelsFor } from '../../shared/usage-labels'
 import type { ProviderId } from '../../shared/providers'
 declare const __BUILD_TIME__: string
@@ -75,10 +78,12 @@ const TABS: { id: SettingsTab; label: string }[] = [
 ]
 
 /** With Codex in use, or a Codex session in front: these settings apply to it
- *  too (one status strip for every session), and say which items it cannot
- *  fill yet. Usage track MP6: a Codex session's account now shows (the
- *  footer names it through the registry), so the note no longer says it
- *  does not. */
+ *  too (one status strip for every session). Usage track MP6: a Codex
+ *  session's account now shows (the footer names it through the registry),
+ *  so the note no longer says it does not. P3.7 (rows 36, 37): nor its lines
+ *  changed (counted from the edits its rollout records) or its Duration (the
+ *  conversation's running time), so it names no item a Codex session cannot
+ *  fill. */
 function StatuslineCodexBanner() {
   const activeSession = useSessionStore((s) => s.sessions.find((sess) => sess.id === s.activeSessionId))
   const codexOn = useSettingsStore((s) => usesCodex(s.settings))
@@ -86,7 +91,7 @@ function StatuslineCodexBanner() {
   if (!isCodex && !codexOn) return null
   return (
     <div className="rounded-md bg-blue/10 border border-blue/30 p-3 mb-3 text-sm text-blue" data-testid="statusline-codex-note">
-      These settings apply to Codex sessions too. A Codex session does not report lines changed or session time yet, so those items do not show for it.
+      These settings apply to Codex sessions too.
     </div>
   )
 }
@@ -121,6 +126,13 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const updateAppMeta = useAppMetaStore((s) => s.update)
   const sentinelAccountProfiles = useAccountProfilesStore((s) => s.profiles)
+  // P3.9: Sentinel watches the assistants in use, and its analysis runs on
+  // the one that is on (both on: the one Ask Conductor runs on); its account
+  // select lists that assistant's accounts.
+  const providerSnapshot = useProviderAccountsStore((s) => s.snapshot)
+  const sentinelScope = { claudeOn: usesClaude(settings), codexOn: usesCodex(settings) }
+  const sentinelRunsOn = sentinelAnalysisProvider(sentinelScope.claudeOn, sentinelScope.codexOn, settings)
+  const sentinelCodexAccounts = sentinelCodexAccountChoices(providerSnapshot)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'general')
@@ -165,10 +177,10 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
   }
 
   const handleClearAllLogs = async () => {
-    if (!window.confirm('Permanently delete the app\'s conversation index? This cannot be undone. Active sessions are kept. Your conversations remain in Claude\'s own files (~/.claude/projects).')) return
+    if (!window.confirm('Permanently delete the app\'s conversation index? This cannot be undone. Active sessions are kept. Your conversations remain in Claude Code\'s and Codex\'s own files (~/.claude/projects, and each Codex account\'s sessions folder).')) return
     try {
       const res = await window.electronAPI.logs2.clearAll()
-      window.alert(`Index cleared: ${res.deletedRuns} run(s), ${res.deletedMessages} message(s) removed. Active sessions are kept. Your conversations remain in Claude's own files.`)
+      window.alert(`Index cleared: ${res.deletedRuns} run(s), ${res.deletedMessages} message(s) removed. Active sessions are kept. Your conversations remain in Claude Code's and Codex's own files.`)
     } catch {
       window.alert('Could not clear the index — the logging service may be unavailable.')
     }
@@ -307,7 +319,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Index conversation logs
-                    <span className="block text-[10px] text-[var(--text-muted)]">The Conductor indexes Claude's own transcripts (~/.claude/projects) for browsing here. Turning this off only stops indexing — your conversations remain in Claude's own files and are not affected.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">The Conductor indexes Claude Code's and Codex's own transcripts (~/.claude/projects, and each Codex account's sessions folder) for browsing here. Turning this off stops indexing at once, sessions already running too; turning it on applies to sessions started after it. Either way your conversations remain in their own files and are not affected.</span>
                   </span>
                 </label>
                 <div className="flex items-center gap-2 mt-1">
@@ -317,7 +329,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   >
                     Clear index
                   </button>
-                  <span className="text-[10px] text-[var(--text-muted)]">(removes the app's index only; conversations remain in Claude's own files at ~/.claude/projects)</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">(removes the app's index only; conversations remain in Claude Code's and Codex's own files)</span>
                 </div>
               </Section>
 
@@ -335,7 +347,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Enable Sentinel
-                    <span className="block text-[10px] text-[var(--text-muted)]">Detects Claude Code updates and proposes registry fixes. Off by default because it spends Claude tokens on a Claude update. Takes effect after restart.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">{sentinelSettingsText(sentinelScope, sentinelRunsOn)}</span>
                   </span>
                 </label>
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
@@ -348,6 +360,30 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   Auto-open findings panel
                   <span className="text-[10px] text-[var(--text-muted)]">(When an analysis completes with open findings)</span>
                 </label>
+                {sentinelRunsOn === 'codex' ? (
+                <Field label="Analysis account">
+                  <select
+                    // A stored id that is no longer offered shows the default,
+                    // as the Claude select does (main falls back the same way).
+                    value={sentinelCodexAccounts.some((a) => a.id === settings.sentinelCodexAccountId)
+                      ? settings.sentinelCodexAccountId ?? ''
+                      : ''}
+                    onChange={(e) => save({ sentinelCodexAccountId: e.target.value || null })}
+                    aria-label="Codex account for Sentinel's analysis"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus-ring-strong focus:border-blue/50 transition-colors"
+                  >
+                    <option value="">Codex review account (default)</option>
+                    {sentinelCodexAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {accountDisplayName(providerSnapshot, a)}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="block text-[10px] text-[var(--text-muted)] mt-1">
+                    The Codex account Sentinel's background analysis runs under. Switch it if that account hits its usage limit. Applies to the next analysis or Re-run.
+                  </span>
+                </Field>
+                ) : (
                 <Field label="Analysis account">
                   <select
                     // A stored id whose profile was deleted would render the
@@ -370,6 +406,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     The account Sentinel's background analysis runs under. Switch it if that account hits its usage limit. Applies to the next analysis or Re-run.
                   </span>
                 </Field>
+                )}
               </Section>
 
               <Section title="Session Watchdog" icon={<path d="M8 2v4M8 2a6 6 0 1 0 3.5 1.1M11 2l1.5 1.5" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />}>
@@ -394,7 +431,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                       {([
                         { key: 'rateLimit', label: 'Rate-limit resume', hint: 'Waits out a usage-limit reset, then continues.' },
                         { key: 'overload', label: 'API overload', hint: 'Backs off and retries on 429/5xx and overloaded_error.' },
-                        { key: 'safeguard', label: 'Safeguard', hint: 'Retries after a flagged-safeguard message clears.' },
+                        { key: 'safeguard', label: 'Safeguard', hint: 'Retries after a flagged-safeguard message clears. Claude Code sessions only: Codex has no such message.' },
                       ] as const).map(({ key, label, hint }) => {
                         const wd = settings.watchdog || {}
                         const checked = key === 'rateLimit'
@@ -727,9 +764,9 @@ type BooleanStatusLineKey = {
 // Labels shared verbatim with onboarding p4's element switches (StatusLineStep
 // ELEMS) so the same element carries the same name on both surfaces.
 const STATUS_LINE_TOGGLES: { key: BooleanStatusLineKey; label: string; description: string }[] = [
-  { key: 'showModel', label: 'Model', description: 'Shows the active Claude model' },
+  { key: 'showModel', label: 'Model', description: 'Shows the active model' },
   { key: 'showEffort', label: 'Effort level', description: 'Active reasoning effort next to the model' },
-  { key: 'showAccount', label: 'Account', description: 'Claude account this session runs as' },
+  { key: 'showAccount', label: 'Account', description: 'The account this session runs as' },
   { key: 'showTokens', label: 'Token usage', description: 'Input tokens / context window' },
   { key: 'showContextBar', label: 'Context bar', description: 'Visual progress bar + percentage' },
   { key: 'showCost', label: 'Cost', description: 'API equivalent cost estimate' },
@@ -1043,7 +1080,7 @@ function FooterDisplayCard(): React.ReactElement {
 
 /* ── Status Line Preview (mock data) ─────────────────── */
 
-function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
+export function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
   // Elements that are toggled off render at 30% opacity with strikethrough
   const vis = (on: boolean) =>
     on ? '' : 'opacity-30 line-through'
@@ -1052,8 +1089,11 @@ function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
     <div
       className="flex flex-col shrink-0 bg-crust border-t border-surface0 text-subtext0"
     >
-      {/* Row 1 */}
-      <div className="flex items-center gap-3 px-2 py-1">
+      {/* Row 1. P3.16a (U3): each row wraps and keeps every value whole. The
+          values come to more than the 696px the Settings column gives the
+          preview (max-w-3xl, less its padding), and the box around it clips,
+          so a single non-wrapping row cut off its last value. */}
+      <div data-testid="status-line-preview-row" className="flex flex-wrap items-center gap-x-3 gap-y-0.5 whitespace-nowrap px-2 py-1">
         <span className={`text-text font-medium ${vis(sl.showModel)}`}>Claude 4 Sonnet</span>
         <span className={`text-overlay1 ${vis(sl.showEffort)}`}>xhigh</span>
         <span className={`flex items-center gap-1 ${vis(sl.showAccount)}`}>
@@ -1084,7 +1124,7 @@ function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
         <span className={`text-overlay1 tabular-nums ${vis(sl.showDuration)}`}>3m 42s</span>
       </div>
       {/* Row 2: Rate limits */}
-      <div className={`flex items-center gap-3 px-2 py-0.5 border-t border-surface0/50 ${!sl.showRateLimits && !sl.showResetTime ? 'opacity-30' : ''}`}>
+      <div data-testid="status-line-preview-row" className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 whitespace-nowrap px-2 py-0.5 border-t border-surface0/50 ${!sl.showRateLimits && !sl.showResetTime ? 'opacity-30' : ''}`}>
         <span className={!sl.showRateLimits ? 'opacity-30' : ''}>
           <MockRateDots label="5h" pct={35} />
         </span>

@@ -3,12 +3,15 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { execSync } from 'child_process'
 import { sandboxFor, approvalFor } from './permissions'
-import { getResourcesDirectory } from '../../ipc/setup-handlers'
-import type { SpawnOptions } from '../types'
+import { getResourcesDirectory, getDataDirectory } from '../../ipc/setup-handlers'
+import type { SpawnOptions, ProviderSpawnCommand, PickFolderIdentity } from '../types'
 import { getConductorMcpPort, issueMcpSessionToken } from '../../conductor-mcp-server'
-import { readConfig } from '../../config-manager'
+import { readConfig, getConfigDir } from '../../config-manager'
 import { colorFgBgValue } from '../host-color-scheme'
-import { codexShellEnv } from './cli-runner'
+import { codexShellEnv, CMD_UNSAFE_PATH_RE } from './cli-runner'
+import { CODEX_CONVERSATION_ID_RE, codexFolderIdentity, resolveCodexResume } from './rollout-lookup'
+import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, codexLocalAppData, verifyPlainCodexHookWrapper, CODEX_HOOK_FILE_ENV, CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER } from './hooks'
+import { codexExtraArgsProblem, codexExtraArgWords } from '../../../shared/extra-args'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   if (os.platform() !== 'win32') {
@@ -122,12 +125,25 @@ export function getCodexResumePickerPath(): string | null {
   return null
 }
 
+/** P3.10 round 1 (A5): the app's own data folder -- this install's (a dev
+ *  build, the installed app and a test run each have their own) -- where the
+ *  hook folders live (hooks.ts preparedCodexHookRoot); null when unknown. */
+export function codexHookDataDir(): string | null {
+  try { return getDataDirectory() || null } catch { return null }
+}
+
+/** P3.10 round 1 (V2): the picker's variable naming the conversations other
+ *  open tabs of this app are on (comma-separated ids), and how many it
+ *  carries at most. */
+export const CODEX_OPEN_ELSEWHERE_ENV = 'CCC_CODEX_OPEN_ELSEWHERE'
+export const CODEX_OPEN_ELSEWHERE_MAX = 64
+
 /** A value that must reach cmd.exe exactly as written holds no control character. */
 const hasControl = (s: string): boolean => [...s].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)
 /** The shim's path is quoted on the line, but cmd.exe still expands `%` inside
  *  quotes and the npm shim re-reads its own path (`%~dp0`): the characters
- *  discovery's own cmd.exe route refuses (cli-runner `codexCommandLine`). */
-const CMD_UNSAFE_PATH_RE = /["%&^]/
+ *  refused there are cli-runner's CMD_UNSAFE_PATH_RE (shared with the hook
+ *  wrapper's route, P3.10 round 1). */
 /** Arguments go unquoted (none needs quoting): any character cmd.exe gives a
  *  meaning, and any whitespace, is refused. */
 const CMD_UNSAFE_ARG_RE = /["%&^|<>!()\s]/
@@ -174,7 +190,7 @@ function setOwned(env: Record<string, string>, name: string, value: string, win3
   env[name] = value
 }
 
-export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string>; commandLine?: string } {
+export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
   const co = opts.codexOptions
   if (!co) throw new Error('codexOptions required for Codex spawn')
 
@@ -257,6 +273,80 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   if (win32) setOwned(env, 'NoDefaultCurrentDirectoryInExePath', '1', win32)
   const viaCmdExe = win32 && /\.(cmd|bat)$/i.test(executable)
 
+  // P3.10 (rows 43, 46, 47, 63): the app's hooks, as a Claude session gets
+  // its http hooks through its settings file: the same command for every
+  // session (Codex asks the user to review a hook once, and keeps the trust
+  // while it is unchanged), the session named by the environment the hook
+  // inherits (its id above, and the file holding the gateway's port and
+  // token). None when the Hooks gateway is off or not listening (no hook
+  // file), the forwarder is not deployed yet, or its path cannot be given
+  // safely on this launch's route (codexHookCommand).
+  // P3.10 round 1 (V3): a launch through the npm .cmd shim can carry the
+  // command only as a plain word; when the resources folder's path is not
+  // one (the default has a space), it runs the app's plain-path copy of the
+  // wrapper under the user's local app data folder, checked again here
+  // before it is used (hooks.ts verifyPlainCodexHookWrapper).
+  let hooksInstalled = false
+  const hookFile = opts.codexHooks?.hookFile
+  if (typeof hookFile === 'string' && hookFile && path.isAbsolute(hookFile) && !hasControl(hookFile)) {
+    let resDir: string | null = null
+    try { resDir = getResourcesDirectory() || null } catch { resDir = null }
+    const scriptsDir = resDir ? path.join(resDir, 'scripts') : null
+    let command = scriptsDir ? codexHookCommand(scriptsDir, process.platform, viaCmdExe) : null
+    let target = scriptsDir ? path.join(scriptsDir, win32 ? CODEX_HOOK_WRAPPER : CODEX_HOOK_SCRIPT) : null
+    if (!command && win32 && viaCmdExe && resDir && scriptsDir) {
+      const plainDir = codexPlainWrapperDir(codexLocalAppData(), resDir)
+      if (plainDir && verifyPlainCodexHookWrapper(scriptsDir, plainDir)) {
+        command = codexHookCommand(plainDir, 'win32', true)
+        target = path.join(plainDir, CODEX_HOOK_WRAPPER)
+      }
+    }
+    let deployed = false
+    try { deployed = !!target && fs.statSync(target).isFile() } catch { deployed = false }
+    if (command && deployed) {
+      flags.push(...codexHookConfigArgs(command))
+      setOwned(env, CODEX_HOOK_FILE_ENV, hookFile, win32)
+      hooksInstalled = true
+    }
+  }
+
+  // P3.11 (row 62): the user's extra CLI arguments, after every flag the app
+  // sets (so none of the app's arguments can become the value of one of
+  // them), each word one argument, on every route below (the picker forwards
+  // them). No shell reads them. pty:spawn drops a value codexExtraArgsProblem
+  // refuses before the launch (its restore sanitizer runs on every spawn);
+  // checked again here, one that reaches the builder refused ends the launch.
+  if (co.extraArgs !== undefined) {
+    const problem = codexExtraArgsProblem(co.extraArgs)
+    if (problem) throw new Error(`Cannot start Codex: its extra CLI arguments are refused: ${problem}.`)
+    flags.push(...codexExtraArgWords(co.extraArgs))
+  }
+
+  // P3.5 (rows 34, 35): an exact resume, as Claude's `claude --resume <uuid>`
+  // (resolveResumeLaunch): the conversation's rollout must be in THIS realm's
+  // sessions folder, and the CLI starts in the directory the conversation ran
+  // in when that still holds (resolveCodexResume). It bypasses the picker, as
+  // Claude's exact resume does. A miss falls back to the picker or a fresh
+  // start, never to another account's conversation.
+  const resumed = opts.resume ? resolveCodexResume(opts.resume, { sessionsDir: launch.sessionsDir, configuredCwd: opts.cwd ?? '' }) : null
+  if (resumed) {
+    // The id goes into argv: only a conversation id ever does, whatever the
+    // lookup answered (the spawn schema and the lookup check it first).
+    if (!CODEX_CONVERSATION_ID_RE.test(resumed.resumeId)) {
+      throw new Error('Cannot resume the Codex conversation: its id is not a conversation id.')
+    }
+    const args = ['resume', resumed.resumeId, ...flags]
+    const cwd = resumed.cwd || undefined
+    const resumeCwdMismatch = resumed.cwdMismatch
+    // The rollout chosen here, so the status line claims it without a second walk.
+    const resumePath = resumed.path
+    if (viaCmdExe) {
+      const target = codexCmdExeTarget(executable, args, env)
+      return { cmd: target.cmd, args: [], commandLine: target.commandLine, env, resumeId: resumed.resumeId, cwd, resumeCwdMismatch, resumePath, hooksInstalled }
+    }
+    return { cmd: executable, args, env, resumeId: resumed.resumeId, cwd, resumeCwdMismatch, resumePath, hooksInstalled }
+  }
+
   // Picker swap: when useResumePicker is true and the picker script is
   // deployed, run `node <picker> <flags>` instead of `codex <flags>`. The
   // picker forwards the flags to `codex resume <uuid>` on pick or to fresh
@@ -271,9 +361,42 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
       if (viaCmdExe) codexCmdExeTarget(executable, flags, env)
       const pickerEnv = { ...env }
       setOwned(pickerEnv, 'CCC_CODEX_EXECUTABLE', executable, win32)
+      // P3.5 (rows 32, 38): where the picker records each decision it makes,
+      // so the status line and the tab follow what the session runs: a file
+      // in a folder of its own, made for this launch with an unguessable
+      // name (owner-only where the platform keeps modes, so no other user
+      // can put a file there first), written by the picker only and read and
+      // removed, with its folder, by the watcher. The folder's identity is
+      // recorded as made (fix round 3): the watcher and the picker use it
+      // only while it is still that folder, never one put in its place.
+      let pickFile: string | undefined
+      let pickFolder: PickFolderIdentity | null = null
+      try {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-codex-pick-'))
+        pickFolder = codexFolderIdentity(dir)
+        if (pickFolder) pickFile = path.join(dir, 'pick.json')
+        else { try { fs.rmdirSync(dir) } catch { /* left empty */ } }
+      } catch {
+        pickFile = undefined
+        pickFolder = null
+      }
+      if (pickFile && pickFolder) {
+        setOwned(pickerEnv, 'CCC_CODEX_PICK_FILE', pickFile, win32)
+        setOwned(pickerEnv, 'CCC_CODEX_PICK_DIR_ID', pickFolder.id, win32)
+      }
+      // The app's config folder, so the picker can name each conversation
+      // with its tab's name (session-state.json), as Claude's picker does.
+      // Read-only, best-effort.
+      try { setOwned(pickerEnv, 'CCC_CONFIG_DIR', getConfigDir(), win32) } catch { /* no names */ }
+      // P3.10 round 1 (V2): the conversations other open tabs of this app are
+      // on (main's own record, ids only), so the picker can say one is open in
+      // another tab -- Codex lets one tab at a time write a conversation --
+      // rather than that it is no longer available. Codex never gets it.
+      const openElsewhere = (opts.codexOpenElsewhere ?? []).filter((id) => typeof id === 'string' && CODEX_CONVERSATION_ID_RE.test(id)).slice(0, CODEX_OPEN_ELSEWHERE_MAX)
+      if (openElsewhere.length > 0) setOwned(pickerEnv, CODEX_OPEN_ELSEWHERE_ENV, openElsewhere.join(','), win32)
       // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup).
       // Resolve to the full node.exe path via `where node`. See resolveNodeExe.
-      return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env: pickerEnv }
+      return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env: pickerEnv, ...(pickFile && pickFolder ? { pickFile, pickFolder } : {}), hooksInstalled }
     }
     // Fallthrough: picker missing, spawn codex directly.
   }
@@ -281,7 +404,7 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   if (viaCmdExe) {
     // node-pty / ConPTY cannot directly invoke .cmd shims; route through cmd.exe.
     const target = codexCmdExeTarget(executable, flags, env)
-    return { cmd: target.cmd, args: [], commandLine: target.commandLine, env }
+    return { cmd: target.cmd, args: [], commandLine: target.commandLine, env, hooksInstalled }
   }
-  return { cmd: executable, args: flags, env }
+  return { cmd: executable, args: flags, env, hooksInstalled }
 }

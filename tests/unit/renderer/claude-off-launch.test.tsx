@@ -21,6 +21,7 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
+import type { LaunchGateConfig } from '../../../src/renderer/hooks/useLaunchConfig'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -171,7 +172,7 @@ describe('what a tab of a blocked config reads when it opens (the resume prompt 
     expect(launchBlockedTabText({ provider: 'codex' }, {})).toBe('Not started. Codex is not set up yet. Set it up in Settings, Accounts, then Restart this tab.')
     expect(launchBlockedTabText({ provider: 'claude' }, { claudeEnabled: false, codexEnabled: true })).toBe('Not started. Claude Code is off. Turn it on in Settings, Accounts, then Restart this tab.')
     // A saved session with no provider is Claude.
-    expect(launchBlockedTabText({}, { claudeEnabled: false, codexEnabled: true })).toBe('Not started. Claude Code is off. Turn it on in Settings, Accounts, then Restart this tab.')
+    expect(launchBlockedTabText({} as LaunchGateConfig, { claudeEnabled: false, codexEnabled: true })).toBe('Not started. Claude Code is off. Turn it on in Settings, Accounts, then Restart this tab.')
     // A terminal-only session runs no Claude; a provider that is on launches.
     expect(launchBlockedTabText({ provider: 'claude', shellOnly: true }, { claudeEnabled: false, codexEnabled: true })).toBeUndefined()
     expect(launchBlockedTabText({ provider: 'codex' }, { codexEnabled: true })).toBeUndefined()
@@ -280,6 +281,35 @@ describe('the Feature Guide Ask card', () => {
   })
 })
 
+describe('the Feature Guide section heroes (P3.4 follow-up, row 14)', () => {
+  // The productivity hero told a Codex-only user about showing Claude
+  // something. It names the assistant in use; with Claude Code on it reads
+  // as before.
+  const productivityHero = async (): Promise<string> => {
+    await act(async () => { root.render(<FeatureGuidePage onNavigateToSessions={() => {}} onStartTour={() => {}} />) })
+    const quick = [...container.querySelectorAll('button')].find((b) => b.textContent?.startsWith('Productivity'))!
+    await act(async () => { quick.click() })
+    return container.querySelector('[data-ux-id="section-hero"]')!.textContent ?? ''
+  }
+  const BEFORE = 'Panes, sketches and captures that live next to the terminal, so you never have to leave the session to show Claude something.'
+
+  it('Codex only: the productivity hero names Codex, not Claude', async () => {
+    setProviders({ claudeEnabled: false, codexEnabled: true })
+    const hero = await productivityHero()
+    expect(hero).toContain('so you never have to leave the session to show Codex something.')
+    expect(hero).not.toContain('Claude')
+  })
+
+  it('Claude Code on (alone or beside Codex): as before', async () => {
+    for (const on of [{ claudeEnabled: true, codexEnabled: true }, { claudeEnabled: true, codexEnabled: false }]) {
+      act(() => { root.unmount() })
+      root = createRoot(container)
+      setProviders(on)
+      expect(await productivityHero(), JSON.stringify(on)).toContain(BEFORE)
+    }
+  })
+})
+
 describe('the New session dialog', () => {
   function providerRadio(title: string): HTMLInputElement {
     const g = container.querySelector('[role="radiogroup"][aria-label="Provider"]')!
@@ -313,5 +343,71 @@ describe('the New session dialog', () => {
     render({ initial: cfg() })
     expect(providerRadio('Claude Code').checked).toBe(true)
     expect(providerRadio('Claude Code').disabled).toBe(true)
+  })
+
+  // P3.4 follow-up (row 14): SSH Persistent keeps a remote session alive by
+  // wrapping the remote claude command in tmux, which a terminal-only
+  // session never runs while Claude Code is off (every Launch Claude is
+  // refused). So with Claude Code off the card is disabled for Terminal only,
+  // as it is for Codex, with the reason in the same place.
+  function connectionRadio(title: string): HTMLInputElement {
+    const g = container.querySelector('[role="radiogroup"][aria-label="Connection"]')!
+    const lab = Array.from(g.querySelectorAll('label')).find((l) => l.querySelector('span')?.textContent === title)!
+    return lab.querySelector('input[type="radio"]') as HTMLInputElement
+  }
+  const PERSISTENT_COPY = 'SSH Persistent keeps a remote Claude Code session running, which needs Claude Code on.'
+  const persistentNote = () => container.querySelector('[data-testid="claude-off-persistent-note"]')
+
+  it('with Claude Code off, Terminal only: SSH Persistent is disabled with the reason; Local and SSH stay', () => {
+    setProviders({ claudeEnabled: false, codexEnabled: true })
+    render()
+    // Codex (the start) keeps its own treatment and note, and not this one.
+    expect(connectionRadio('SSH Persistent').disabled).toBe(true)
+    expect(persistentNote()).toBeNull()
+    act(() => { providerRadio('Terminal only').click() })
+    expect(providerRadio('Terminal only').checked).toBe(true)
+    expect(connectionRadio('SSH Persistent').disabled).toBe(true)
+    expect(connectionRadio('Local').disabled).toBe(false)
+    expect(connectionRadio('SSH').disabled).toBe(false)
+    expect(persistentNote()!.textContent).toBe(PERSISTENT_COPY)
+    expect(container.querySelector('[data-testid="codex-local-note"]')).toBeNull()
+  })
+
+  it('with Claude Code on (alone or beside Codex), Terminal only offers SSH Persistent as before, with no note', () => {
+    for (const on of [{ claudeEnabled: true, codexEnabled: true }, { claudeEnabled: true, codexEnabled: false }]) {
+      act(() => { root.unmount() })
+      root = createRoot(container)
+      setProviders(on)
+      render()
+      act(() => { providerRadio('Terminal only').click() })
+      for (const t of ['Local', 'SSH', 'SSH Persistent']) expect(connectionRadio(t).disabled, `${t} ${JSON.stringify(on)}`).toBe(false)
+      expect(persistentNote()).toBeNull()
+    }
+  })
+
+  it('an edit of a terminal-only SSH Persistent config with Claude Code off keeps its choice, says why it is off, and can move to plain SSH', () => {
+    setProviders({ claudeEnabled: false, codexEnabled: true })
+    render({ initial: cfg({ shellOnly: true, sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } }) })
+    expect(connectionRadio('SSH Persistent').checked).toBe(true)
+    expect(connectionRadio('SSH Persistent').disabled).toBe(true)
+    expect(persistentNote()!.textContent).toBe(PERSISTENT_COPY)
+    act(() => { connectionRadio('SSH').click() })
+    expect(connectionRadio('SSH').checked).toBe(true)
+  })
+
+  it('an existing terminal-only SSH Persistent config can still be saved with Claude Code off, and stays persistent', () => {
+    setProviders({ claudeEnabled: false, codexEnabled: true })
+    const onConfirm = vi.fn()
+    render({ onConfirm, initial: cfg({ shellOnly: true, sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } }) })
+    expect(connectionRadio('SSH Persistent').checked).toBe(true)
+    const submit = container.querySelector('[data-testid="session-dialog-submit"]') as HTMLButtonElement
+    expect(submit.disabled).toBe(false)
+    act(() => { submit.click() })
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+    const saved = onConfirm.mock.calls[0][0]
+    expect(saved.shellOnly).toBe(true)
+    expect(saved.sessionType).toBe('ssh')
+    // Persistent is stored as the default (undefined); only plain SSH stores false.
+    expect(saved.sshConfig.detachable).toBeUndefined()
   })
 })

@@ -20,7 +20,7 @@ export function useWatchdogSubscription(sessionId: string) {
         // an "off" pill and a menu block whose toggles could never tick.
         watchdog: state.armed === false
           ? undefined
-          : { status: state.status, waitUntil: state.waitUntil, gaveUp: state.gaveUp, checks: state.checks },
+          : { status: state.status, waitUntil: state.waitUntil, gaveUp: state.gaveUp, checks: state.checks, ...(state.unavailable ? { unavailable: state.unavailable } : {}) },
       })
     })
     // Seed from main's CURRENT states on mount (#266 MAJOR-4): a push-only
@@ -33,7 +33,7 @@ export function useWatchdogSubscription(sessionId: string) {
       const mine = states.find((s) => s.sessionId === sessionId)
       updateSession(sessionId, {
         watchdog: mine && mine.armed !== false
-          ? { status: mine.status, waitUntil: mine.waitUntil, gaveUp: mine.gaveUp, checks: mine.checks }
+          ? { status: mine.status, waitUntil: mine.waitUntil, gaveUp: mine.gaveUp, checks: mine.checks, ...(mine.unavailable ? { unavailable: mine.unavailable } : {}) }
           : undefined,
       })
     }).catch(() => { /* main gone mid-teardown */ })

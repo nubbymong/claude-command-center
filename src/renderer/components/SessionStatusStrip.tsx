@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useRef, useEffect } from 'react'
 import { useSessionStore, type Session } from '../stores/sessionStore'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
 import { usesCodex } from '../onboarding/provider-choice'
@@ -14,8 +14,9 @@ import { useSwitchAccount } from '../hooks/useSwitchAccount'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { isAccountActive } from '../../shared/account-types'
-import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
+import { resolveAccountNameByEmail } from '../../shared/account-chip-color'
+import { switchItemHint } from '../utils/switchAccountItems'
+import { useProviderAccountChip, useEmailChipColourKey, useSwitchAccountItems } from '../hooks/useAccountChip'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import ToolbarPopup from './ToolbarPopup'
 import {
@@ -29,6 +30,7 @@ import { resolvePickedModelId } from '../../shared/model-registry'
 import { useRegistryStore } from '../stores/registryStore'
 import AiUsageChip from './github/AiUsageChip'
 import { writeSessionInput } from './terminal/tmuxWheelScroll'
+import { typeIntoCodexComposer, type CodexTyping } from '../lib/codexComposer'
 
 interface SessionStatusStripProps {
   /** The PTY/session id for THIS terminal. Telemetry is read for this
@@ -55,6 +57,10 @@ const CONTROL_PILL =
 // Stable empty-array reference so the Zustand selector doesn't return a fresh
 // [] each render (which would trip the re-render cascade guard).
 const EMPTY_HIDDEN: string[] = []
+
+/** How long the strip's note says why a Codex command was not sent (P3.8
+ *  round 1, C1). */
+export const CODEX_NOTE_MS = 6000
 
 // SessionStatusStrip (v2 shell, UAT R2): the per-session telemetry + controls
 // band. Lives directly above the command rows, under the terminal -- the old
@@ -98,9 +104,17 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
   // Mid-session account switch (respawn + resume): gated on having at least 2
-  // profiles (need a real choice). Selector form on every read so the strip
-  // never re-renders on unrelated store churn.
-  const canSwitchAccount = canSwitchAccountForSession({ provider: session?.provider, isSsh: !!session?.sshConfig, shellOnly: !!session?.shellOnly, profileCount: profiles.length })
+  // accounts of the session's provider (need a real choice). Selector form on
+  // every read so the strip never re-renders on unrelated store churn.
+  // P3.6 (row 22): one list for every provider (utils/switchAccountItems).
+  // Only the list, the chip and its colour are read from the account list
+  // (hooks/useAccountChip): a change elsewhere in it re-renders nothing here.
+  const switchItems = useSwitchAccountItems(session, { profiles, aliases: accountAliases })
+  // P3.6 (row 20): a session that runs under a registry account (Codex) shows
+  // that account's identity chip, by the footer's label rule.
+  const providerChip = useProviderAccountChip(session)
+  const emailColourKey = useEmailChipColourKey(session?.accountEmail, { profiles, overrides: accountColourOverrides }, session?.accountColour)
+  const canSwitchAccount = canSwitchAccountForSession({ provider: session?.provider, isSsh: !!session?.sshConfig, shellOnly: !!session?.shellOnly, profileCount: profiles.length, providerAccountCount: switchItems.length })
   const registry = useRegistryStore((s) => s.registry)
   // Copilot AI-credit meter gate. The chip self-gates on githubAiUsageEnabled
   // (returns null when off), so we read the same flag here to avoid rendering
@@ -139,6 +153,35 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
 
   const write = (cmd: string) => {
     writeSessionInput(sessionId, cmd)
+  }
+  // P3.8 round 1 (row 61; C1, C2, C3): Compact on a Codex session types
+  // Codex's own /compact only into its ready, empty composer, and presses
+  // Enter only in the same run once the composer holds exactly /compact
+  // (lib/codexComposer.ts, from the VM probe's screens); otherwise it types
+  // nothing and says why. App renders one strip, re-pointed at whichever tab
+  // is shown: a press's pending Enter belongs to the session it was pressed
+  // on, and is dropped when the strip is re-pointed or goes away.
+  const pendingCodexCommand = useRef<CodexTyping | null>(null)
+  const [codexNote, setCodexNote] = useState<string | null>(null)
+  useEffect(() => () => {
+    pendingCodexCommand.current?.cancel()
+    pendingCodexCommand.current = null
+    setCodexNote(null)
+  }, [sessionId])
+  useEffect(() => {
+    if (!codexNote) return
+    const t = setTimeout(() => setCodexNote(null), CODEX_NOTE_MS)
+    return () => clearTimeout(t)
+  }, [codexNote])
+  const onCompact = () => {
+    if (isClaude) { write('/compact\n'); return }
+    const typing = typeIntoCodexComposer(sessionId, '/compact')
+    if (typing.typed) {
+      pendingCodexCommand.current = typing
+      setCodexNote(null)
+    } else {
+      setCodexNote(typing.reason ?? null)
+    }
   }
   const onModel = (si: number, v: string) => {
     // These values are written straight into a live PTY as a slash-command
@@ -201,9 +244,12 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
     )
   }
 
-  // A Codex strip is telemetry-only (no controls cluster), so with the master
-  // off there is nothing left to show — collapse the band entirely.
-  if (!statusLineEnabled && !isClaude) return null
+  // P3.8 (row 61): a Codex session's strip has the controls cluster too
+  // (Compact and Restart; its Model pill is not built yet), so with the master
+  // off it keeps them, as a Claude session's does. A provider with no controls
+  // and nothing at the far left collapses the band.
+  const hasControls = isClaude || session.provider === 'codex'
+  if (!statusLineEnabled && !hasControls && !(canSwitchAccount || (sl.showAccount && providerChip))) return null
 
   // "The meters should appear, but nothing has arrived yet." Shimmering forever
   // on a session that has nothing to say is worse than the blank it replaces, so
@@ -253,31 +299,34 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // and colour are resolved by live email: a mid-session /login that updates
   // session.accountEmail immediately shows the right name/colour. Override
   // wins over the spawn-time colour key.
-  const accountName = session.accountEmail
-    ? resolveAccountNameByEmail(session.accountEmail, profiles, accountAliases)
-    : null
+  // A Codex session's is its registry account's (providerChip, above).
+  const accountName = !isClaude
+    ? (providerChip?.name ?? null)
+    : session.accountEmail
+      ? resolveAccountNameByEmail(session.accountEmail, profiles, accountAliases)
+      : null
+  // P3.6 (row 7): the identity's colour when the account list names it
+  // (utils/accountChip), else the email override as before.
   const accountDot = resolveIdentityColor(
-    resolveAccountColourKey(session.accountEmail, accountColourOverrides, session.accountColour),
+    providerChip ? providerChip.colourKey : emailColourKey,
     theme,
   )
+  const accountTitle = providerChip ? providerChip.title : session.accountEmail
 
-  // Account chooser: every profile (resolved name + truncated email hint).
-  // The current account is marked active; selecting it is a no-op in switchAccount.
-  // Inactive accounts stay listed but are disabled (greyed, unselectable); the
-  // current account is never disabled, even if it was deactivated while in use.
-  const accountItems = profiles.map((p) => {
-    const isCurrent = p.id === session.profileId
-    const inactive = !isAccountActive(p)
-    return {
-      label: resolveAccountName(p.accountEmail, p.name, accountAliases),
-      value: p.id,
-      active: isCurrent,
-      disabled: inactive && !isCurrent,
-      hint: inactive
-        ? `${middleTruncateEmail(p.accountEmail)} · inactive`
-        : middleTruncateEmail(p.accountEmail),
-    }
-  })
+  // Account chooser: every account of the session's provider (resolved name +
+  // truncated address hint). The current account is marked active; selecting
+  // it is a no-op in switchAccount. Inactive accounts (and a Codex account
+  // that needs attention) stay listed but are disabled (greyed, unselectable);
+  // the current account is never disabled, even if it was deactivated while
+  // in use. A Codex account launched only with that launch's confirmation
+  // says "confirm at launch" (utils/switchAccountItems).
+  const accountItems = switchItems.map((item) => ({
+    label: item.label,
+    value: item.value,
+    active: item.active,
+    disabled: item.disabled,
+    hint: switchItemHint(item),
+  }))
 
   return (
     <div
@@ -328,7 +377,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
         <span
           className="flex items-center gap-1 shrink-0"
           style={{ color: 'var(--text-muted)' }}
-          title={session.accountEmail}
+          title={accountTitle}
           data-testid="account-chip"
         >
           <span
@@ -488,15 +537,17 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
         <div className="flex-1" aria-hidden />
       )}
 
-      {/* Controls (Claude only): Mode + Model as a pair, Compact as a normal
-          action, Restart visually separated behind a divider with a quiet
-          danger-on-hover treatment. (UAT R2 Tasks 2 + 4.) */}
-      {isClaude && (
+      {/* Controls: Mode + Model as a pair, Compact as a normal action, Restart
+          visually separated behind a divider with a quiet danger-on-hover
+          treatment. (UAT R2 Tasks 2 + 4.) A Codex session has them too (P3.8,
+          row 61), Compact running Codex's own /compact; its Model pill is not
+          built yet (row 41), so its model stays in the telemetry band. */}
+      {hasControls && (
         <div className="flex items-center gap-1 shrink-0">
           {/* Account switch moved to the far-left of the strip (first child,
               above) so the account sits in one consistent place for every
               session type. The Model / Compact / Restart controls remain here. */}
-          <div className="relative">
+          {isClaude && (<div className="relative">
             <button
               onClick={() => setOpenPicker(openPicker === 'model' ? null : 'model')}
               className={CONTROL_PILL}
@@ -538,9 +589,16 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
                 onClose={() => setOpenPicker(null)}
               />
             )}
-          </div>
+          </div>)}
+          {/* Why a Codex command was not sent (not at its prompt, busy, or text
+              already typed there): said here for a moment, never typed. */}
+          {codexNote && (
+            <span role="status" className="text-xs truncate max-w-[22rem]" style={{ color: 'var(--text-muted)' }} data-testid="codex-command-note">
+              {codexNote}
+            </span>
+          )}
           <button
-            onClick={() => write('/compact\n')}
+            onClick={onCompact}
             className={CONTROL_PILL}
             style={{
               background: 'var(--surface-raised)',

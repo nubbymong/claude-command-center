@@ -81,9 +81,10 @@ export default function HooksGatewaySection() {
           <h3 className="text-sm font-semibold text-text">HTTP Hooks Gateway</h3>
           <p className="text-xs text-subtext0 mt-1 max-w-md">
             Opt-in loopback listener that receives tool-call, permission, and lifecycle events
-            from your Claude Code sessions. Foundation for upcoming desktop notifications and
+            from your Claude Code and Codex sessions. Foundation for upcoming desktop notifications and
             external automations. No telemetry - listener is 127.0.0.1 only; reverse-tunnelled
-            into SSH sessions you start.
+            into SSH sessions you start. Codex asks you once per account to review the app's hooks
+            (&quot;Hooks need review&quot;); until you trust them, a Codex session sends none.
           </p>
         </div>
         <label className="flex items-center gap-2 text-sm cursor-pointer">

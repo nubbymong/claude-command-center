@@ -35,6 +35,20 @@ export function usesCodex(s: ProviderChoiceView): boolean {
   return codexPreference(s) === 'on'
 }
 
+/** The one assistant in use when only one is (usesClaude, usesCodex), for
+ *  copy that names the assistants (the guided tour, the Feature Guide).
+ *  Null when both are, and when neither is (a state setup never leaves), so
+ *  that copy then reads as it does with both on. */
+export type OnlyAssistant = 'claude' | 'codex' | null
+
+export function onlyAssistantInUse(s: ProviderChoiceView): OnlyAssistant {
+  const claude = usesClaude(s)
+  const codex = usesCodex(s)
+  if (claude && !codex) return 'claude'
+  if (codex && !claude) return 'codex'
+  return null
+}
+
 /** Both keys a choice saves. */
 export function choiceSettings(choice: AssistantsChoice): { claudeEnabled: boolean; codexEnabled: boolean } {
   return { claudeEnabled: choice !== 'codex', codexEnabled: choice !== 'claude' }

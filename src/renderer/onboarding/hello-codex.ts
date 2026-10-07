@@ -234,7 +234,7 @@ function codexReviewCell(opts: HelloCodexCopyInputs): string {
 export function helloCodexComparison(opts: HelloCodexCopyInputs): Array<[string, string, string]> {
   return [
     ['Instructions file', '`CLAUDE.md`', '`AGENTS.md`'],
-    ['Permissions', 'Claude permission settings', 'Read-only, Standard, Auto, Unrestricted'],
+    ['Permissions', 'Claude permission settings', 'Read-only, Standard, Plan mode, Auto, Unrestricted'],
     ['Runs over SSH', 'Yes', 'Not in this release'],
     ['Vision, browser, canvas', 'Yes', 'Not yet'],
     ['Code review', 'Asks Codex', codexReviewCell(opts)],

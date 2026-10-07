@@ -195,5 +195,9 @@ export const WATCHDOG_CHECK_ITEMS: ReadonlyArray<{ key: 'rateLimit' | 'overload'
   { key: 'safeguard', label: 'Safeguard' },
 ]
 
+/** P3.10: a check this session's CLI has no patterns for (Codex has no
+ *  flagged-safeguard message): shown, off, and not switchable. */
+export const WATCHDOG_UNAVAILABLE_HINT = "Not available: this session's assistant has no such message to retry."
+
 /** Says what the session-level toggles are: live, and only for this run. */
 export const WATCHDOG_RUNTIME_HINT = 'Applies to this session now. Relaunching restores the Settings defaults.'

@@ -12,7 +12,7 @@ import { act } from 'react'
 
 const { default: ConfigContextMenu } = await import('../../../src/renderer/components/sidebar/ConfigContextMenu')
 const { default: SessionContextMenu } = await import('../../../src/renderer/components/sidebar/SessionContextMenu')
-const { PIN_WHILE_RUNNING_HINT, WATCHDOG_RUNTIME_HINT } = await import('../../../src/renderer/components/sidebar/sessionsPanelState')
+const { PIN_WHILE_RUNNING_HINT, WATCHDOG_RUNTIME_HINT, WATCHDOG_UNAVAILABLE_HINT } = await import('../../../src/renderer/components/sidebar/sessionsPanelState')
 
 describe('sidebar context menus — Quick Start + running lock', () => {
   let container: HTMLDivElement; let root: Root
@@ -111,5 +111,23 @@ describe('sidebar context menus — Quick Start + running lock', () => {
     act(() => { (container.querySelector('[data-testid="session-ctx-watchdog-safeguard"]') as HTMLButtonElement).click() })
     expect(onToggleWatchdogCheck).toHaveBeenCalledTimes(1)
     expect(onToggleWatchdogCheck).toHaveBeenCalledWith('safeguard')
+  })
+
+  // P3.10 (row 43): a Codex session's Watchdog has no safeguard check (Codex
+  // has no such message): shown off, not switchable, and says why.
+  it("session menu: a check the session's CLI has no patterns for is shown off, not switchable, with the reason", () => {
+    const onToggleWatchdogCheck = vi.fn()
+    renderSessionMenu({ watchdogChecks: { ...allOn, safeguard: false }, onToggleWatchdogCheck, watchdogUnavailable: ['safeguard'] })
+    const btn = container.querySelector('[data-testid="session-ctx-watchdog-safeguard"]') as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    expect(btn.getAttribute('aria-disabled')).toBe('true')
+    expect(btn.getAttribute('title')).toBe(WATCHDOG_UNAVAILABLE_HINT)
+    expect(btn.textContent).toContain('(not available)')
+    act(() => { btn.click() })
+    expect(onToggleWatchdogCheck).not.toHaveBeenCalled()
+    const rate = container.querySelector('[data-testid="session-ctx-watchdog-rateLimit"]') as HTMLButtonElement
+    expect(rate.disabled).toBe(false)
+    act(() => { rate.click() })
+    expect(onToggleWatchdogCheck).toHaveBeenCalledWith('rateLimit')
   })
 })

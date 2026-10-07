@@ -25,17 +25,27 @@ export function parseFileUrl(url: string): string | null {
 
 /**
  * Decode a Windows DROPFILES (CF_HDROP) buffer into file paths.
- * Layout: UInt32LE(0) = offset to the path list, byte 13 = fWide (1 = UTF-16LE),
- * then a null-separated, double-null-terminated list. Returns [] on a malformed
- * or too-short buffer.
+ * Layout (the DROPFILES struct, 20 bytes): pFiles (UInt32LE at offset 0) = offset
+ * to the path list, pt (two 4-byte coordinates, offset 4), fNC (4 bytes, offset
+ * 12), fWide (4 bytes, offset 16; non-zero = UTF-16LE, zero = 8-bit), then a
+ * null-separated, double-null-terminated list. Returns [] on a malformed or
+ * too-short buffer, or a pFiles inside the header (the header read as paths).
+ * Reads up to the list's end (its first empty entry): the clipboard block can
+ * be larger than the list, and what follows it is not a path.
  */
 export function parseHdropBuffer(buf: Buffer): string[] {
   if (!buf || buf.length < 20) return []
   const start = buf.readUInt32LE(0)
-  if (start <= 0 || start >= buf.length) return []
-  const wide = buf.readUInt8(13) !== 0
+  if (start < 20 || start >= buf.length) return []
+  const wide = buf.readUInt32LE(16) !== 0
   const list = buf.subarray(start).toString(wide ? 'ucs2' : 'latin1')
-  return list.split('\0').map((s) => s.trim()).filter(Boolean)
+  const paths: string[] = []
+  for (const entry of list.split('\0')) {
+    if (entry === '') break
+    const p = entry.trim()
+    if (p) paths.push(p)
+  }
+  return paths
 }
 
 const ALLOWED_IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'])

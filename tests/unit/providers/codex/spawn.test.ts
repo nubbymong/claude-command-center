@@ -142,6 +142,45 @@ describe('CodexProvider', () => {
     expect(out.args.find(a => a.startsWith('model_reasoning_effort='))).toBeUndefined()
   })
 
+  // P3.8 round 1 (L2): Codex has no launch flag for Plan mode; /plan is typed
+  // later. Round 2 (PM1): a Plan mode launch is READ-ONLY (the CLI's own
+  // sandbox option), so no turn can write before Codex's Plan mode is on;
+  // leaving read-only later is Codex's own /permissions.
+  it('the plan preset launches read-only, as the read-only preset does, with no flag of its own', () => {
+    const out = new CodexProvider().buildSpawnCommand({
+      sessionId: 'sid', realmLaunch: launch,
+      codexOptions: { model: 'gpt-5.5', permissionsPreset: 'plan' },
+    })
+    const readOnly = new CodexProvider().buildSpawnCommand({
+      sessionId: 'sid', realmLaunch: launch,
+      codexOptions: { model: 'gpt-5.5', permissionsPreset: 'read-only' },
+    })
+    expect(out.args).toEqual(readOnly.args)
+    expect(out.args.join(' ')).toContain('--sandbox read-only --ask-for-approval on-request')
+    expect(out.args.join(' ')).not.toMatch(/workspace-write|plan/)
+  })
+
+  // P3.8 (row 40): the levels the registry offers Codex reach the launch as
+  // they are (the spawn schema holds them to CODEX_EFFORTS first); Default (no
+  // model, no effort) adds neither flag, so Codex chooses.
+  it('max and ultra reach the launch as model_reasoning_effort; Default adds no -m and no effort', () => {
+    for (const e of ['max', 'ultra'] as const) {
+      const out = new CodexProvider().buildSpawnCommand({
+        sessionId: 'sid', realmLaunch: launch,
+        codexOptions: { model: 'gpt-6-astra', reasoningEffort: e, permissionsPreset: 'standard' },
+      })
+      const i = out.args.indexOf(`model_reasoning_effort=${e}`)
+      expect(i, e).toBeGreaterThan(0)
+      expect(out.args[i - 1]).toBe('-c')
+      expect(out.args.slice(0, 2)).toEqual(['-m', 'gpt-6-astra'])
+    }
+    const bare = new CodexProvider().buildSpawnCommand({
+      sessionId: 'sid', realmLaunch: launch, codexOptions: { permissionsPreset: 'standard' },
+    })
+    expect(bare.args).not.toContain('-m')
+    expect(bare.args.find(a => a.startsWith('model_reasoning_effort='))).toBeUndefined()
+  })
+
   it('CODEX_HOME is the realm\'s, whatever the parent process carries (WP1.38)', () => {
     process.env.CODEX_HOME = '/tmp/codex-test'
     const out = new CodexProvider().buildSpawnCommand({

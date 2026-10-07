@@ -96,6 +96,68 @@ describe('the answer (ADR-022 bounds 3, 5, 8)', () => {
     expect(c.verdict?.ok).toBe(true)
   })
 
+  // P3.14 (ADR-023): the answer's own `rateLimits.credits` is kept (three
+  // validated fields). The validators are NOT widened (bound 5 unchanged): a
+  // credits object of the wrong shape is not a schema mismatch, it is just not
+  // kept, so it can never make the CLI "unsupported" until it changes.
+  describe('credits (P3.14, ADR-023)', () => {
+    const answerWith = (credits: unknown, extra: Record<string, unknown> = {}) => line({
+      id: 2,
+      result: { rateLimits: { limitId: 'codex', primary: { usedPercent: 18, windowDurationMins: 300, resetsAt: reset }, planType: 'plus', credits, ...extra }, rateLimitsByLimitId: null },
+    })
+
+    it('a valid credits object arrives on the verdict\'s reading', () => {
+      const { c } = client()
+      c.begin(); c.receive(initAnswer()); c.receive(answerWith({ hasCredits: true, unlimited: false, balance: '1250.0000000000' }))
+      expect(c.verdict?.ok).toBe(true)
+      if (!c.verdict?.ok) throw new Error('no reading')
+      expect(c.verdict.reading.credits).toEqual({ hasCredits: true, unlimited: false, balance: 1250 })
+      expect(c.verdict.reading.limits[0].primary?.usedPercent).toBe(18)
+      expect(c.verdict.reading.planType).toBe('plus')
+    })
+
+    it('a malformed credits object still gives an ok verdict with the limits (bound 5 is unchanged)', () => {
+      for (const credits of ['junk', 7, [], { hasCredits: 'x' }, { hasCredits: true }, { hasCredits: true, unlimited: 'no', balance: 5 }, { hasCredits: true, unlimited: false, balance: -5 }]) {
+        const { c } = client()
+        c.begin(); c.receive(initAnswer()); c.receive(answerWith(credits))
+        expect(c.verdict?.ok, JSON.stringify(credits)).toBe(true)
+        if (!c.verdict?.ok) throw new Error('no reading')
+        expect(c.verdict.reading.limits[0].primary?.usedPercent).toBe(18)
+        expect(c.verdict.reading.planType).toBe('plus')
+        // Never the sticky verdict, and never a kept junk balance: none now
+        // (null), or the flags with no balance.
+        const kept = c.verdict.reading.credits
+        expect(kept === null || (kept !== undefined && kept.balance === null), JSON.stringify(credits)).toBe(true)
+      }
+    })
+
+    it('no credits key: an ok verdict whose reading has no credits key; null credits: none now', () => {
+      const none = client()
+      none.c.begin(); none.c.receive(initAnswer()); none.c.receive(answerWith(undefined))
+      if (!none.c.verdict?.ok) throw new Error('no reading')
+      expect(Object.prototype.hasOwnProperty.call(none.c.verdict.reading, 'credits')).toBe(false)
+      const nul = client()
+      nul.c.begin(); nul.c.receive(initAnswer()); nul.c.receive(answerWith(null))
+      if (!nul.c.verdict?.ok) throw new Error('no reading')
+      expect(nul.c.verdict.reading.credits).toBeNull()
+    })
+
+    it('an extra key in credits never reaches the verdict', () => {
+      const { c } = client()
+      c.begin(); c.receive(initAnswer()); c.receive(answerWith({ hasCredits: true, unlimited: false, balance: '5', extra: 'x-secret' }))
+      if (!c.verdict?.ok) throw new Error('no reading')
+      expect(JSON.stringify(c.verdict)).not.toContain('x-secret')
+    })
+
+    it('only the answer\'s own rateLimits are read: credits on a per-limit entry are not kept', () => {
+      const { c } = client()
+      c.begin(); c.receive(initAnswer())
+      c.receive(line({ id: 2, result: { rateLimits: { limitId: 'codex', primary: { usedPercent: 18, windowDurationMins: 300, resetsAt: reset } }, rateLimitsByLimitId: { codex_x: { limitId: 'codex_x', primary: { usedPercent: 3, windowDurationMins: 300, resetsAt: reset }, credits: { hasCredits: true, unlimited: true, balance: '7' } } } } }))
+      if (!c.verdict?.ok) throw new Error('no reading')
+      expect(c.verdict.reading.credits).toBeUndefined()
+    })
+  })
+
   it('reads a line split across chunks, with CRLF, and ignores notifications', () => {
     const { c } = client()
     c.begin()

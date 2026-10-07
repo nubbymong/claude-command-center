@@ -98,9 +98,14 @@ export function reviewToolView(snapshot: AccountsSnapshot | null, tool: ReviewTo
   }
   // Claude review answers Codex sessions: while Codex is off (or not set up)
   // nothing asks, but the switch keeps its meaning for when it is back on.
+  // Codex review answers Claude sessions: the same while Claude Code is off
+  // (P3.4, row 14).
   const codexOff = savedOff(ctx.settings, 'codex') || providerView(snapshot, 'codex')?.enabled === false
   const codexNotSetUp = providerUnanswered(snapshot, 'codex')
-  const note = isCodex ? null : codexOff ? 'Only Codex sessions use it; Codex is off.' : codexNotSetUp ? 'Only Codex sessions use it; Codex is not set up.' : null
+  const claudeOff = savedOff(ctx.settings, 'claude') || providerView(snapshot, 'claude')?.enabled === false
+  const note = isCodex
+    ? claudeOff ? 'Only Claude sessions use it; Claude Code is off.' : null
+    : codexOff ? 'Only Codex sessions use it; Codex is off.' : codexNotSetUp ? 'Only Codex sessions use it; Codex is not set up.' : null
   const notice = reviewerNotice(snapshot, id, ctx.platform)
   const review = p?.review
   if (!review) return { disabled: false, message: null, reviewer: null, notice, note }

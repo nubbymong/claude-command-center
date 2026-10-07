@@ -12,7 +12,7 @@ import { deployClaudeStatuslineScript, deployClaudeResumePickerScript } from './
 import { watchClaudeStatuslineFile, listClaudeResumableSessions } from './telemetry'
 import {
   claudeAuthorityEnvVariables, CLAUDE_MIN_MANAGED_CLI_VERSION,
-  sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeManagedLaunchPreflight,
+  sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeManagedLaunchPreflight, claudeTransportSettingsEnv,
 } from './managed-launch'
 import { createClaudeLegacyAccountsPort } from './legacy-store'
 import type { ClaudeLegacyAccountsIo } from './legacy-store'
@@ -28,7 +28,7 @@ export {
   CLAUDE_REMOVED_SETTINGS_KEYS, CLAUDE_MIN_MANAGED_CLI_VERSION,
   isClaudeAuthorityEnvVariable, sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys,
   claudeAuthorityFamilyRules,
-  claudeManagedCliCompatibility, claudeManagedLaunchPreflight,
+  claudeManagedCliCompatibility, claudeManagedLaunchPreflight, claudeTransportSettingsEnv,
 } from './managed-launch'
 export type { AuthorityKind, AuthorityEntry } from './managed-launch'
 
@@ -131,6 +131,7 @@ export const claudeCapabilities: ProviderCapabilities = {
   'auth.apiKey': { state: 'unsupported', note: 'managed accounts use the CLI sign-in; an API key is never collected' },
   'auth.status': { state: 'unknown', note: 'wired in the Claude adapter slice' },
   'auth.logout': { state: 'unknown', note: 'wired in the Claude adapter slice' },
+  'auth.retireReplaced': { state: 'unsupported', note: 'a Claude profile signs in again in its own home; nothing is replaced' },
   'realm.isolated': { state: 'unknown', platformOverrides: { darwin: 'unsupported' }, note: 'profile homes; not on macOS in WP1 (D2); wired in the Claude adapter slice' },
   'account.labelFields': { state: 'unknown', note: 'email read from the profile identity file; wired in the Claude adapter slice' },
   'account.usage': { state: 'unknown', note: 'the per-account usage fetch lives in src/main/usage, not on this package; wired in a later slice' },
@@ -213,6 +214,7 @@ export function createClaudePackage(deps: ClaudePackageDeps = {}): ProviderPacka
       sanitizeManagedSettings: sanitizeClaudeManagedSettings,
       authoritySettingsKeys: claudeAuthoritySettingsKeys,
       preflight: claudeManagedLaunchPreflight,
+      transportSettingsEnv: claudeTransportSettingsEnv,
     },
     ...(deps.legacyAccountsIo ? { legacyAccounts: createClaudeLegacyAccountsPort(deps.legacyAccountsIo) } : {}),
     // A reviewer for Codex sessions: discovery, a review-only launch in the

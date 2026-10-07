@@ -10,8 +10,8 @@
 import { create } from 'zustand'
 import type {
   AccountsSnapshot, AccountView, AccountsResult, AccountsFailure, ProviderInstallationView, ProviderId,
-  BeginSetupRequest, SignInRequest, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, ResolveConflictRequest,
-  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, InstallRecipeView,
+  BeginSetupRequest, SignInRequest, SignInAgainRequest, SignInAgainResult, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, ResolveConflictRequest,
+  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, InstallRecipeView, UpdateIdentityRequest, IdentityView, SignInPhase,
 } from '../../shared/providers'
 import { SIGN_IN_METHODS } from '../../shared/providers'
 import { useSettingsStore } from './settingsStore'
@@ -174,7 +174,7 @@ export const providerAccountActions = {
   issueSecretHandle: (accountId: string) => call<{ handle: string }>(() => api().issueSecretHandle(accountId)),
   signIn: (req: SignInRequest) => call<{ state: KnownAuthState }>(() => api().signIn(req)),
   /** An existing managed account's sign-in, run again in its own realm. */
-  signInAgain: (req: SignInRequest) => call<{ state: KnownAuthState }>(() => api().signInAgain(req)),
+  signInAgain: (req: SignInAgainRequest) => call<SignInAgainResult>(() => api().signInAgain(req)),
   cancelSignIn: (accountId: string) => call(() => api().cancelSignIn(accountId)),
   completeSetup: (req: CompleteSetupRequest) => call<{ accountId: string }>(() => api().completeSetup(req)),
   abandonSetup: (accountId: string) => call(() => api().abandonSetup(accountId)),
@@ -201,6 +201,18 @@ export const providerAccountActions = {
   checkSignIn: (accountId: string) => call<{ state: KnownAuthState }>(() => api().refreshStatus(accountId)),
   resolveConflict: (req: ResolveConflictRequest) => call(() => api().resolveConflict(req)),
   setReviewerDefault: (req: SetReviewerDefaultRequest) => call(() => api().setReviewerDefault(req)),
+  /** The identity editor (P3.2, design 5.1, 5.2): name, colour and group
+   *  are the identity's, shown on every account linked to it. */
+  updateIdentity: (req: UpdateIdentityRequest) => call(() => api().updateIdentity(req)),
+  createGroup: (name: string) => call<{ groupId: string }>(() => api().createGroup(name)),
+  /** Point an account at another identity (link), or give it a private copy
+   *  of its current one (unlink). Main refuses what the rules forbid (an
+   *  unverified sign-in is never linked). */
+  linkIdentity: (accountId: string, identityId: string) => call(() => api().linkIdentity(accountId, identityId)),
+  unlinkIdentity: (accountId: string) => call<{ identityId: string }>(() => api().unlinkIdentity(accountId)),
+  /** "Restore" on an archived account: main brings it back INACTIVE, with
+   *  nothing about its sign-in trusted; "Make active" then checks it. */
+  restore: (accountId: string) => call(() => api().setLifecycle({ accountId, lifecycle: 'inactive' })),
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +231,99 @@ export function providerView(snapshot: AccountsSnapshot | null, providerId: Prov
 export function selectProviderAccounts(snapshot: AccountsSnapshot | null, providerId: ProviderId): AccountView[] {
   const mine = (snapshot?.accounts ?? []).filter((a) => a.providerId === providerId && a.lifecycle !== 'archived')
   return [...mine.filter((a) => a.lifecycle === 'active'), ...mine.filter((a) => a.lifecycle === 'inactive')]
+}
+
+/** A provider's archived accounts ("Archived (N)", design 5.3), in the
+ *  snapshot's order. */
+export function selectArchivedAccounts(snapshot: AccountsSnapshot | null, providerId: ProviderId): AccountView[] {
+  return (snapshot?.accounts ?? []).filter((a) => a.providerId === providerId && a.lifecycle === 'archived')
+}
+
+/** "Restore": an archived account that is not mirrored from the provider's
+ *  own list (that one comes back where it was removed). */
+export function canOfferRestore(account: AccountView): boolean {
+  return account.lifecycle === 'archived' && !account.legacyLinked
+}
+
+export function identityOf(snapshot: AccountsSnapshot | null, account: Pick<AccountView, 'identityId'>): IdentityView | undefined {
+  return snapshot?.identities.find((i) => i.id === account.identityId)
+}
+
+/** The other live accounts that share this account's identity: the "Linked
+ *  with" line and the identity editor's list. Archived ones are history. */
+export function linkedAccounts(snapshot: AccountsSnapshot | null, account: AccountView): AccountView[] {
+  return (snapshot?.accounts ?? []).filter((a) => a.id !== account.id && a.identityId === account.identityId && a.lifecycle !== 'archived')
+}
+
+/** What the "Linked with" line names for a linked account: the provider's
+ *  label for it (Claude: the email), else its display name. */
+export function linkedAccountLabel(snapshot: AccountsSnapshot | null, account: AccountView): string {
+  return account.providerLabel?.trim() || accountDisplayName(snapshot, account)
+}
+
+/** Whether an account's identity can be linked at all: an unverified or
+ *  external sign-in keeps its own identity (its attribution is a guess). */
+export function canLinkIdentity(account: Pick<AccountView, 'unverified' | 'external'>): boolean {
+  return !account.unverified && !account.external
+}
+
+/** Accounts the identity editor offers under "Link another account": what
+ *  main accepts (linkAccountIdentity) -- live, vouched-for accounts on
+ *  another identity, and never a record of a provider's own list (a Claude
+ *  profile) when a record of that same list is already on this identity,
+ *  live or archived -- of a provider that is on (one that is off offers
+ *  nothing, as it manages nothing). */
+export function linkCandidates(snapshot: AccountsSnapshot | null, account: AccountView): AccountView[] {
+  if (!canLinkIdentity(account)) return []
+  const accounts = snapshot?.accounts ?? []
+  // Records of a provider's own list on this identity (an archived one is no
+  // longer linked, and only a provider's own list archives it this way).
+  const listRecordHere = (a: AccountView) => accounts.some((b) => b.id !== a.id && b.identityId === account.identityId
+    && b.providerId === a.providerId && (b.legacyLinked || b.lifecycle === 'archived'))
+  return accounts.filter((a) => a.identityId !== account.identityId && a.lifecycle !== 'archived' && canLinkIdentity(a)
+    && !(a.legacyLinked && listRecordHere(a)) && providerView(snapshot, a.providerId)?.enabled !== false)
+}
+
+/** The session facts the Accounts rows read (a structural subset of the
+ *  renderer's Session, so this module imports no session store). */
+export interface AccountSessionFacts {
+  id: string
+  label: string
+  customName?: string
+  provider?: ProviderId
+  sessionType?: string
+  shellOnly?: boolean
+  profileId?: string
+  ptyExited?: boolean
+  neverStarted?: boolean
+}
+
+export function sessionTitle(s: Pick<AccountSessionFacts, 'label' | 'customName'>): string {
+  return s.customName?.trim() || s.label
+}
+
+/** The Claude sessions running on a Claude profile now: local, not a plain
+ *  shell, started and not ended, on that profile (a session that names none
+ *  runs on the primary, as the header's account pill resolves it). Claude
+ *  sessions hold no account lease, so this is the "N running" for a Claude
+ *  row. */
+export function claudeSessionsOnProfile(sessions: readonly AccountSessionFacts[], profileId: string, primaryId: string | undefined): AccountSessionFacts[] {
+  return sessions.filter((s) => (s.provider ?? 'claude') === 'claude' && s.sessionType === 'local' && !s.shellOnly && !s.ptyExited && !s.neverStarted
+    && (s.profileId ?? primaryId) === profileId)
+}
+
+/** How many holders a refusal counts that this window cannot name: main's
+ *  own unnamed count, plus the named sessions not open here. */
+export function unnamedHolders(ids: readonly string[] | undefined, named: readonly { id: string }[], unnamed: number | undefined): number {
+  const here = new Set(named.map((s) => s.id))
+  return (unnamed ?? 0) + (ids ?? []).filter((id) => !here.has(id)).length
+}
+
+/** The sessions a refusal named that this window has open, for "Go to". */
+export function blockerSessions(sessions: readonly AccountSessionFacts[], ids: readonly string[] | undefined): AccountSessionFacts[] {
+  if (!ids?.length) return []
+  const wanted = new Set(ids)
+  return sessions.filter((s) => wanted.has(s.id))
 }
 
 /** The registry account mirroring one of the provider's own accounts (a
@@ -241,7 +346,19 @@ export function accountDisplayName(snapshot: AccountsSnapshot | null, account: A
   if (friendly) return friendly
   const label = account.providerLabel?.trim()
   if (label) return label
+  // An unnamed identity shared with a labelled account (a Claude profile's
+  // email): that label names the person here too.
+  const linked = (snapshot?.accounts ?? []).find((a) => a.id !== account.id && a.identityId === account.identityId && a.lifecycle !== 'archived' && a.providerLabel?.trim())
+  if (linked) return linked.providerLabel!.trim()
   return ACCOUNT_NAME_FALLBACK
+}
+
+/** An account's name inside a sentence: this computer's own sign-in in lower
+ *  case (externalHomeLabelInSentence); any other name as it is. */
+export function accountNameInSentence(snapshot: AccountsSnapshot | null, account: AccountView): string {
+  if (!account.external) return accountDisplayName(snapshot, account)
+  const p = providerView(snapshot, account.providerId)
+  return externalHomeLabelInSentence(p ?? { providerId: account.providerId, displayName: account.providerId }, externalHomeFolder(snapshot, account.providerId))
 }
 
 /** What the reviewer line under a provider's section says. `label` is the
@@ -277,15 +394,23 @@ export function canOfferMakeReviewer(snapshot: AccountsSnapshot | null, account:
   return !!providerView(snapshot, account.providerId)?.review
 }
 
-/** Whether an account may be offered "Sign in again": one this app manages
- *  (not the provider's shared external home), not archived, not blocked (it
- *  is reconciled first), and not signed in now (the provider never logs in
- *  over a realm that is still signed in). */
+/** The Codex accounts Sentinel's analysis may run under (P3.9), as the
+ *  Settings select lists them: the ones a review could run on unattended
+ *  (active, not blocked, vouched for, nothing stopping reviews on this
+ *  platform), in the list's order. */
+export function sentinelCodexAccountChoices(snapshot: AccountsSnapshot | null): AccountView[] {
+  return selectProviderAccounts(snapshot, 'codex').filter((a) => a.lifecycle === 'active' && a.operationalState !== 'blocked' && !a.unverified && !a.external && !a.reviewRefusal)
+}
+
+/** Whether an account may be offered "Sign in again": not archived and not
+ *  blocked (it is reconciled first). Signed in too (P3.3, design 9.2): main
+ *  then signs in to a new folder and moves the account there only once that
+ *  sign-in is verified, so the one it has is never lost on the way. This
+ *  computer's own sign-in too, in place, after its warning is confirmed
+ *  (design 9.2, last paragraph). */
 export function canOfferSignInAgain(account: AccountView): boolean {
-  if (account.external) return false
   if (account.lifecycle === 'archived') return false
-  if (account.operationalState === 'blocked') return false
-  return account.lastKnownAuthState !== 'signed-in'
+  return account.operationalState !== 'blocked'
 }
 
 /** The methods "Sign in again" offers: the account's recorded family only
@@ -446,6 +571,12 @@ export function externalHomeLabel(p: Pick<ProviderInstallationView, 'providerId'
   return folder ? `This computer's ${p.displayName} (${folder})` : `This computer's ${p.displayName}`
 }
 
+/** That name inside a sentence, lower case as the copy says it mid-sentence
+ *  ("Sign in to this computer's Codex (~/.codex) again?"). */
+export function externalHomeLabelInSentence(p: Pick<ProviderInstallationView, 'providerId' | 'displayName'>, folder: string | null): string {
+  return folder ? `this computer's ${p.displayName} (${folder})` : `this computer's ${p.displayName}`
+}
+
 /** That folder as a sentence names it: the folder main named, else "this
  *  computer's <provider> folder", which claims none. */
 export function externalHomeWhere(snapshot: AccountsSnapshot | null, p: Pick<ProviderInstallationView, 'providerId' | 'displayName'>): string {
@@ -467,8 +598,12 @@ export function signInMethodLabel(account: Pick<AccountView, 'authMethod'>, p: P
 /** An account's sign-in state as a row says it. A blocked account (a check
  *  found it signed in a different way than before, such as an API key where
  *  there was a ChatGPT sign-in) says so before anything else. */
-export function accountState(account: Pick<AccountView, 'operationalState' | 'lastKnownAuthState'>): { text: string; tone: StatusTone } {
+export function accountState(account: Pick<AccountView, 'operationalState' | 'lastKnownAuthState' | 'oldSignInLeft'>): { text: string; tone: StatusTone } {
   if (account.operationalState === 'blocked') return { text: 'Needs attention: signed in a different way than before', tone: 'warn' }
+  // A sign in again moved it to a new sign-in; the old one is still there:
+  // kept on purpose, or not removed (oldSignInText says why and what to do).
+  if (account.oldSignInLeft === 'kept') return { text: 'Needs attention: the old sign-in is kept', tone: 'warn' }
+  if (account.oldSignInLeft) return { text: 'Needs attention: the old sign-in was not removed', tone: 'warn' }
   switch (account.lastKnownAuthState) {
     case 'signed-in': return { text: 'Signed in', tone: account.operationalState === 'attention' ? 'warn' : 'ok' }
     case 'signed-out': return { text: 'Signed out', tone: 'warn' }
@@ -477,6 +612,33 @@ export function accountState(account: Pick<AccountView, 'operationalState' | 'la
     case 'unsupported': return { text: "Can't check the sign-in here", tone: 'muted' }
     default: return { text: 'Not checked yet', tone: 'muted' }
   }
+}
+
+/** Why an account's old sign-in is still there, and what removes it (the
+ *  row's line under its state). Honest: never "Check sign-in removes it"
+ *  when a check will not. */
+export function oldSignInText(reason: NonNullable<AccountView['oldSignInLeft']>, providerName: string): string {
+  switch (reason) {
+    case 'kept': return 'It stays until the app can remove it without signing out the new one. Archiving the account removes it.'
+    case 'unavailable': return `It is removed once ${providerName} can sign it out here.`
+    case 'failed': return 'Removing it did not finish. Check sign-in tries again.'
+  }
+}
+
+/** The Sign in again dialog's status line for a step with no output of its
+ *  own: carrying the earlier conversations over can take minutes. */
+export function signInPhaseText(phase: SignInPhase): string {
+  switch (phase) {
+    case 'carrying-history': return 'Signed in. Carrying your earlier conversations over to the new sign-in; with a long history this can take a few minutes...'
+  }
+}
+
+/** A sign in again that left earlier conversation files behind, in plain
+ *  words: how many, and where they still are. */
+export function notCarriedOverText(count: number): string {
+  const files = count === 1 ? '1 earlier conversation file was' : `${count} earlier conversation files were`
+  const where = count === 1 ? 'It stays' : 'They stay'
+  return `Signed in again. ${files} not carried over to the new sign-in, because each is also linked from somewhere else on this computer. ${where} in the account's old folder while that folder is kept.`
 }
 
 /** "Check sign-in" is offered on an account the provider can check now: the
@@ -506,8 +668,9 @@ const EXTERNAL_SIGN_IN_COMMAND: Readonly<Partial<Record<ProviderId, string>>> = 
 
 /** What a signed-out or expired row for the provider's own home on this
  *  computer says to do, or null when there is nothing to say. */
-export function externalSignInHint(account: Pick<AccountView, 'external' | 'lastKnownAuthState' | 'operationalState'>, provider: Pick<ProviderInstallationView, 'providerId'>): string | null {
-  if (!account.external || account.operationalState === 'blocked') return null
+export function externalSignInHint(account: Pick<AccountView, 'external' | 'lastKnownAuthState' | 'operationalState' | 'signingIn'>, provider: Pick<ProviderInstallationView, 'providerId'>): string | null {
+  // While the app signs it in again (in place), there is nothing to run.
+  if (!account.external || account.operationalState === 'blocked' || account.signingIn) return null
   if (account.lastKnownAuthState !== 'signed-out' && account.lastKnownAuthState !== 'expired') return null
   const command = EXTERNAL_SIGN_IN_COMMAND[provider.providerId]
   return command ? `Run ${command} in a terminal, then Check sign-in.` : null

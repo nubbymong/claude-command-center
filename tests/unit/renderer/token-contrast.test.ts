@@ -16,6 +16,11 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { SUB_TOOL_PILL_TOKEN, SUB_TOOL_PILL_WASH } from '../../../src/renderer/components/conductor-mcp/sub-tool-tones'
+import { ATTENTION_PULSE_PEAK, ATTENTION_PULSE_REST } from '../../../src/renderer/utils/injectAttentionStyles'
+import { IDENTITY_PALETTE } from '../../../src/shared/identity-colors'
+import { StatusPill } from '../../../src/renderer/components/ui/StatusPill'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { createElement } from 'react'
 
 const CSS = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/styles.css'), 'utf8')
 
@@ -930,6 +935,9 @@ describe('contrast: the page header breadcrumb, the selected Settings tab and sm
   const PAGE_FRAME = read('PageFrame.tsx')
   const SETTINGS = read('SettingsPage.tsx')
   const ACCOUNTS = read('AccountsPanel.tsx')
+  // P3.2: the name and colour fields moved from the Claude row into the
+  // identity editor every account row's chip opens.
+  const EDITOR = read('settings/accounts/IdentityEditor.tsx')
   /** A text colour utility, as a token name: text-[var(--x)] -> x. */
   const tokenClass = (cls: string) => cls.match(/(?:^|\s)text-\[var\(--([a-z0-9-]+)\)\]/)?.[1]
 
@@ -1003,7 +1011,7 @@ describe('contrast: the page header breadcrumb, the selected Settings tab and sm
     const outset = ruleOf(CSS, '.focus-ring-strong-outset:focus-visible')
     expect(prop(outset, 'outline'), 'the same ring as the strong form').toBe(prop(ruleOf(CSS, '.focus-ring-strong:focus-visible'), 'outline'))
     const offset = Number(prop(outset, 'outline-offset')?.match(/^(\d+)px$/)?.[1])
-    const swatch = ACCOUNTS.slice(ACCOUNTS.indexOf('data-testid={`colour-swatch-'))
+    const swatch = EDITOR.slice(EDITOR.indexOf('data-testid={`${testId}-colour-'))
     const el = swatch.slice(0, swatch.indexOf('/>'))
     expect(el.match(/className="([^"]*)"/)?.[1]?.split(/\s+/), 'the swatch draws the outset ring').toContain('focus-ring-strong-outset')
     const shadow = el.match(/boxShadow: isSelected \? `([^`]*)`/)?.[1]
@@ -1015,7 +1023,7 @@ describe('contrast: the page header breadcrumb, the selected Settings tab and sm
     // The swatches sit far enough apart that the ring (offset plus width) stays
     // clear of the next swatch, with room to spare (Tailwind gap-N is N x 4px).
     const width = Number(prop(outset, 'outline')?.match(/^(\d+)px /)?.[1])
-    const row = ACCOUNTS.slice(0, ACCOUNTS.indexOf('data-testid={`colour-swatch-'))
+    const row = EDITOR.slice(0, EDITOR.indexOf('data-testid={`${testId}-colour-'))
     const gap = Number(row.slice(row.lastIndexOf('<div className="flex flex-wrap gap-')).match(/^<div className="flex flex-wrap gap-(\d+(?:\.\d+)?)"/)?.[1]) * 4
     expect(gap - (offset + width), `the swatch gap (${gap}px) clears the focus ring (${offset + width}px) by 2px`).toBeGreaterThanOrEqual(2)
   })
@@ -1038,6 +1046,9 @@ describe('contrast: the page header breadcrumb, the selected Settings tab and sm
     const sources: [string, string][] = [
       ['SettingsPage.tsx', SETTINGS.slice(0, start) + SETTINGS.slice(end)],
       ['AccountsPanel.tsx', ACCOUNTS],
+      // The row every account uses, and the identity editor its chip opens (P3.2).
+      ['settings/accounts/AccountRow.tsx', read('settings/accounts/AccountRow.tsx')],
+      ['settings/accounts/IdentityEditor.tsx', EDITOR],
       // Drawn inside each Claude account row of the Accounts panel.
       ['settings/AccountWebSession.tsx', read('settings/AccountWebSession.tsx')],
       ['settings/AccountIsolationNotice.tsx', read('settings/AccountIsolationNotice.tsx')],
@@ -1054,5 +1065,107 @@ describe('contrast: the page header breadcrumb, the selected Settings tab and sm
         expect(r, `${name}: --text-muted on --${bg} = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
       }
     }
+  })
+})
+
+/* ---- P3.16a (U4): the attention card and tab under the pulse ------------- */
+
+describe('contrast, P3.16a (U4): an attention card and tab stay readable under the pulse', () => {
+  // The pulse is the session's identity colour painted over the sidebar card
+  // or the tab (both sit on --surface-panel; an attention card or tab is never
+  // the active one, so nothing else tints it) at an opacity that peaks at
+  // ATTENTION_PULSE_PEAK and rests at ATTENTION_PULSE_REST when the animation
+  // does not run. The text drawn over it is the card's name (--color-subtext0),
+  // its muted lines (--text-muted, which an attention card sets to
+  // --text-secondary: styles.css) and the tab's label (--color-text). The
+  // "attention" pill has a base of its own (below).
+  const pulse = Math.max(ATTENTION_PULSE_PEAK, ATTENTION_PULSE_REST)
+  // A card or tab that is hovered (or multi-selected, for a card) also has the
+  // identity colour at hex 12 (7%) under the overlay: SessionRow and TabBar set
+  // `identity + '12'` on it. The overlay is painted over that.
+  const UNDER = 0x12 / 255
+
+  it('rests at or below its peak, and the peak is a tint: never most of the identity colour', () => {
+    expect(ATTENTION_PULSE_REST).toBeGreaterThan(0)
+    expect(ATTENTION_PULSE_REST).toBeLessThanOrEqual(ATTENTION_PULSE_PEAK)
+    expect(ATTENTION_PULSE_PEAK).toBeLessThanOrEqual(0.25)
+  })
+
+  it('the tint laid under the overlay is the one the components set (hex 12 on hover and selection)', () => {
+    const row = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/sidebar/SessionRow.tsx'), 'utf8')
+    const bar = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/TabBar.tsx'), 'utf8')
+    // The card's hover (onMouseEnter) and its multi-select (selectedStyle) tints:
+    // round 1 pins the second too, which a raise to '20' would otherwise pass.
+    // (The active card's '20' never shows attention.)
+    expect(row).toMatch(/backgroundColor = identity \+ '12'/)
+    expect(row).toMatch(/:\s*isSelected\s*\?\s*\{\s*backgroundColor: identity \+ '12',/)
+    expect(bar).toMatch(/backgroundColor = color \+ '12'/)
+  })
+
+  it('the attention card sets its muted text to the secondary text, in styles.css, and only its text: the context meter keeps --text-muted (round 1)', () => {
+    // Redefined on the card's muted text elements, not on the whole card: on the
+    // card it also recoloured the context meter's fill (.meter-neutral).
+    const rule = /\.session-card\[data-attention="true"\]\s+:is\(([^)]*)\)\s*\{([^}]*)\}/.exec(CSS)
+    expect(rule, 'a .session-card[data-attention="true"] :is(...) rule').not.toBeNull()
+    expect(rule![1].split(',').map((s) => s.trim()).sort()).toEqual(['.meta', '.session-ordinal'])
+    expect(rule![2]).toMatch(/--text-muted:\s*var\(--text-secondary\)\s*;/)
+    expect(CSS, 'no rule redefines it on the whole attention card').not.toMatch(/\.session-card\[data-attention(?:=["']true["'])?\]\s*\{[^}]*--text-muted/)
+    expect(CSS).toMatch(/\.meter-neutral\s*\{\s*background:\s*var\(--text-muted\);/)
+    // Every element of the card drawn in --text-muted is one of the two the rule names.
+    const row = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/sidebar/SessionRow.tsx'), 'utf8')
+    const muted = row.match(/<[a-z]+\b[^>]*--text-muted[^>]*>/g) ?? []
+    // P3.16a round 2 (Q7): the count pinned exactly, and every use of the token
+    // in the file is inside one of the tags found, so a tag the scan cut short
+    // (a `>` of an `=>` before the colour) cannot go unchecked.
+    expect(muted).toHaveLength(2)
+    expect(row.match(/--text-muted/g) ?? []).toHaveLength(muted.length)
+    for (const tag of muted) expect(tag.replace(/\s+/g, ' '), tag).toMatch(/className="(?:[^"]* )?(?:meta|session-ordinal)(?: [^"]*)?"/)
+  })
+
+  it('every identity colour, both themes: the card name, its muted lines and the tab label clear 4.5:1 at the pulse\'s strongest', () => {
+    const rows: string[] = []
+    for (const [name, mode] of BOTH) {
+      const surface = token('surface-panel', mode)
+      for (const [key, hexes] of Object.entries(IDENTITY_PALETTE)) {
+        const identity = name === 'dark' ? hexes.dark : hexes.light
+        const card = wash(identity, pulse, wash(identity, UNDER, surface))
+        const pairs: [string, string, string][] = [
+          ['card name (--color-subtext0)', token('color-subtext0', mode), card],
+          ['card muted lines (--text-secondary)', token('text-secondary', mode), card],
+          ['tab label (--color-text)', token('color-text', mode), card],
+        ]
+        for (const [what, fg, bg] of pairs) {
+          const r = contrast(fg, bg)
+          if (r < MIN) rows.push(`${name} / ${key}: ${what} ${fg} on ${bg} = ${r.toFixed(2)}:1`)
+        }
+      }
+    }
+    expect(rows, rows.join('\n')).toEqual([])
+  })
+
+  it('the attention pill has a base of its own on the panel, so the pulse under it cannot move its contrast: --status-warning on a wash of itself over --surface-panel clears 4.5:1 in both themes', () => {
+    // StatusPill's awaiting pill is the status colour over a 15% wash of itself
+    // over an opaque --surface-panel (the sidebar's surface), not over whatever
+    // the card shows beneath: a light-theme tint of any identity colour takes
+    // --status-warning on its own wash below 4.5:1 at any visible strength.
+    const markup = renderToStaticMarkup(createElement(StatusPill, { state: 'awaiting' }))
+    expect(markup).toContain('color-mix(in srgb, var(--status-warning) 15%, var(--surface-panel))')
+    for (const state of ['running', 'error', 'compacting'] as const) {
+      expect(renderToStaticMarkup(createElement(StatusPill, { state })), state).toContain('15%, transparent)')
+    }
+    for (const [name, mode] of BOTH) {
+      const warning = token('status-warning', mode)
+      const r = contrast(warning, wash(warning, 0.15, token('surface-panel', mode)))
+      expect(r, `${name}: ${warning} on its wash over --surface-panel = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
+    }
+  })
+
+  it('the maths sees the failure it was written for: the old strength (35%) on the old tab label (--color-overlay1) fails for some identity', () => {
+    // Guards the guard: a block that could not fail would certify anything.
+    const worst = (name: 'dark' | 'light') => Math.min(...Object.values(IDENTITY_PALETTE).map((h) => {
+      const mode = name === 'dark' ? 0 : 1
+      return contrast(token('color-overlay1', mode), wash(name === 'dark' ? h.dark : h.light, 0.35, token('surface-panel', mode)))
+    }))
+    expect(Math.min(worst('dark'), worst('light'))).toBeLessThan(MIN)
   })
 })

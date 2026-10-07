@@ -19,6 +19,26 @@ describe('the partner strip names the tab\'s own assistant (walk fix N4)', () =>
     expect(app).not.toContain('not Claude</span>')
     expect(app).not.toMatch(/\n\s*Back to Claude\n/)
   })
+
+  // P3.7, the C item "narrow-window overlap" (row 64): the GitHub button
+  // floats over the pane's top-right corner (GitHubPanel's gh-fab: absolute
+  // top-2 right-2, 32px from 8px in; its geometry is pinned in
+  // terminalview-account-launch.test.tsx), and the strip's way back sat in
+  // that corner. The strip keeps it clear as the switch note does (pr-12,
+  // 48px); the note wraps rather than pushing the button, which never shrinks.
+  // jsdom cannot hit-test, so the rule is pinned in the markup.
+  it('keeps the floating GitHub button\'s corner clear at any width: the note wraps, the way back never shrinks under the button', () => {
+    const app = fs.readFileSync(path.resolve(process.cwd(), 'src/renderer/App.tsx'), 'utf8').replace(/\r\n/g, '\n')
+    const at = app.indexOf('data-ux-id="partner-identity-strip"')
+    expect(at).toBeGreaterThan(0)
+    const open = app.slice(app.lastIndexOf('<div', at), at)
+    const stripClasses = (/className="([^"]*)"/.exec(open)?.[1] ?? '').split(/\s+/)
+    expect(stripClasses.filter((c) => /^(px|pl|pr)-/.test(c))).toEqual(['pl-3', 'pr-12'])
+    const body = app.slice(at, app.indexOf('</div>', at))
+    expect((/<span className="([^"]*)">Partner terminal/.exec(body)?.[1] ?? '').split(/\s+/)).toContain('min-w-0')
+    const button = (/<button[\s\S]*?className="([^"]*)"/.exec(body)?.[1] ?? '').split(/\s+/)
+    expect(button).toEqual(expect.arrayContaining(['ml-auto', 'shrink-0', 'whitespace-nowrap']))
+  })
 })
 
 describe('shouldGateAccountChoice', () => {

@@ -207,6 +207,7 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     const saved = { sessions: [{ id: 'a' }], activeSessionId: 'a', savedAt: 1, detachedRemotes: [{ sessionId: 'r' }] }
     const handler = run<() => void>(jsxHandler(APP, 'onDontOpen'), {
       pendingRestore: saved, setPendingRestore: (v: unknown) => { order.push(`setPendingRestore:${v}`) },
+      setUnansweredRestore: (v: unknown) => { order.push(`unanswered:${v}`) },
       // Walk fix N5: nothing reopens; the tally is the remotes just kept.
       setRestoreTally: (t: { sessions: unknown[]; detached: unknown[] }) => { order.push(`tally:${t.sessions.length}:${t.detached.length}`) },
       useDetachedRemotesStore: { getState: () => ({ entries: [{ sessionId: 'r' }] }) },
@@ -218,7 +219,7 @@ describe('App.tsx wires the R6/R7 helpers', () => {
       persistDetachedOnlyOrClear: async () => { order.push('persist'); return 'saved' },
     })
     handler()
-    expect(order).toEqual(['setPendingRestore:null', 'reconcile', 'cancelAutosave', 'hydrate:true', 'ping', 'tally:0:1', 'persist'])
+    expect(order).toEqual(['setPendingRestore:null', 'unanswered:null', 'reconcile', 'cancelAutosave', 'hydrate:true', 'ping', 'tally:0:1', 'persist'])
   })
 
   it('Resume hands the WHOLE saved set to restoreSavedSessions (none dropped), and clears the prompt first', () => {
@@ -236,6 +237,7 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     let tally: unknown
     const handler = run<() => void>(jsxHandler(APP, 'onResume'), {
       pendingRestore: saved, setPendingRestore: (v: unknown) => { order.push(`setPendingRestore:${v}`) },
+      setUnansweredRestore: (v: unknown) => { order.push(`unanswered:${v}`) },
       setRestoreTally: (t: unknown) => { tally = t; order.push('tally') },
       restoreSavedSessions: async (s: unknown, _ref: unknown, deps: { probeGoneSessions: unknown; pingAllDetachedHosts: unknown }) => {
         order.push(`restore:${s === saved}`)
@@ -246,13 +248,21 @@ describe('App.tsx wires the R6/R7 helpers', () => {
       pingAllDetachedHosts,
     })
     handler()
-    expect(order).toEqual(['tally', 'setPendingRestore:null', 'restore:true', 'deps:true'])
+    // P3.5 fix round 1 (item D): the offer is let go before the restore writes the file.
+    expect(order).toEqual(['tally', 'setPendingRestore:null', 'unanswered:null', 'restore:true', 'deps:true'])
     // Walk fix N5: tallied from the saved set itself, every session in it
     // (one that will reopen Not started included), before the restore lands.
     expect(tally).toEqual({ sessions: saved.sessions, detached: [] })
     // ADR-009 R7: the restore is marked in flight BEFORE the prompt clears, so a
     // close before it lands keeps the saved file.
     expect(restoreUnsettledRef.current).toBe(true)
+  })
+
+  it('while the resume prompt is up, every write of the session file keeps its offer: App keeps it in step with pendingRestore (P3.5 fix round 1, item D)', () => {
+    const at = APP.indexOf('setUnansweredRestore(pendingRestore)')
+    expect(at, 'the effect that keeps the offer in step').toBeGreaterThan(-1)
+    const effect = APP.slice(APP.lastIndexOf('useEffect(', at), APP.indexOf(']', at) + 1)
+    expect(effect).toMatch(/useEffect\(\(\) => \{\s*setUnansweredRestore\(pendingRestore\)\s*\}, \[pendingRestore\]/)
   })
 
   it('the resume gate is boot-only: raised by the saved set whatever its providers, set only by the startup load, never brought back once answered', async () => {
@@ -268,26 +278,39 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     // (b) The one thing that sets a saved set is the startup load, which runs
     // once (hasRestoredRef); everything else clears it or is the Refresh below.
     const setters = APP.match(/setPendingRestore\((?!null\))[^\n]*/g) ?? []
-    expect(setters).toEqual(['setPendingRestore(savedState)', 'setPendingRestore((prev) => (prev && saved && saved.sessions.length > 0 ? saved : prev))'])
+    expect(setters).toEqual(['setPendingRestore(savedState)', 'setPendingRestore((prev) => refreshRestoreOffer(prev, saved, open))'])
     expect(block(APP, APP.indexOf('async function postConfigInit()')).text).toContain('if (savedState) setPendingRestore(savedState)')
     expect(APP).toContain('if (!configLoaded || hasRestoredRef.current) return\n    hasRestoredRef.current = true\n\n    async function postConfigInit()')
     // (c) A Refresh read that lands after the prompt was answered leaves it
     // answered; while it is still up the fresh list replaces it, and a
-    // transient empty read keeps the current one.
+    // transient empty read keeps the current one. P3.5 (the C item "Resume
+    // replaces the tab list"): a tab open now -- launched while the prompt
+    // was up, and autosaved into the file -- is never offered again. The
+    // helper is cut out of session-persistence.ts and run like the handler.
+    const SP = readSrc('src/renderer/session-persistence.ts')
+    const offerAt = SP.indexOf('export function refreshRestoreOffer(')
+    expect(offerAt, 'refreshRestoreOffer').toBeGreaterThan(-1)
+    const refreshRestoreOffer = run<(...a: unknown[]) => unknown>(block(SP, offerAt).text.replace(/^export /, ''), {})
     const fresh = { sessions: [{ id: 'b' }], activeSessionId: 'b', savedAt: 2 }
-    const refreshWith = async (loaded: unknown) => {
+    const refreshWith = async (loaded: unknown, openIds: string[] = []) => {
       let updater: ((prev: unknown) => unknown) | undefined
       const refresh = run<() => Promise<void>>(jsxHandler(APP, 'onRefresh'), {
         setPendingRestore: (u: (prev: unknown) => unknown) => { updater = u },
         window: { electronAPI: { session: { load: async () => loaded } } },
+        useSessionStore: { getState: () => ({ sessions: openIds.map((id) => ({ id })) }) },
+        refreshRestoreOffer,
+        Set,
       })
       await refresh()
       return updater!
     }
     const update = await refreshWith(fresh)
     expect(update(null), 'answered: stays answered').toBeNull()
-    expect(update(codexOnly), 'still up: the fresh list').toBe(fresh)
+    expect(update(codexOnly), 'still up: the fresh list').toEqual(fresh)
     expect((await refreshWith({ sessions: [] }))(codexOnly), 'an empty read keeps the list').toBe(codexOnly)
+    expect((await refreshWith(fresh, ['b']))(codexOnly), 'a tab open now is not offered again').toBe(codexOnly)
+    const mixed = { sessions: [{ id: 'b' }, { id: 'c' }], activeSessionId: 'b', savedAt: 3 }
+    expect((await refreshWith(mixed, ['b']))(codexOnly), 'only the saved tabs not open').toEqual({ ...mixed, sessions: [{ id: 'c' }] })
   })
 })
 

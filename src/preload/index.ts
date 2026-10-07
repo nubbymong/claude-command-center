@@ -33,7 +33,7 @@ import type {
   TrailEntry,
 } from '../shared/canvas'
 import type {
-  AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest,
+  AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest, SignInAgainRequest, SignInAgainResult,
   CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest, SecretDeposit, KnownAuthState, ProviderId,
   ResolveConflictRequest, SetReviewerDefaultRequest, ProviderAccountUsageView, ProviderUsageStreamResult,
 } from '../shared/providers'
@@ -102,6 +102,9 @@ export interface WatchdogPublicState {
   armed: boolean
   /** #605: which auto-retry checks are live for this session right now. */
   checks: WatchdogChecks
+  /** P3.10: checks this session's CLI has no patterns for (Codex: the
+   *  safeguard), off and not switchable; absent when there are none. */
+  unavailable?: Array<keyof WatchdogChecks>
   attempts: number
   overloadAttempts: number
   safeguardAttempts: number
@@ -127,8 +130,11 @@ export interface ElectronAPI {
     list: () => Promise<import('../shared/account-types').AccountProfile[]>
     create: (name?: string) => Promise<import('../shared/account-types').AccountProfile>
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
-    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string }>
-    delete: (id: string) => Promise<{ ok: boolean; error?: string }>
+    /** `code: 'in-use'`: a live session runs on the account; `sessions`
+     *  names them, `unnamed` counts other holders (P3.2). A removal refused
+     *  after its claude.ai sign-in was cleared says `in-use-cleared`. */
+    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string; code?: 'in-use'; sessions?: string[] }>
+    delete: (id: string) => Promise<{ ok: boolean; error?: string; code?: 'in-use' | 'in-use-cleared'; sessions?: string[]; unnamed?: number }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     /** Credential generation (stat stamp + signed-in), never token contents. */
     credentialStamp: (id: string) => Promise<{ ok: boolean; stamp: string | null; signedIn: boolean }>
@@ -165,7 +171,9 @@ export interface ElectronAPI {
     openFolder: () => Promise<string | null>
   }
   clipboard: {
-    saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
+    /** PR-level ADR-009 round 1 (A1): off Windows, `posixShell` says whether
+     *  the shell a plain terminal runs is of the sh family ('sh') or not. */
+    saveImage: () => Promise<{ path: string; posixShell?: 'sh' | 'other' } | { error: 'no-image' | 'too-large' }>
     /** Focus-independent clipboard text read, retried for Windows delayed-render (#145). */
     readText: () => Promise<string>
   }
@@ -225,18 +233,22 @@ export interface ElectronAPI {
       provider?: 'claude' | 'codex'
       codexOptions?: {
         model?: string
-        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
+        /** P3.11 (row 62): extra CLI arguments; main checks them. */
+        extraArgs?: string
       }
       /** WP2: the Codex account the session runs under (an opaque registry
        *  id). Absent = the provider default. */
       providerAccountId?: string
       /** WP2: THIS launch's acknowledgement of an unverified sign-in. */
       acknowledgeRealmOnly?: boolean
-    }) => Promise<{ started: false } | ({ started: false } & import('../shared/providers').ProviderLaunchRefused) | void>
+    }) => Promise<{ started: false } | ({ started: false } & import('../shared/providers').SpawnRefused) | { started: true; carry?: import('../shared/providers').ConversationCarryNotice; launched?: { codexPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan' } } | void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
-    kill: (sessionId: string) => void
+    /** P3.16a round 2 (Q5): `'restart'` when a Restart ends the process (its
+     *  next one follows), so its exit is not the session's end. */
+    kill: (sessionId: string, reason?: 'restart') => void
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
   }
@@ -640,7 +652,7 @@ export interface ElectronAPI {
     sendSecret: (deposit: SecretDeposit) => void
     signIn: (req: SignInRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
     /** Sign an existing managed account in again, in its own realm. */
-    signInAgain: (req: SignInRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    signInAgain: (req: SignInAgainRequest) => Promise<AccountsResult<SignInAgainResult>>
     onSignInOutput: (cb: (event: SignInOutputEvent) => void) => () => void
     cancelSignIn: (accountId: string) => Promise<AccountsResult>
     completeSetup: (req: CompleteSetupRequest) => Promise<AccountsResult<{ accountId: string }>>
@@ -969,7 +981,7 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.send(IPC.PTY_WRITE, sessionId, data),
     resize: (sessionId, cols, rows) =>
       ipcRenderer.send(IPC.PTY_RESIZE, sessionId, cols, rows),
-    kill: (sessionId) => ipcRenderer.send(IPC.PTY_KILL, sessionId),
+    kill: (sessionId, reason) => (reason === 'restart' ? ipcRenderer.send(IPC.PTY_KILL, sessionId, 'restart') : ipcRenderer.send(IPC.PTY_KILL, sessionId)),
     onData: (sessionId, callback) => onChannel(ptyDataChannel(sessionId), callback),
     onExit: (sessionId, callback) => onChannel(ptyExitChannel(sessionId), callback)
   },
@@ -1351,9 +1363,12 @@ const electronAPI: ElectronAPI = {
     signIn: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN, req.secretHandle !== undefined
       ? { accountId: req.accountId, method: req.method, secretHandle: req.secretHandle }
       : { accountId: req.accountId, method: req.method }),
-    signInAgain: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, req.secretHandle !== undefined
-      ? { accountId: req.accountId, method: req.method, secretHandle: req.secretHandle }
-      : { accountId: req.accountId, method: req.method }),
+    signInAgain: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, {
+      accountId: req.accountId, method: req.method,
+      ...(req.secretHandle !== undefined ? { secretHandle: req.secretHandle } : {}),
+      sameAccount: req.sameAccount,
+      ...(req.acknowledgeExternal !== undefined ? { acknowledgeExternal: req.acknowledgeExternal } : {}),
+    }),
     onSignInOutput: (cb) => onChannel<SignInOutputEvent>(IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT, cb),
     cancelSignIn: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_CANCEL_SIGN_IN, { accountId }),
     completeSetup: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_COMPLETE_SETUP, req),

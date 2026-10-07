@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { defaultLoginShell } from '../../../src/main/login-shell'
+import { defaultLoginShell, localSessionShell, isShFamilyShell } from '../../../src/main/login-shell'
 
 // The three CLI probes (cli:check, the setup probe, the setup PTY) used to fall
 // back to /bin/zsh on every non-Windows platform and the local session launch
@@ -47,5 +47,21 @@ describe('defaultLoginShell', () => {
     if (process.env.SHELL) expect(r).toBe(process.env.SHELL)
     else if (process.platform === 'darwin') expect(r).toBe('/bin/zsh')
     else expect(['/bin/bash', '/bin/zsh', '/bin/sh']).toContain(r)
+  })
+})
+
+// PR-level ADR-009 round 1 (A1): the shell a local session's PTY runs, and
+// whether it is of the sh family (Alt+V types a path only into one off Windows).
+describe('localSessionShell and isShFamilyShell', () => {
+  it('a local session runs PowerShell on Windows and the login shell elsewhere', () => {
+    expect(localSessionShell({ SHELL: '/usr/bin/fish' }, 'win32', none)).toBe('powershell.exe')
+    expect(localSessionShell({ SHELL: '/usr/bin/fish' }, 'linux', none)).toBe('/usr/bin/fish')
+    expect(localSessionShell({}, 'darwin', none)).toBe('/bin/zsh')
+    expect(localSessionShell({}, 'linux', has('/bin/bash'))).toBe('/bin/bash')
+  })
+
+  it('the sh family by basename: sh, bash, zsh, dash, ksh, and no other', () => {
+    for (const s of ['/bin/sh', '/bin/bash', '/usr/local/bin/zsh', '/bin/dash', '/bin/ksh', 'bash']) expect(isShFamilyShell(s), s).toBe(true)
+    for (const s of ['/usr/bin/fish', '/usr/bin/nu', '/usr/bin/elvish', '/usr/bin/pwsh', '/usr/bin/tcsh', '/bin/csh', '/usr/bin/xonsh', '/bin/bash5', '/bin/mksh', 'powershell.exe', '', '/bin/']) expect(isShFamilyShell(s), s).toBe(false)
   })
 })

@@ -18,6 +18,12 @@
  *
  *   Formally: cwd.replace(/[^A-Za-z0-9]/g, '-')
  *
+ * P3.16a round 2 (Q1): a name longer than 200 characters is cut at 200 and the
+ * folder's hash follows it, and the folder is the real path of the launch
+ * folder (src/shared/project-key.ts, claudeProjectDirName below; fixer 3, F6:
+ * on Windows too), as the pinned Claude Code binaries name it. Their sanitiser is the
+ * same per-UTF-16-code-unit rule, so a non-ASCII character becomes `-` too.
+ *
  * Real examples verified against the developer machine's ~/.claude/projects (2026-06-06).
  * NOTE: all four verified pairs are ASCII-only inputs/outputs. The behaviour of
  * `[^A-Za-z0-9]→'-'` for non-ASCII characters (e.g. accented letters, CJK) is an
@@ -176,6 +182,38 @@ export function canonicalizeTranscriptPath(p: string): string | null {
 // mangleCwdToProjectDir — canonical impl in src/shared/project-key.ts;
 // imported + re-exported above so existing importers compile unchanged.
 // ---------------------------------------------------------------------------
+// claudeProjectDirName (P3.16a round 2, Q1)
+// ---------------------------------------------------------------------------
+
+/** How claudeProjectDirName reads the launch folder (injectable for tests). */
+export interface ClaudeLaunchFolderOptions {
+  /** The real path of a folder; throws when it cannot be read. */
+  realpath?: (p: string) => string
+}
+
+/**
+ * The projects folder name Claude Code gives a session launched in `cwd`.
+ * Claude Code takes its launch folder as the real path of its working folder
+ * (`realpathSync(process.cwd())` in the pinned binaries, on every platform),
+ * so a folder reached through a symbolic link or a junction is named by the
+ * folder it points to; a folder whose real path cannot be read keeps its own
+ * spelling. The real path is Node's JS realpathSync, which the VM probe at
+ * Claude Code 2.1.280 matched on Windows (a junction resolved; the case, the
+ * drive letter, a subst drive and an 8.3 name kept as written), not the
+ * native one. The probe matched it on the folder Claude Code's own process
+ * started in, after the shell the app starts it through had rewritten that
+ * folder (the drive letter, the case, an 8.3 name), which this function does
+ * not reproduce: see the Windows limit in docs/wp2/completion-plan.md (P3.16).
+ * The name is then the shared rule's (mangleCwdToProjectDir: the
+ * 200-character cut and hash included).
+ */
+export function claudeProjectDirName(cwd: string, opts: ClaudeLaunchFolderOptions = {}): string {
+  let folder = cwd
+  try { folder = (opts.realpath ?? fs.realpathSync)(cwd) } catch { /* named as given */ }
+  return mangleCwdToProjectDir(folder)
+}
+
+// ---------------------------------------------------------------------------
 // resolveResumeTargetFromTranscript (T8b — exact-conversation resume)
 // ---------------------------------------------------------------------------
 
@@ -286,6 +324,8 @@ interface HeuristicBinderDeps {
   projectsRoot?: string
   /** Override fs operations for testing */
   fsImpl?: FsImpl
+  /** Override how the launch folder's real path is read (claudeProjectDirName), for testing */
+  launchFolder?: ClaudeLaunchFolderOptions
 }
 
 interface HeuristicBinder {
@@ -373,8 +413,9 @@ export function makeHeuristicBinder(deps?: HeuristicBinderDeps): HeuristicBinder
         return excludeUuids.has(stem)
       }
 
-      // Determine the project directory for this cwd.
-      const mangled = mangleCwdToProjectDir(cwd)
+      // Determine the project directory for this cwd: the one Claude Code
+      // names for it (P3.16a round 2, Q1).
+      const mangled = claudeProjectDirName(cwd, deps?.launchFolder)
       const projDir = path.join(projectsRoot, mangled)
 
       // Try to read the directory; if it doesn't exist, return null (retry allowed).

@@ -6,6 +6,7 @@ import { BrandMark } from './BrandMark'
 import ConductorHealthPill from './ConductorHealthPill'
 import ConductorServicesPanel from './ConductorServicesPanel'
 import SentinelDot from './sentinel/SentinelDot'
+import { usesClaude, usesCodex } from '../onboarding/provider-choice'
 
 interface Props {
   sidebarOpen: boolean
@@ -27,15 +28,35 @@ interface ComponentStatus {
   id: string
   label: string
   status: string
-  name: string
 }
 
+// Mirrors src/main/service-status.ts: a provider that is off has no reading
+// (its components null, and its ...ReadAt null).
 interface ServiceStatusPayload {
   fetchedAt: string
   claudeCode: ComponentStatus | null
   claudeAi: ComponentStatus | null
   api: ComponentStatus | null
+  codexCli: ComponentStatus | null
+  codexApi: ComponentStatus | null
+  claudeReadAt: string | null
+  codexReadAt: string | null
   worst: string
+}
+
+const SEVERITY: Record<string, number> = {
+  operational: 0,
+  under_maintenance: 1,
+  degraded_performance: 2,
+  partial_outage: 3,
+  major_outage: 4,
+}
+
+/** The highest-severity status among the pills shown. */
+function worstOf(statuses: (string | undefined)[]): string {
+  let worst = 'operational'
+  for (const s of statuses) if (s && (SEVERITY[s] ?? 0) > (SEVERITY[worst] ?? 0)) worst = s
+  return worst
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -104,6 +125,7 @@ function StatusPill({ label, status, highlight }: StatusPillProps) {
       <div
         className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-surface0/60 bg-surface0/40"
         title={`${label}: status unknown`}
+        data-testid={`status-pill-${label}`}
       >
         <div className="w-1.5 h-1.5 rounded-full bg-overlay0" />
         <span className="text-[10px] text-overlay0 font-medium leading-none">{label}</span>
@@ -120,6 +142,7 @@ function StatusPill({ label, status, highlight }: StatusPillProps) {
           : 'border-surface0/60 bg-surface0/40'
       }`}
       title={`${label}: ${STATUS_LONG_LABELS[status] || status}`}
+      data-testid={`status-pill-${label}`}
     >
       <div className={`w-1.5 h-1.5 rounded-full ${dot}`} />
       <span className={`text-[10px] font-medium leading-none ${txt}`}>{label}</span>
@@ -170,18 +193,26 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
     return () => { active = false; unsub() }
   }, [])
 
-  const worst = serviceStatus?.worst || 'operational'
-  const isHealthy = !serviceStatus || worst === 'operational'
+  // Each provider's pills only while it is on (rows 14 and 45), and once its
+  // status page has been read. A reading taken before a provider was turned
+  // off is neither shown nor counted in the tint.
+  const claudeOn = useSettingsStore((s) => usesClaude(s.settings))
+  const codexOn = useSettingsStore((s) => usesCodex(s.settings))
+  const claudeReadAt = claudeOn ? serviceStatus?.claudeReadAt ?? null : null
+  const codexReadAt = codexOn ? serviceStatus?.codexReadAt ?? null : null
+  const claudeShown = [serviceStatus?.claudeCode, serviceStatus?.claudeAi, serviceStatus?.api]
+  const codexShown = [serviceStatus?.codexCli, serviceStatus?.codexApi]
+  const worst = worstOf([...(claudeReadAt ? claudeShown : []), ...(codexReadAt ? codexShown : [])].map((c) => c?.status))
+  const isHealthy = worst === 'operational'
   const gradientColor = STATUS_GRADIENT_COLORS[worst]
   const apiStatus = serviceStatus?.api?.status
-  const tooltipLines: string[] = []
-  if (serviceStatus) {
-    if (serviceStatus.claudeCode) tooltipLines.push(`Claude Code: ${STATUS_LONG_LABELS[serviceStatus.claudeCode.status] || serviceStatus.claudeCode.status}`)
-    if (serviceStatus.claudeAi) tooltipLines.push(`Claude.ai: ${STATUS_LONG_LABELS[serviceStatus.claudeAi.status] || serviceStatus.claudeAi.status}`)
-    if (serviceStatus.api) tooltipLines.push(`API: ${STATUS_LONG_LABELS[serviceStatus.api.status] || serviceStatus.api.status}`)
-    tooltipLines.push(`Last checked ${formatRelative(serviceStatus.fetchedAt)}`)
-  }
-  const tooltip = tooltipLines.join(' · ')
+  const codexApiStatus = serviceStatus?.codexApi?.status
+  const tooltipOf = (lines: [string, ComponentStatus | null | undefined][], readAt: string): string => [
+    ...lines.flatMap(([name, c]) => (c ? [`${name}: ${STATUS_LONG_LABELS[c.status] || c.status}`] : [])),
+    `Last checked ${formatRelative(readAt)}`,
+  ].join(' · ')
+  const claudeTooltip = claudeReadAt ? tooltipOf([['Claude Code', serviceStatus?.claudeCode], ['Claude.ai', serviceStatus?.claudeAi], ['API', serviceStatus?.api]], claudeReadAt) : ''
+  const codexTooltip = codexReadAt ? tooltipOf([['Codex CLI', serviceStatus?.codexCli], ['Codex API', serviceStatus?.codexApi]], codexReadAt) : ''
 
   // macOS keeps its native traffic lights (main window uses
   // titleBarStyle:'hiddenInset'): left-pad the bar so our controls clear them,
@@ -242,7 +273,7 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       </div>
 
       {/* One uniform gap between every status chip (Services, Code, Claude.ai,
-          API, Sentinel, theme): the container gap is the ONLY spacing — no
+          API, Codex, Sentinel, theme): the container gap is the ONLY spacing — no
           per-chip margins, which produced alternating 4px/12px gaps. */}
       <div className="titlebar-no-drag flex items-center gap-1.5">
         {/* Conductor services health pill + anchored diagnostics console (D1b) */}
@@ -250,24 +281,44 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
           <ConductorHealthPill open={panelOpen} onOpen={() => (panelOpen ? closePanel() : openPanel())} />
           {panelMounted && <ConductorServicesPanel open={panelOpen} onClose={closePanel} />}
         </div>
-        {/* Claude service status — two pills (Claude Code + Claude.ai) with API in tooltip */}
-        {serviceStatus && (
+        {/* Claude service status, while Claude Code is on: two pills (Claude Code + Claude.ai) with API in tooltip */}
+        {claudeReadAt && (
           <div
             className="flex items-center gap-1.5"
-            title={tooltip}
+            title={claudeTooltip}
+            data-testid="status-group-claude"
           >
             <StatusPill
               label="Code"
-              status={serviceStatus.claudeCode?.status}
+              status={serviceStatus?.claudeCode?.status}
               highlight={!isHealthy}
             />
             <StatusPill
               label="Claude.ai"
-              status={serviceStatus.claudeAi?.status}
+              status={serviceStatus?.claudeAi?.status}
               highlight={!isHealthy}
             />
             {apiStatus && apiStatus !== 'operational' && (
               <StatusPill label="API" status={apiStatus} highlight />
+            )}
+          </div>
+        )}
+        {/* Codex service status from OpenAI's page, while Codex is on: one
+            pill (the Codex CLI), with the Codex API in the tooltip and as its
+            own pill only when it is not operational, as Claude's API is. */}
+        {codexReadAt && (
+          <div
+            className="flex items-center gap-1.5"
+            title={codexTooltip}
+            data-testid="status-group-codex"
+          >
+            <StatusPill
+              label="Codex"
+              status={serviceStatus?.codexCli?.status}
+              highlight={!isHealthy}
+            />
+            {codexApiStatus && codexApiStatus !== 'operational' && (
+              <StatusPill label="Codex API" status={codexApiStatus} highlight />
             )}
           </div>
         )}

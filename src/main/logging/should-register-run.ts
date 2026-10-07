@@ -2,7 +2,8 @@
  * should-register-run.ts — the single pure predicate that decides whether a PTY
  * spawn produces a logged RUN (Logs v2).
  *
- * Kept as a tiny pure function (no imports, no I/O) so it can be unit-tested in
+ * Kept as a tiny pure function (no I/O; its one import is the notice version)
+ * so it can be unit-tested in
  * isolation and called O(1) on the spawn path. The pty-manager callsite reads
  * the live per-config + global `loggingEnabled` flags (default-true semantics,
  * the same pattern as channel-permissions.ts) and passes the needed fields in.
@@ -13,9 +14,10 @@
  * duplicated inline gating.
  *
  * Register a run iff ALL of the following hold:
- *  - provider === 'claude'              — the local Claude provider ONLY. Codex
- *                                         and any other/unknown provider never
- *                                         produce a Claude transcript to tail.
+ *  - provider claude or codex           -- P3.12: a local Codex session is indexed
+ *                                         too (its rollout, bound by the Codex
+ *                                         log binder). Any other/unknown provider
+ *                                         has no transcript to tail.
  *  - NOT shellOnly                      — plain shells + the add-account /login
  *                                         flow never produce a transcript.
  *  - NOT the SSH spawn path             — remote sessions write transcripts on
@@ -28,11 +30,16 @@
  *                                         own transcripts still exist, so the
  *                                         header's "Past discussions" resume
  *                                         path is unaffected.
+ *  - a Codex run: the notice that names Codex's indexing was seen (P3.12
+ *    round 2, W9: `loggingConsentSeen` and `loggingConsentVersion` at least
+ *    LOGGING_CONSENT_VERSION); a Claude run keeps its rule.
  *  - per-config loggingEnabled !== false  — DEFAULT-TRUE (undefined => ON).
  *  - global  loggingEnabled !== false     — DEFAULT-TRUE (undefined => ON).
  *
  * No default export (project convention).
  */
+import { LOGGING_CONSENT_VERSION } from '../../shared/logging-consent-version'
+
 export function shouldRegisterRun(
   opts: {
     provider?: 'claude' | 'codex'
@@ -43,14 +50,14 @@ export function shouldRegisterRun(
     /** Per-config logging opt-out. DEFAULT-TRUE: only `false` disables. */
     loggingEnabled?: boolean
   },
-  settings: { loggingEnabled?: boolean },
+  settings: { loggingEnabled?: boolean; loggingConsentSeen?: boolean; loggingConsentVersion?: number },
 ): boolean {
-  // Local Claude only — codex / other providers are excluded (the `=== 'claude'`
-  // check already excludes codex; the contract is spelled out for clarity).
-  if (opts.provider !== 'claude') return false
+  // Claude or Codex (P3.12); any other or missing provider is excluded.
+  if (opts.provider !== 'claude' && opts.provider !== 'codex') return false
   if (opts.shellOnly) return false
   if (opts.ssh) return false
   if (opts.isAsk === true) return false
+  if (opts.provider === 'codex' && !(settings.loggingConsentSeen === true && typeof settings.loggingConsentVersion === 'number' && settings.loggingConsentVersion >= LOGGING_CONSENT_VERSION)) return false
   if (opts.loggingEnabled === false) return false
   if (settings.loggingEnabled === false) return false
   return true

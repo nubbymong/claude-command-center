@@ -121,6 +121,17 @@ describe('useRestartSession (P4 Task A)', () => {
 
   // 1. restart() on a local non-shell session ---------------------------------
 
+  // P3.8 round 4 (L1): the preset the last run launched with is that run's;
+  // the remount clears it with the other per-run fields.
+  it("restart() clears the last run's launched Codex preset", () => {
+    const session = makeSession({ sessionType: 'local', shellOnly: false, launchedCodexPreset: 'plan' } as Partial<Session>)
+    useSessionStore.getState().addSession(session)
+    renderHarness(session)
+    act(() => { capturedActions!.restart() })
+    const stored = useSessionStore.getState().sessions.find((s) => s.id === session.id)
+    expect(stored!.launchedCodexPreset).toBeUndefined()
+  })
+
   it('restart() calls markSessionForResumePicker and re-adds session with status idle', () => {
     const session = makeSession({ sessionType: 'local', shellOnly: false })
     useSessionStore.getState().addSession(session)
@@ -196,7 +207,7 @@ describe('useRestartSession (P4 Task A)', () => {
     act(() => { capturedActions!.restart() })
 
     const partnerId = session.id + '-partner'
-    expect(ptyKillMock).toHaveBeenCalledWith(partnerId)
+    expect(ptyKillMock).toHaveBeenCalledWith(partnerId, 'restart')
     expect(clearSpawnedMock).toHaveBeenCalledWith(partnerId)
     // killSessionPty (which also kills main) must NOT be called
     expect(killSessionPtyMock).not.toHaveBeenCalled()
@@ -223,6 +234,18 @@ describe('useRestartSession (P4 Task A)', () => {
     // The fields round-trip through removeSession + addSession (...session merge).
     expect(stored!.resumeUuid).toBe('persisted-uuid')
     expect(stored!.resumeCwd).toBe('F:/wt')
+  })
+
+  // P3.16a round 2 (Q5): every kill a Restart or a Recover makes says it is a
+  // Restart's, so main does not log the session's end on the Services page.
+  it('restart() and recover() kill as a Restart: the main view\'s kill and the partner\'s say so', () => {
+    const session = makeSession()
+    useSessionStore.getState().addSession(session)
+    renderHarness(session)
+    act(() => { capturedActions!.restart() })
+    expect(killSessionPtyMock).toHaveBeenCalledWith(session.id, { restart: true })
+    act(() => { capturedActions!.recover() })
+    expect(ptyKillMock.mock.calls).toEqual([[session.id, 'restart'], [session.id + '-partner', 'restart']])
   })
 
   // 2c. Walk fix W4: a Restart of a tab whose launch started nothing is a launch
@@ -265,7 +288,7 @@ describe('useRestartSession (P4 Task A)', () => {
       act(() => { capturedActions!.restart() })
       view.stop()
       // The partner restarts: its PTY is killed and the views remount.
-      expect(ptyKillMock).toHaveBeenCalledWith('old-partner')
+      expect(ptyKillMock).toHaveBeenCalledWith('old-partner', 'restart')
       expect(clearSpawnedMock).toHaveBeenCalledWith('old-partner')
       const after = useSessionStore.getState().sessions.find((s) => s.id === 'old')!
       expect(after.createdAt).toBeGreaterThan(1_000_000)
@@ -276,7 +299,7 @@ describe('useRestartSession (P4 Task A)', () => {
       expect(view.heard).toEqual([])
     })
 
-    it('a Multi Spawn config, or nothing of it running: the Restart goes ahead and the flag goes', () => {
+    it('a Multi Spawn config, or nothing of it running: the Restart goes ahead, and the tab stays Not started until its new view has started it (P3.16a, U7)', () => {
       for (const [configs, others] of [[[cfg({ allowMultiSpawn: true })], [running]], [[cfg()], []]] as const) {
         useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
         killSessionPtyMock.mockReset()
@@ -285,9 +308,31 @@ describe('useRestartSession (P4 Task A)', () => {
         for (const s of others) useSessionStore.getState().addSession(s)
         renderHarness(notStarted)
         act(() => { capturedActions!.restart() })
-        expect(killSessionPtyMock).toHaveBeenCalledWith('old')
-        expect(useSessionStore.getState().sessions.find((s) => s.id === 'old')!.neverStarted).toBeUndefined()
+        expect(killSessionPtyMock).toHaveBeenCalledWith('old', { restart: true })
+        // The flag is the new view's to clear, when its spawn has started a PTY
+        // (TerminalView markLive): a Restart that only remounts has started nothing.
+        expect(useSessionStore.getState().sessions.find((s) => s.id === 'old')!.neverStarted).toBe(true)
       }
+    })
+
+    // P3.16a (U7): a Restart pressed while the partner view is shown restarts the
+    // MAIN tab (every Restart control passes isShowingPartner false), whose view is
+    // hidden behind the partner and starts only when it is shown. Until it has
+    // started, the sidebar does not count it as running.
+    it('P3.16a (U7): a Restart of a Not started tab does not make the sidebar count it as running before it has started', async () => {
+      const { runningConfigCounts } = await import('../../../src/renderer/components/sidebar/savedConfigsView')
+      useConfigStore.setState({ configs: [cfg()] })
+      useSessionStore.getState().addSession(notStarted)
+      expect(runningConfigCounts(useSessionStore.getState().sessions).get('cfg-1')).toBeUndefined()
+      renderHarness(notStarted)
+      act(() => { capturedActions!.restart() })
+      const after = useSessionStore.getState().sessions.find((s) => s.id === 'old')!
+      expect(after.createdAt).toBeGreaterThan(1_000_000) // the views were remounted
+      expect(after.neverStarted).toBe(true)
+      expect(runningConfigCounts(useSessionStore.getState().sessions).get('cfg-1')).toBeUndefined()
+      // The tab that started is counted, as before.
+      useSessionStore.getState().updateSession('old', { neverStarted: undefined })
+      expect(runningConfigCounts(useSessionStore.getState().sessions).get('cfg-1')).toBe(1)
     })
 
     it('a tab that started is its config\'s running copy: its Restart only replaces it, as before', () => {
@@ -295,7 +340,9 @@ describe('useRestartSession (P4 Task A)', () => {
       useSessionStore.getState().addSession(running)
       renderHarness(running)
       act(() => { capturedActions!.restart() })
-      expect(killSessionPtyMock).toHaveBeenCalledWith('new')
+      expect(killSessionPtyMock).toHaveBeenCalledWith('new', { restart: true })
+      // It stays counted as its config's running copy through the Restart.
+      expect(useSessionStore.getState().sessions.find((s) => s.id === 'new')!.neverStarted).toBeUndefined()
     })
   })
 

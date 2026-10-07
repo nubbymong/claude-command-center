@@ -66,6 +66,18 @@ export interface AllowanceLimit {
   secondary: AllowanceWindow | null
 }
 
+/** An account's credits as one reading reports them: a count of the
+ *  provider's own credits, NOT money (P3.1 evidence answer 7; ADR-023), so it
+ *  is not a `CreditsInfo` and carries no currency. Validated: a flag that is
+ *  not a boolean drops the whole of it, a balance that is not a plain decimal
+ *  becomes null; nothing is repaired. `balance` is null when the reading
+ *  names none. */
+export interface AllowanceCredits {
+  hasCredits: boolean
+  unlimited: boolean
+  balance: number | null
+}
+
 /** An account's allowances as one reading, provider-neutral. */
 export interface AllowanceReading {
   limits: AllowanceLimit[]
@@ -76,6 +88,13 @@ export interface AllowanceReading {
    *  live read), so an "as of" built on it never looks fresher than any
    *  figure it shows; null when unknown. */
   readingAt: number | null
+  /** The account's credits count. Three states: a figure; `null`, "none now"
+   *  (the newest account-wide report says the account has none, or its credits
+   *  were unusable); and no key at all, no statement. The credits are the
+   *  newest account-wide report's, the one the main bars come from, so a null
+   *  clears an older figure in a merge and no statement leaves it. A merged
+   *  reading never carries null: it has a figure or no key. */
+  credits?: AllowanceCredits | null
 }
 
 // ChatGPT plans as a ChatGPT sign-in reports them: the PlanType list of the

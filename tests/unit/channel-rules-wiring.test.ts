@@ -14,7 +14,7 @@ vi.mock('../../src/main/session-registry', () => ({
 }))
 const internal: Record<string, (p: any) => void> = {}
 vi.mock('../../src/main/internal-events', () => ({ onInternal: (e: string, cb: any) => { internal[e] = cb; return () => {} } }))
-vi.mock('../../src/main/hooks/index', () => ({ getGateway: () => ({ subscribe: () => () => {} }) }))
+vi.mock('../../src/main/hooks/index', () => ({ onGateway: (bind: (gw: any) => unknown) => { bind({ subscribe: () => () => {} }); return () => {} } }))
 const { startRulesEngine } = await import('../../src/main/channel-rules')
 
 describe('channel-rules wiring', () => {

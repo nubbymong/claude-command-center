@@ -50,6 +50,13 @@ export interface ProviderAccount {
   updatedAt: number
   lastAuthenticatedAt?: number
   lastValidatedAt?: number
+  /** When it was archived (design 5.3, "Archived (N)"). Present only while
+   *  archived: set on archive, dropped on restore. */
+  archivedAt?: number
+  /** The name of the account's own identity when it was first linked to
+   *  another one, kept to give it back on unlink (never another account's
+   *  name or label). Present only while linked, and only when it had one. */
+  nameBeforeLink?: string
   lastKnownAuthState: KnownAuthState
   operationalState: OperationalState
   identityAssurance: IdentityAssurance

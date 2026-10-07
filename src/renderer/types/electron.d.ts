@@ -41,7 +41,7 @@ import type { ModelRegistry } from '../../shared/model-registry'
 export type { ModelRegistry } from '../../shared/model-registry'
 import type {
   AccountsSnapshot as ProviderAccountsSnapshot, AccountsResult as ProviderAccountsResult, ProviderInstallationView, InstallRecipeView,
-  SignInOutputEvent, BeginSetupRequest, SignInRequest, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest,
+  SignInOutputEvent, BeginSetupRequest, SignInRequest, SignInAgainRequest, SignInAgainResult, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest,
   SecretDeposit, KnownAuthState, ProviderId as ProviderAccountsProviderId, ResolveConflictRequest, SetReviewerDefaultRequest,
   ProviderAccountUsageView, ProviderUsageStreamResult,
 } from '../../shared/providers'
@@ -89,13 +89,16 @@ export interface ServiceComponentStatus {
   id: string
   label: string
   status: string
-  name: string
 }
 export interface ServiceStatusPayload {
   fetchedAt: string
   claudeCode: ServiceComponentStatus | null
   claudeAi: ServiceComponentStatus | null
   api: ServiceComponentStatus | null
+  codexCli: ServiceComponentStatus | null
+  codexApi: ServiceComponentStatus | null
+  claudeReadAt: string | null
+  codexReadAt: string | null
   worst: string
 }
 
@@ -116,6 +119,9 @@ export interface WatchdogPublicState {
   armed: boolean
   /** #605: which auto-retry checks are live for this session right now. */
   checks: WatchdogChecks
+  /** P3.10: checks this session's CLI has no patterns for (Codex: the
+   *  safeguard), off and not switchable; absent when there are none. */
+  unavailable?: Array<keyof WatchdogChecks>
   attempts: number
   overloadAttempts: number
   safeguardAttempts: number
@@ -136,8 +142,11 @@ export interface ElectronAPI {
   accountProfiles: {
     list: () => Promise<import('../../shared/account-types').AccountProfile[]>
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
-    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string }>
-    delete: (id: string) => Promise<{ ok: boolean; error?: string }>
+    /** `code: 'in-use'`: a live session runs on the account; `sessions`
+     *  names them, `unnamed` counts other holders (P3.2). A removal refused
+     *  after its claude.ai sign-in was cleared says `in-use-cleared`. */
+    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string; code?: 'in-use'; sessions?: string[] }>
+    delete: (id: string) => Promise<{ ok: boolean; error?: string; code?: 'in-use' | 'in-use-cleared'; sessions?: string[]; unnamed?: number }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     /** Credential generation (stat stamp + signed-in), never token contents (rc.14 review F7). */
     credentialStamp?: (id: string) => Promise<{ ok: boolean; stamp: string | null; signedIn: boolean }>
@@ -178,7 +187,9 @@ export interface ElectronAPI {
     openFolder: () => Promise<string | null>
   }
   clipboard: {
-    saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
+    /** PR-level ADR-009 round 1 (A1): off Windows, `posixShell` says whether
+     *  the shell a plain terminal runs is of the sh family ('sh') or not. */
+    saveImage: () => Promise<{ path: string; posixShell?: 'sh' | 'other' } | { error: 'no-image' | 'too-large' }>
     /** Focus-independent clipboard text read, retried for Windows delayed-render (#145). */
     readText: () => Promise<string>
   }
@@ -248,8 +259,10 @@ export interface ElectronAPI {
       provider?: 'claude' | 'codex'
       codexOptions?: {
         model?: string
-        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
+        /** P3.11 (row 62): extra CLI arguments; main checks them. */
+        extraArgs?: string
       }
       /** WP2: the Codex account the session runs under (an opaque registry
        *  id). Absent = the provider default. Codex only. */
@@ -260,11 +273,17 @@ export interface ElectronAPI {
       acknowledgeRealmOnly?: boolean
       /** Resolves `{ started: false }` when main started nothing for this
        *  request: its launch was cancelled or superseded while it was being
-       *  prepared. Anything else means the spawn went ahead. */
-    }) => Promise<void | { started: false } | ({ started: false } & import('../../shared/providers').ProviderLaunchRefused)>
+       *  prepared. Anything else means the spawn went ahead; P3.6: with
+       *  `carry` when it went ahead on another account without the
+       *  conversation carried whole (main's words, and whether it resumed).
+       *  P3.8 round 3: a Codex run says the permissions preset it launched
+       *  with (`launched`). */
+    }) => Promise<void | { started: false } | ({ started: false } & import('../../shared/providers').SpawnRefused) | { started: true; carry?: import('../../shared/providers').ConversationCarryNotice; launched?: { codexPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan' } }>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
-    kill: (sessionId: string) => void
+    /** P3.16a round 2 (Q5): `'restart'` when a Restart ends the process (its
+     *  next one follows), so its exit is not the session's end. */
+    kill: (sessionId: string, reason?: 'restart') => void
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
   }
@@ -905,7 +924,7 @@ export interface ElectronAPI {
     sendSecret: (deposit: SecretDeposit) => void
     signIn: (req: SignInRequest) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
     /** Sign an existing managed account in again, in its own realm. */
-    signInAgain: (req: SignInRequest) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
+    signInAgain: (req: SignInAgainRequest) => Promise<ProviderAccountsResult<SignInAgainResult>>
     onSignInOutput: (cb: (event: SignInOutputEvent) => void) => () => void
     cancelSignIn: (accountId: string) => Promise<ProviderAccountsResult>
     completeSetup: (req: CompleteSetupRequest) => Promise<ProviderAccountsResult<{ accountId: string }>>

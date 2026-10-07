@@ -36,11 +36,11 @@ vi.mock('../../../src/main/provider-account-registry', async () => {
     initAccountRegistry: vi.fn(), reconcileLegacyAccountStore: vi.fn(async () => {}), reconcileLegacyAccountStores: vi.fn(async () => {}), sameDirectory: () => false,
   }
 })
-const n = vi.hoisted(() => ({ sessions: { claude: 0, codex: 0 } as Record<string, number>, agents: 0, insights: 0, sentinel: 0, ssh: 0, setup: 0, throws: false }))
+const n = vi.hoisted(() => ({ sessions: { claude: 0, codex: 0 } as Record<string, number>, agents: 0, insights: 0, sentinel: 0, sentinelCodex: 0, ssh: 0, setup: 0, throws: false }))
 vi.mock('../../../src/main/pty-manager', () => ({ countUnleasedAgentSessions: (id: string) => n.sessions[id] ?? 0 }))
 vi.mock('../../../src/main/cloud-agent-manager', () => ({ countClaudeAgentsInUse: () => { if (n.throws) throw new Error('boom'); return n.agents } }))
 vi.mock('../../../src/main/insights-runner', () => ({ countInsightsRunsInFlight: () => n.insights }))
-vi.mock('../../../src/main/sentinel/index', () => ({ sentinelClaudeRunsInFlight: () => n.sentinel }))
+vi.mock('../../../src/main/sentinel/index', () => ({ sentinelClaudeRunsInFlight: () => n.sentinel, sentinelCodexRunsInFlight: () => n.sentinelCodex }))
 vi.mock('../../../src/main/ipc/pty-handlers', () => ({ countSshClaudeLaunches: () => n.ssh }))
 vi.mock('../../../src/main/ipc/setup-handlers', () => ({ countCliSetupInUse: () => n.setup }))
 
@@ -49,7 +49,7 @@ const { initProviderAccounts, _resetProviderAccountsForTest } = await import('..
 
 beforeEach(() => {
   _resetProviderAccountsForTest()
-  Object.assign(n, { sessions: { claude: 0, codex: 0 }, agents: 0, insights: 0, sentinel: 0, ssh: 0, setup: 0, throws: false })
+  Object.assign(n, { sessions: { claude: 0, codex: 0 }, agents: 0, insights: 0, sentinel: 0, sentinelCodex: 0, ssh: 0, setup: 0, throws: false })
 })
 
 // What main composes at start (index.ts).
@@ -82,7 +82,7 @@ describe('Claude Code in use, for the switch-off rule', () => {
     expect(await service().setProviderEnabled('claude', false)).toEqual({ ok: true })
   })
 
-  it("Claude Code's runs do not hold Codex: only Codex's own sessions do", async () => {
+  it("Claude Code's runs do not hold Codex: only Codex's own sessions and runs do", async () => {
     Object.assign(n, { agents: 1, insights: 1, sentinel: 1, ssh: 1, setup: 1 })
     expect(providerUseWithoutLease('codex')).toBe(0)
     expect(await service().setProviderEnabled('codex', false)).toEqual({ ok: true })
@@ -92,5 +92,21 @@ describe('Claude Code in use, for the switch-off rule', () => {
     n.throws = true
     expect(providerUseWithoutLease('claude')).toBe(1)
     expect((await service().setProviderEnabled('claude', false)).ok).toBe(false)
+  })
+})
+
+// P3.9: Sentinel's Codex runs (its version check and model list read, and an
+// analysis on Codex) are Codex in use, as its Claude runs are Claude Code's.
+describe('Codex in use, for the switch-off rule (P3.9)', () => {
+  it('a Sentinel Codex run in flight: switching Codex off is refused, as in use', async () => {
+    n.sentinelCodex = 1
+    expect(providerUseWithoutLease('codex')).toBe(1)
+    expect(await service().setProviderEnabled('codex', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+  })
+
+  it("Sentinel's Codex runs do not hold Claude Code", async () => {
+    n.sentinelCodex = 2
+    expect(providerUseWithoutLease('claude')).toBe(0)
+    expect(await service().setProviderEnabled('claude', false)).toEqual({ ok: true })
   })
 })

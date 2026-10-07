@@ -36,10 +36,20 @@ export function getDefaultAccountEmail(): string | null {
 /** Capture once at spawn. profileId undefined => single-account/default.
  *  Reads the account's shared PROFILE home (Bug 2: sessions of an account share it). */
 export function captureClaudeAccount(sessionId: string, profileId: string | undefined): void {
+  // A capture under another profile than the one recorded (the default account
+  // counting as one) is a new spawn of this session on that profile -- Switch
+  // account restarts the same session id -- so the session now runs there: its
+  // profile and account are read afresh, and every reader (live usage,
+  // Tokenomics' local check, sessionsOnProfile) follows it.
+  if ((bySession.has(sessionId) || profileBySession.has(sessionId)) && profileBySession.get(sessionId) !== profileId) {
+    bySession.delete(sessionId)
+    profileBySession.delete(sessionId)
+  }
   // Record the profileId first (before the email guard) so it is captured even on a
-  // retry tick where the email read failed the first time. First-write-wins.
+  // retry tick where the email read failed the first time. The first reading wins
+  // within one profile.
   if (profileId && !profileBySession.has(sessionId)) profileBySession.set(sessionId, profileId)
-  if (bySession.has(sessionId)) return // drift-immune: first capture wins
+  if (bySession.has(sessionId)) return // drift-immune: the first reading wins within one profile
   const email = profileId
     ? readProfileAccountEmail(profileId)
     : getDefaultAccountEmail()
@@ -190,6 +200,26 @@ export function detectedNewAccountEmail(profileId: string): string | null {
   return detectedByProfile.get(profileId) ?? null
 }
 
+/** The live sessions running on `profileId` now (the active watchers and the
+ *  spawn-captured map), each once -- the sessions a lifecycle refusal names.
+ *  Unlike isProfileInUseByLiveSession it does not count transient consumers:
+ *  the `claude auth status` probe every Claude row starts when Accounts
+ *  opens would otherwise refuse Make inactive right after the page opens
+ *  (P3.2 review). A removal still counts them (its teardown would pull the
+ *  home out from under the probe). */
+export function sessionsOnProfile(profileId: string): string[] {
+  if (!profileId) return []
+  // A session is on the profile it runs on now: the active watcher's, when
+  // there is one (a restart on another profile re-registers it there), else
+  // the one captured at spawn.
+  const out: string[] = []
+  for (const sessionId of new Set([...watched.keys(), ...profileBySession.keys()])) {
+    const pid = watched.has(sessionId) ? watched.get(sessionId) : profileBySession.get(sessionId)
+    if (pid === profileId) out.push(sessionId)
+  }
+  return out
+}
+
 /** True when `profileId` is in use by a live session OR a transient credential
  *  consumer -- i.e. that profile's home is the active USERPROFILE/credential
  *  store of something running now. Used to refuse a profile delete that would
@@ -205,8 +235,9 @@ export function detectedNewAccountEmail(profileId: string): string | null {
  *  gains profile binding this check must learn about it. */
 export function isProfileInUseByLiveSession(profileId: string): boolean {
   if (!profileId) return false
-  for (const pid of watched.values()) if (pid === profileId) return true
-  for (const pid of profileBySession.values()) if (pid === profileId) return true
+  // The sessions on it now (sessionsOnProfile), so a refusal and the sessions
+  // it names agree; then the transient consumers.
+  if (sessionsOnProfile(profileId).length > 0) return true
   if (hasTransientProfileConsumer(profileId)) return true
   return false
 }

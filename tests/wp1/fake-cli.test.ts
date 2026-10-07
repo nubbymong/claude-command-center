@@ -12,7 +12,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn as nodeSpawn } from 'node:child_process'
-import { codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, discoverCodex, codexCliEnv, parseCodexLoginStatus, createCodexAuthOperations, createCodexReviewOperations, makeCodexKillTree, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_TREE_PRIME_MS, CODEX_KILL_WORST_MS } from '../../src/main/providers/codex'
+import { codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, discoverCodex, codexCliEnv, parseCodexLoginStatus, createCodexAuthOperations, createCodexReviewOperations, makeCodexKillTree, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_TREE_PRIME_MS, CODEX_KILL_WORST_MS, readCodexModelCatalogue } from '../../src/main/providers/codex'
 import { createClaudeReviewLaunch, createClaudeReviewOperations, CLAUDE_REVIEW_ARGS } from '../../src/main/providers/claude'
 import { produceReviewDiff, defaultReviewDiffDeps, findGit } from '../../src/main/review-diff'
 import type { CodexCliOperation, CodexDiscovery, CodexAuthDeps } from '../../src/main/providers/codex'
@@ -64,6 +64,14 @@ if (a === 'login' || a === 'login --device-auth') {
   process.stdout.write('Successfully logged in\\n'); process.exit(0)
 }
 if (a === 'logout') { try { fs.unlinkSync(auth) } catch {} process.stdout.write('Successfully logged out\\n'); process.exit(0) }
+if (a === 'debug models --bundled') {
+  // P3.9: the model catalogue read. Leaves a helper folder in its home, as
+  // the real CLI prepares its home, and reports where it ran.
+  fs.mkdirSync(path.join(home, 'tmp'), { recursive: true })
+  fs.writeFileSync(path.join(__dirname, 'models-seen.json'), JSON.stringify({ home, cwd: process.cwd() }))
+  process.stdout.write(JSON.stringify({ models: [{ slug: 'gpt-5.5', display_name: 'GPT-5.5', visibility: 'list', priority: 2 }, { slug: 'gpt-5.4', display_name: 'GPT-5.4', visibility: 'hide', priority: 1 }, { slug: 'gpt-6-astra', display_name: 'GPT-6-Astra', visibility: 'list', priority: 1 }] }) + '\\n')
+  process.exit(0)
+}
 if (a === 'exec --json --ephemeral --skip-git-repo-check --sandbox read-only -m gpt-5.5 -') {
   // A review (WP2 5a): reports what reached it -- the request from stdin, its
   // working folder, any Conductor variable -- as the pinned JSONL events.
@@ -75,6 +83,23 @@ if (a === 'exec --json --ephemeral --skip-git-repo-check --sandbox read-only -m 
     process.stdout.write(events.map((e) => JSON.stringify(e)).join('\\n') + '\\n'); process.exit(0)
   })
   return
+}
+if (a.startsWith('exec --json --ephemeral --skip-git-repo-check --ignore-user-config ')) {
+  // P3.9 round 2: Sentinel's text-only analysis. 'early' (FAKE_ANALYSIS):
+  // a request that fails at once, as the VM saw -- the error event, then an
+  // exit -- after starting a helper that inherits the output pipes and
+  // outlives it (on Windows detached, as the real CLI's helper is not in
+  // Node's job). Otherwise the argv it was given, as a reply.
+  if (process.env.FAKE_ANALYSIS === 'early') {
+    const g = require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'], detached: process.platform === 'win32' })
+    fs.writeFileSync(path.join(__dirname, 'helper.pid'), String(g.pid))
+    g.unref()
+    process.stdout.write(JSON.stringify({ type: 'turn.failed', error: { message: 'unexpected status 400 Bad Request: fake' } }) + '\\n')
+    setTimeout(() => process.exit(1), Number(process.env.FAKE_EXIT_MS) || 300)
+    return
+  }
+  const events = [{ type: 'item.completed', item: { id: 'i0', type: 'agent_message', text: JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) } }, { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }]
+  process.stdout.write(events.map((e) => JSON.stringify(e)).join('\\n') + '\\n'); process.exit(0)
 }
 if (a === 'app-server') {
   // Usage track MP7 (ADR-022): the protocol helper. Logs every message it is
@@ -277,6 +302,47 @@ describe('the runner against a fake Codex CLI (real processes)', () => {
 
 // WP2 5a: the Codex reviewer over the real runner and, on Windows, the real
 // npm shim and cmd.exe -- the request reaches Codex byte for byte on stdin.
+describe('the model catalogue read against the fake Codex CLI (real processes; P3.9)', () => {
+  it('runs debug models --bundled on the proven file through the real shim, in a fresh empty home that is removed after, with no ambient credential', async () => {
+    const realStat = (p: string) => {
+      const s = fs.statSync(p, { bigint: true })
+      return { size: Number(s.size), mtimeMs: Number(s.mtimeMs), ctimeMs: Number(s.ctimeMs), dev: String(s.dev), ino: String(s.ino), isFile: s.isFile() }
+    }
+    const versionHome = home('models-version')
+    const proven = await discoverCodex({
+      resolve: () => exe, realpath: (p) => fs.realpathSync.native(p), stat: realStat,
+      run: (cmd, env) => runCodexCli(cmd, { env, timeoutMs: 20_000 }),
+      env: poisoned, platform: process.platform,
+      versionHome: () => ({ home: versionHome, dispose: () => {} }), now: () => 1,
+    })
+    expect(proven.state).toBe('found')
+    const parent = path.join(dir, 'models-homes')
+    fs.mkdirSync(parent, { recursive: true })
+    const made: string[] = []
+    const r = await readCodexModelCatalogue({
+      proven: () => proven,
+      executablePorts: { resolve: () => exe, realpath: (p) => fs.realpathSync.native(p), stat: realStat, platform: process.platform },
+      baseEnv: async () => poisoned,
+      run: (cmd, opts) => runCodexCli(cmd, opts),
+      scratchHome: () => {
+        const h = fs.mkdtempSync(path.join(parent, 'h-'))
+        made.push(h)
+        // TEST CLEANUP GUARD: only this test's own folder, by its prefix and parent.
+        return { home: h, dispose: () => { if (path.basename(h).startsWith('h-') && path.dirname(h) === parent) fs.rmSync(h, { recursive: true, force: true }) } }
+      },
+    })
+    expect(r).toEqual({ ok: true, version: '0.155.1', models: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }, { id: 'gpt-5.5', label: 'GPT-5.5' }] })
+    const seen = JSON.parse(fs.readFileSync(path.join(dir, 'models-seen.json'), 'utf8')) as { home: string; cwd: string }
+    expect(made).toHaveLength(1)
+    expect(path.resolve(seen.home)).toBe(path.resolve(made[0]))
+    // Removed after the read, the helper folder the CLI made in it included.
+    expect(fs.existsSync(made[0])).toBe(false)
+    // Started in the executable's own folder, never a project.
+    expect(fs.realpathSync.native(seen.cwd).toLowerCase()).toBe(dir.toLowerCase())
+    if (IS_WIN) expect(fs.existsSync(path.join(dir, 'PLANTED-RAN'))).toBe(false)
+  })
+})
+
 describe('the Codex reviewer against the fake Codex CLI (real processes)', () => {
   it('the request arrives intact on stdin, in the project, with no Conductor variable; relative PATH entries and a node in the project are never used', async () => {
     const project = path.join(dir, 'project')
@@ -298,6 +364,59 @@ describe('the Codex reviewer against the fake Codex CLI (real processes)', () =>
     expect(seen.conductorVars).toEqual([])
     expect(fs.existsSync(marker)).toBe(false)
   }, 60_000)
+})
+
+// P3.9 round 2 (G1): Sentinel's analysis through the real reviewer, runner
+// and shim. The argv arrives whole (the empty list through cmd.exe); a run
+// whose codex fails at once settles soon after it exits, with the real
+// error, even while a helper it started still holds the output pipes; and
+// that helper is ended.
+describe('the text-only analysis against the fake Codex CLI (real processes; P3.9 round 2)', () => {
+  const env = () => {
+    const e: Record<string, string> = { ...codexCliEnv(poisoned, home('analysis')) }
+    for (const k of Object.keys(e)) if (k.toUpperCase() === 'PATH') delete e[k]
+    e.PATH = withNode
+    return e
+  }
+  it('the analysis argv arrives whole, in the folder given', async () => {
+    const folder = path.join(dir, 'analysis-a')
+    fs.mkdirSync(folder, { recursive: true })
+    const r = await createCodexReviewOperations().run({ executable: exe, env: env(), cwd: folder, prompt: 'notes', timeoutMs: 20_000, purpose: 'analysis' })
+    expect(r, JSON.stringify(r)).toMatchObject({ ok: true })
+    const seen = JSON.parse(r.ok ? r.text : '{}') as { argv: string[]; cwd: string }
+    const want = codexCommandLine('/x/codex', 'analysis', 'linux', {})
+    expect(seen.argv).toEqual('refused' in want ? null : want.args)
+    expect(seen.argv).toContain('project_root_markers=[]')
+    expect(fs.realpathSync.native(seen.cwd)).toBe(fs.realpathSync.native(folder))
+  }, 60_000)
+
+  it('codex failing at once: settled soon after its exit, with the real error (not a timeout), and its helper ended', async () => {
+    const folder = path.join(dir, 'analysis-b')
+    fs.mkdirSync(folder, { recursive: true })
+    const helperPid = path.join(dir, 'helper.pid')
+    try { fs.unlinkSync(helperPid) } catch { /* none yet */ }
+    // Round 3: codex exits within a second. On POSIX the read at its first
+    // output (the helper already started) proves the helper the run's. On
+    // Windows the process table is read through PowerShell, which takes
+    // about a second to answer, so this run lasts past that read; how
+    // often a real sub-second failure is caught there is the VM's to
+    // measure (the reads start at the spawn and at the first output).
+    const exitMs = IS_WIN ? CODEX_TREE_PRIME_MS + 1000 : 800
+    const started = Date.now()
+    const r = await createCodexReviewOperations().run({ executable: exe, env: { ...env(), FAKE_ANALYSIS: 'early', FAKE_EXIT_MS: String(exitMs) }, cwd: folder, prompt: 'notes', timeoutMs: 120_000, purpose: 'analysis' })
+    const took = Date.now() - started
+    expect(r, JSON.stringify(r)).toMatchObject({ ok: false })
+    expect(r.ok ? '' : r.code).not.toBe('timed-out')
+    expect(r.ok ? '' : r.message).toContain('unexpected status 400')
+    expect(took).toBeLessThan(exitMs + 25_000)
+    const pid = Number(fs.readFileSync(helperPid, 'utf8'))
+    let alive = true
+    for (const until = Date.now() + GONE_MS; alive && Date.now() < until;) {
+      try { process.kill(pid, 0); await new Promise((res) => setTimeout(res, 200)) } catch { alive = false }
+    }
+    if (alive) { try { process.kill(pid, 'SIGKILL') } catch { /* gone */ } }
+    expect(alive).toBe(false)
+  }, 90_000)
 })
 
 // WP1.20, WP1.22, WP1.51, WP1.62 -- slice 3c: the auth operations over the

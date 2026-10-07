@@ -18,8 +18,43 @@ export interface HooksGatewayLike {
 
 let singleton: HooksGatewayLike | null = null
 
+/** P3.16a (N6): a consumer bound by onGateway, and what its bind returned for the
+ *  gateway set now (its subscription there), called when another gateway is set. */
+interface GatewayBinding {
+  bind: (gw: HooksGatewayLike) => (() => void) | void
+  release: (() => void) | null
+}
+const bindings = new Set<GatewayBinding>()
+
+function rebind(b: GatewayBinding, gw: HooksGatewayLike | null): void {
+  const release = b.release
+  b.release = null
+  if (release) release()
+  if (!gw) return
+  const r = b.bind(gw)
+  b.release = typeof r === 'function' ? r : null
+}
+
 export function setGateway(gw: HooksGatewayLike): void {
   singleton = gw
+  for (const b of [...bindings]) rebind(b, gw)
+}
+
+/**
+ * P3.16a (N6): hand `bind` the gateway: at once when one is set, and again for each
+ * later setGateway. What `bind` returns (the gateway's unsubscribe) is called when
+ * another gateway is set or this binding ends, so a consumer hears the gateway set
+ * now and no other. A consumer started before src/main/index.ts sets the gateway
+ * (the rules engine) hears it all the same. Returns a function that ends the binding.
+ */
+export function onGateway(bind: (gw: HooksGatewayLike) => (() => void) | void): () => void {
+  const b: GatewayBinding = { bind, release: null }
+  bindings.add(b)
+  rebind(b, singleton)
+  return () => {
+    bindings.delete(b)
+    rebind(b, null)
+  }
 }
 
 export function getGateway(): HooksGatewayLike | null {

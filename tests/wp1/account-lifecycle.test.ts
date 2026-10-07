@@ -471,6 +471,71 @@ describe('Claude accounts keep their own rules', () => {
   })
 })
 
+describe('a Claude profile a live session runs on (P3.2 review: the in-use refusal holds whichever channel asks)', () => {
+  it('is not made inactive through the accounts service while in use, and nothing is written to Claude\'s list; free, it is', async () => {
+    let busy = new Set(['profile-b2'])
+    const h = await harness({
+      claude: [claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2')],
+      legacyRecordInUse: (providerId, legacyId) => providerId === 'claude' && busy.has(legacyId),
+    })
+    const b = h.doc().accounts.find((a) => a.providerId === 'claude' && !a.isProviderDefault)!
+    const writes = h.legacyWrites.length
+    expect(await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).toMatchObject({
+      ok: false, code: 'in-use', message: 'This account is in use by an open session. Close its sessions and try again.',
+    })
+    expect(h.doc().accounts.find((a) => a.id === b.id)).toMatchObject({ lifecycle: 'active' })
+    expect(h.legacyWrites.length).toBe(writes)
+    busy = new Set()
+    expect((await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).ok).toBe(true)
+    // Making it active again is never refused for this.
+    busy = new Set(['profile-b2'])
+    expect((await h.service.setLifecycle({ accountId: b.id, lifecycle: 'active' })).ok).toBe(true)
+  })
+
+  it('an account already inactive is a no-op, not refused, while a session holds its record (P3.2 ADR-009 pass, F3)', async () => {
+    const h = await harness({
+      claude: [claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2', { lifecycle: 'inactive' })],
+      legacyRecordInUse: () => true,
+    })
+    const b = h.doc().accounts.find((a) => a.providerId === 'claude' && !a.isProviderDefault)!
+    expect(b.lifecycle).toBe('inactive')
+    expect(await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).toEqual({ ok: true })
+  })
+
+  it('a no-op writes nothing to Claude\'s own list, even when that list has since moved (P3.2 ADR-009 confirmation, R1)', async () => {
+    let busy = new Set<string>()
+    const h = await harness({
+      claude: [claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2')],
+      legacyRecordInUse: (_p, legacyId) => busy.has(legacyId),
+    })
+    const b = h.doc().accounts.find((a) => a.providerId === 'claude' && !a.isProviderDefault)!
+    expect((await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).ok).toBe(true)
+    // The profile was made active again on Claude's own surface (the registry
+    // learns it at the next reconcile), and a session now runs on it.
+    h.setClaude([claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2', { lifecycle: 'active' })])
+    busy = new Set(['profile-b2'])
+    const before = h.legacyWrites.length
+    expect(await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).toEqual({ ok: true })
+    expect(h.legacyWrites.slice(before)).toEqual([])
+  })
+
+  it('a check that throws counts as in use (fail closed); a managed account is not asked', async () => {
+    const asked: string[] = []
+    const h = await harness({
+      claude: [claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2')],
+      legacyRecordInUse: (_p, legacyId) => { asked.push(legacyId); throw new Error('boom') },
+    })
+    const b = h.doc().accounts.find((a) => a.providerId === 'claude' && !a.isProviderDefault)!
+    expect(await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).toMatchObject({ ok: false, code: 'in-use' })
+    const a = await addCodexAccount(h, 'A')
+    const c = await addCodexAccount(h, 'C')
+    await h.service.setDefault({ accountId: c })
+    asked.length = 0
+    expect((await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })).ok).toBe(true)
+    expect(asked).toEqual([])
+  })
+})
+
 describe('a sign-in that changed, and reconciling it (WP1.24, WP1.25; design 5.3, 5.5)', () => {
   const account = (h: Awaited<ReturnType<typeof harness>>, id: string) => h.doc().accounts.find((x) => x.id === id)!
   const STATUS = {
@@ -598,19 +663,27 @@ describe('ADR-009 round 1 regressions: archived records, capabilities, setup rac
     expect(h.signedIn.get(EXT_HOME.toLowerCase())).toBe('chatgpt')
   })
 
-  it('the production realm source hands out only a realm being set up or in use', async () => {
+  it('the production realm source hands out only a realm being set up or in use, or a managed one being retired only to check or sign it out (P3.3)', async () => {
     vi.resetModules()
-    const realms: Record<string, 'pending' | 'active' | 'retiring' | 'retired' | 'recovery'> = {}
+    const realms: Record<string, { lifecycle: 'pending' | 'active' | 'retiring' | 'retired' | 'recovery'; ownership: 'conductor-managed' | 'external-default' }> = {}
     vi.doMock('../../src/main/provider-account-registry', () => ({
-      getAccountRegistry: () => ({ current: () => ({ realms: Object.entries(realms).map(([id, lifecycle]) => ({ id, lifecycle })) }) }),
+      getAccountRegistry: () => ({ current: () => ({ realms: Object.entries(realms).map(([id, r]) => ({ id, ...r })) }) }),
       getAccountRegistryResourcesDir: () => 'C:\\res',
     }))
     try {
       const { codexRealmSource } = await import('../../src/main/providers/compose')
-      for (const lifecycle of ['pending', 'active', 'retiring', 'retired', 'recovery'] as const) {
-        realms['realm-x'] = lifecycle
-        const r = await codexRealmSource.lookup({ authRealmId: 'realm-x' })
-        expect(r.ok, lifecycle).toBe(lifecycle === 'pending' || lifecycle === 'active')
+      for (const ownership of ['conductor-managed', 'external-default'] as const) {
+        for (const lifecycle of ['pending', 'active', 'retiring', 'retired', 'recovery'] as const) {
+          for (const use of ['status', 'logout', 'login', 'launch', 'usage', 'sessions', 'folder'] as const) {
+            realms['realm-x'] = { lifecycle, ownership }
+            const r = await codexRealmSource.lookup({ authRealmId: 'realm-x' }, use)
+            // A sign in again's old realm (retiring, or kept in recovery) is
+            // only checked or signed out through it; never a retired one,
+            // never an external one, and nothing else runs there.
+            const moved = ownership === 'conductor-managed' && (lifecycle === 'retiring' || lifecycle === 'recovery') && (use === 'status' || use === 'logout')
+            expect(r.ok, `${ownership} ${lifecycle} ${use}`).toBe(lifecycle === 'pending' || lifecycle === 'active' || moved)
+          }
+        }
       }
     } finally {
       vi.doUnmock('../../src/main/provider-account-registry')
@@ -652,7 +725,8 @@ describe('ADR-009 round 1 regressions: archived records, capabilities, setup rac
     await h.service.signIn({ accountId: b.accountId, method: 'browser' }, 1)
     const abandon = h.service.abandonSetup({ accountId: b.accountId })
     await tick()
-    expect(await h.service.completeSetup({ accountId: b.accountId, identity: { mode: 'new', colourKey: 'violet' } })).toMatchObject({ ok: false, code: 'busy' })
+    // Refused: the Discard is under way and recorded (P3.3 review round 2: written ahead).
+    expect(await h.service.completeSetup({ accountId: b.accountId, identity: { mode: 'new', colourKey: 'violet' } })).toMatchObject({ ok: false, code: 'unsupported' })
     release()
     expect(await abandon).toEqual({ ok: true })
     expect(h.doc().accounts).toEqual([])
@@ -802,7 +876,7 @@ describe('signing an existing account in again (WP2 6b)', () => {
     h.signedIn.delete(realmHome(h, a))
     expect(await h.service.refreshStatus({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
     const lines: string[] = []
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1, (t) => lines.push(t))).toEqual({ ok: true, state: 'signed-in' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1, (t) => lines.push(t))).toEqual({ ok: true, state: 'signed-in' })
     expect(h.signedIn.get(realmHome(h, a))).toBe('chatgpt')
     expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lastKnownAuthState: 'signed-in', operationalState: 'ready' })
     // It is still the same account, in the same realm: no new setup, no new account.
@@ -820,12 +894,12 @@ describe('signing an existing account in again (WP2 6b)', () => {
     if (!issued.ok) throw new Error(issued.code)
     h.service.depositSecret(issued.handle, 1, 'sk-proj-' + 'x'.repeat(40))
     // Recorded from the login itself, and said so: not a success.
-    expect(await h.service.signInAgain({ accountId: a, method: 'apiKey', secretHandle: issued.handle }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed', state: 'signed-in' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'apiKey', secretHandle: issued.handle }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed', state: 'signed-in' })
     expect(h.doc().accounts.find((x) => x.id === a)!.operationalState).toBe('blocked')
     // Blocked: reconcile first. Nothing runs on it at all -- a login here could
     // overwrite the very sign-in the user is asked to confirm.
     const runsBefore = h.runs.length
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed' })
     expect(h.runs.length).toBe(runsBefore)
   })
 
@@ -834,14 +908,15 @@ describe('signing an existing account in again (WP2 6b)', () => {
     const a = await addCodexAccount(h, 'A')
     expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's1' })).ok).toBe(true)
     const before = h.runs.length
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
     expect(h.runs.length).toBe(before)
   })
 
   it('never on an external home, an archived account, or a key that was not deposited for this account by this window', async () => {
     const h = await harness()
     const ext = await withExternal(h)
-    expect(await h.service.signInAgain({ accountId: ext, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
+    // This computer's own sign-in: only with the user's acknowledgement (P3.3 review round 1, S2).
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: ext, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'acknowledgement-required' })
     expect(h.service.issueSecretHandle({ accountId: ext }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
     const a = await addCodexAccount(h, 'A')
     const b = await addCodexAccount(h, 'B')
@@ -849,27 +924,35 @@ describe('signing an existing account in again (WP2 6b)', () => {
     const forB = h.service.issueSecretHandle({ accountId: b }, 1)
     if (!forB.ok) throw new Error(forB.code)
     h.service.depositSecret(forB.handle, 1, 'sk-proj-' + 'y'.repeat(40))
-    expect(await h.service.signInAgain({ accountId: a, method: 'apiKey', secretHandle: forB.handle }, 1)).toMatchObject({ ok: false, code: 'secret-unavailable' })
-    expect(await h.service.signInAgain({ accountId: b, method: 'apiKey', secretHandle: forB.handle }, 1)).toMatchObject({ ok: false, code: 'secret-unavailable' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'apiKey', secretHandle: forB.handle }, 1)).toMatchObject({ ok: false, code: 'secret-unavailable' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: b, method: 'apiKey', secretHandle: forB.handle }, 1)).toMatchObject({ ok: false, code: 'secret-unavailable' })
     const forA = h.service.issueSecretHandle({ accountId: a }, 1)
     if (!forA.ok) throw new Error(forA.code)
     h.service.depositSecret(forA.handle, 1, 'sk-proj-' + 'z'.repeat(40))
-    expect(await h.service.signInAgain({ accountId: a, method: 'apiKey', secretHandle: forA.handle }, 2)).toMatchObject({ ok: false, code: 'secret-unavailable' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'apiKey', secretHandle: forA.handle }, 2)).toMatchObject({ ok: false, code: 'secret-unavailable' })
     // A browser sign-in carries no handle.
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser', secretHandle: forA.handle }, 1)).toMatchObject({ ok: false })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser', secretHandle: forA.handle }, 1)).toMatchObject({ ok: false })
     // Archived: nothing runs on it.
     expect((await h.service.setLifecycle({ accountId: b, lifecycle: 'inactive' })).ok).toBe(true)
     expect((await h.service.setLifecycle({ accountId: b, lifecycle: 'archived' })).ok).toBe(true)
-    expect(await h.service.signInAgain({ accountId: b, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'lifecycle' })
     expect(h.service.issueSecretHandle({ accountId: b }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
   })
 
-  it('on a realm that is still signed in it runs no login and just records the check', async () => {
+  it('on a realm that is still signed in it signs in again in a new realm, never over the old one (P3.3, WP1.52)', async () => {
     const h = await harness()
     const a = await addCodexAccount(h, 'A')
+    const old = realmHome(h, a)
     const before = h.runs.length
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
-    expect(h.args().slice(before).filter((x) => x !== 'login status')).toEqual([])
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    // The login ran in a new realm, never in the old one, and the old one
+    // is kept (its removal is not proven safe: P3.3 review round 1, S1).
+    // tests/wp1/reauth-staging.test.ts covers the rest.
+    const logins = h.runs.slice(before).filter((r) => r.args === 'login')
+    expect(logins).toHaveLength(1)
+    expect(logins[0].home.toLowerCase()).not.toBe(old)
+    expect(realmHome(h, a)).toBe(logins[0].home.toLowerCase())
+    expect(h.runs.slice(before).filter((r) => r.args === 'logout')).toEqual([])
   })
 
   it('nothing launches on the account while its sign-in is replaced, and the record is written before the hold ends (ADR-009 6b)', async () => {
@@ -886,7 +969,7 @@ describe('signing an existing account in again (WP2 6b)', () => {
     const a = await addCodexAccount(h, 'A', 'browser')
     armed = true
     expect(await h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
-    const running = h.service.signInAgain({ accountId: a, method: 'browser' }, 1)
+    const running = h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)
     await new Promise((r) => setTimeout(r, 0))
     expect(await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's-during' })).toMatchObject({ ok: false, code: 'busy' })
     expect(await h.service.prepareLaunch({ kind: 'review', providerId: 'codex', ownerId: 'r-during' })).toMatchObject({ ok: false })
@@ -912,7 +995,7 @@ describe('signing an existing account in again (WP2 6b)', () => {
     const issued = h.service.issueSecretHandle({ accountId: a }, 1)
     if (!issued.ok) throw new Error(issued.code)
     h.service.depositSecret(issued.handle, 1, 'sk-proj-' + 'v'.repeat(40))
-    expect(await h.service.signInAgain({ accountId: a, method: 'apiKey', secretHandle: issued.handle }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'apiKey', secretHandle: issued.handle }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed' })
     expect(h.doc().accounts.find((x) => x.id === a)!.operationalState).toBe('blocked')
   })
 
@@ -921,7 +1004,7 @@ describe('signing an existing account in again (WP2 6b)', () => {
     const a = await addCodexAccount(h, 'A', 'browser')
     expect(await h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
     h.port.failWrites = [h.port.writes + 1]
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'persist-failed' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'persist-failed' })
     expect(await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's1' })).toMatchObject({ ok: false, code: 'sign-in-changed' })
     // No review is offered on it meanwhile either.
     await h.service.setReviewerDefault({ providerId: 'codex', accountId: a })
@@ -935,8 +1018,8 @@ describe('signing an existing account in again (WP2 6b)', () => {
   it('a second click while one runs is refused as busy', async () => {
     const h = await harness()
     const a = await addCodexAccount(h, 'A')
-    const first = h.service.signInAgain({ accountId: a, method: 'browser' }, 1)
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'busy' })
+    const first = h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'busy' })
     expect((await first).ok).toBe(true)
   })
 })
@@ -1013,5 +1096,119 @@ describe('a status check that rejects frees its single-flight entry (WP1.10; WP2
     const before = statusRuns()
     expect(await h.service.refreshStatus({ accountId: a })).toEqual({ ok: true, state: 'signed-in' })
     expect(statusRuns() - before).toBe(1)
+  })
+})
+
+describe('Archived (N) with Restore, and a refusal that names its sessions (P3.2; design 5.3)', () => {
+  const archive = async (h: Awaited<ReturnType<typeof harness>>, id: string) => {
+    expect((await h.service.setLifecycle({ accountId: id, lifecycle: 'inactive' })).ok).toBe(true)
+    expect(await h.service.setLifecycle({ accountId: id, lifecycle: 'archived' })).toEqual({ ok: true })
+  }
+
+  it('a managed archived account comes back inactive without running anything; making it active checks its sign-in', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const b = await addCodexAccount(h, 'B')
+    await h.service.setDefault({ accountId: b })
+    await archive(h, a)
+    const realmId = h.doc().accounts.find((x) => x.id === a)!.authRealmId
+    // The snapshot says when it was archived, only while it is.
+    expect(typeof h.service.snapshot().accounts.find((x) => x.id === a)!.archivedAt).toBe('number')
+    expect(h.service.snapshot().accounts.find((x) => x.id === b)!.archivedAt).toBeUndefined()
+    const before = h.runs.length
+    expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })).toEqual({ ok: true })
+    expect(h.service.snapshot().accounts.find((x) => x.id === a)!.archivedAt).toBeUndefined()
+    expect(h.runs.length).toBe(before)
+    expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'inactive', lastKnownAuthState: 'unknown', operationalState: 'attention', isProviderDefault: false })
+    expect(findRealm(h.doc(), realmId)).toMatchObject({ lifecycle: 'active' })
+    expect(h.service.snapshot().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'inactive', realmLifecycle: 'active' })
+    // The archive signed it out: making it active checks, and it needs attention.
+    expect((await h.service.setLifecycle({ accountId: a, lifecycle: 'active' })).ok).toBe(true)
+    expect(h.args().slice(before)).toEqual(['login status'])
+    expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'active', lastKnownAuthState: 'signed-out', operationalState: 'attention' })
+  })
+
+  it('an archived account cannot jump straight back to active', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const b = await addCodexAccount(h, 'B')
+    await h.service.setDefault({ accountId: b })
+    await archive(h, a)
+    const before = h.runs.length
+    expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'active' })).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(h.runs.length).toBe(before)
+    expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'archived' })
+  })
+
+  it('is refused while the provider is off: its accounts are listed, never managed', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const b = await addCodexAccount(h, 'B')
+    await h.service.setDefault({ accountId: b })
+    await archive(h, a)
+    expect(await h.service.setProviderEnabled('codex', false)).toEqual({ ok: true })
+    expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })).toMatchObject({ ok: false, code: 'provider-disabled' })
+    expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'archived' })
+  })
+
+  it('an archived external home whose home was adopted again is not restored over the newer account', async () => {
+    const h = await harness()
+    const m = await addCodexAccount(h, 'M')
+    const e1 = await withExternal(h)
+    await h.service.setDefault({ accountId: m })
+    await h.service.setLifecycle({ accountId: e1, lifecycle: 'inactive' })
+    expect(await h.service.setLifecycle({ accountId: e1, lifecycle: 'archived', acknowledgeExternal: true })).toEqual({ ok: true })
+    const again = await h.service.adoptExternalDefault({ providerId: 'codex' })
+    if (!again.ok) throw new Error(again.code)
+    expect(await h.service.setLifecycle({ accountId: e1, lifecycle: 'inactive' })).toMatchObject({ ok: false, code: 'realm-conflict' })
+    // Once the newer one is archived too, the older one can come back.
+    await h.service.setLifecycle({ accountId: again.accountId, lifecycle: 'inactive' })
+    expect(await h.service.setLifecycle({ accountId: again.accountId, lifecycle: 'archived', acknowledgeExternal: true })).toEqual({ ok: true })
+    expect(await h.service.setLifecycle({ accountId: e1, lifecycle: 'inactive' })).toEqual({ ok: true })
+    expect(h.doc().accounts.find((x) => x.id === e1)).toMatchObject({ lifecycle: 'inactive', identityAssurance: 'realm-only' })
+  })
+
+  it('a Claude record comes back where it was removed, never through Restore', async () => {
+    const h = await harness({ claude: [claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2')] })
+    const b = h.doc().accounts.find((a) => a.providerId === 'claude' && !a.isProviderDefault)!
+    const r = await h.store.reconcileLegacy({ providerId: 'claude', read: () => [claudeSnapshot('profile-a1', { isDefault: true })], apply: () => {} })
+    expect(r.ok).toBe(true)
+    expect(h.doc().accounts.find((a) => a.id === b.id)).toMatchObject({ lifecycle: 'archived' })
+    // The legacy sync records when it archived the record (review round 3)...
+    expect(typeof h.doc().accounts.find((a) => a.id === b.id)!.archivedAt).toBe('number')
+    expect(await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).toMatchObject({ ok: false, code: 'legacy-owned' })
+    // ...and drops it when the record comes back.
+    const back = await h.store.reconcileLegacy({ providerId: 'claude', read: () => [claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2')], apply: () => {} })
+    expect(back.ok).toBe(true)
+    const restored = h.doc().accounts.find((a) => a.id === b.id)!
+    expect(restored.lifecycle).not.toBe('archived')
+    expect('archivedAt' in restored).toBe(false)
+  })
+
+  it('a refusal for consumers names the app sessions whose sessions or reviews hold the account', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    await addCodexAccount(h, 'B')
+    await h.service.setDefault({ accountId: h.doc().accounts[1].id })
+    for (const [owner, sessionId] of [['tab-1:1', 'tab-1'], ['tab-2:1', 'tab-2']]) {
+      expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: owner, sessionId })).ok).toBe(true)
+    }
+    expect((await h.service.acquireLaunchLease({ kind: 'review', providerId: 'codex', providerAccountId: a, ownerId: 'review:tab-1:1', sessionId: 'tab-1' })).ok).toBe(true)
+    const prepared = await h.service.prepareLaunch({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 'tab-3:1', sessionId: 'tab-3' })
+    expect(prepared.ok).toBe(true)
+    const r = await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })
+    expect(r).toMatchObject({ ok: false, code: 'consumers', consumers: 4 })
+    expect(r.ok === false && r.sessions ? [...r.sessions].sort() : null).toEqual(['tab-1', 'tab-2', 'tab-3'])
+    // Every holder is a named session (tab-1's review included): nothing more.
+    expect(r.ok === false && 'unnamed' in r).toBe(false)
+    // Nothing holding it by session: the count alone, and no list.
+    h.service.releaseLaunch('session', 'tab-1:1')
+    h.service.releaseLaunch('session', 'tab-2:1')
+    h.service.releaseLaunch('review', 'review:tab-1:1')
+    h.service.releaseLaunch('session', 'tab-3:1')
+    expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 'bare' })).ok).toBe(true)
+    const bare = await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })
+    expect(bare).toMatchObject({ ok: false, code: 'consumers', consumers: 1, unnamed: 1 })
+    expect(bare.ok === false && 'sessions' in bare).toBe(false)
   })
 })

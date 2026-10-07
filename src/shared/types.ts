@@ -168,10 +168,26 @@ export interface TerminalOptions {
 }
 
 export interface CodexOptions {
-  /** gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex / gpt-5.3-codex-spark / gpt-5.2 */
+  /** A Codex model id: the registry's Codex models (resources/model-registry.json,
+   *  family codex), or one saved before them. Absent or '' = Codex's own default. */
   model?: string
-  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-  permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+  /** Absent (or 'none') = the model's own default; the spawn allowlist is
+   *  CODEX_EFFORTS (sanitize-restored-spawn-options.ts). */
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+  permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
+  /** P3.11 (row 62): the extraArgs field for Codex. Each word is one launch
+   *  argument, after every flag the app sets. One rule (codexExtraArgsProblem,
+   *  src/shared/extra-args.ts) in the dialog, which says why and holds Save
+   *  back, and at launch, which drops a refused value: the shared charset, and
+   *  no flag the app sets (model, -c settings, permissions, working folder,
+   *  resume), none that changes the account, provider or endpoint, and no word
+   *  Codex reads as one of its commands. */
+  extraArgs?: string
+  /** P3.12 (row 31): the per-config indexing opt-out, as
+   *  ClaudeOptions.loggingEnabled. DEFAULT-TRUE (undefined / true = on); when
+   *  false the app does not index this config's Codex conversations for the
+   *  Logs viewer. Codex keeps them in its account's sessions folder either way. */
+  loggingEnabled?: boolean
 }
 
 // ── Session Persistence ──
@@ -292,6 +308,17 @@ export interface SessionState {
    *  on files written before this feature; round-trips untouched through the
    *  main-side save/load (only `sessions` is migrated). */
   detachedRemotes?: DetachedRemote[]
+  /** P3.6: Codex conversations whose claim was not certain (two new sessions
+   *  in one folder), written by main at every save and read back by main at
+   *  load, so a Switch account never carries one after a relaunch either. */
+  codexUncertainConversations?: string[]
+  /** P3.7: each conversation's running time (main's
+   *  conversation-running-time.ts), written by main at every save and read
+   *  back by main at load, schema-checked, so a session's Duration carries on
+   *  across a relaunch. `gaps`: spans whose completed turns are not in `ms`
+   *  yet (the next run counts them); `gapMs` (P3.16): the part of those
+   *  turns a run had counted. */
+  conversationRunningTimes?: Array<{ id: string; ms: number; until: number; gaps?: Array<{ from: number; to: number }>; gapMs?: number }>
 }
 
 /**

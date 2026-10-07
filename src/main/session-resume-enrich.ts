@@ -40,7 +40,31 @@ export interface ResumeEnrichDeps {
   isExactBindSourceActive: () => boolean
   /** Derive {uuid, cwd} from a transcript path, or null on any failure. */
   resolveResumeTargetFromTranscript: (transcriptPath: string) => { uuid: string; cwd: string } | null
+  /**
+   * P3.5: the conversation a non-Claude (Codex) tab is on, as its provider
+   * keeps it in main (pty-manager's kept conversation: the one its status
+   * line claimed, or the one an exact resume started), or null. Absent: such
+   * tabs are left as they are.
+   */
+  getProviderResumeTarget?: (sessionId: string) => { uuid: string; cwd: string } | null | undefined
+  /**
+   * P3.6: the conversations whose claim was not certain (pty-manager), saved
+   * with the state so a relaunch that resumes one keeps it from being carried
+   * by a Switch account. Only those a saved session is on are written.
+   */
+  getUncertainProviderConversations?: () => string[]
+  /**
+   * P3.7: each conversation's running time, as main keeps it
+   * (conversation-running-time.ts), saved with the state at every save,
+   * whichever tabs are open (a closed tab's conversation can be resumed
+   * later), so a session's Duration carries on across a relaunch. After a
+   * clear they are written on their own (session-durability.ts, fixer 9 A1).
+   */
+  getConversationRunningTimes?: () => Array<{ id: string; ms: number; until: number; gaps?: Array<{ from: number; to: number }>; gapMs?: number }>
 }
+
+/** A conversation id, as every resume target must carry (the spawn schema's form). */
+const CONVERSATION_ID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
 /**
  * Enrich a SessionState IN PLACE with each Claude session's exact-conversation
@@ -51,8 +75,10 @@ export interface ResumeEnrichDeps {
  *     carried (from restore, or the renderer's own enrichment). The fallback is
  *     therefore never worse than today's behaviour.
  *   - A null binder (logging disabled) is a whole no-op.
- *   - Shell-only and non-Claude (Codex/SSH) sessions are skipped — the binder only
- *     tracks local Claude transcripts.
+ *   - Shell-only sessions are skipped; non-Claude (Codex) sessions never read
+ *     the binder, which only tracks local Claude transcripts: P3.5 stamps them
+ *     from their provider's kept conversation (getProviderResumeTarget), a
+ *     conversation id only.
  *   - Never throws: a per-session failure leaves that one record unchanged.
  *
  * Returns the same object (mutated) for call-site convenience.
@@ -65,7 +91,14 @@ export function enrichSessionStateWithResumeTargets(
   for (const s of state.sessions) {
     try {
       if (!s || s.shellOnly) continue
-      if ((s.provider ?? 'claude') !== 'claude') continue
+      if ((s.provider ?? 'claude') !== 'claude') {
+        const kept = deps.getProviderResumeTarget?.(s.id)
+        if (kept && typeof kept.uuid === 'string' && CONVERSATION_ID_RE.test(kept.uuid) && typeof kept.cwd === 'string' && kept.cwd) {
+          s.resumeUuid = kept.uuid
+          s.resumeCwd = kept.cwd
+        }
+        continue
+      }
       // #480: EXACT bind only — this must not persist a heuristic (cross-prone)
       // guess. The hooks-off fallback re-enables the heuristic only when no
       // authenticated source can arrive.
@@ -82,6 +115,42 @@ export function enrichSessionStateWithResumeTargets(
     } catch {
       // best-effort: leave this record exactly as it was
     }
+  }
+  if (deps.getUncertainProviderConversations) {
+    let all: string[] | null = null
+    try {
+      const got = deps.getUncertainProviderConversations()
+      all = Array.isArray(got) ? got.filter((id): id is string => typeof id === 'string') : null
+    } catch {
+      // Main cannot say: the list stays as it was.
+      all = null
+    }
+    if (all) {
+      try {
+        const on = new Set(state.sessions.map((s) => (s && typeof s.resumeUuid === 'string' ? s.resumeUuid.toLowerCase() : '')).filter(Boolean))
+        const kept = all.filter((id) => on.has(id.toLowerCase()))
+        if (kept.length) state.codexUncertainConversations = kept
+        else delete state.codexUncertainConversations
+      } catch {
+        // The saved sessions could not be read (ADR-009 round 2, C8): main's
+        // own list, whole, never what the renderer sent.
+        state.codexUncertainConversations = all
+      }
+    }
+  }
+  if (deps.getConversationRunningTimes) {
+    // Main's own list, never what the renderer sent: when main cannot give
+    // one (its getter throws or answers with no list), none is written and
+    // the renderer's is dropped. Unlike the uncertain list above, which keeps
+    // the state's own copy when its getter throws.
+    let times: unknown = null
+    try {
+      times = deps.getConversationRunningTimes()
+    } catch {
+      times = null
+    }
+    if (Array.isArray(times) && times.length) state.conversationRunningTimes = times
+    else delete state.conversationRunningTimes
   }
   return state
 }

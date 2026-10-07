@@ -29,6 +29,9 @@ const MAX_LINES = 500
 // the Session Context poll into an O(N bytes) hit every 20s. ~1MB is
 // plenty of tail for issue references + recent tool calls.
 const MAX_BYTES = 1_000_000
+/** P3.12 (row 65): a Codex session's rollout is read with the same bounds
+ *  (codex-rollout-loader.ts). */
+export const TRANSCRIPT_TAIL = { maxLines: MAX_LINES, maxBytes: MAX_BYTES } as const
 
 export interface TranscriptEvents {
   messages: TranscriptMessage[]

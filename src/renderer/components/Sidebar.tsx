@@ -55,6 +55,8 @@ import { deriveOnboarding } from '../onboarding/gate'
 import { useHelloCodexStore } from '../onboarding/hello-codex-open'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSwitchAccount } from '../hooks/useSwitchAccount'
+import { switchAccountItems } from '../utils/switchAccountItems'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
 import { injectAttentionStyles } from '../utils/injectAttentionStyles'
 import { closeSessionBatch } from '../utils/closeSessionBatch'
@@ -327,7 +329,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const primaryProfileId = accountProfiles.find((p) => p.isPrimary)?.id
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const menuSession = sessionContextMenu ? sessions.find((s) => s.id === sessionContextMenu.sessionId) ?? null : null
-  const canSwitchAccount = canSwitchAccountForSession({ provider: menuSession?.provider, isSsh: !!menuSession?.sshConfig, shellOnly: !!menuSession?.shellOnly, profileCount: accountProfiles.length })
+  // P3.6 (row 22): the menu's Switch Account lists the session provider's
+  // accounts, as the strip's pill does (utils/switchAccountItems).
+  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
+  const menuSwitchItems = switchAccountItems(menuSession, { profiles: accountProfiles, aliases: accountAliases, snapshot: accountsSnapshot })
+  const canSwitchAccount = canSwitchAccountForSession({ provider: menuSession?.provider, isSsh: !!menuSession?.sshConfig, shellOnly: !!menuSession?.shellOnly, profileCount: accountProfiles.length, providerAccountCount: menuSwitchItems.length })
   const switchMenuAccount = useSwitchAccount(menuSession)
 
   // Inject attention styles on mount
@@ -1616,6 +1622,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             // toggle that would be a no-op. The menu stays open: these are
             // three independent switches and users flip more than one.
             watchdogChecks={s.watchdog?.checks}
+            watchdogUnavailable={s.watchdog?.unavailable}
             onToggleWatchdogCheck={(key) => {
               const current = s.watchdog?.checks
               if (!current) return
@@ -1633,12 +1640,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             }}
             onDismiss={() => setSessionContextMenu(null)}
             canSwitchAccount={canSwitchAccount}
-            profiles={accountProfiles}
-            accountAliases={accountAliases}
-            onSwitchAccount={(profileId) => {
+            switchItems={menuSwitchItems}
+            onSwitchAccount={(accountId) => {
               // Gates the multi-account tip's "you already do this" variant.
               trackUsage('accounts.switch-session-account')
-              switchMenuAccount(s.id, profileId)
+              switchMenuAccount(s.id, accountId)
             }}
             // #216: account actions on the session itself. Gated to a local
             // session with a resolved account — an SSH session's browser and

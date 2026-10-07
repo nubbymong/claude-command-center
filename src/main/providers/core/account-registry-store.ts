@@ -170,6 +170,32 @@ export class AccountRegistryStore {
     return run
   }
 
+  /** Read the file again, under the lock: a write reported as failed may
+   *  still have reached the disk (the write landed, then something after it
+   *  threw), and what the disk says is what the next start will read. The
+   *  document becomes the file's when it reads and validates; otherwise
+   *  nothing changes and the answer says so. */
+  reread(): Promise<StoreResult> {
+    return this.exclusive(() => {
+      if (!this.doc || this.state.mode !== 'ready') return this.refuseRecovery()
+      let read: ReturnType<RegistryFsPort['read']>
+      try { read = this.opts.fs.read() } catch (e) { return { ok: false as const, code: 'persist-failed' as const, message: `the registry could not be read back: ${errText(e)}` } }
+      if (read.kind !== 'ok') return { ok: false as const, code: 'persist-failed' as const, message: 'the registry could not be read back' }
+      let raw: unknown
+      try { raw = JSON.parse(read.text) } catch (e) { return { ok: false as const, code: 'persist-failed' as const, message: `the registry read back is not JSON: ${errText(e)}` } }
+      const parsed = parseRegistryDoc(raw)
+      if (!parsed.ok) return { ok: false as const, code: 'persist-failed' as const, message: 'the registry read back does not validate' }
+      const doc = deepFreeze(parsed.doc)
+      this.doc = doc
+      this.inLock.exit(() => {
+        for (const l of this.listeners) {
+          try { l(doc) } catch (e) { this.log(`[registry] a listener threw: ${errText(e)}`) }
+        }
+      })
+      return { ok: true as const, doc }
+    })
+  }
+
   /** Apply one pure transition and persist its result. */
   mutate(fn: (doc: ProviderRegistryDoc, now: number) => RegistryResult): Promise<StoreResult> {
     return this.exclusive(() => {

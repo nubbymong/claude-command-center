@@ -18,6 +18,10 @@
  *     least-privilege 'read-only' so the codex session still launches.
  *   - codex `model`: an invalid one is DROPPED; the session launches on the
  *     CLI's default model.
+ *   - codex `reasoningEffort`: one off CODEX_EFFORTS is DROPPED; the session
+ *     launches on its model's default effort (P3.8).
+ *   - codex `extraArgs`: a value codexExtraArgsProblem refuses is DROPPED; the
+ *     session launches without them (P3.11). This runs on every pty:spawn.
  *
  * Every other field is left untouched and still strict-parses downstream. Pure and
  * dependency-injected for logging so it unit-tests without the Electron ABI (and
@@ -25,8 +29,13 @@
  * mutates the input.
  */
 import { UUID_RE } from './logging/transcript-discovery'
+import { CODEX_MODEL_ID_MAX, CODEX_MODEL_ID_RE } from '../shared/model-registry'
+import { claudeExtraArgsProblem, codexExtraArgsProblem } from '../shared/extra-args'
 
-export const CODEX_PRESETS = ['read-only', 'standard', 'auto', 'unrestricted'] as const
+/** The Codex permission presets. 'plan' (P3.8, L2; round 2, PM1) is Claude's
+ *  Plan mode launch option: it launches read-only, as 'read-only' does, then
+ *  Codex's own /plan is typed into its first ready prompt. */
+export const CODEX_PRESETS = ['read-only', 'standard', 'auto', 'unrestricted', 'plan'] as const
 
 // ── The spawn schema's own rules for the two persisted claude fields ─────────
 // Exported and consumed by spawnOptionsSchema (pty-handlers) so the sanitizer
@@ -39,22 +48,27 @@ export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'dont
 /** A Codex model id (`gpt-5.5`, `gpt-oss:20b`, `provider/model`), bounded and
  *  charset-limited like the Claude model: it becomes a launch argument. The
  *  first character is alphanumeric, so the value can never read as a flag.
- *  '' means "no override", as for Claude. */
-export const CODEX_MODEL_MAX = 64
-export const CODEX_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/
+ *  '' means "no override", as for Claude. One definition, shared with the
+ *  Codex picker (P3.8 round 1): it offers only ids that pass. */
+export const CODEX_MODEL_MAX = CODEX_MODEL_ID_MAX
+export const CODEX_MODEL_RE = CODEX_MODEL_ID_RE
 
-export const EXTRA_ARGS_MAX = 512
-export const EXTRA_ARGS_CHARSET_RE = /^[A-Za-z0-9 _\-=.\/\\:@,+]*$/
+/** The Codex CLI's reasoning efforts (its ReasoningEffort values, 0.153.4),
+ *  the only values `-c model_reasoning_effort=<value>` is built from (P3.8,
+ *  row 40). 'none' means "no override" to the spawn, as it always has. */
+export const CODEX_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
 
-/** The managed-flag refine, on a backslash-collapsed copy, plus the trailing-
- *  backslash ban — byte-identical to the schema's refine (see pty-handlers for
- *  the shell-expansion analysis behind it). */
-export function extraArgsRefineOk(v: string): boolean {
-  return (
-    !v.endsWith('\\') &&
-    !/(^|\s)--(model|effort|permission-mode|settings|mcp-config|agents|resume)\b/.test(v.replace(/\\/g, ''))
-  )
-}
+// The extra CLI arguments rules (both assistants) live in src/shared/extra-args.ts,
+// so the session dialog reads the same rule; re-exported here for main.
+export {
+  EXTRA_ARGS_MAX,
+  EXTRA_ARGS_CHARSET_RE,
+  extraArgsBaseProblem,
+  extraArgsRefineOk,
+  claudeExtraArgsProblem,
+  codexExtraArgWords,
+  codexExtraArgsProblem,
+} from '../shared/extra-args'
 
 export function sanitizeRestoredSpawnOptions<T>(
   options: T,
@@ -100,6 +114,20 @@ export function sanitizeRestoredSpawnOptions<T>(
       log('[pty] #397: dropping an invalid persisted Codex model; the session launches with the default model')
       out.codexOptions = { ...out.codexOptions, model: undefined }
     }
+    // P3.8: the same for the effort, which the strict parse holds to
+    // CODEX_EFFORTS; dropped, the session starts on its model's own default.
+    const effort = out.codexOptions.reasoningEffort
+    if (effort !== undefined && !(CODEX_EFFORTS as readonly unknown[]).includes(effort)) {
+      log('[pty] dropping an invalid persisted Codex reasoning effort; the session launches with the model default')
+      out.codexOptions = { ...out.codexOptions, reasoningEffort: undefined }
+    }
+    // P3.11 (row 62): extra CLI arguments the strict parse refuses are
+    // dropped; the session launches without them.
+    const extraArgs = out.codexOptions.extraArgs
+    if (extraArgs !== undefined && codexExtraArgsProblem(extraArgs) !== null) {
+      log('[pty] dropping invalid persisted Codex extra CLI arguments; the session launches without them')
+      out.codexOptions = { ...out.codexOptions, extraArgs: undefined }
+    }
   }
 
   // Phase 5 started PERSISTING these two, so a corrupt-but-parseable file can
@@ -116,11 +144,9 @@ export function sanitizeRestoredSpawnOptions<T>(
     }
   }
   if (out.extraArgs !== undefined) {
-    const ok =
-      typeof out.extraArgs === 'string' &&
-      out.extraArgs.length <= EXTRA_ARGS_MAX &&
-      EXTRA_ARGS_CHARSET_RE.test(out.extraArgs) &&
-      extraArgsRefineOk(out.extraArgs)
+    // The cap, charset, trailing backslash and managed-flag refine the schema
+    // applies (claudeExtraArgsProblem, src/shared/extra-args.ts).
+    const ok = claudeExtraArgsProblem(out.extraArgs) === null
     if (!ok) {
       log('[pty] #397: dropping invalid persisted extraArgs; the session launches without them')
       out.extraArgs = undefined

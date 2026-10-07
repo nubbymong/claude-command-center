@@ -365,6 +365,9 @@ export interface AppSettings {
    *  written. Set true (with or without disabling logging) to suppress the
    *  prompt permanently. */
   loggingConsentSeen?: boolean
+  /** P3.12 round 1 (B5): the version of the notice seen (LOGGING_CONSENT_VERSION
+   *  in utils/logging-consent.ts); absent = the earlier notice (1). */
+  loggingConsentVersion?: number
   /** True once the legacy file logs have been imported into SQLite (Phase 2b). */
   legacyLogsMigrated?: boolean
   /** True once the one-time "legacy logs detected" surfacing has been shown. */
@@ -418,6 +421,11 @@ export interface AppSettings {
    *  the frozen global hangs at auth or carries stale usage limits). Switchable
    *  in Settings when the chosen account hits its usage limit. */
   sentinelAccountProfileId?: string | null
+  /** P3.9: the Codex account Sentinel's analysis runs under when it runs on
+   *  Codex (the provider in use, or the one Ask Conductor runs on with both
+   *  on). null/absent = the account Codex reviews run on; one that can no
+   *  longer run falls back to it, and the failure message says so. */
+  sentinelCodexAccountId?: string | null
   /** Session Watchdog (#235). Opt-in, default off — see WatchdogSettings. */
   watchdog?: WatchdogSettings
 }

@@ -55,6 +55,16 @@ function valueAllowed(key: string, value: string): boolean {
   return true
 }
 
+/** Only absolute PATH entries: a relative or empty entry names a folder
+ *  relative to wherever the process runs. Windows entries are a drive or a
+ *  share (optionally quoted); POSIX entries start with `/`. Null when none
+ *  is left. (The reviewer's environment keeps the same rule.) */
+export function absolutePathValue(value: string, win: boolean): string | null {
+  const sep = win ? ';' : ':'
+  const kept = value.split(sep).filter((p) => (win ? /^"?([A-Za-z]:[\\/]|[\\/]{2}[^\\/])/.test(p) : p.startsWith('/')))
+  return kept.length ? kept.join(sep) : null
+}
+
 /** A clean environment for one Codex CLI operation in one realm. */
 export function codexCliEnv(
   inherited: Readonly<Record<string, string | undefined>>,
@@ -71,6 +81,11 @@ export function codexCliEnv(
     const key = win ? name.toUpperCase() : name
     if (!ALLOWED.has(key) || seen.has(key) || !valueAllowed(key, value)) continue
     seen.add(key)
+    if (key === 'PATH') {
+      const abs = absolutePathValue(value, win)
+      if (abs !== null) out[name] = abs
+      continue
+    }
     out[name] = value
   }
   if (win) out.NoDefaultCurrentDirectoryInExePath = '1'

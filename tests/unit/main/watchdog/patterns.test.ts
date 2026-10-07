@@ -307,6 +307,39 @@ describe('overload detection — raw-line cap prevents reaching a stale error be
   })
 })
 
+// P3.16 (M2): the other assistant's current-turn rule, for Claude Code: only the
+// rows below the newest user message in the tail are the current turn.
+describe('overload and safeguard detection read only the current turn (P3.16, M2)', () => {
+  const PROMPT = String.fromCharCode(0x276f)
+  const LINE = String.fromCharCode(0x2500).repeat(41)
+  const ERR = `  ${String.fromCharCode(0x23bf)}  API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`
+  const box = (draft = ''): string[] => [LINE, `${PROMPT} ${draft}`, LINE, '  accept edits on (shift+tab to cycle)']
+  const OK = `${String.fromCharCode(0x25cf)} Done.`
+
+  it('an error above a newer user message is an earlier turn\'s, for either prompt glyph', () => {
+    for (const glyph of ['>', PROMPT]) {
+      const pane = [`${glyph} task`, ERR, `${glyph} continue`, OK, ...box()].join('\n')
+      expect(detectOverload(pane, OVERLOAD_PATTERNS), glyph).toBe(false)
+    }
+  })
+  it('an error below the newest user message is live', () => {
+    const pane = ['> task', ERR, '> continue', OK, '> next step', ERR, ...box()].join('\n')
+    expect(detectOverload(pane, OVERLOAD_PATTERNS)).toBe(true)
+  })
+  it('a draft typed in the input box is not a user message: the error above it stays live', () => {
+    expect(detectOverload(['> task', ERR, ...box('half a sentence')].join('\n'), OVERLOAD_PATTERNS)).toBe(true)
+    expect(detectOverload([`${PROMPT} task`, ERR, ...box('a draft')].join('\n'), OVERLOAD_PATTERNS)).toBe(true)
+  })
+  it('an indented prompt glyph (a quote, a tool row) is not a user message', () => {
+    expect(detectOverload(['> task', ERR, '  > quoted in the answer', ...box()].join('\n'), OVERLOAD_PATTERNS)).toBe(true)
+  })
+  it('the safeguard flag follows the same rule', () => {
+    const FLAG = "  API Error: Fable 5's safeguards flagged this message (https://www.anthropic.com/legal/aup)."
+    expect(detectSafeguard([`${PROMPT} task`, FLAG, ...box()].join('\n'), SAFEGUARD_PATTERNS)).toBe(true)
+    expect(detectSafeguard([`${PROMPT} task`, FLAG, `${PROMPT} continue`, OK, ...box()].join('\n'), SAFEGUARD_PATTERNS)).toBe(false)
+  })
+})
+
 describe('safeguard detection — requires a nearby API Error anchor', () => {
   const FLAG = [
     '❯ continue',

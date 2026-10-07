@@ -534,3 +534,38 @@ async function addCodexAccountWhileOn(h: Awaited<ReturnType<typeof harness>>, on
   off()
   return id
 }
+
+describe('the sessions a refusal names (P3.2, design 5.3)', () => {
+  it('lists each app session whose session or review holds the account once; sign-ins and operations are only counted', () => {
+    const r = new ConsumerLeaseRegistry()
+    r.add('acct-a', 'codex', { kind: 'session', ownerId: 'tab-1:1', sessionId: 'tab-1' })
+    r.add('acct-a', 'codex', { kind: 'review', ownerId: 'review:tab-1:1', sessionId: 'tab-1' })
+    r.add('acct-a', 'codex', { kind: 'review', ownerId: 'review:tab-2:2', sessionId: 'tab-2' })
+    r.add('acct-a', 'codex', { kind: 'sign-in', ownerId: 'acct-a', sessionId: 'tab-9' })
+    r.add('acct-a', 'codex', { kind: 'operation', ownerId: 'op-1' })
+    r.add('acct-a', 'codex', { kind: 'session', ownerId: 'no-session' })
+    r.add('acct-b', 'codex', { kind: 'session', ownerId: 'tab-3:1', sessionId: 'tab-3' })
+    expect(r.sessionsHolding('acct-a').sort()).toEqual(['tab-1', 'tab-2'])
+    expect(r.count('acct-a')).toBe(6)
+    r.releaseOwner('session', 'tab-1:1')
+    expect(r.sessionsHolding('acct-a').sort()).toEqual(['tab-1', 'tab-2'])
+    r.releaseOwner('review', 'review:tab-1:1')
+    expect(r.sessionsHolding('acct-a')).toEqual(['tab-2'])
+    expect(r.sessionsHolding('acct-none')).toEqual([])
+  })
+})
+
+describe('what no named session accounts for (P3.2 review round 3: "and N more")', () => {
+  it('a session and its own review are one name; sign-ins, operations and unnamed leases are counted', () => {
+    const r = new ConsumerLeaseRegistry()
+    r.add('acct-a', 'codex', { kind: 'session', ownerId: 'tab-1:1', sessionId: 'tab-1' })
+    r.add('acct-a', 'codex', { kind: 'review', ownerId: 'review:tab-1:1', sessionId: 'tab-1' })
+    expect(r.unattributed('acct-a')).toBe(0)
+    r.add('acct-a', 'codex', { kind: 'sign-in', ownerId: 'acct-a', sessionId: 'tab-9' })
+    r.add('acct-a', 'codex', { kind: 'operation', ownerId: 'op-1' })
+    r.add('acct-a', 'codex', { kind: 'session', ownerId: 'bare' })
+    r.add('acct-b', 'codex', { kind: 'operation', ownerId: 'op-2' })
+    expect(r.unattributed('acct-a')).toBe(3)
+    expect(r.unattributed('acct-none')).toBe(0)
+  })
+})

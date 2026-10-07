@@ -63,11 +63,116 @@ export interface SpawnOptions {
    *  credentials removed, CODEX_HOME set) and its transcript folder. A Codex
    *  spawn runs only from this. Set by main; never from the renderer. */
   realmLaunch?: { executable: string; env: Record<string, string>; sessionsDir: string }
+  /** Codex (P3.5): the conversation to resume exactly -- the persisted
+   *  target of a restored tab, or the tab's kept conversation on a Restart.
+   *  The builder resumes it only when its rollout is in `realmLaunch`'s own
+   *  sessions folder, and checks the id again before it reaches argv. Set by
+   *  main only. */
+  resume?: { uuid: string; cwd: string }
+  /** Codex (P3.10): the session's hook file (its gateway port and token),
+   *  when the Hooks gateway is on and listening. The builder gives the launch
+   *  the app's hooks only with it, and only when their command can be given
+   *  safely (`hooksInstalled`). Set by main only. */
+  codexHooks?: { hookFile: string }
+  /** Codex (P3.10 round 1, V2): the conversations other open tabs of this
+   *  app are on (ids), for the resume picker to say one is open in another
+   *  tab. Set by main only. */
+  codexOpenElsewhere?: string[]
+}
+
+/** What a provider's builder hands the PTY. `commandLine` (Windows only): the
+ *  whole command line after `cmd`, which node-pty passes VERBATIM -- a cmd.exe
+ *  `/s /c` line cannot survive its per-argument quoting; when present it is
+ *  what runs, and `args` is empty. Codex (P3.5): `cwd`, the directory the CLI
+ *  must start in when it is not the configured one (an exact resume in the
+ *  conversation's own directory); `resumeId`, the conversation it resumes;
+ *  `pickFile`, where the resume picker records the conversation it opens. */
+export interface ProviderSpawnCommand {
+  cmd: string
+  args: string[]
+  env: Record<string, string>
+  commandLine?: string
+  cwd?: string
+  resumeId?: string
+  /** No rollout of the resumed conversation records the directory the
+   *  session kept: it starts in the configured one (the caller says so). */
+  resumeCwdMismatch?: boolean
+  /** The rollout of the resumed conversation the builder chose. */
+  resumePath?: string
+  pickFile?: string
+  /** The folder made for the pick file, as it was when made (fix round 3). */
+  pickFolder?: PickFolderIdentity
+  /** Codex (P3.10): the launch carries the app's hooks (see
+   *  SpawnOptions.codexHooks). */
+  hooksInstalled?: boolean
+}
+
+/** A folder as it was when made: what it is (its device and file id, exact)
+ *  and where it really is (every link on the way resolved). The resume
+ *  picker's pick folder is used only while it is still this folder. */
+export interface PickFolderIdentity {
+  id: string
+  real: string
+}
+
+/** How a session's telemetry finds its transcript. `cwd`: the resolved
+ *  working directory the PTY runs in, which Codex uses to claim a new
+ *  rollout. `spawnTimestamp`: Date.now() captured immediately before
+ *  pty.spawn(), the lower bound of that claim (ts >= spawn - 5s).
+ *  `sessionsDir`: where the session's realm writes its transcripts (Codex).
+ *  Codex (P3.5): `resumeId`, the conversation the launch resumes (claimed
+ *  wherever it is); `pickFile`, where the resume picker records its pick;
+ *  `onClaim`, told which conversation the session is on once claimed.
+ *  Claude ignores all of it (its telemetry is the statusline file watcher). */
+export interface TelemetryOptions {
+  cwd: string
+  spawnTimestamp: number
+  sessionsDir?: string
+  resumeId?: string
+  /** The rollout the launch chose for `resumeId`: claimed without a walk
+   *  when it is still that conversation's, in this realm. */
+  resumePath?: string
+  pickFile?: string
+  /** The pick file's folder as it was made: no pick is read, and nothing
+   *  there removed, unless it is still that folder. */
+  pickFolder?: PickFolderIdentity
+  /** `certain` (P3.6): false when the rollout could have been another
+   *  launch's (two new sessions in one folder, P3.5's recorded limit).
+   *  `exact` (P3.10): the conversation is known, not inferred: a resume by
+   *  id, the one a picker named, or the one the session's own hook reported
+   *  (`fromHook`). */
+  onClaim?: (claim: { id: string; cwd: string; certain: boolean; exact?: boolean; fromHook?: boolean }) => void
+  /** Told when a claim is let go (the picker decided again after it). */
+  onRelease?: () => void
+  /** P3.6 (VM finding V2): the conversation the session is on when another
+   *  session holds its rollout (a resume by id, the one a picker named, or
+   *  since P3.10 the one its own hook reported): the session's all the
+   *  same. Since P3.10 its rollout is read here too, as the holder reads it,
+   *  so both tabs show its figures. onRelease is told when a later decision
+   *  takes it back. */
+  onShared?: (conversation: { id: string; cwd: string; exact?: boolean; fromHook?: boolean }) => void
+  /** P3.12: the rollout claimed (path, the realm's sessions folder, exact,
+   *  shared), told with each onClaim or onShared, and null when a claim is
+   *  let go. Checked by the watcher; nothing else supplies it. */
+  onRollout?: (rollout: { path: string; sessionsDir: string; exact: boolean; shared: boolean; identity?: string } | null) => void
 }
 
 export interface TelemetrySource {
   /** Stop the underlying watcher / tail when the session ends. */
   stop(): void
+  /** Codex (P3.10): the session's own hook reported `rolloutPath` as the
+   *  conversation it is on. The watcher claims it exactly (it checks the
+   *  path is a rollout inside its realm whose session_meta names the id in
+   *  its name), or confirms the claim it has. Returns what it claimed, or
+   *  null when the path is refused. */
+  noteExactRollout?(rolloutPath: string): { id: string; cwd: string } | null
+  /** Codex (P3.10): another session's hook proved `rolloutPath` is that
+   *  session's conversation: a claim of it here that was only inferred is
+   *  let go, and claiming goes on. True when a claim was let go. */
+  refuteInferredClaim?(rolloutPath: string): boolean
+  /** Codex (P3.12 round 1): a claim made beside another session's whose
+   *  holder has let it go is this session's now: reported again. */
+  recheckShared?(): boolean
 }
 
 export interface HistorySession {
@@ -84,10 +189,8 @@ export interface SessionProvider {
   readonly displayName: string
 
   resolveBinary(legacyVersion?: LegacyVersion): { cmd: string; args: string[] } | null
-  /** `commandLine` (Windows only): the whole command line after `cmd`, which
-   *  node-pty passes VERBATIM -- a cmd.exe `/s /c` line cannot survive its
-   *  per-argument quoting. When present it is what runs, and `args` is empty. */
-  buildSpawnCommand(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string>; commandLine?: string }
+  /** See ProviderSpawnCommand. */
+  buildSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand
   detectUiRunning(data: string): boolean
 
   /** Optional -- Claude only; Codex has no statusline shim. */
@@ -99,19 +202,25 @@ export interface SessionProvider {
    * copies `scripts/codex-resume-picker.js`.
    */
   deployResumePickerScript?(resourcesDir: string): Promise<void>
-  /**
-   * Subscribe to live telemetry for a spawned session.
-   *
-   * opts.cwd            -- resolved working directory passed to the PTY spawn.
-   *                        Used by the Codex provider to claim the correct rollout file.
-   * opts.spawnTimestamp -- Date.now() captured immediately before pty.spawn().
-   *                        Used as the lower-bound for the rollout claim window (ts >= spawn - 5s).
-   * opts.sessionsDir    -- where the session's realm writes its transcripts (Codex).
-   * Claude provider ignores opts (its telemetry comes from the statusline file watcher).
-   */
+  /** Optional -- Codex (P3.10 round 4): prepare the folders the provider's
+   *  hooks use, asynchronously and only while the provider is on, with
+   *  `secureFolders`, the app's owner-only folder rule (given folders in
+   *  order, it makes each this user's alone and reads it back; on Windows in
+   *  one PowerShell call). A no-op while they are still ready. Resolves
+   *  whether the launch's hook folder is ready. Never throws. */
+  prepareHookFolders?(resourcesDir: string, secureFolders: (dirs: readonly string[]) => Promise<ReadonlyArray<{ dir: string; ok: boolean; detail?: string }>>): Promise<boolean>
+  /** Optional -- Codex (P3.10): write the session's hook file (the Hooks
+   *  gateway's port, the session id and its token, owner-only, in a folder
+   *  made for the launch inside the app's own data folder, P3.10 round 1)
+   *  for `buildSpawnCommand`'s `codexHooks`, with the way to remove it when
+   *  the session's resources go. Null when it cannot be written, or when the
+   *  hook folders were not prepared (round 4, prepareHookFolders): nothing is
+   *  started here. */
+  prepareSessionHooks?(sessionId: string, port: number, secret: string): { hookFile: string; dispose(): void } | null
+  /** Subscribe to live telemetry for a spawned session (see TelemetryOptions). */
   ingestSessionTelemetry(
     sessionId: string,
-    opts: { cwd: string; spawnTimestamp: number; sessionsDir?: string },
+    opts: TelemetryOptions,
     onUpdate: (data: StatuslineData) => void,
   ): TelemetrySource
   listHistorySessions(): Promise<HistorySession[]>

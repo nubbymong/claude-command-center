@@ -56,9 +56,11 @@ Clear the name (blank + Enter) to revert to the config's label.
 
 CCC isolates accounts per session so you can run different Claude logins side by
 side. Switch a session's account from its sidebar right-click menu → *Switch
-Account*. (On macOS only one Claude account can be used, because Claude Code
-keeps its sign-in in the login Keychain. Codex accounts are not limited this
-way.)
+Account*, or from the account pill at the far left of its status line. A Codex
+session moves between your Codex accounts the same way and keeps its
+conversation (see [Codex accounts](#codex-accounts)). (On macOS only one Claude
+account can be used, because Claude Code keeps its sign-in in the login
+Keychain. Codex accounts are not limited this way.)
 
 **What that isolation is, exactly.** It keeps the *logins* apart. Each account
 has its own home folder, and a session launched as that account runs in it: its
@@ -151,8 +153,8 @@ for Codex and says why.
 
 - At least one provider always stays on.
 - A provider cannot be turned off while anything of it is running: its
-  sessions, a code review, a sign-in in progress, and for Claude Code also
-  cloud agents, Insights and Sentinel runs. The row says so (for example
+  sessions, a code review, a sign-in in progress, a Sentinel check or
+  analysis, and for Claude Code also cloud agents and Insights. The row says so (for example
   *"Codex is in use (2)."*); close those and switch it off again.
 - Once a provider is off, nothing of it starts anywhere. Its saved configs say
   why instead of launching (*"Codex is off. Turn it on in Settings, Accounts to
@@ -176,6 +178,16 @@ for Codex and says why.
   and colour.
 - The Codex sign-in already on this computer always keeps an identity of its
   own, because CCC cannot tell whose it is.
+- To change an identity later, click the round chip at the left of any account
+  row in Settings, Accounts, Claude or Codex. Its editor holds the **Name**,
+  the **Colour** and the **Group**, and **Link another account** ties the
+  account to another of your accounts, Claude or Codex (**Unlink** undoes
+  it). The name, colour and group show on every linked account, and the
+  colour on the account's chips everywhere. (This computer's own sign-in has
+  no name field and cannot be linked.)
+- A row with sessions running on it says how many (*2 running*). When an
+  account cannot be made inactive, archived or removed because sessions use
+  it, the row names each one with **Go to**.
 - If an account's name or colour is changed both in CCC and in Claude's own
   account list, Settings → Accounts shows both and lets you pick one (**Keep
   this app's** or **Use Claude Code's**).
@@ -196,6 +208,7 @@ Codex section of Settings → Accounts, or on the Set up Codex page):
   it; with none set, reviews use the default), **Sign in again**, **Check
   sign-in**, **Sign out**, **Make inactive** or **Make active**, and
   **Archive**. Inactive and archived accounts are not offered at launch.
+  Archived accounts are listed under **Archived**, each with **Restore**.
 - A setup you started and did not finish is listed under *Unfinished setups*,
   with **Resume** and **Discard**.
 
@@ -219,8 +232,10 @@ Codex section of Settings → Accounts, or on the Set up Codex page):
   **Cannot run reviews**. Every launch on it asks you to confirm, either with
   the tick in the session dialog or just before the session starts. A code
   review, which nobody is there to confirm, never runs on it.
-- CCC never signs in to it. If it is signed out, run `codex login` in a
-  terminal, then **Check sign-in** on its row.
+- CCC never signs in to it on its own. If it is signed out, run `codex login`
+  in a terminal, then **Check sign-in** on its row, or choose **Sign in again**
+  in its menu: CCC warns first that this signs out every app that uses that
+  sign-in, and that it stays signed out if the new sign-in does not finish.
 - Signing out of it or archiving it asks first: signing out also signs Codex out
   for everything else on this computer that uses it, while archiving only
   forgets it in CCC.
@@ -228,20 +243,66 @@ Codex section of Settings → Accounts, or on the Set up Codex page):
 To start a Codex session, open **New saved config** (the sidebar's + New, then
 Config), choose the **Codex** card and an account. The default account is
 listed first, an account you confirm at each launch says so, and an account
-that needs attention cannot be picked. A Codex session's header has a
-**Restart** menu: **Restart** starts a new conversation, and **Restart and pick
-a conversation** lists its recent conversations in the terminal (type a number
-to pick one, or `n` for a new one).
+signed in a different way than before cannot be picked until you confirm it
+(see *Sign-in recovery* below).
+
+- **Model and effort.** The model list is the one the supported Codex versions
+  offer in their own picker; each model offers only the effort levels it runs,
+  and a saved effort its model cannot run is dropped.
+- **Permissions.** *Read-only*, *Standard*, *Plan mode*, *Auto* and
+  *Unrestricted*. *Plan mode* starts the session read-only and turns on
+  Codex's own Plan mode once Codex is ready; if it cannot, a note says so
+  (type `/plan`, or `/permissions` to change what Codex may do). The
+  permission pill reads *plan* only while Codex shows its Plan mode.
+- **Restart.** A Codex session's header has a **Restart** menu: **Restart**
+  carries on with the same conversation (a new one if the session had none
+  yet), and **Restart and pick a conversation** lists its recent conversations
+  in the terminal (type a number to pick one, or `n` for a new one). The list
+  includes the project's other git worktrees, tagged with the worktree's name,
+  and leads with a session's name where you gave it one. A Codex session that
+  was open when CCC closed reopens in the same conversation, under the same
+  account.
+- **Compact and the model pill.** On a running Codex session, **Compact** on
+  the status line types Codex's own `/compact`, and the model pill opens
+  Codex's own model and effort picker. Each types only while Codex waits at an
+  empty prompt, and says why when it cannot. On a session that is not
+  running, the model pill is a list, applied when the session restarts.
+- **Switch Account.** With two or more Codex accounts, the account pill at the
+  far left of a Codex session's status line, or **Switch Account** in its
+  right-click menu, moves the running session to another Codex account: it
+  restarts there and carries on in the same conversation, which CCC copies
+  into that account's folder. When the conversation cannot come along whole, a
+  note above the terminal says why.
+- **Status line.** A Codex session's status line shows its account, model and
+  effort, tokens, lines changed (counted from Codex's edits), duration (the
+  conversation's running time, carried on across restarts) and its 5-hour and
+  weekly windows; the Status Line settings apply to it.
+- **Multi Spawn and Quick Start** work for Codex configs as for Claude ones.
 
 ### Sign-in recovery
 
 - **Check sign-in** asks Codex right now whether the account is signed in, and
   shows the answer on the row (for example *Checked just now: signed in.*).
-- **Sign in again** appears on a signed-out or expired managed account. It asks
-  you to tick *Sign in to the same account as before*, then signs in inside
-  that account's own folder with the same kind of sign-in it had before:
-  ChatGPT again, or an API key again. Close the account's
-  sessions first: an account in use cannot be signed in again.
+- **Sign in again** asks you to tick *Sign in to the same account as before*,
+  then signs in with the same kind of sign-in the account had before: ChatGPT
+  again, or an API key again. Close the account's sessions first: an account
+  in use cannot be signed in again.
+  - A signed-out or expired account signs in again inside its own folder.
+  - An account that is still signed in signs in again inside a new folder, and
+    moves there only once the new sign-in is verified, with its earlier
+    conversations carried over (*Carrying your earlier conversations over...*;
+    with a long history this can take a few minutes). A sign-in that fails or
+    is cancelled leaves the account with the sign-in it had. Once the account
+    has moved, its row reads *Needs attention: the old sign-in is kept*: the
+    account works on its new sign-in and can still be picked for sessions, and
+    the old one stays until CCC can remove it without signing out the new one;
+    archiving the account removes it.
+  - Earlier conversation files that are also linked from somewhere else on
+    this computer are not carried over; the dialog says how many, and they
+    stay in the account's old folder. An account with more earlier conversation
+    files than CCC carries over is refused with nothing changed: to keep them,
+    sign out first, then sign in again, which signs in within the account's own
+    folder.
 - **Needs attention: signed in a different way than before.** A check notices
   when an account is now signed in a different way than the one on record, for
   example with an API key where it had a ChatGPT sign-in. Nothing launches or
@@ -313,14 +374,50 @@ Linux may ask for administrator rights; CCC never elevates on its own.
   **Use an API key** instead; the key goes to Codex, and CCC never stores it.
 - **No Codex over SSH in this release.** Use a Claude Code config for a remote
   machine, or run Codex from a local config.
+- **Codex asks once per account to review the app's hooks.** The first Codex
+  session on an account opens on Codex's own *Hooks need review* screen;
+  choose *Trust all and continue*. Without them the session works, but the
+  attention dot does not light up for Codex's approvals or finished turns (see
+  the Feature Guide's known issues for what the hooks send and how to trust
+  them later).
+- **One tab at a time per Codex conversation.** *Restart and pick a
+  conversation* marks a conversation another tab has open (*open in another
+  tab*). With Codex 0.155.1, picking it shows Codex's own lock screen, which
+  stays: close that tab and carry on in the one that has the conversation, or
+  close that one first and pick again. Codex 0.153.4 starts a new conversation
+  instead and says why.
+- **On Windows, Codex edits on its own only after its sandbox is set up.**
+  When Codex asks, choose *1. Set up default sandbox* (Codex says it needs
+  administrator permission). With *2. Use non-admin sandbox*, or none, Codex
+  asks before every edit on *Standard* and fails on *Auto*. Do not run CCC as
+  administrator.
+- **On Windows, a Codex session's tab can stay open after Codex quits** while a
+  command Codex started in the background still runs. Close the tab: that ends
+  the command too.
 
 ## Logs & transcript viewer
 
-Every Claude session's conversation is indexed locally (never leaves your
-machine); Codex conversations are not indexed yet. The **Logs** tab is a
+Every local Claude and Codex session's conversation is indexed locally (never
+leaves your machine); a Codex session's is read from its own Codex account's
+folder. The **Logs** tab is a
 chat-style transcript viewer with search and a timeline. Slots are labeled by
 the session's work name (or config label), so a renamed session is easy to
 find later.
+
+**Index conversation logs** (Settings, General, or one saved config's own
+setting) turns indexing off at once, for sessions already running too; turning
+it on applies to sessions started after. What a session writes while indexing
+is off is never indexed, and a conversation a session resumes carries on in
+the index where it left off, for Claude and Codex alike.
+
+On Windows, give a Claude config its working folder as Windows spells it
+(choose it with the folder picker, or type it as File Explorer shows it, with
+the drive letter in upper case). For a folder typed in another mix of upper
+and lower case than it has on disk, with a lower-case drive letter, or by its
+short 8.3 name, CCC can look for the session's conversation in another folder
+than Claude Code writes it to, so a restored tab may not reopen its own
+conversation, and with the app's hooks and status line off the Logs page may
+not show it. The conversation itself stays in Claude Code's files.
 
 ### Codex usage
 
@@ -337,7 +434,9 @@ account shows its 5-hour and weekly allowance and its plan:
 - otherwise from the account's latest session, marked **As of** with its age.
 
 An account with no session yet says its allowance shows after the first one;
-an API-key account is billed per token, so it has no plan allowance. The
+an API-key account is billed per token, so it has no plan allowance. An
+account on paid credits shows its credits under its bars, in Codex credits (a
+count, not money): *N credits*, or *Unlimited*. The
 usage strip at the foot of the window shows one pill per person, grouped by
 provider. Token use and cost are in Tokenomics (below).
 

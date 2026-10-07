@@ -27,12 +27,18 @@ import * as os from 'os'
 import { execSync, execFile } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
+import { openNotIndexedWindow, closeNotIndexedWindow, releaseNotIndexedWindow, keepNotIndexedWindow, closeHeldNotIndexedWindow, conversationKey } from './logging/indexing-gaps'
+import { claudeFolderKey, claudeProjectsRootKey, normaliseClaudeFolder } from './logging/claude-folder-key'
+import { codexFolderKey } from './logging/codex-folder-key'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
-import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
+import { getCodexLogBinder } from './logging/codex-log-binder'
+import { resolveResumeTargetFromTranscript, claudeProjectDirName, UUID_RE, canonicalizeTranscriptPath } from './logging/transcript-discovery'
 import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag, expandResumeTargetCwd, parseWorktreePaths } from './spawn-claude-command'
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
+import { bundledConptyChoice, bundledConptyFailed, SYSTEM_CONPTY_OPTIONS, BUNDLED_EARLY_EXIT_MS, type ConptySpawnOptions } from './bundled-conpty'
+import { guardPtyIo, type PtyIoSide } from './pty-input-guard'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { TMUX_WHEEL_EXIT_KEY } from '../shared/tmux-wheel'
 import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, parseEndSudoSentinel, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
@@ -78,6 +84,7 @@ import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessio
 import { readConfig, getConfigDir } from './config-manager'
 import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 import { getWatchdogManager } from './watchdog/watchdog-manager'
+import { clearCodexIdleAttention } from './codex-idle-attention'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -297,6 +304,10 @@ export interface CodexLaunch {
   executable: string
   env: Record<string, string>
   sessionsDir: string
+  /** P3.6 (main only): this launch resumes no kept conversation. A respawn
+   *  onto another account from a conversation whose claim was not certain
+   *  starts a new one there (pty-handlers carryForRespawn). */
+  freshConversation?: boolean
 }
 
 // WP2 (plan A10): the account lease of each running Codex session, so a
@@ -340,7 +351,7 @@ export function codexLaunchLeaseTaken(lease: AccountLease): boolean {
  *  seconds). The account stays leased until it has actually gone -- no
  *  sign-out or folder removal beside a Codex still winding down -- or, if no
  *  exit is ever reported, for a bounded grace. */
-const CODEX_LEASE_EXIT_GRACE_MS = 6_000
+export const CODEX_LEASE_EXIT_GRACE_MS = 6_000
 function releaseCodexLeaseOnExit(proc: pty.IPty, lease: AccountLease): void {
   let done = false
   const release = (): void => {
@@ -351,6 +362,74 @@ function releaseCodexLeaseOnExit(proc: pty.IPty, lease: AccountLease): void {
   try { proc.onExit(() => release()) } catch { release(); return }
   const timer = setTimeout(release, CODEX_LEASE_EXIT_GRACE_MS)
   ;(timer as unknown as { unref?: () => void }).unref?.()
+}
+
+/** Something drawn on the screen: a character that is neither a space nor a
+ *  control (once escape sequences are stripped). */
+const DRAWN_ON_SCREEN_RE = /[^\s\x00-\x1f\x7f]/
+
+/** P3.15 round 2 (J5): the bundled ConPTY can also fail after node-pty has
+ *  started it (OpenConsole.exe ended at once, or unable to create Codex in
+ *  it). Such a session ends within moments having drawn nothing (the console
+ *  host's own setup sequences aside), where a real Codex draws its screen at
+ *  once, even to say it cannot start. So a Codex PTY under the bundled ConPTY
+ *  that ends within BUNDLED_EARLY_EXIT_MS with nothing drawn, and that the app
+ *  did not end itself (a close, a Restart, a Switch account), makes the next
+ *  launch use the system ConPTY (bundledConptyFailed, said once). The session
+ *  is not relaunched. */
+function watchBundledConptyEarlyExit(sessionId: string, proc: pty.IPty): void {
+  const startedAt = Date.now()
+  let drew = false
+  let data: { dispose(): void } | null = null
+  try { data = proc.onData((d) => { if (!drew && DRAWN_ON_SCREEN_RE.test(stripAnsiForSentinel(d))) drew = true }) } catch { return }
+  try {
+    proc.onExit(() => {
+      try { data?.dispose() } catch { /* already gone */ }
+      if (drew || Date.now() - startedAt > BUNDLED_EARLY_EXIT_MS) return
+      if (ptySessions.get(sessionId)?.ptyProcess !== proc) return
+      bundledConptyFailed(`a Codex session under it ended within ${BUNDLED_EARLY_EXIT_MS / 1000} s with nothing on screen`)
+    })
+  } catch { try { data?.dispose() } catch { /* already gone */ } }
+}
+
+/** A PTY input or output error as a log line names it: its code, or its message. */
+function describePtyIoError(err: NodeJS.ErrnoException | undefined): string {
+  return stripSpoofableText(String(err?.code ?? err?.message ?? err), 120)
+}
+
+/** A helper PTY's input or output failed: said once a side, nothing else (it
+ *  settles on its own exit or time limit). */
+const logHelperPtyIo = (what: string) => (side: PtyIoSide, err: NodeJS.ErrnoException): void => {
+  logWarn(`${what} ${side} failed (${describePtyIoError(err)})`)
+}
+
+/** P3.15 rounds 3 and 4 (K1, P4): how long a session whose PTY input or output
+ *  failed may take to end by itself (as after a Ctrl+C that quits Codex)
+ *  before it is ended. */
+export const PTY_IO_FAILED_GRACE_MS = 3000
+
+/** P3.15 rounds 3 and 4 (K1, P4): a failed write to a session's PTY input, or
+ *  an error on its output, never quits the app (pty-input-guard.ts says why
+ *  each can happen, and why there is nothing to retry). Said once a side in
+ *  the log. A session that has not ended by itself within
+ *  PTY_IO_FAILED_GRACE_MS is ended (once), with a line in its terminal saying
+ *  why, rather than left taking keys that go nowhere. */
+function guardSessionPty(win: BrowserWindow, sessionId: string, proc: pty.IPty): void {
+  let ending = false
+  guardPtyIo(proc, (side, err) => {
+    logWarn(side === 'input'
+      ? `[pty] input to session ${sessionId} failed (${describePtyIoError(err)}); it takes no more input`
+      : `[pty] output of session ${sessionId} failed (${describePtyIoError(err)})`)
+    if (ending) return
+    ending = true
+    const timer = setTimeout(() => {
+      if (ptySessions.get(sessionId)?.ptyProcess !== proc) return // it ended, or was replaced, by itself
+      logWarn(`[pty] session ${sessionId} did not end within ${PTY_IO_FAILED_GRACE_MS} ms of its ${side} failing: ending it`)
+      if (!win.isDestroyed()) win.webContents.send(`pty:data:${sessionId}`, '\r\n[This session stopped taking input, so it was ended.]\r\n')
+      try { proc.kill() } catch { /* already gone */ }
+    }, PTY_IO_FAILED_GRACE_MS)
+    ;(timer as unknown as { unref?: () => void }).unref?.()
+  })
 }
 
 // rc.15 review R3 (aicc_planning#49): a LOCAL spawn whose profile is mid-refresh
@@ -389,6 +468,633 @@ const refreshWaitSpawns = new Map<string, {
 
 // Codex-provider telemetry sources: keyed by sessionId, stopped on PTY exit / kill.
 const codexTelemetrySources = new Map<string, TelemetrySource>()
+
+// P3.5 (rows 34, 35): the conversation each Codex session is on -- the one its
+// status line claimed, or the one an exact resume started -- as the transcript
+// binder knows each Claude tab's. Unlike lastResumeTarget it is NOT cleared by
+// killPty: a Restart kills first and resumes it after; a launch that resumes
+// nothing lets it go. session:save persists it (session-resume-enrich), so a
+// relaunch resumes it too. Only a conversation id is kept. Bounded, the
+// oldest tab's first (a closed tab's entry is never used again).
+// P3.6 (row 22): with it, the account of the launch that resumed or claimed
+// it (its lease's), which a Switch account carries it from; never persisted.
+export const KEPT_CODEX_CONVERSATIONS_MAX = 512
+// P3.10: `inferred` -- the conversation was taken by folder and time (a new
+// one), not known (a resume by id, a pick, or the session's own hook).
+// Round 1 (S4): `hooksHeard` -- this session's own launch's hooks had been
+// heard when it took it, or have been since: Codex runs them for this very
+// session (a tab that declined Codex's review sends none, whatever another
+// tab of the same account chose).
+const keptCodexConversations = new Map<string, { uuid: string; cwd: string; accountId?: string; inferred?: boolean; hooksHeard?: boolean }>()
+
+// P3.12 (row 65): the rollout each Codex session's watcher holds (claimed, or
+// read beside another tab), for its GitHub Session Context, as Claude's reads
+// the newest transcript of its project folder. The watcher checked it is a
+// plain rollout file of the session's own realm (the loader checks again).
+// Replaced by the next claim, gone when a claim is let go, kept after the
+// process ends (the tab still shows that conversation); bounded.
+const codexContextRollouts = new Map<string, { path: string; sessionsDir: string }>()
+export const CODEX_CONTEXT_ROLLOUTS_MAX = 512
+
+function noteCodexContextRollout(sessionId: string, rollout: { path: string; sessionsDir: string } | null): void {
+  codexContextRollouts.delete(sessionId)
+  if (!rollout || typeof rollout.path !== 'string' || typeof rollout.sessionsDir !== 'string') return
+  codexContextRollouts.set(sessionId, { path: rollout.path, sessionsDir: rollout.sessionsDir })
+  while (codexContextRollouts.size > CODEX_CONTEXT_ROLLOUTS_MAX) {
+    const oldest = codexContextRollouts.keys().next().value
+    if (oldest === undefined) break
+    codexContextRollouts.delete(oldest)
+  }
+}
+
+/**
+ * P3.12 round 1 (V1): the sessions whose run is indexed now, with the config
+ * and assistant each launched under, so a logging switch turned off stops
+ * indexing them at once (applyLoggingSwitches), for both assistants.
+ */
+const indexedRuns = new Map<string, { configId?: string; provider: 'claude' | 'codex' }>()
+
+/** P3.12 round 1 (V1): the run of `sessionId` stops being indexed: the worker
+ *  drains and retires its transcripts and closes the run ('stopped'); a Codex
+ *  session's later claims bind nothing (Claude's are dropped by the worker, as
+ *  for a run that ended). The session itself runs on. */
+function stopIndexingRun(sessionId: string): void {
+  const run = indexedRuns.get(sessionId)
+  indexedRuns.delete(sessionId)
+  const now = Date.now()
+  // P3.12 (X1): a session goes on not indexed: the conversation it is on, and
+  // each it moves to from now, are marked written while not indexed (P3.16
+  // M1: a Claude session as a Codex one).
+  if (run) markSessionNotIndexed(sessionId, run.provider, now)
+  try { getLogSupervisor()?.runEnd(sessionId, now, 'stopped') } catch { /* best-effort */ }
+  try { getCodexLogBinder()?.stopIndexing(sessionId) } catch { /* best-effort */ }
+  logInfo(`[pty] indexing stopped for ${sessionId}: a logging switch was turned off`)
+}
+
+/**
+ * P3.12 round 1 (V1): after Settings or the saved configs change. Every
+ * indexed run whose indexing is now off (the Settings switch, or its config's
+ * own Index conversation logs field: claudeOptions for a Claude run,
+ * codexOptions for a Codex one) stops being indexed. A switch turned on
+ * applies to sessions started after it (for both assistants: a running
+ * session is not indexed again until it is started again).
+ */
+export function applyLoggingSwitches(): void {
+  if (indexedRuns.size === 0) return
+  const settings = readConfig<{ loggingEnabled?: boolean }>('settings') ?? {}
+  const configs = readConfig<unknown>('configs')
+  for (const [sessionId, run] of [...indexedRuns]) {
+    const off = settings.loggingEnabled === false || savedConfigLoggingOff(configs, run.configId, run.provider) === true
+    if (off) stopIndexingRun(sessionId)
+  }
+}
+
+/** P3.12 round 1 (V1) and round 2 (W3): a saved config's own Index
+ *  conversation logs field for an assistant (claudeOptions for Claude,
+ *  codexOptions for Codex), read from the configs as saved now: true when it
+ *  is off, false when on, undefined when the config is not saved. */
+function savedConfigLoggingOff(configs: unknown, configId: string | undefined, provider: 'claude' | 'codex'): boolean | undefined {
+  if (!configId || !Array.isArray(configs)) return undefined
+  const config = (configs as Array<{ id?: unknown; claudeOptions?: { loggingEnabled?: unknown }; codexOptions?: { loggingEnabled?: unknown } } | null>)
+    .find((c) => !!c && c.id === configId)
+  if (!config) return undefined
+  const own = provider === 'codex' ? config.codexOptions : config.claudeOptions
+  return own?.loggingEnabled === false
+}
+
+/**
+ * P3.12 (X1, Z1): the local Codex sessions running while not indexed (logging
+ * off in Settings or in their config, or before the notice naming Codex was
+ * seen), each with the moment it became not indexed (its launch, or the
+ * switch-off). Every conversation such a session is on is marked written while
+ * not indexed (indexing-gaps.ts) from that moment, not from its claim of the
+ * conversation (Codex writes the first records before the claim), so no later
+ * run, from any tab, indexes what was written then. Cleared when a launch of
+ * the session begins.
+ *
+ * P3.16 (M1): a local Claude session the same way (logging off in Settings or
+ * in its config, or before the indexing notice was seen). Round 1 (N1, N2):
+ * it marks every transcript of its projects folder it names (its hooks and
+ * status line, or its exact resume at launch), each from the moment it became
+ * not indexed and each until the session ends; while it has named none it
+ * marks its whole projects folder (claude-folder-key.ts), so a session whose
+ * transcript is never named still leaves out what it wrote. Each entry keeps
+ * the assistant the session runs, so a session's conversation is the one of
+ * its own assistant. Only a run the logging switches and rules leave out is
+ * not indexed (shouldRegisterRun), not one whose log service is missing.
+ */
+const notIndexedSessions = new Map<string, { since: number; provider: 'claude' | 'codex' }>()
+
+/** P3.16 (M1): the transcript each local Claude session is on, the latest its
+ *  hooks or status line named (or its exact resume at launch), canonical, for
+ *  the windows above. Gone at the session's teardown; bounded. */
+const claudeTranscripts = new Map<string, string>()
+export const CLAUDE_TRANSCRIPTS_MAX = 512
+
+/** P3.16 round 1 (N1, N4): each local Claude session's projects folder, the
+ *  canonical one its transcripts are bound under (from its launch folder);
+ *  only a `<uuid>.jsonl` directly in it is taken as the session's transcript.
+ *  Set at its launch, gone at its teardown; bounded. */
+const claudeFolders = new Map<string, string>()
+
+/** PR-level ADR-009 round 1 (C1): each local Codex session's folder its
+ *  watcher matches a new rollout by (the one it runs in), from its launch, for
+ *  the folder window below. Set at each Codex launch, gone at its teardown;
+ *  bounded. Round 2 (K1): with the folder's real path when it differs (a
+ *  folder reached through a link), the one a session_meta records off Windows
+ *  (Codex records its working folder with the links resolved). Round 2 (K2):
+ *  the folder alone, whatever the realm (codex-folder-key.ts). Fixer 7b
+ *  (N1): and the folder as the OS names it on disk, when that is another key
+ *  (on a macOS volume that ignores case, a session_meta records the folder's
+ *  own case). Each spelling with a key of its own, the launch one first. */
+const codexFolders = new Map<string, { folders: string[] }>()
+
+function noteCodexFolder(sessionId: string, cwd: string): void {
+  codexFolders.delete(sessionId)
+  if (typeof cwd !== 'string' || !cwd) return
+  // The real path as the app names a Claude projects folder from it (since
+  // fixer 3, F6): Node's JS realpathSync; and the one realpathSync.native
+  // gives (the OS's own name, its case included; the case is not folded off
+  // Windows, since a volume can tell case apart). Each is the folder as given
+  // when it cannot be read.
+  const realOr = (read: () => string): string => { try { return read() } catch { return cwd } }
+  const folders = [cwd]
+  for (const real of [realOr(() => fs.realpathSync(cwd)), realOr(() => fs.realpathSync.native(cwd))]) {
+    if (!folders.some((f) => normaliseClaudeFolder(f) === normaliseClaudeFolder(real))) folders.push(real)
+  }
+  codexFolders.set(sessionId, { folders })
+  while (codexFolders.size > CLAUDE_TRANSCRIPTS_MAX) {
+    const oldest = codexFolders.keys().next().value
+    if (oldest === undefined) break
+    codexFolders.delete(oldest)
+  }
+}
+
+/** `since`: the moment the session became not indexed; `now`: this moment. */
+function markSessionNotIndexed(sessionId: string, provider: 'claude' | 'codex', since: number, now: number = since): void {
+  notIndexedSessions.set(sessionId, { since, provider })
+  if (provider === 'codex') {
+    // PR-level ADR-009 round 1 (C1): the folder it runs in is marked from
+    // this moment until the session ends (a cover: its claims and a claim let
+    // go leave it open), so a rollout its own watcher never claims (another
+    // tab took it by folder and time; Codex began it inside the session, its
+    // /new or a backtrack, with no hook to say so) is left out by that
+    // folder, as a Claude session's projects folder is. Written at once.
+    // Round 2 (K2): the folder in every realm, so a Sign in again's copy of
+    // such a rollout is left out too. Fails closed: an indexed Codex session
+    // of any account in the same folder has its turns left out meanwhile (a
+    // recorded limit). Round 2 (K1) and fixer 7b (N1): a folder spelled more
+    // than one way (as launched, its real path, its name on disk) is marked
+    // by each spelling, whichever one a rival session's rollout records.
+    for (const folder of codexFolders.get(sessionId)?.folders ?? []) {
+      try { keepNotIndexedWindow(sessionId, codexFolderKey(folder), since, now, { writeNow: true, cover: true }) } catch { /* best-effort */ }
+    }
+    const held = codexContextRollouts.get(sessionId)?.path
+    if (held) { try { openNotIndexedWindow(sessionId, held, since, now) } catch { /* best-effort */ } }
+    return
+  }
+  // A Claude session's first window is written at once: the transcript it is
+  // on, or while it has named none, its projects folder.
+  const named = claudeTranscripts.get(sessionId)
+  const folder = claudeFolders.get(sessionId)
+  const key = named ? conversationKey(named) : folder ? claudeFolderKey(folder) : null
+  let kept: ReturnType<typeof keepNotIndexedWindow> = 'invalid'
+  if (key) { try { kept = keepNotIndexedWindow(sessionId, key, since, now, { writeNow: true }) } catch { /* best-effort */ } }
+  // PR-level ADR-009 round 1 (C2): past the record's cap with every
+  // conversation open, it is covered as past its own cap (noteClaudeTranscript).
+  if (kept === 'full' && folder) {
+    const cover = named ? claudeCoverKey(folder, named) : claudeFolderKey(folder)
+    try { keepNotIndexedWindow(sessionId, cover, since, now, { writeNow: true, cover: true }) } catch { /* best-effort */ }
+  }
+}
+
+/** P3.16a round 2 (Q2, Q3): the window that covers a transcript a Claude
+ *  session named when it can have none of its own: its own folder's, or for a
+ *  transcript of another project's folder the projects folders' root's. */
+function claudeCoverKey(folder: string, canonical: string): string {
+  const ownFolder = normaliseClaudeFolder(path.dirname(canonical)) === normaliseClaudeFolder(folder)
+  return ownFolder ? claudeFolderKey(folder) : claudeProjectsRootKey(path.join(os.homedir(), '.claude', 'projects'))
+}
+
+/** P3.12 (Y1): the session no longer holds a conversation while not indexed
+ *  (it ends, relaunches or lets the claim go): its windows close.
+ *  PR-level ADR-009 round 1 (C1): `coversStay` for a Codex session that let
+ *  its claim go and runs on: its folder window stays open. */
+function endSessionNotIndexed(sessionId: string, now: number, opts: { coversStay?: boolean } = {}): void {
+  try { closeNotIndexedWindow(sessionId, now, opts) } catch { /* best-effort */ }
+}
+
+/** P3.16 (M1), round 1 (N2, N4): a Claude session is on the transcript at
+ *  `transcriptPath` (its hook or status line said so, or its exact resume).
+ *  Taken only as a `<uuid>.jsonl` directly in the session's own projects
+ *  folder, or (round 2, Q3) directly in another project's folder under the
+ *  Claude projects root (a /resume across projects); a subagent's transcript,
+ *  or a path anywhere else, is not its conversation. Kept for the windows;
+ *  while the session runs not indexed, that conversation's window opens from
+ *  the moment it became not indexed and stays open beside the others it named
+ *  until the session ends, and its folder's window, if it held one, closes
+ *  now. Round 2 (Q2): past the most windows a session holds, a name is covered
+ *  from that same moment until the session ends instead: by its own folder's
+ *  window, opened again, or for another project's folder by one on the
+ *  projects root, so no name the session gives is in no window. Only the name
+ *  and folder are used; nothing is read. */
+function noteClaudeTranscript(sessionId: string, transcriptPath: string): void {
+  if (typeof sessionId !== 'string' || !sessionId || typeof transcriptPath !== 'string') return
+  const folder = claudeFolders.get(sessionId)
+  if (!folder) return
+  const canonical = canonicalizeTranscriptPath(transcriptPath)
+  if (!canonical) return
+  const name = path.basename(canonical)
+  if (!/\.jsonl$/.test(name) || !UUID_RE.test(name.slice(0, -'.jsonl'.length))) return
+  const projectsRoot = path.join(os.homedir(), '.claude', 'projects')
+  const ownFolder = normaliseClaudeFolder(path.dirname(canonical)) === normaliseClaudeFolder(folder)
+  if (!ownFolder && normaliseClaudeFolder(path.dirname(path.dirname(canonical))) !== normaliseClaudeFolder(projectsRoot)) return
+  claudeTranscripts.delete(sessionId)
+  claudeTranscripts.set(sessionId, canonical)
+  while (claudeTranscripts.size > CLAUDE_TRANSCRIPTS_MAX) {
+    const oldest = claudeTranscripts.keys().next().value
+    if (oldest === undefined) break
+    claudeTranscripts.delete(oldest)
+  }
+  const notIndexed = notIndexedSessions.get(sessionId)
+  if (notIndexed?.provider === 'claude') {
+    const now = Date.now()
+    let kept: ReturnType<typeof keepNotIndexedWindow> = 'invalid'
+    try { kept = keepNotIndexedWindow(sessionId, conversationKey(canonical), notIndexed.since, now) } catch { /* best-effort */ }
+    if (kept === 'full') {
+      const cover = claudeCoverKey(folder, canonical)
+      try { keepNotIndexedWindow(sessionId, cover, notIndexed.since, now, { cover: true }) } catch { /* best-effort */ }
+    } else {
+      // A cover window is left open (indexing-gaps closes only the folder's first one).
+      try { closeHeldNotIndexedWindow(sessionId, claudeFolderKey(folder), now) } catch { /* best-effort */ }
+    }
+  }
+}
+
+/** P3.16 round 1 (N1): a local Claude session's projects folder, from the
+ *  folder it is launched in (as the transcript binder binds it). Round 2
+ *  (Q1): the folder Claude Code names for it (its real path, on Windows too
+ *  since fixer 3, F6; past 200 characters, the name cut with the folder's
+ *  hash). */
+function noteClaudeFolder(sessionId: string, launchCwd: string): void {
+  if (typeof launchCwd !== 'string' || !launchCwd) return
+  claudeFolders.delete(sessionId)
+  claudeFolders.set(sessionId, path.join(os.homedir(), '.claude', 'projects', claudeProjectDirName(launchCwd)))
+  while (claudeFolders.size > CLAUDE_TRANSCRIPTS_MAX) {
+    const oldest = claudeFolders.keys().next().value
+    if (oldest === undefined) break
+    claudeFolders.delete(oldest)
+  }
+}
+
+/** P3.16 (M1): the window closer waiting on each killed process, run by the
+ *  process's exit handler (spawnPty registers one for every PTY; no second
+ *  listener is added). */
+const windowClosersOnExit = new WeakMap<pty.IPty, () => void>()
+
+/** P3.12 (K1), P3.16 (M1): a killed session's windows stay open while its
+ *  process winds down, and close, only those windows, when its exit is
+ *  reported (its exit handler) or the grace the account lease uses passes. */
+function closeWindowWhenEnded(proc: pty.IPty, close: (ts: number) => void): void {
+  let done = false
+  const settle = (): void => {
+    if (done) return
+    done = true
+    clearTimeout(timer)
+    if (windowClosersOnExit.get(proc) === settle) windowClosersOnExit.delete(proc)
+    try { close(Date.now()) } catch { /* best-effort */ }
+  }
+  const timer = setTimeout(settle, CODEX_LEASE_EXIT_GRACE_MS)
+  ;(timer as unknown as { unref?: () => void }).unref?.()
+  // A closer already waiting on this process (a second kill) settles now.
+  try { windowClosersOnExit.get(proc)?.() } catch { /* best-effort */ }
+  windowClosersOnExit.set(proc, settle)
+}
+
+/** P3.12 (row 65): the rollout a Codex session's watcher holds (and its
+ *  realm's sessions folder), for the GitHub Session Context; null when none. */
+export function codexRolloutForSessionContext(sessionId: string): { path: string; sessionsDir: string } | null {
+  const r = codexContextRollouts.get(sessionId)
+  return r ? { path: r.path, sessionsDir: r.sessionsDir } : null
+}
+
+function keepCodexConversation(sessionId: string, conversation: { uuid: string; cwd: string }, accountId?: string, how?: { inferred: boolean }): void {
+  if (typeof conversation.uuid !== 'string' || !UUID_RE.test(conversation.uuid) || typeof conversation.cwd !== 'string') return
+  keptCodexConversations.delete(sessionId)
+  keptCodexConversations.set(sessionId, {
+    uuid: conversation.uuid,
+    cwd: conversation.cwd,
+    ...(typeof accountId === 'string' && accountId ? { accountId } : {}),
+    ...(how?.inferred ? { inferred: true } : {}),
+    ...(codexHooksHeard.has(sessionId) ? { hooksHeard: true } : {}),
+  })
+  while (keptCodexConversations.size > KEPT_CODEX_CONVERSATIONS_MAX) {
+    const oldest = keptCodexConversations.keys().next().value
+    if (oldest === undefined) break
+    keptCodexConversations.delete(oldest)
+  }
+}
+
+// P3.10 (rows 43, 46, 47, 63): the Codex launches given the app's hooks (see
+// providers/codex/hooks.ts) and their hook files (removed with the session's
+// resources). A hook's rollout path is the exact claim of the conversation
+// the session is on (as Claude's #480 bind); the last one taken is kept so
+// the frequent events (a prompt, each tool) cost one comparison.
+// Round 1:
+//  - codexHooksHeard (S4): the sessions whose CURRENT launch's own hooks have
+//    been heard -- Codex runs them for that session (see keptCodexConversations);
+//  - codexGatewayTokens (B1): the sessions whose latest gateway token a Codex
+//    launch minted, until that session's process exits (or another launch's
+//    token replaces it). It decides that a hook's transcript path is a Codex
+//    one, and outlives both the PTY entry and (round 2, R8) the token itself,
+//    which killPty now unregisters at once: a hook already on its way from
+//    the gateway when the token went is still never a Claude sink;
+//  - codexResumedById (S4): the conversation each live launch resumed by id,
+//    whose P3.6 doubt no hook clears, this tab's or another's (the app's own
+//    choice, from a record that may be in doubt);
+//  - codexRefusedHookLogged (N1): a refused path is logged once a launch.
+const codexHookFiles = new Map<string, { hookFile: string; dispose(): void }>()
+const codexHookedLaunches = new Set<string>()
+const codexHooksHeard = new Set<string>()
+const codexGatewayTokens = new Set<string>()
+const codexResumedById = new Map<string, string>()
+const codexRefusedHookLogged = new Set<string>()
+const lastCodexHookRollout = new Map<string, string>()
+
+function forgetCodexHooks(sessionId: string): void {
+  const file = codexHookFiles.get(sessionId)
+  if (file) {
+    codexHookFiles.delete(sessionId)
+    try { file.dispose() } catch { /* best-effort */ }
+  }
+  codexHookedLaunches.delete(sessionId)
+  codexHooksHeard.delete(sessionId)
+  codexResumedById.delete(sessionId)
+  codexRefusedHookLogged.delete(sessionId)
+  lastCodexHookRollout.delete(sessionId)
+}
+
+/** P3.10 round 1 (B1): the session's gateway token was just minted, by a
+ *  Codex launch or not. */
+function noteGatewayToken(sessionId: string, codex: boolean): void {
+  if (codex) codexGatewayTokens.add(sessionId)
+  else codexGatewayTokens.delete(sessionId)
+}
+
+/** P3.10 round 1 (B1, B2): the session's gateway token goes -- its process
+ *  exited, its spawn failed, or its launch sends no hook at all. */
+function dropGatewayToken(sessionId: string): void {
+  try { getGateway()?.unregisterSession(sessionId) } catch { /* the gateway may have stopped */ }
+  codexGatewayTokens.delete(sessionId)
+}
+
+/**
+ * P3.10: a hook of Codex session `sessionId` (authenticated by the gateway
+ * with that session's token) named `rolloutPath` as the transcript it is on.
+ * True when the session is a Codex one -- its PTY runs Codex, or (round 1,
+ * B1) its registered token is a Codex launch's, killed or not -- so the
+ * caller hands the path to no Claude sink (the Claude transcript binder, the
+ * Claude account attribution). This session's own hooks count as heard
+ * (round 1, S4); its telemetry claims the rollout exactly (checked there: a
+ * rollout inside the realm whose session_meta names the id in its name).
+ * Another session's inferred claim of it is proved wrong only by a
+ * conversation this one STARTED (noteCodexHookEvent, round 1, B4).
+ */
+export function noteCodexHookTranscript(sessionId: string, rolloutPath: string): boolean {
+  if (!codexGatewayTokens.has(sessionId) && ptySessions.get(sessionId)?.agent !== 'codex') return false
+  // A Codex session this launch gave no hooks, or one already torn down:
+  // nothing it says is taken.
+  if (!codexHookedLaunches.has(sessionId)) return true
+  if (!codexHooksHeard.has(sessionId)) {
+    codexHooksHeard.add(sessionId)
+    const kept = keptCodexConversations.get(sessionId)
+    if (kept) kept.hooksHeard = true
+  }
+  if (lastCodexHookRollout.get(sessionId) === rolloutPath) return true
+  const tel = codexTelemetrySources.get(sessionId)
+  const took = tel?.noteExactRollout?.(rolloutPath) ?? null
+  if (!took) {
+    if (!codexRefusedHookLogged.has(sessionId)) {
+      codexRefusedHookLogged.add(sessionId)
+      logWarn(`[pty] Codex session ${sessionId}: a hook named a transcript that is not a rollout of its account folder (length ${typeof rolloutPath === 'string' ? rolloutPath.length : 'n/a'}); ignored (said once for this launch)`)
+    }
+    return true
+  }
+  lastCodexHookRollout.set(sessionId, rolloutPath)
+  return true
+}
+
+/**
+ * P3.10 round 1 (B4): proof that another session's inferred claim is wrong
+ * comes only from a conversation this session's own Codex STARTED: its
+ * SessionStart hook with `source: startup`. No other session's Codex can
+ * have written that rollout, so another session that took it by folder and
+ * time took the wrong one: it is let go and never taken by inference again
+ * (telemetry refuteInferredClaim). A conversation this session RESUMED
+ * (`source: resume`: the TUI's own /resume, a resume by id, a pick) may be
+ * another tab's own new conversation, which that tab's Codex made and may
+ * still be writing, so it proves nothing about the others. The path must be
+ * the one this session's own watch took from its hook: the gateway hands the
+ * transcript path over (noteCodexHookTranscript) before the event itself.
+ */
+export function noteCodexHookEvent(e: { sessionId?: unknown; event?: unknown; payload?: unknown }): void {
+  if (!e || e.event !== 'SessionStart' || typeof e.sessionId !== 'string') return
+  const sessionId = e.sessionId
+  if (!codexHookedLaunches.has(sessionId)) return
+  const p = e.payload as { source?: unknown; transcript_path?: unknown } | null | undefined
+  if (!p || typeof p !== 'object' || p.source !== 'startup') return
+  const named = lastCodexHookRollout.get(sessionId)
+  if (!named || p.transcript_path !== named) return
+  let refuted = false
+  for (const [other, source] of codexTelemetrySources) {
+    if (other === sessionId) continue
+    try {
+      if (source.refuteInferredClaim?.(named)) {
+        refuted = true
+        logInfo(`[pty] Codex session ${other}: its inferred conversation is one ${sessionId}'s Codex started (its hook said so); it claims again`)
+      }
+    } catch { /* one session's watch never breaks another's */ }
+  }
+  // P3.12 round 1 (B1): this session read that conversation beside the one
+  // refuted; it holds it now, and its watcher says so again (its logs bind it).
+  if (refuted) {
+    try { codexTelemetrySources.get(sessionId)?.recheckShared?.() } catch { /* best-effort */ }
+  }
+}
+
+/** P3.10 (round 1, B5): where a hook's transcript path goes: a Codex
+ *  session's own watch (noteCodexHookTranscript), else Claude's sinks, the
+ *  account attribution and the transcript binder, as before P3.10. */
+export function routeHookTranscriptPath(sessionId: string, transcriptPath: string, claude: { attribute: (sessionId: string, transcriptPath: string) => void; bind: (sessionId: string, transcriptPath: string) => void }): void {
+  if (noteCodexHookTranscript(sessionId, transcriptPath)) return
+  // P3.16 (M1): the conversation a Claude session is on, for the windows
+  // written while not indexed (whether or not the binder indexes it).
+  noteClaudeTranscript(sessionId, transcriptPath)
+  claude.attribute(sessionId, transcriptPath)
+  claude.bind(sessionId, transcriptPath)
+}
+
+/** P3.10: whether `sessionId` runs Codex now (a live PTY started as a Codex
+ *  session). The attention source maps Codex's own hook events with it. */
+export function isCodexPtySession(sessionId: string): boolean {
+  return ptySessions.get(sessionId)?.agent === 'codex'
+}
+
+/** P3.10: a session's own hook named conversation `uuid`: P3.6's doubt
+ *  about it goes -- unless a live launch resumed it by id (round 1, S4:
+ *  this tab's or another's). That was the app's own choice from a record
+ *  that may be in doubt, and a hook proves only which conversation the
+ *  hooked tab is on, not that record. */
+function clearCodexDoubtFromHook(uuid: string): void {
+  if (typeof uuid !== 'string') return
+  const key = uuid.toLowerCase()
+  for (const resumed of codexResumedById.values()) if (resumed === key) return
+  uncertainCodexConversations.delete(key)
+}
+
+/** P3.10 round 1 (V2): the conversations other open Codex tabs are on (they
+ *  hold their account lease), as main recorded them, for the resume picker
+ *  to say one is open in another tab. Round 2 (R10): only tabs on the same
+ *  account as this launch -- Codex's writer lock is per account folder, and a
+ *  conversation carried to another account keeps its id, so the same id open
+ *  on another account is no lock here. */
+function codexConversationsOpenElsewhere(sessionId: string, accountId: string | undefined): string[] {
+  const out: string[] = []
+  for (const [other, kept] of keptCodexConversations) {
+    if (other === sessionId || !codexLaunchLeases.has(other)) continue
+    if (!accountId || kept.accountId !== accountId) continue
+    out.push(kept.uuid)
+  }
+  return out
+}
+
+/** The conversation a Codex session is on, for session:save (P3.5). */
+export function getKeptCodexConversation(sessionId: string): { uuid: string; cwd: string } | undefined {
+  const kept = keptCodexConversations.get(sessionId)
+  return kept ? { uuid: kept.uuid, cwd: kept.cwd } : undefined
+}
+
+/** P3.6 (row 22): the conversation a Codex session is on and the account it
+ *  ran under, for a Switch account to carry it into another account; none
+ *  unless both are known. `uncertain`: its claim could have been another
+ *  session's (see uncertainCodexConversations), so it is never carried.
+ *  P3.10 `unconfirmed`: it is only inferred, though this session's own
+ *  hooks have been heard (round 1, S4: keyed to the session, not its
+ *  account) -- Codex runs them for this session and names the conversation
+ *  it is on with every event, yet not this one, so it may be another
+ *  writer's: never carried either. A session whose own hooks are not heard
+ *  (the review declined or not answered, the gateway off, no hook given)
+ *  keeps P3.6's rules. */
+export function getKeptCodexConversationSource(sessionId: string): { uuid: string; cwd: string; accountId: string; uncertain: boolean; unconfirmed: boolean } | undefined {
+  const kept = keptCodexConversations.get(sessionId)
+  if (!kept || !kept.accountId) return undefined
+  const unconfirmed = kept.inferred === true && kept.hooksHeard === true
+  return { uuid: kept.uuid, cwd: kept.cwd, accountId: kept.accountId, uncertain: uncertainCodexConversations.has(kept.uuid.toLowerCase()), unconfirmed }
+}
+
+// P3.6 (ADR-009 round 1, B1; owner decision): conversations whose claim was
+// not certain -- two new sessions in one folder of one realm, started within
+// the claim window, can take each other's rollout (P3.5's recorded limit,
+// until P3.10's exact claim). P3.5's claim, Restart and relaunch are
+// unchanged; a Switch account never carries or brings up to date one of
+// these, and starts a new conversation on the new account instead. Kept by
+// conversation id, so a relaunch that resumes one keeps it uncertain: main
+// saves the list with the session state and reads it back when the state is
+// loaded. Bounded, the oldest first out.
+export const UNCERTAIN_CODEX_CONVERSATIONS_MAX = 512
+const uncertainCodexConversations = new Set<string>()
+
+function markCodexConversationUncertain(uuid: string): void {
+  if (typeof uuid !== 'string' || !UUID_RE.test(uuid)) return
+  const key = uuid.toLowerCase()
+  uncertainCodexConversations.delete(key)
+  uncertainCodexConversations.add(key)
+  while (uncertainCodexConversations.size > UNCERTAIN_CODEX_CONVERSATIONS_MAX) {
+    const oldest = uncertainCodexConversations.values().next().value
+    if (oldest === undefined) break
+    uncertainCodexConversations.delete(oldest)
+  }
+}
+
+/** The conversations whose claim was not certain, for the session state. */
+export function uncertainCodexConversationIds(): string[] {
+  return [...uncertainCodexConversations]
+}
+
+/** The list the session state saved (on load): anything that is not a
+ *  conversation id is ignored. */
+export function rememberUncertainCodexConversations(ids: unknown): void {
+  if (!Array.isArray(ids)) return
+  for (const id of ids.slice(-UNCERTAIN_CODEX_CONVERSATIONS_MAX)) if (typeof id === 'string') markCodexConversationUncertain(id)
+}
+
+/** The same, from a loaded session state (session-durability's read-back
+ *  at load, before any restored session respawns): the list saved in it,
+ *  whatever else it holds. Nothing for anything but a state. */
+export function rememberUncertainCodexConversationsFrom(state: unknown): void {
+  if (!state || typeof state !== 'object') return
+  rememberUncertainCodexConversations((state as { codexUncertainConversations?: unknown }).codexUncertainConversations)
+}
+
+/** P3.6 (row 22; ADR-009 round 1, B1): whether another session with a
+ *  running Codex process (it holds its account lease) is on conversation
+ *  `uuid`, as main recorded it. A Switch account never copies or brings up
+ *  to date a conversation another open session is on: that would fork it,
+ *  or put this session's turns into the rollout the other is writing. */
+export function codexConversationHeldElsewhere(sessionId: string, uuid: string): boolean {
+  const want = String(uuid).toLowerCase()
+  for (const [other, kept] of keptCodexConversations) {
+    if (other !== sessionId && kept.uuid.toLowerCase() === want && codexLaunchLeases.has(other)) return true
+  }
+  return false
+}
+
+// P3.6 (row 22; quality round 1): a Switch account carries the conversation
+// only once the session's previous Codex process has ended, so nothing it
+// writes after the copy is lost. killPty records the end of each Codex run it
+// kills; the respawn waits for it, bounded. An entry settles true when its
+// process reports its end, and false once the grace its account lease is
+// released after (releaseCodexLeaseOnExit) has passed with no end reported;
+// either way it then goes, and from then on the run counts as over, as its
+// lease does (lines such a run writes later can be missed). A later kill of
+// the session replaces it.
+const endingCodexRuns = new Map<string, Promise<boolean>>()
+
+function noteCodexRunEnding(sessionId: string, proc: pty.IPty, onEnded?: () => void): void {
+  let settleWith!: (reported: boolean) => void
+  const done = new Promise<boolean>((resolve) => { settleWith = resolve })
+  endingCodexRuns.set(sessionId, done)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const settle = (reported: boolean): void => {
+    if (timer) clearTimeout(timer)
+    settleWith(reported)
+    if (endingCodexRuns.get(sessionId) === done) endingCodexRuns.delete(sessionId)
+    // P3.12 (K1): whatever waited for the process to end (a not-indexed window).
+    try { onEnded?.() } catch { /* best-effort */ }
+  }
+  timer = setTimeout(() => settle(false), CODEX_LEASE_EXIT_GRACE_MS)
+  ;(timer as unknown as { unref?: () => void }).unref?.()
+  try { proc.onExit(() => settle(true)) } catch { settle(true) }
+}
+
+/** P3.6: true when this session has no Codex run still going: none live,
+ *  and none killed whose end is awaited (the last one killed reported its
+ *  end, or its grace passed before this was asked). Waits at most
+ *  `timeoutMs` for an awaited end: false when a run is live (never killed),
+ *  when its end is not reported in that time, or when its grace passes
+ *  first with no end reported. */
+export async function codexRunEnded(sessionId: string, timeoutMs: number): Promise<boolean> {
+  if (codexLaunchLeases.has(sessionId)) return false
+  const ending = endingCodexRuns.get(sessionId)
+  if (!ending) return true
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs) })
+  try {
+    return await Promise.race([ending, late])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 // T8b (bug #5): exact-conversation resume target captured at the TOP of a
 // respawn (in-session Restart / Switch-account), keyed by sessionId. Captured
@@ -669,6 +1375,8 @@ export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndT
         // the End promise the IPC handler returns and the live lanes await.
         const args = buildSshExecArgs(target, remoteCommand, os.platform(), { batchMode: false })
         child = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.homedir(), env: process.env as Record<string, string> })
+        // P3.15 rounds 3 and 4 (K1, P4): an error on its input or output never quits the app.
+        guardPtyIo(child, logHelperPtyIo(`[ssh] ${sessionId}: end-remote (password)`))
       } catch (err) {
         done('failed', `spawn: ${(err as Error)?.message ?? err}`)
         return
@@ -809,6 +1517,8 @@ export function probeTmuxLive(
         // sync throw here must resolve 'unverified', never escape the promise.
         const args = buildSshExecArgs(target, remoteCommand, os.platform(), { batchMode: false })
         child = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.homedir(), env: process.env as Record<string, string> })
+        // P3.15 rounds 3 and 4 (K1, P4): an error on its input or output never quits the app.
+        guardPtyIo(child, logHelperPtyIo('[ssh] liveness probe (password)'))
       } catch (err) {
         done(unverified, `spawn: ${(err as Error)?.message ?? err}`)
         return
@@ -1387,13 +2097,18 @@ function spawnPtyResolved(
      * SAME conversation it was on at quit (not the newest in the cwd's folder).
      * In-session Restart/Switch DO NOT set this — main self-captures via
      * lastResumeTarget. Fail-open: ignored if the transcript/cwd no longer exist.
+     * Codex (P3.5): the same field, resumed with `codex resume <id>` when the
+     * conversation's rollout is in the launch's realm; a Restart resumes the
+     * tab's kept conversation (keptCodexConversations).
      */
     resume?: { uuid: string; cwd: string }
     provider?: 'claude' | 'codex'
     codexOptions?: {
       model?: string
-      reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-      permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+      reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+      permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
+      /** P3.11 (row 62): the IPC schema checks it; buildCodexSpawn again. */
+      extraArgs?: string
     }
     /** MAIN-INTERNAL (WP2, plan A10): the Codex session's prepared launch --
      *  its account lease, executable and realm environment. Set only by
@@ -1405,6 +2120,11 @@ function spawnPtyResolved(
    *  once its PTY is registered. */
   inheritedTeardown?: () => void,
 ): void {
+  // P3.16a round 2 (Q5): a Restart's mark is for the exit of the process it
+  // ended before this spawn; this spawn's own process ends as any other does.
+  // Here, so every way a spawn starts clears it (spawnPty, a prepared spawn,
+  // the re-entry after a refresh wait; fixer 3, F2).
+  restartKills.delete(sessionId)
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd ? describePathForLog(options.cwd) : 'default'})`)
 
   // T8b (bug #5): in-session Restart / Switch-account REUSE this sessionId and
@@ -1456,6 +2176,11 @@ function spawnPtyResolved(
   const rows = options?.rows || 30
 
   let ptyProcess: pty.IPty
+  // P3.12 round 6 (Z1): when this launch's Codex process was started (taken before
+  // its spawn): the moment the session became not indexed, when it launched so.
+  let codexLaunchedAt: number | undefined
+  // P3.16 (M1): the same for this launch's Claude process.
+  let claudeLaunchedAt: number | undefined
 
   // Hoisted to function scope so the shared post-spawn tail (session-log capture)
   // can read them for EVERY branch (ssh / codex / claude / shell-only). They were
@@ -4172,48 +4897,174 @@ function spawnPtyResolved(
     // node-pty resolver miss). A spawn that failed releases its lease, and
     // ends a PTY it had already started, so no Codex runs unheld.
     let started: pty.IPty | undefined
+    // P3.10 (rows 43, 46, 47, 63): the app's hooks for this launch, when the
+    // Hooks gateway is on and listening -- as the Claude branch's injectHooks:
+    // a token minted for the session, and the file that hands it to the hook
+    // (never a command line). The previous launch's are gone with its
+    // resources (killPty above).
+    let hookFile: { hookFile: string; dispose(): void } | null = null
+    // Round 1 (B2): whether this launch minted the session's gateway token,
+    // which goes again whenever nothing will use it.
+    let tokenMinted = false
     try {
       const provider = getProvider('codex')
-      const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv, commandLine } = provider.buildSpawnCommand({
+      const gw = getGateway()
+      const gwStatus = gw?.status()
+      if (gw && gwStatus?.listening && gwStatus.port && provider.prepareSessionHooks) {
+        try {
+          const secret = gw.registerSession(sessionId)
+          tokenMinted = true
+          noteGatewayToken(sessionId, true)
+          // Round 1 (A5): in the app's own data folder; round 4 (P1): in the
+          // hook folder prepared beforehand (owner-only, checked here without
+          // starting anything), else no hooks.
+          hookFile = provider.prepareSessionHooks(sessionId, gwStatus.port, secret)
+        } catch (err) {
+          logError(`[pty] Failed to prepare Codex hooks for ${sessionId}: ${(err as Error)?.message ?? err}`)
+          hookFile = null
+        }
+      }
+      // P3.5 (rows 34, 35): the conversation to resume exactly, as the Claude
+      // branch does -- a restored tab's persisted one (options.resume), else,
+      // on a Restart, the one the tab is on (kept across the kill). "Restart
+      // and pick a conversation" (the picker) is never overridden by the kept
+      // one. The builder resumes it only when its rollout is in this launch's
+      // realm, checks the id again, and says where the CLI starts.
+      // P3.6: a respawn onto another account from a conversation whose claim
+      // was not certain resumes none (`freshConversation`, main only).
+      const resumeTarget = options?.resume ?? (options?.useResumePicker || launch.freshConversation === true ? undefined : keptCodexConversations.get(sessionId))
+      const built = provider.buildSpawnCommand({
         sessionId,
         provider: 'codex',
-        cwd: options?.cwd,
+        // The configured directory, resolved: where an exact resume falls
+        // back to when the conversation's own directory does not hold.
+        cwd: resolvedCwd,
         cols,
         rows,
         useResumePicker: options?.useResumePicker,
         codexOptions: options?.codexOptions,
         realmLaunch: { executable: launch.executable, env: launch.env, sessionsDir: launch.sessionsDir },
+        ...(resumeTarget ? { resume: { uuid: resumeTarget.uuid, cwd: resumeTarget.cwd } } : {}),
         // Same light/dark signal the local Claude spawn gets (book item 34).
         hostColorScheme: resolveHostColorScheme(
           readConfig<{ theme?: string }>('settings')?.theme,
           nativeTheme.shouldUseDarkColors,
         ),
+        ...(hookFile ? { codexHooks: { hookFile: hookFile.hookFile } } : {}),
+        // Round 1 (V2): for the picker, the conversations other tabs are on.
+        ...(options?.useResumePicker ? { codexOpenElsewhere: codexConversationsOpenElsewhere(sessionId, launch.lease.accountId) } : {}),
       })
-      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${commandLine ?? spawnArgs.join(' ')} cwd=${describePathForLog(resolvedCwd)}`)
+      const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv, commandLine } = built
+      // P3.10: a hook file the launch did not use goes at once; one it uses
+      // goes with the session's resources. Round 1 (B2): a token nothing will
+      // use (no hook file, or hooks the launch could not carry) goes too.
+      const hooked = built.hooksInstalled === true && !!hookFile
+      if (hookFile && hooked) {
+        codexHookFiles.set(sessionId, hookFile)
+        codexHookedLaunches.add(sessionId)
+      } else if (hookFile) {
+        try { hookFile.dispose() } catch { /* best-effort */ }
+      }
+      hookFile = null
+      if (tokenMinted && !hooked) {
+        dropGatewayToken(sessionId)
+        tokenMinted = false
+      }
+      // Round 1 (S4): the conversation this launch resumed by id keeps its doubt.
+      if (built.resumeId) codexResumedById.set(sessionId, built.resumeId.toLowerCase())
+      logInfo(`[pty-manager] Codex hooks for ${sessionId}: ${hooked ? 'on' : 'off (the Hooks gateway is off or not listening, or the hook could not be given on this launch)'}`)
+      // Where the CLI runs: the resumed conversation's own directory, else the configured one.
+      const codexCwd = built.cwd || resolvedCwd
+      // The tab is on the conversation it resumes; a launch that resumes
+      // nothing (the picker, a fresh start) lets the kept one go until the
+      // status line claims the next.
+      if (built.resumeId) keepCodexConversation(sessionId, { uuid: built.resumeId, cwd: codexCwd }, launch.lease.accountId, { inferred: false })
+      else keptCodexConversations.delete(sessionId)
+      // Said, never silent: the conversation's rollout does not record the
+      // directory this session kept, so it resumes in the configured one.
+      if (built.resumeId && built.resumeCwdMismatch) {
+        logWarn(`[pty-manager] Codex resume for ${sessionId}: no rollout of ${built.resumeId} records the directory the session kept; resuming in ${describePathForLog(codexCwd)}`)
+      }
+      // P3.15 (row 71): on Windows a local Codex session runs under node-pty's
+      // bundled ConPTY (its conpty.dll and the OpenConsole.exe beside it, the
+      // console host Windows Terminal ships). The ConPTY built into Windows
+      // repaints Codex's screen in place, so the terminal kept no scrollback
+      // and the wheel did nothing; the bundled one passes Codex's scrolling
+      // through. The system ConPTY when the bundled files are missing (said in
+      // the launch line, with the folder it was looked for in when bundled, and
+      // once in bundled-conpty.ts). Claude sessions, plain terminals and SSH
+      // sessions keep the system ConPTY, as before.
+      const conpty = bundledConptyChoice()
+      const conptyNote = conpty.kind === 'bundled' ? ` conpty=bundled (${describePathForLog(conpty.dir)})`
+        : conpty.kind === 'system' ? ` conpty=system (${describePathForLog(conpty.reason)})` : ''
+      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${commandLine ?? spawnArgs.join(' ')} cwd=${describePathForLog(codexCwd)} (resume=${built.resumeId ?? 'none'})${conptyNote}`)
       // Codex sessions never designate a canvas worktree; drop any inherited
       // hint, in every spelling (Windows names are case-insensitive).
       for (const k of Object.keys(spawnEnv)) if (k.toUpperCase() === 'CCC_SESSION_WORKTREE') delete (spawnEnv as Record<string, string>)[k]
       // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
       const codexSpawnTimestamp = Date.now()
+      codexLaunchedAt = codexSpawnTimestamp
       // The lease is this session's from here: the killPty above has already
       // released the previous spawn's (or will, once its process has ended).
       codexLaunchLeases.set(sessionId, launch.lease)
       takenCodexLeases.add(launch.lease)
       // A cmd.exe line goes verbatim (see buildSpawnCommand's `commandLine`).
-      ptyProcess = started = pty.spawn(spawnCmd, commandLine ?? spawnArgs, {
+      // The ConPTY options are the choice's own; nothing else differs between
+      // the bundled and the system ConPTY.
+      const spawnCodexPty = (conptyOptions: ConptySpawnOptions): pty.IPty => pty.spawn(spawnCmd, commandLine ?? spawnArgs, {
         name: 'xterm-256color',
         cols,
         rows,
-        cwd: resolvedCwd,
+        cwd: codexCwd,
         env: spawnEnv,
-        useConpty: true,
+        ...conptyOptions,
       })
+      let onBundledConpty = conpty.kind === 'bundled'
+      try {
+        ptyProcess = started = spawnCodexPty(conpty.options)
+      } catch (err) {
+        // P3.15 round 1 (F1): the bundled files can be there and still fail as
+        // the session starts (blocked or damaged, OpenConsole.exe unable to
+        // start). node-pty's startProcess then throws before Codex is started
+        // (Codex is created later, in node-pty's connect). A throw after
+        // startProcess (opening the console's input pipe) could in theory leave
+        // that connect pending and start a Codex no one sees; not seen, and not
+        // handled here. The session starts on the system ConPTY, and the rest
+        // of the run uses it. A start that fails there too is not the bundled
+        // ConPTY's fault (a missing executable): the first error goes on and
+        // the choice stays.
+        if (conpty.kind !== 'bundled') throw err
+        try { ptyProcess = started = spawnCodexPty(SYSTEM_CONPTY_OPTIONS) } catch { throw err }
+        onBundledConpty = false
+        bundledConptyFailed(String((err as Error)?.message ?? err))
+        logInfo(`[pty-manager] Codex PTY for ${sessionId}: the bundled ConPTY failed to start; started on the system ConPTY`)
+      }
+      if (onBundledConpty) watchBundledConptyEarlyExit(sessionId, started)
       ptyProcess.onData((data) => {
         if (win.isDestroyed()) return
         if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return // rc.15 review R9
         getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
+        // P3.10 (rows 43, 46): the Watchdog's pane and silence clock, as a
+        // Claude session's; a no-op until the session arms one (off by default).
+        getWatchdogManager()?.feedData(sessionId, data)
         win.webContents.send(`pty:data:${sessionId}`, data)
       })
+      // P3.12 (row 31): whatever an earlier launch of this session claimed is
+      // not this run's; this launch's claims are held until its run is
+      // recorded (a resume claims at once, inside ingestSessionTelemetry).
+      getCodexLogBinder()?.beginLaunch(sessionId)
+      // P3.12 (X1): this launch is not yet known as not indexed (its own run
+      // block says, below); a claim it makes before that is not marked.
+      notIndexedSessions.delete(sessionId)
+      // PR-level ADR-009 round 1 (C1): the folder this launch runs in (its
+      // watcher matches a new rollout by it), for its folder window when it is
+      // not indexed.
+      noteCodexFolder(sessionId, codexCwd)
+      // P3.12 round 1 (B2): a launch on another account (Switch Account) is on
+      // another account's folder: the rollout recorded for the Session
+      // Context goes until this launch claims one.
+      const contextBefore = codexContextRollouts.get(sessionId)
+      if (contextBefore && contextBefore.sessionsDir !== launch.sessionsDir) codexContextRollouts.delete(sessionId)
       // Start rollout watch-and-claim telemetry. Updates are dispatched to the
       // renderer (statusline:update) identically to how Claude statusline
       // updates flow through statusline-watcher.ts. (Tokenomics is no longer fed
@@ -4221,7 +5072,56 @@ function spawnPtyResolved(
       const codexTelSrc = provider.ingestSessionTelemetry(
         sessionId,
         // The realm's own transcripts: a managed account never writes to ~/.codex.
-        { cwd: resolvedCwd, spawnTimestamp: codexSpawnTimestamp, sessionsDir: launch.sessionsDir },
+        // P3.5: the resumed conversation is claimed wherever it is, the
+        // picker's pick through its file, and the tab keeps what is claimed.
+        {
+          cwd: codexCwd,
+          spawnTimestamp: codexSpawnTimestamp,
+          sessionsDir: launch.sessionsDir,
+          ...(built.resumeId ? { resumeId: built.resumeId } : {}),
+          ...(built.resumeId && built.resumePath ? { resumePath: built.resumePath } : {}),
+          ...(built.pickFile ? { pickFile: built.pickFile, pickFolder: built.pickFolder } : {}),
+          onClaim: (claimed) => {
+            keepCodexConversation(sessionId, { uuid: claimed.id, cwd: claimed.cwd }, launch.lease.accountId, { inferred: claimed.exact !== true })
+            // P3.6: a claim that could have been another session's.
+            if (claimed.certain !== true) markCodexConversationUncertain(claimed.id)
+            // P3.10: the session's own hook named it: this session is on it,
+            // as Codex says, which clears P3.6's doubt -- unless a live launch
+            // resumed it by id (clearCodexDoubtFromHook).
+            else if (claimed.fromHook === true) clearCodexDoubtFromHook(claimed.id)
+          },
+          // The picker decided again after a claim: the session is no longer
+          // on it. Round 1 (Q3): nor is the path its hook last named taken
+          // as read (the same path again is handed to the watch).
+          onRelease: () => {
+            keptCodexConversations.delete(sessionId)
+            lastCodexHookRollout.delete(sessionId)
+          },
+          // P3.6 (VM finding V2): on a conversation another session holds
+          // (picked, resumed by id, or named by its hook): recorded as this
+          // session's too, so a Switch refuses it as in use and says so.
+          onShared: (shared) => {
+            keepCodexConversation(sessionId, { uuid: shared.id, cwd: shared.cwd }, launch.lease.accountId, { inferred: shared.exact !== true })
+            if (shared.fromHook === true) clearCodexDoubtFromHook(shared.id)
+          },
+          // P3.12 (rows 31, 32, 65): the rollout claimed, as the watcher
+          // checked it (its realm, a plain rollout file), or null when let
+          // go: the session's logs and name file (the Codex log binder) and
+          // its GitHub Session Context read the conversation from this alone.
+          onRollout: (rollout) => {
+            noteCodexContextRollout(sessionId, rollout)
+            // P3.12 (X1, Z1): a conversation a session not indexed is on: its
+            // window opens when the session became not indexed, not now.
+            // PR-level ADR-009 round 1 (C1): a claim let go closes the
+            // conversation's window only; the folder's stays open.
+            const notIndexed = notIndexedSessions.get(sessionId)
+            if (notIndexed?.provider === 'codex') {
+              if (rollout) { try { openNotIndexedWindow(sessionId, rollout.path, notIndexed.since, Date.now()) } catch { /* best-effort */ } }
+              else endSessionNotIndexed(sessionId, Date.now(), { coversStay: true })
+            }
+            getCodexLogBinder()?.noteRollout(sessionId, rollout)
+          },
+        },
         (data) => {
           // Copilot review on PR #31 (p9.17): decorate at the send site so
           // the renderer receives accountColour. decorateStatuslineWithColour
@@ -4236,8 +5136,10 @@ function spawnPtyResolved(
       )
       codexTelemetrySources.set(sessionId, codexTelSrc)
       // WP2 commit 5b: a local Codex session may ask for a Claude review of
-      // the project it runs in -- the directory its PTY started in, never
-      // home or above it (the codex_review rule, #188). Whether the tool is
+      // its configured project directory, never home or above it (the
+      // codex_review rule, #188) -- and never the directory a resumed
+      // conversation's rollout names (P3.5), which is transcript content, the
+      // same line the Agent Canvas root holds in the Claude branch. Whether the tool is
       // offered is decided per MCP connection; killPty's unregister (run
       // before every spawn) clears this, so a respawn re-decides.
       if (isHomeOrAncestor(resolvedCwd)) {
@@ -4246,6 +5148,11 @@ function spawnPtyResolved(
         registerClaudeReviewSession(sessionId, resolvedCwd)
       }
     } catch (err) {
+      // P3.10: a launch that failed keeps no hook file or hooked mark, and
+      // (round 1, B2) no gateway token it minted.
+      if (hookFile) { try { hookFile.dispose() } catch { /* best-effort */ } }
+      forgetCodexHooks(sessionId)
+      if (tokenMinted) dropGatewayToken(sessionId)
       if (codexLaunchLeases.get(sessionId) === launch.lease) codexLaunchLeases.delete(sessionId)
       if (started) {
         // A PTY that started: its lease goes when its process does.
@@ -4442,6 +5349,14 @@ function spawnPtyResolved(
     // succeeds (see below) so a spawn throw can't leak the per-session map entry,
     // and shell-only sessions (no Claude) never capture.
 
+    // C item (completion plan, section 7; fixed in P3.10): everything from the
+    // spawn to the data hook can throw (a quoting refusal, a store refusing a
+    // root, a settings read), and a throw here used to leave the process just
+    // started running untracked: no session entry, no exit handler, never
+    // killed. It is now ended, with what this spawn had taken, and the throw
+    // goes on to the caller as before (the Codex branch does the same).
+    let localStarted: pty.IPty | undefined
+    try {
     if (shellOnly) {
       logInfo(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${describePathForLog(resolvedCwd)}${options?.elevated ? ' (elevated)' : ''}`)
 
@@ -4453,6 +5368,7 @@ function spawnPtyResolved(
         env: finalSpawnEnv,
         useConpty: true
       })
+      localStarted = ptyProcess
 
       // #48: hold the profile for this shell's life (see shellOnlyProfileHolds).
       // Only after pty.spawn succeeded, mirroring B3 for the identity capture:
@@ -4564,7 +5480,10 @@ function spawnPtyResolved(
           existsSync: fs.existsSync,
           statSync: (p) => fs.statSync(p),
           homedir: os.homedir,
-          mangleCwdToProjectDir,
+          // P3.16a round 2 (Q1): the folder Claude Code names (its real path,
+          // on Windows too since fixer 3, F6; past 200 characters, cut with
+          // the folder's hash).
+          mangleCwdToProjectDir: (cwd) => claudeProjectDirName(cwd),
           projectsRoot: path.join(os.homedir(), '.claude', 'projects'),
           // Best-effort: ensure a direct-work conversation (no subagent/workflow,
           // hence no companion dir from the CLI) is resumable. Never throws.
@@ -4596,7 +5515,7 @@ function spawnPtyResolved(
             pid: () => process.pid,
             warn: (msg) => { logWarn(msg) },
             homedir: os.homedir,
-            mangleCwdToProjectDir,
+            mangleCwdToProjectDir: (cwd) => claudeProjectDirName(cwd),
             projectsRoot: path.join(os.homedir(), '.claude', 'projects'),
             isHomeOrAncestor,
             ensureCompanionDir: (projectDir, uuid) => { ensureCompanionDir(projectDir, uuid, nodeFsCompanionDeps) },
@@ -4617,6 +5536,7 @@ function spawnPtyResolved(
       assertGatedDirectory(options, claudeCwd, 'resume directory', recordUnverifiedDirectory)
       logInfo(`[pty-manager] Launching Claude via shell in PTY: ${spawnCmd} -> ${cmd} cwd=${describePathForLog(claudeCwd)} (resumePicker=${!!options?.useResumePicker}, resume=${resumeUuid ?? 'none'})`)
 
+      claudeLaunchedAt = Date.now()
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
         name: 'xterm-256color',
         cols,
@@ -4625,6 +5545,7 @@ function spawnPtyResolved(
         env: finalSpawnEnv,
         useConpty: true
       })
+      localStarted = ptyProcess
 
       // B3: capture identity ONLY after the spawn succeeds — if pty.spawn throws,
       // no map entry is created (no leak), and shell-only sessions never reach
@@ -4809,6 +5730,8 @@ function spawnPtyResolved(
         if (gw && gwStatus?.listening && gwStatus.port) {
           try {
             const secret = gw.registerSession(sessionId)
+            // P3.10 round 1 (B1): this token is a Claude launch's.
+            noteGatewayToken(sessionId, false)
             injectHooks({ sessionId, settingsPath: sesPath, port: gwStatus.port, secret, cwd: claudeCwd })
           } catch (err) {
             logError(`[pty] Failed to inject hooks for ${sessionId}: ${(err as Error)?.message ?? err}`)
@@ -4934,9 +5857,26 @@ function spawnPtyResolved(
       getWatchdogManager()?.feedData(sessionId, data)
       win.webContents.send(`pty:data:${sessionId}`, data)
     })
+    } catch (err) {
+      if (localStarted) {
+        logWarn(`[pty] Local spawn for ${sessionId} failed after its process started; the process is ended (${(err as Error)?.message ?? err})`)
+        try { localStarted.kill() } catch { /* already gone */ }
+        dropGatewayToken(sessionId)
+        try { removeLocalSessionSettings(sessionId) } catch { /* best-effort */ }
+        try { removeLocalSessionMcpConfig(sessionId) } catch { /* best-effort */ }
+        try { removeLocalSessionStatusUrl(sessionId) } catch { /* best-effort */ }
+        try { cleanupSessionResources(sessionId) } catch { /* best-effort */ }
+        try { clearClaudeAccount(sessionId) } catch { /* best-effort */ }
+        try { stopWatchingAccountIdentity(sessionId) } catch { /* best-effort */ }
+      }
+      throw err
+    }
   }
 
   ptySessions.set(sessionId, { ptyProcess, sessionId, agent: options?.shellOnly ? null : (options?.provider ?? 'claude') })
+  // P3.15 rounds 3 and 4 (K1, P4): every session's PTY, of every kind: an
+  // error on its input or its output never quits the app.
+  guardSessionPty(win, sessionId, ptyProcess)
   updateSessionMeta({ id: sessionId, label: options?.configLabel ?? sessionId, cwd: options?.cwd, provider: options?.provider ?? 'claude' })
   // Watchdog (#235): any interactive Claude session — LOCAL or SSH (owner
   // 2026-08-31: it observes the PTY, which an SSH session has too; the headless
@@ -4945,12 +5885,16 @@ function spawnPtyResolved(
   // the claude-running latch inside the SSH flow (see setFlowState) — at spawn
   // its PTY carries the handshake (auth prompts, remote-controlled MOTD), which
   // the watchdog must never be in a position to type into.
-  // Never Codex, a bare shell (shellOnly), or an Ask Conductor one-shot (#266
+  // Never a bare shell (shellOnly), or an Ask Conductor one-shot (#266
   // MAJOR-5: an ephemeral ask surface must not grow a retry badge). No-op when
   // the feature is off (default). feedData already flows for every session.
-  if (!options?.shellOnly && !options?.ssh && (options?.provider ?? 'claude') === 'claude') {
+  // P3.10 (row 43): a LOCAL Codex session too, with Codex's own patterns
+  // (watchdog/codex-patterns.ts); Codex runs on this computer only in this
+  // release, so there is no SSH Codex session to arm.
+  const watchdogProvider = options?.provider ?? 'claude'
+  if (!options?.shellOnly && !options?.ssh && (watchdogProvider === 'claude' || watchdogProvider === 'codex')) {
     getWatchdogManager()?.startWatchdog(sessionId, {
-      provider: options?.provider,
+      provider: watchdogProvider,
       ssh: false,
       shellOnly: false,
       // Explicit kind flag (#266 MAJOR-5), never the askPrompt heuristic: that
@@ -4978,13 +5922,47 @@ function spawnPtyResolved(
   // runs are skipped immediately — the worker keeps running idle. Asymmetry: if
   // logging was DISABLED at boot there is no supervisor, so a mid-run enable
   // needs a restart.
-  const settings = readConfig<{ loggingEnabled?: boolean }>('settings') ?? {}
+  const settings = readConfig<{ loggingEnabled?: boolean; loggingConsentSeen?: boolean; loggingConsentVersion?: number }>('settings') ?? {}
+  // P3.12 round 2 (W3): the config's own switch as saved now (a Restart, a
+  // Switch Account or a restore carries the value it was launched with).
+  const runProvider = (options?.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'
+  const savedOff = savedConfigLoggingOff(readConfig<unknown>('configs'), options?.configId, runProvider)
+  const registerOptions = savedOff === undefined ? (options ?? {}) : { ...(options ?? {}), loggingEnabled: !savedOff }
   // Single source of truth for the run-registration decision (Task 9):
-  // claude-local-only (not codex/other), not shell-only, not SSH, per-config
+  // local Claude or (P3.12) local Codex, not shell-only, not SSH, per-config
   // loggingEnabled !== false, global loggingEnabled !== false. The matching
   // runEnd/endRun on exit are gated on this same `logSup` being non-null, so a
   // run is only ended if it was registered.
-  const logSup = shouldRegisterRun(options ?? {}, settings) ? getLogSupervisor() : null
+  const registersRun = shouldRegisterRun(registerOptions, settings)
+  const logSup = registersRun ? getLogSupervisor() : null
+  // P3.12 round 1 (V1): a spawn that is not indexed (logging off, a shell, SSH)
+  // ends whatever run this session id still had open (a Restart's old process
+  // exits after this spawn, so its own exit does not), so nothing is added to
+  // it; one that is indexed is recorded for the logging switches.
+  const codexRunProvider = !options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'codex'
+  // P3.16 (M1): a local Claude session's projects folder (round 1, N1) and,
+  // when it resumes one exactly, its conversation are known at launch; its
+  // hooks and status line name the transcript after.
+  const claudeRunProvider = !options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude'
+  if (claudeRunProvider && effectiveLaunchCwd) noteClaudeFolder(sessionId, effectiveLaunchCwd)
+  if (claudeRunProvider && resumeUuidForBind && effectiveLaunchCwd) {
+    const resumed = buildResumeTranscriptPath(effectiveLaunchCwd, resumeUuidForBind)
+    if (resumed) noteClaudeTranscript(sessionId, resumed)
+  }
+  if (logSup) {
+    indexedRuns.set(sessionId, { ...(options?.configId ? { configId: options.configId } : {}), provider: codexRunProvider ? 'codex' : 'claude' })
+  } else {
+    indexedRuns.delete(sessionId)
+    try { getLogSupervisor()?.runEnd(sessionId, Date.now(), 'exited') } catch { /* best-effort */ }
+    // P3.12 (X1, X3): a local session running not indexed marks the
+    // conversations it is on (P3.16 M1: a Claude session as a Codex one).
+    // Round 1 (N3): only a run the switches and rules leave out; one they
+    // index whose log service is missing this time marks nothing.
+    if (!registersRun) {
+      if (codexRunProvider) markSessionNotIndexed(sessionId, 'codex', codexLaunchedAt ?? Date.now(), Date.now())
+      else if (claudeRunProvider) markSessionNotIndexed(sessionId, 'claude', claudeLaunchedAt ?? Date.now(), Date.now())
+    }
+  }
   logSup?.runStart({
     sessionId,
     configId: options?.configId,
@@ -5002,12 +5980,18 @@ function spawnPtyResolved(
     provider: options?.provider ?? 'claude',
     startedAt: Date.now(),
   })
+  // P3.12 (row 31): a local Codex run's transcript is the rollout its own
+  // watcher claims (the Codex log binder, told by onRollout above), bound
+  // from here on; Claude's discovery below (its heuristic scan of
+  // ~/.claude/projects, its resume-bind) is Claude's alone.
+  const codexLocalRun = !options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'codex'
+  if (codexLocalRun) getCodexLogBinder()?.startRun(sessionId, !!logSup)
   // Logs v2 (Task 8): arm the heuristic transcript-discovery fallback for this run.
   // The exact sources (hooks + statusline) bind first; if neither has bound ~20s
   // later, the binder scans ~/.claude/projects for the newest matching JSONL.
-  // Gated on logSup (the consolidated shouldRegisterRun decision — already
-  // claude-local-only, so no separate provider re-check) + a known cwd.
-  if (logSup && effectiveLaunchCwd) {
+  // Gated on logSup (the consolidated shouldRegisterRun decision) + a known cwd,
+  // and on a Claude run (P3.12: a Codex run is registered too, and has its own).
+  if (logSup && effectiveLaunchCwd && !codexLocalRun) {
     // FIX 4: register with the effective launch cwd so the 20s heuristic
     // fallback scans the folder Claude ran in (the resume override when active).
     const binder = getTranscriptBinder()
@@ -5054,7 +6038,15 @@ function spawnPtyResolved(
   // adjacent, so the window is one statement wide.
   markPtySessionAlive(sessionId)
   ptyProcess.onExit(({ exitCode }) => {
-    logInfo(`[pty] PTY exited for session ${sessionId} with code ${exitCode}`)
+    // P3.16 (M1): a killed Claude session's not-indexed windows close now that
+    // its process has ended (closeWindowWhenEnded), whichever session the id
+    // belongs to by now.
+    try { windowClosersOnExit.get(ptyProcess)?.() } catch { /* best-effort */ }
+    // P3.15 round 2 (J1): under node-pty's bundled ConPTY a Codex that quits by
+    // itself can end before its exit code is known: said as unknown, and the
+    // run recorded as exited, not crashed.
+    const exitCodeKnown = typeof exitCode === 'number' && Number.isFinite(exitCode)
+    logInfo(`[pty] PTY exited for session ${sessionId} with code ${exitCodeKnown ? exitCode : 'unknown'}`)
     // Restart-race guard: the renderer's restart flow kills the old PTY
     // and re-spawns synchronously with the SAME sessionId. node-pty's
     // exit callback is async — by the time it fires, the new PTY has
@@ -5104,20 +6096,26 @@ function spawnPtyResolved(
       // Gated on weAreCurrent so the restart-race stale exit can't end the
       // just-respawned session's run. No-op when logging is disabled / this
       // session was never recorded (logSup null).
-      logSup?.runEnd(sessionId, Date.now(), exitCode === 0 ? 'exited' : 'crashed')
+      logSup?.runEnd(sessionId, Date.now(), !exitCodeKnown || exitCode === 0 ? 'exited' : 'crashed')
+      indexedRuns.delete(sessionId)
       // Logs v2 (Task 8): cancel any pending heuristic timer + clear the binder's
       // per-session bind state so a reused sessionId (restart) binds fresh.
       getTranscriptBinder()?.endRun(sessionId)
+      // P3.12: and the Codex log binder's (a Codex run's claims).
+      getCodexLogBinder()?.endRun(sessionId)
       // #536: retire any remembered CCC name so a renamed-but-never-bound session
       // does not leak an entry in the pending-name registry for the process life.
       forgetSessionName(sessionId)
-      getPtyIntegrityMonitor()?.endSession(sessionId)
+      // P3.16a round 2 (Q5): the exit of a process a Restart ended, with its
+      // next process not started yet (a Restart pressed in the partner view
+      // starts the main's next one when its view is shown), restarts the
+      // count quietly; any other end is the session's end, with its event.
+      if (restartKills.delete(sessionId)) getPtyIntegrityMonitor()?.resetSession(sessionId)
+      else getPtyIntegrityMonitor()?.endSession(sessionId)
       // (watchdog teardown now lives UNCONDITIONALLY in cleanupSessionResources
       //  below — see FINDING 1 — so the restart-race stale exit tears it down too)
-      try {
-        const gwExit = getGateway()
-        if (gwExit) gwExit.unregisterSession(sessionId)
-      } catch { /* gateway may have already stopped during shutdown */ }
+      // (P3.10 round 1, B1: with the record that a Codex launch minted it.)
+      dropGatewayToken(sessionId)
       removeLocalSessionSettings(sessionId)
       removeLocalSessionMcpConfig(sessionId)
       // ADR-009 token custody: the status-URL sidecar carries this session's MCP
@@ -5394,6 +6392,13 @@ function cleanupSessionResources(sessionId: string): void {
     codexLaunchLeases.delete(sessionId)
     codexLease.release()
   }
+  // P3.16 (M5): the integrity monitor's count of the PTY this ends starts again
+  // (round 1, N8: quietly, with no "session ended" event; the session's own
+  // exit ends the record). A Restart (and every respawn: spawnPty runs killPty
+  // first) starts a new process, and the renderer counts the bytes of each
+  // terminal mount from 0, so the new process's count starts from 0 too, on
+  // either ConPTY. A no-op when there is none.
+  getPtyIntegrityMonitor()?.resetSession(sessionId)
   pendingWrites.delete(sessionId)
   launchPendingSessions.delete(sessionId)
   recentWrites.delete(sessionId)
@@ -5431,10 +6436,37 @@ function cleanupSessionResources(sessionId: string): void {
   // place that stops the 500ms full-file-read tail poller — killPty isn't hit
   // until the tab is closed, so without this the poller ran for the dead tab.
   const codexTel = codexTelemetrySources.get(sessionId)
+  // P3.12 (Y1): a session ending holds no conversation while not indexed
+  // (P3.16 M1: and the Claude transcript and folder it was on are not the next
+  // launch's).
+  notIndexedSessions.delete(sessionId)
+  claudeTranscripts.delete(sessionId)
+  claudeFolders.delete(sessionId)
+  codexFolders.delete(sessionId)
+  endSessionNotIndexed(sessionId, Date.now())
   if (codexTel) {
     try { codexTel.stop() } catch { /* noop */ }
     codexTelemetrySources.delete(sessionId)
+    // P3.12 round 2 (Q3): a session reading this one's conversation beside
+    // it holds it now (its watcher says so, and its logs bind it).
+    for (const [other, source] of codexTelemetrySources) {
+      if (other === sessionId) continue
+      try { source.recheckShared?.() } catch { /* one session's watch never breaks another's */ }
+    }
   }
+  // P3.12 round 1 (Q1): the Codex log binder's claim goes with the session's
+  // resources (killPty runs this before every spawn, a Claude one too), so a
+  // tab respawned as another assistant keeps nothing of it; a Codex launch
+  // begins its own afterwards.
+  try { getCodexLogBinder()?.endRun(sessionId) } catch { /* best-effort */ }
+  // P3.10: the launch's hook file (its token) and its hooked mark go with
+  // the session's resources; the gateway's token for it goes on exit, as a
+  // Claude session's does, and a respawn mints a new one.
+  forgetCodexHooks(sessionId)
+  // P3.10 round 1 (Q1): a Codex turn's pending idle mark goes with the run it
+  // was for (an exit, a Restart, a Switch), so a fresh run is never marked
+  // for its predecessor's turn.
+  clearCodexIdleAttention(sessionId)
   // Clear the SSH flow controller too -- otherwise a stale entry keeps
   // a closure over the old ptyProcess and a renderer click after
   // session restart would write to a dead pty.
@@ -5500,7 +6532,31 @@ function cleanupSessionResources(sessionId: string): void {
 // time to reach the remote shell and run before we tear the tunnel down.
 const REMOTE_CLEANUP_GRACE_MS = 400
 
-export function killPty(sessionId: string): void {
+/** P3.16a round 2 (Q5): the sessions a Restart killed whose next process has
+ *  not started yet. The exit of the process it ended restarts the Services
+ *  count quietly instead of ending the session there. Set by a Restart's kill,
+ *  cleared by the next spawn of the id or a close, taken by that exit; bounded
+ *  (an id past the bound just ends as a close would). */
+const restartKills = new Set<string>()
+export const RESTART_KILLS_MAX = 512
+
+/** Why a kill came (the `pty:kill` IPC): a Restart's (its next process
+ *  follows) or a close (the session's end). Absent: neither (a spawn's own
+ *  kill of the process it replaces, a quit). */
+export interface KillPtyOptions { reason?: 'restart' | 'close' }
+
+export function killPty(sessionId: string, opts: KillPtyOptions = {}): void {
+  if (opts.reason === 'restart') {
+    restartKills.delete(sessionId)
+    restartKills.add(sessionId)
+    while (restartKills.size > RESTART_KILLS_MAX) {
+      const oldest = restartKills.values().next().value
+      if (oldest === undefined) break
+      restartKills.delete(oldest)
+    }
+  } else if (opts.reason === 'close') {
+    restartKills.delete(sessionId)
+  }
   // rc.15 review R3: a spawn still waiting for its profile's refresh has no PTY
   // yet -- cancel the wait (its hold goes with it); there is nothing else to kill.
   const waiting = refreshWaitSpawns.get(sessionId)
@@ -5530,6 +6586,27 @@ export function killPty(sessionId: string): void {
   if (entry && dyingLease) {
     codexLaunchLeases.delete(sessionId)
     releaseCodexLeaseOnExit(entry.ptyProcess, dyingLease)
+    // P3.12 (K1): a not-indexed window this session holds stays open until the
+    // process has ended (a killed Codex goes on writing while it winds down, and
+    // a Switch's carry copies what it writes), or the grace passes with no end
+    // reported; it is closed then, at that moment, and only that window.
+    let closeWindow: ((ts: number) => void) | null = null
+    try { closeWindow = releaseNotIndexedWindow(sessionId) } catch { /* best-effort */ }
+    // P3.6: a Switch account's carry waits for this process to end.
+    noteCodexRunEnding(sessionId, entry.ptyProcess, closeWindow ? () => closeWindow?.(Date.now()) : undefined)
+  } else if (entry) {
+    // P3.16 (M1): a killed Claude session's window the same way: open while
+    // its process winds down, closed when its exit is reported or the grace
+    // passes, and only that window. (None was opened for a shell or SSH.)
+    let closeWindow: ((ts: number) => void) | null = null
+    try { closeWindow = releaseNotIndexedWindow(sessionId) } catch { /* best-effort */ }
+    if (closeWindow) closeWindowWhenEnded(entry.ptyProcess, closeWindow)
+  }
+  // P3.10 round 2 (R8): a killed Codex session's gateway token goes now, so
+  // the gateway refuses its dying process's late hooks; the record that its
+  // hooks are Codex's stays until the process exits (codexGatewayTokens).
+  if (codexGatewayTokens.has(sessionId)) {
+    try { getGateway()?.unregisterSession(sessionId) } catch { /* the gateway may have stopped */ }
   }
   // Read persistence BEFORE cleanupSessionResources runs (it no longer clears
   // these, but killPty does, at the end).
@@ -5562,6 +6639,11 @@ export function killPty(sessionId: string): void {
     ptySessions.delete(sessionId)
   }
   cleanupSessionResources(sessionId)
+  // P3.16a round 2 (Q5): a close with no process left to report its end (it
+  // ended before, or a Restart's exit restarted its count quietly and no next
+  // process started) is the session's end on the Services page now. A no-op
+  // when the record already went with the process's end.
+  if (!entry && opts.reason === 'close') getPtyIntegrityMonitor()?.endSession(sessionId)
   // Deliberate close: NOW drop the end-target + persistence flag (see the maps'
   // doc). A natural exit reaches cleanupSessionResources but not here, so the
   // target survives a transient drop for a later End.
@@ -5666,4 +6748,13 @@ export function getActivePtySessionIds(): string[] {
 // it. The renderer status enum is UI-only; PTY presence is authoritative.
 export function isSessionWritable(sessionId: string): boolean {
   return ptySessions.has(sessionId)
+}
+
+// P3.13: whether main holds this session, running or on its way to running: a
+// PTY, or a spawn parked on a profile refresh, the project gate or a launch
+// preparation (refreshWaitSpawns). The one-at-a-time rule (launch-one-at-a-time.ts)
+// counts a copy of a config from the moment its spawn is accepted, so a second
+// copy asked for while the first is still preparing is refused too.
+export function isSessionLiveOrStarting(sessionId: string): boolean {
+  return ptySessions.has(sessionId) || refreshWaitSpawns.has(sessionId)
 }
