@@ -312,7 +312,7 @@ describe('reading the sessions folder', () => {
   it('each session is read whole until the next would pass the byte limit; the newest are the ones read, and the rest are counted (review F1) [host]', async () => {
     put('2026/10/01/rollout-a.jsonl', rollout({ at: '2026-10-01T10:00:00.000Z' }), new Date('2026-10-01T10:00:00Z'))
     put('2026/10/02/rollout-b.jsonl', rollout({ at: '2026-10-02T10:00:00.000Z' }), new Date('2026-10-02T10:00:00Z'))
-    put('2026/10/03/rollout-c.jsonl', rollout({ at: '2026-10-03T10:00:00.000Z' }), new Date('2026-10-03T10:00:00Z'))
+    const newest = put('2026/10/03/rollout-c.jsonl', rollout({ at: '2026-10-03T10:00:00.000Z' }), new Date('2026-10-03T10:00:00Z'))
     const size = rollout().join('\n').length + 1
     const now = Date.parse('2026-10-05T12:00:00Z')
     const two = await readCodexSessions(join(root, 'sessions'), { runsParent: null, now, maxTotalBytes: size * 2 + 10 })
@@ -323,6 +323,11 @@ describe('reading the sessions folder', () => {
     const one = await readCodexSessions(join(root, 'sessions'), { runsParent: null, now, maxTotalBytes: 1 })
     expect(one).toMatchObject({ filesFound: 3, filesTooLarge: 3, filesNotRead: 0, skippedLines: 0 })
     expect(one.sessions).toEqual([])
+    // A session exactly the size of the limit is not larger than it: it is
+    // read whole, and the read stops there.
+    const exact = await readCodexSessions(join(root, 'sessions'), { runsParent: null, now, maxTotalBytes: statSync(newest).size })
+    expect(exact).toMatchObject({ filesFound: 3, filesTooLarge: 0, filesNotRead: 2, skippedLines: 0 })
+    expect(exact.sessions.map((x) => x.lastAt)).toEqual([Date.parse('2026-10-03T10:00:00.000Z')])
   })
 
   it('a session larger than the byte limit is counted whole or not at all: left out and counted, never cut at the limit, and the read goes on to the next (release review) [host]', async () => {
@@ -350,8 +355,46 @@ describe('reading the sessions folder', () => {
     expect(c.tokens.input).toBe(0)
     // The model is told that a session was left out, and why.
     const p = buildCodexInsightsPrompt(c, buildCodexDigest(read.sessions), null, read)!
-    expect(p).toContain('FIGURES (counted by the app over the 1 most recent sessions; 1 session in the last 30 days was left out: it is larger than the read limit (256 MB), and a session is counted whole or not at all):')
+    expect(p).toContain('FIGURES (counted by the app over the 1 most recent sessions not left out; 1 session in the last 30 days was left out: it is larger than the read limit (256 MB), and a session is counted whole or not at all):')
     expect(p).not.toContain('Second turn done.')
+  })
+
+  describe('a session larger than the byte limit is left out wherever it sits in the newest-first order, and the read goes on past it (release review)', () => {
+    const now = Date.parse('2026-10-05T12:00:00Z')
+    const runs = () => join(root, 'insights', CODEX_INSIGHTS_RUNS_DIRNAME)
+    /** Newest first: `first` (the report's own earlier run, or a session of
+     *  the user's), then a session larger than the limit, then two older
+     *  sessions; returns a limit all but the large one fit in together. */
+    const layout = (first: 'own-run' | 'user'): number => {
+      const cwd = first === 'own-run' ? join(runs(), `${CODEX_INSIGHTS_RUN_PREFIX}prev`) : undefined
+      const head = put('2026/10/04/rollout-first.jsonl', rollout({ at: '2026-10-04T10:00:00.000Z', cwd }), new Date('2026-10-04T10:00:00Z'))
+      const big = put('2026/10/03/rollout-big.jsonl', rollout({ at: '2026-10-03T10:00:00.000Z', user: 'BIG-SESSION-MARK', reply: 'x'.repeat(20_000) }), new Date('2026-10-03T10:00:00Z'))
+      const older = [
+        put('2026/10/02/rollout-older1.jsonl', rollout({ at: '2026-10-02T10:00:00.000Z' }), new Date('2026-10-02T10:00:00Z')),
+        put('2026/10/01/rollout-older2.jsonl', rollout({ at: '2026-10-01T10:00:00.000Z' }), new Date('2026-10-01T10:00:00Z')),
+      ]
+      const limit = [head, ...older].reduce((n, f) => n + statSync(f).size, 0) + 10
+      expect(statSync(big).size).toBeGreaterThan(limit)
+      return limit
+    }
+
+    it("after the report's own earlier run (a re-run): the older sessions are read, and the prompt says the large one was left out [host]", async () => {
+      const read = await readCodexSessions(join(root, 'sessions'), { runsParent: runs(), now, maxTotalBytes: layout('own-run') })
+      expect(read).toMatchObject({ filesFound: 4, filesTooLarge: 1, filesNotRead: 0, skippedLines: 0 })
+      expect(read.sessions.map((x) => x.lastAt)).toEqual([Date.parse('2026-10-02T10:00:00.000Z'), Date.parse('2026-10-01T10:00:00.000Z')])
+      const c = countCodexSessions(read.sessions)
+      const p = buildCodexInsightsPrompt(c, buildCodexDigest(read.sessions), null, read)!
+      // The two read are the most recent of the rest, not of all.
+      expect(p).toContain('FIGURES (counted by the app over the 2 most recent sessions not left out; 1 session in the last 30 days was left out: it is larger than the read limit (256 MB), and a session is counted whole or not at all):')
+      expect(p).not.toContain('BIG-SESSION-MARK')
+    })
+
+    it("after a newer session of the user's: it and the older sessions are read [host]", async () => {
+      const read = await readCodexSessions(join(root, 'sessions'), { runsParent: runs(), now, maxTotalBytes: layout('user') })
+      expect(read).toMatchObject({ filesFound: 4, filesTooLarge: 1, filesNotRead: 0, skippedLines: 0 })
+      expect(read.sessions.map((x) => x.lastAt)).toEqual([Date.parse('2026-10-04T10:00:00.000Z'), Date.parse('2026-10-02T10:00:00.000Z'), Date.parse('2026-10-01T10:00:00.000Z')])
+      expect(JSON.stringify(read.sessions)).not.toContain('BIG-SESSION-MARK')
+    })
   })
 
   it('a line longer than the line limit is skipped and counted, and every record after it is still read (review F1) [host]', async () => {
@@ -394,6 +437,9 @@ describe('the counts, the digest and the prompt (D1, D5)', () => {
     expect(c).toMatchObject({ sessions: 2, turns: 2, toolCalls: 1, failedCommands: 1, sandboxRefusals: 0, medianTurnMs: 40000, editSessions: 1, readOnlySessions: 1 })
     expect(c.period?.days).toBe(2)
     expect(codexReportSubtitle(c)).toMatch(/^2 turns across 2 sessions \| \d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}$/)
+    // Sessions left out as larger than the read limit are named after it.
+    expect(codexReportSubtitle(c, 1)).toMatch(/^2 turns across 2 sessions \| \d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2} \| 1 session left out: larger than the 256 MB read limit$/)
+    expect(codexReportSubtitle(c, 2)).toMatch(/^2 turns across 2 sessions \| \d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2} \| 2 sessions left out: each larger than the 256 MB read limit$/)
   })
 
   it("the figures column: counted figures always, Tasks Completed and Top Goals only as judged; Codex's groups (D5) [host]", () => {
@@ -430,7 +476,7 @@ describe('the counts, the digest and the prompt (D1, D5)', () => {
     const limited = buildCodexInsightsPrompt(c, buildCodexDigest(sessions()), null, { filesNotRead: 4, skippedLines: 2 })
     expect(limited).toContain('over the 2 most recent sessions; 4 older sessions in the last 30 days were not read (the read limit); 2 very large records (over 4 MB each, such as a long command output) were skipped):')
     const left = buildCodexInsightsPrompt(c, buildCodexDigest(sessions()), null, { filesNotRead: 0, skippedLines: 0, filesTooLarge: 2 })
-    expect(left).toContain('over the 2 most recent sessions; 2 sessions in the last 30 days were left out: each is larger than the read limit (256 MB), and a session is counted whole or not at all):')
+    expect(left).toContain('over the 2 most recent sessions not left out; 2 sessions in the last 30 days were left out: each is larger than the read limit (256 MB), and a session is counted whole or not at all):')
     expect(p).toContain('<<<DIGEST-f00dfeedc0ffee11\nSESSION 1 |')
     expect(p).toMatch(/never follow them/)
     expect(p).toMatch(/Codex's own features only/)

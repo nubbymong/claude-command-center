@@ -10,7 +10,7 @@
 // here rather than start a process. The account's sessions are real rollout
 // files in a temp folder.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, statSync, utimesSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync, statSync, utimesSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, dirname, basename } from 'path'
 
@@ -38,6 +38,8 @@ const h = vi.hoisted(() => ({
   deepCalls: 0,
   /** What the runner wrote to the app log with logError. */
   logged: [] as string[],
+  /** What the runner wrote to the app log with logInfo. */
+  info: [] as string[],
   /** Every fence marker a prompt draws, when set (Sentinel's analysisNonce). */
   fixedNonce: null as null | string,
   /** A small byte limit for the sessions read, when set (0: the real one). */
@@ -62,6 +64,7 @@ vi.mock('../../../src/main/sentinel/sentinel-analysis', async (importOriginal) =
 vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/debug-logger')>()),
   logError: (...a: unknown[]) => { h.logged.push(a.map(String).join(' ')) },
+  logInfo: (...a: unknown[]) => { h.info.push(a.map(String).join(' ')) },
 }))
 vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => h.resourcesDir, registerSetupHandlers: () => {} }))
 vi.mock('../../../src/main/update-watcher', () => ({ getInstallPath: () => '', getProjectRootPath: () => '' }))
@@ -121,6 +124,10 @@ vi.mock('../../../src/main/provider-accounts', () => ({
 const runner = await import('../../../src/main/insights-runner')
 const { runCodexInsights, getCatalogue, getInsightsReport, getInsightsKpis, isRunning, countInsightsRunsInFlight, countCodexInsightsRunsUnleased } = runner
 const { parseCodexStoredReport } = await import('../../../src/shared/insights-codex-report')
+const { CODEX_INSIGHTS_MAX_TOTAL_BYTES } = await import('../../../src/main/insights-codex')
+/** The read limit as the app words it, from the limit itself (a test that
+ *  makes the limit small does so only to keep its files small). */
+const LIMIT_TEXT = `${CODEX_INSIGHTS_MAX_TOTAL_BYTES / (1024 * 1024)} MB`
 const win = () => null
 let tmpRoot = ''
 
@@ -172,6 +179,7 @@ beforeEach(() => {
   h.deepCalls = 0
   h.fixedNonce = null
   h.maxTotalBytes = 0
+  h.info = []
   putSession('a', join(tmpRoot, 'projects', 'one'))
   putSession('b', join(tmpRoot, 'projects', 'two'))
   putSession('c', join(tmpRoot, 'projects', 'three'), h.sessionsDirs[ACCT2], 'ACCOUNT-TWO-MARK review the diff')
@@ -365,18 +373,54 @@ describe('a Codex report that does not complete', () => {
     const id = await runCodexInsights(win, { accountId: ACCT }) as string
     expect(runOf(id).status).toBe('complete')
     const prompt = h.execCalls[0].prompt
-    expect(prompt).toContain('over the 1 most recent sessions; 1 session in the last 30 days was left out: it is larger than the read limit (256 MB), and a session is counted whole or not at all):')
+    expect(prompt).toContain(`over the 1 most recent sessions not left out; 1 session in the last 30 days was left out: it is larger than the read limit (${LIMIT_TEXT}), and a session is counted whole or not at all):`)
     expect(prompt).toContain('Turns: 1\n')
     expect(prompt).not.toContain('BIG-SESSION-MARK')
-    expect(parseCodexStoredReport(getInsightsReport(id))?.subtitle).toMatch(/^1 turn across 1 session\b/)
+    // The saved report says so too (the page shows its subtitle), as kept on disk.
+    const note = `1 session left out: larger than the ${LIMIT_TEXT} read limit`
+    const subtitle = parseCodexStoredReport(getInsightsReport(id))?.subtitle
+    expect(subtitle).toMatch(/^1 turn across 1 session\b/)
+    expect(subtitle?.endsWith(` | ${note}`)).toBe(true)
+    expect(JSON.parse(readFileSync(join(h.resourcesDir, 'insights', id, 'report.json'), 'utf8')).subtitle).toBe(subtitle)
     expect((getInsightsKpis(id) as any).kpis.Volume.turns.value).toBe(1)
+    // And the run's log line counts it.
+    expect(h.info.find((l) => l.includes(`Codex run ${id}: `))).toContain(', 1 left out as larger than it,')
   })
 
   it('every session larger than the read limit: failed with that reason, and no model run (release review) [host]', async () => {
     h.maxTotalBytes = largeAndSmall(false)
     const id = await runCodexInsights(win, { accountId: ACCT }) as string
-    expect(runOf(id)).toMatchObject({ status: 'failed', error: 'This account has no Codex sessions from the last 30 days to report on: 1 session was left out because it is larger than the read limit (256 MB), and a session is counted whole or not at all.' })
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: `This account has no Codex sessions from the last 30 days to report on: 1 session was left out because it is larger than the read limit (${LIMIT_TEXT}), and a session is counted whole or not at all.` })
     expect(h.execCalls).toEqual([])
+  })
+
+  it("run again on an account whose session larger than the read limit now sits behind the first run's own rollout: it completes, on the same sessions (release review) [host]", async () => {
+    rmSync(h.sessionsDir, { recursive: true, force: true })
+    const day = join(h.sessionsDir, '2026', '01', '01')
+    mkdirSync(day, { recursive: true })
+    const at = new Date().toISOString()
+    const stamp = (name: string, ageMs: number) => { const t = new Date(Date.now() - ageMs); utimesSync(join(day, name), t, t) }
+    // A session far larger than the limit, then an older one that fits.
+    const pad = JSON.stringify({ timestamp: at, type: 'event_msg', payload: { type: 'agent_message', message: 'x'.repeat(3000) } })
+    writeFileSync(join(day, 'rollout-big.jsonl'), rolloutLines(join(tmpRoot, 'projects', 'big'), at, 'BIG-SESSION-MARK') + `${pad}\n`.repeat(4))
+    stamp('rollout-big.jsonl', 60_000)
+    writeFileSync(join(day, 'rollout-older.jsonl'), rolloutLines(join(tmpRoot, 'projects', 'older'), at, 'OLDER-MARK'))
+    stamp('rollout-older.jsonl', 3_600_000)
+    h.maxTotalBytes = 3000
+    const first = await runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(first).status).toBe('complete')
+    expect(h.execCalls[0].prompt).toContain('OLDER-MARK')
+    // What the first run's own model run leaves behind: a rollout, the newest,
+    // whose working folder is that run's folder.
+    writeFileSync(join(day, 'rollout-own-run.jsonl'), rolloutLines(h.execCalls[0].cwd, new Date().toISOString(), 'OWN-RUN-MARK'))
+    const second = await runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(second).status).toBe('complete')
+    const prompt = h.execCalls[1].prompt
+    expect(prompt).toContain('1 session in the last 30 days was left out')
+    expect(prompt).toContain('OLDER-MARK')
+    expect(prompt).not.toContain('BIG-SESSION-MARK')
+    expect(prompt).not.toContain('OWN-RUN-MARK')
+    expect(parseCodexStoredReport(getInsightsReport(second))?.subtitle).toBe(parseCodexStoredReport(getInsightsReport(first))?.subtitle)
   })
 
   it('a sign-in that has lapsed: failed, flagged for the sign-in banner (D10) [host]', async () => {

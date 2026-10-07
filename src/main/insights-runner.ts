@@ -1457,7 +1457,8 @@ export async function runCodexInsights(
       publish()
       const parsed = parseCodexInsightsReply(out.text)
       if (!parsed.ok) return { failed: codexReplyFailedMessage(parsed.reason) }
-      const stored = codexStoredReport(counts, parsed.reply)
+      // The saved report (so the page too) names any session left out.
+      const stored = codexStoredReport(counts, parsed.reply, read.filesTooLarge)
       if (!stored) return { failed: codexReplyFailedMessage('its cards did not check') }
       return { stored, kpis: codexInsightsKpis(counts, parsed.reply) }
     })
