@@ -60,7 +60,7 @@ No images were added. Images that showed a surface this release retired, and wha
 | Image | Showed | Decision |
 | --- | --- | --- |
 | `src/renderer/assets/training/step-security.jpg`, `step-security-mac.jpg` | The Settings rail with the retired Codex tab | No longer used: the Multiple Accounts, Settings and Sentinel cards now show the neutral `v2-shell-hero.jpg`, as the two new cards do. Needs a recapture of the current Settings, Accounts page. |
-| `src/renderer/assets/training/step-vision.jpg` | The Conductor MCP page, whose Codex review card still points at "Settings -> Codex" | Kept on the Conductor MCP, Agent Canvas and Canvas Explained cards. Recaptured on the 2.1.1-beta.2 candidate and approved by the owner on 2026-10-07: it shows the page without that pointer. Its macOS variant `step-vision-mac.jpg` is not yet recaptured. |
+| `src/renderer/assets/training/step-vision.jpg` | The Conductor MCP page, whose Codex review card still points at "Settings -> Codex" | Kept on the Conductor MCP, Agent Canvas and Canvas Explained cards. Recaptured on the 2.1.1-beta.2 candidate and approved by the owner on 2026-10-07: it shows the page without that pointer. Its macOS variant `step-vision-mac.jpg` was recaptured on a macOS build of the same candidate and approved by the owner on 2026-10-07 too. |
 | `docs/screenshots/settings.jpg`, `settings-mac.jpg` | A 1.5.x Settings page with the Codex tab | Referenced by nothing; nothing to remove. |
 | `docs/screenshots/shot-memory.png` | The Memory page with the banner WP2 removed, and no Codex account's memories (P4.4 lists them) | Not recaptured: the README shows no Memory image, since a superseded shot beside text that contradicts it is worse than none (P4.11 review), and nothing references the file. |
 | `docs/screenshots/shot-tokenomics.png` | Tokenomics without the provider and account filters and the split KPIs (the WP2 usage track) | Recaptured on the 2.1.1-beta.2 candidate and approved by the owner on 2026-10-07: it shows the provider and account filters. |
@@ -78,7 +78,9 @@ the four Feature Guide images (`v2-shell-hero.jpg`, `step-session-options.jpg`,
 `step-tokenomics.jpg`, `step-vision.jpg`) were then recaptured on the
 2.1.1-beta.2 candidate and approved by the owner on 2026-10-07. Their macOS
 variants `step-session-options-mac.jpg`, `step-tokenomics-mac.jpg` and
-`step-vision-mac.jpg` are not yet recaptured and remain owed, on a Mac.
+`step-vision-mac.jpg` were then recaptured on a macOS build of the
+2.1.1-beta.2 candidate, made on a Mac from a later head of this branch, and
+approved by the owner on 2026-10-07.
 
 For the recapture (the VM for Windows and the Mac for macOS, never the owner's
 machine): the capture tool runs the app on a home of its own inside its
