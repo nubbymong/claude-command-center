@@ -1,8 +1,8 @@
 # Row 58, the artifacts half: a section 19 record (signed)
 
 **Status:** Signed by the owner on the Agent Canvas, 2026-10-05: alternative A (section 6). Drafted 2026-10-03,
-refreshed 2026-10-04 against the PR 4 head `ec2343c0`, and its citations re-checked for this copy on 2026-10-05
-against `f6b9a086`. Row 58 (Web sign-in and artifacts), phase P4.6 of the completion plan
+refreshed 2026-10-04 against the PR 4 head `18cfc710`, and its citations re-checked for this copy on 2026-10-05
+against `5ec4423b`. Row 58 (Web sign-in and artifacts), phase P4.6 of the completion plan
 (`docs/wp2/completion-plan.md`). The web-session half of row 58 is separate and is not decided here.
 
 **Design section 19** is the approved WP1 design's unsupported-capability escalation: where a shared feature cannot

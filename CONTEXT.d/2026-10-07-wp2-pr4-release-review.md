@@ -1,6 +1,6 @@
 ## 2026-10-07 -- WP2 PR 4: fix passes 16 to 18, the release review and its reviews
 
-Fix pass 16 (aff08b70, 3332c3ac), for the release review of 2026-10-07,
+Fix pass 16 (387eacf5, 1d8330cd), for the release review of 2026-10-07,
 each fix with tests red before it (6 new tests; 7 mutants, 7 red). A Codex
 Insights report counts a session whole or not at all: a session larger than
 the read limit is left out and counted, the prompt says how many and why, and
@@ -16,13 +16,13 @@ Its spec and quality reviews and its ADR-009 pass are answered by fix pass 17,
 below.
 
 Where PR 4 stood before it: the reviews and attack passes of fix passes 10 to
-15 PASS; CI is green at 91e438fd (run 37553704348), the Linux and Codex
+15 PASS; CI is green at 6c1e0d52 (run 37553704348), the Linux and Codex
 conformance jobs included, and the Desktop test gate waits on the owner
-(#309); the VM final pass ran at dc9d6aeb (the package upgrade, e2e 94 of 94,
+(#309); the VM final pass ran at 7c1fab06 (the package upgrade, e2e 94 of 94,
 native 226 of 226, the quarantine suites, the paste and colour checks), and
-the commits from there to 91e438fd change no main or preload source.
+the commits from there to 6c1e0d52 change no main or preload source.
 
-Fix pass 17 (3e50a9cf, 05b629fb), for fix pass 16's spec and quality reviews
+Fix pass 17 (a5220bc0, b27e1df0), for fix pass 16's spec and quality reviews
 and its ADR-009 pass (the Insights read, account sign-in storage), each change
 with a test red before it (7 new tests, 8 changed; 19 mutants, 18 red, and 1
 equivalent survivor: dropping the close right before each wipe, which the
@@ -52,7 +52,7 @@ The user-facing surfaces for the new subtitle text: app knowledge, the
 Feature Guide, the tour, the tips, the report's help text and the changelog
 make no Insights claim it contradicts, so none needs a change.
 
-The T27 move (0061b2b2): T27 needs a host with a system tmux, and the Pi
+The T27 move (7e8aaad3): T27 needs a host with a system tmux, and the Pi
 lane's host is deliberately without one, so it moved to the linuxKey lane
 with the same assertions; that lane passed 4 of 4.
 
@@ -97,11 +97,17 @@ their own share, once, and a wipe's bar lasts until the whole wipe is done,
 its record removal included. Fix passes 18 and 18b (the second for 18's
 reviews and ADR-009 re-attack): 6 new tests; 8 mutants, 7 red, and 1
 equivalent survivor (removing only the once-only guard, which no path needs
-while each share is released once).
+while each share is released once). Fix pass 18b passed its spec and
+quality reviews and the ADR-009 re-attack, and the pre-push checks were
+clear.
 
-The owner approved the README and Feature Guide images on 2026-10-07; they
-are committed separately.
+The owner approved the README and Feature Guide images, Windows and macOS,
+on 2026-10-07; they are committed separately.
 
-Owed now: the confirmation of fix pass 18b by the same reviewers and
-attackers, and CI at the new head; the PR-level ADR-009 pass at PR 4's final
+The owner decided on 2026-10-07 that the real-account chatgpt.com sign-in
+sitting (OR2, and the one-account part of OR1) was not run before this
+release and moves to the owner's own test of 2.1.1-beta.2. The checks that
+need two distinct identities stay outstanding.
+
+Owed now: CI at the new head; the PR-level ADR-009 pass at PR 4's final
 head; the SSH live matrix and the owner's other checks.

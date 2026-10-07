@@ -78,7 +78,7 @@ checklist):
   cards for the assistants in use, and the PR 4 user-facing sweep with the
   2.1.1 changelog lines, built on the defaults of questions 5 to 8; seven
   listed items are owner calls (the plan's P4.11 record).
-- P4.7 (row 68, DONE, mocked; d99a553b to 818d45a7 with fix passes 1 to
+- P4.7 (row 68, DONE, mocked; 9c4f219e to 4079c764 with fix passes 1 to
   9, fix pass 5 below): Insights for a Codex account as the OR3 mockup
   drew it, approved on the canvas 2026-10-05 (C1 = A): the app reads and
   counts that account's own sessions, and one read-only `codex exec` with
@@ -86,46 +86,46 @@ checklist):
   figures and history as text; Run all rolls up the accounts of both
   assistants, its written analysis holding no tools and reading the
   comparison as data; `insights:run` answers the app window only and checks
-  the provider and id class. Fix pass 1 (23505eaa to 63878767) cleared the
-  three WP1 gate failures found at integration; fix pass 2 (b896c5d9,
-  a566fff8) answers ADR-009 round 1 and the spec and quality reviews; fix
-  pass 3 (228af0d5 to b0165c10) answers the VM dry run with the real CLI:
+  the provider and id class. Fix pass 1 (834ec616 to dccd1770) cleared the
+  three WP1 gate failures found at integration; fix pass 2 (a3aa3db4,
+  a786d82a) answers ADR-009 round 1 and the spec and quality reviews; fix
+  pass 3 (c1b278b2 to 2eb9f998) answers the VM dry run with the real CLI:
   the sandbox refusals counted in the words real sessions record, an
   account whose sign-in check failed named in Run all with its reason, and
   the provider row's in-use line following the count; fix pass 4
-  (df25c65b, c293f847) answers ADR-009 round 2 (PASS: 0 blocker, 0 major)
+  (256bb133, 750d272c) answers ADR-009 round 2 (PASS: 0 blocker, 0 major)
   and the fix pass 3 reviews, their minors fixed (26 mutants, 26 killed);
-  fix pass 6 (46510944 to d01c91e5) answers ADR-009 round 3 (four lenses,
+  fix pass 6 (3397df8d to cf1c167c) answers ADR-009 round 3 (four lenses,
   PASS: 0 blocker, 0 major) and the fix pass 4 reviews (8 mutants, 8
-  killed); fix pass 7 (23176b9c; 4 mutants, 4 killed) answers the one
+  killed); fix pass 7 (58abef14; 4 mutants, 4 killed) answers the one
   minor of ADR-009 round 4 over fix pass 6 (two lenses, PASS: 0 blocker, 0
-  major); fix pass 8 (699c0214) puts the Codex run confirmation in its own
-  file on the dialog palette, for the #360 guard CI failed on at d1a126a3;
-  fix pass 9 (818d45a7) answers the two nits of fix pass 8's quality
+  major); fix pass 8 (1bf3df7e) puts the Codex run confirmation in its own
+  file on the dialog palette, for the #360 guard CI failed on at 01bf64db;
+  fix pass 9 (4079c764) answers the two nits of fix pass 8's quality
   review: the confirmation's controls show focus, and Escape and Cancel
   give focus back to the Run button that opened it. The spec and quality
   reviews of fix passes 4, 6 and 8 PASS; ADR-009 round 5
-  over fix pass 7 (one lens) PASS at d1a126a3. At d1a126a3 the VM run
+  over fix pass 7 (one lens) PASS at 01bf64db. At 01bf64db the VM run
   passed every piece (3 refusals and 3 failed commands per account on
   0.153.4 and 0.155.1, the links file 6 of 6, the packaged walk), and the
   pre-push batch to it was green (327 host-safe unit files, 6,037 tests,
-  at f9630c5d; fix pass 7 again at d1a126a3). Row 58's artifacts record
-  is signed (67f44333).
+  at dfcf34af; fix pass 7 again at 01bf64db). Row 58's artifacts record
+  is signed (b2047f0d).
 
 **Reviews since fix pass 8.** The spec and quality reviews of fix pass 8
-PASS (two nits, fixed in 818d45a7); the spec reviews of 1daf5faa,
-c0a0b7f6, 07b400b8 and f6b9a086 PASS, with one minor on 1daf5faa (a
+PASS (two nits, fixed in 4079c764); the spec reviews of 99a3bb21,
+1f0a096d, e5a9e356 and 5ec4423b PASS, with one minor on 99a3bb21 (a
 chatgpt.com pane closed because the sign-in made in it could not be
-recorded did not say why), fixed in bafde453; row 58's round 7 quality
-review PASS at 9ab9c41c. Fix pass 9 is bafde453 and 818d45a7.
+recorded did not say why), fixed in b7a96be2; row 58's round 7 quality
+review PASS at 4a24ec9a. Fix pass 9 is b7a96be2 and 4079c764.
 
 **Owed for PR 4 now.** The spec and quality reviews of fix pass 9; the
 checks of the dev dependency bumps; what the Electron 44 migration still owes
 (the Owed list in its 2026-10-06 fragment; the finding that was under
-investigation, the colour reply, was fixed in 409b455a); the owner's checks
+investigation, the colour reply, was fixed in 501c2bd8); the owner's checks
 (OR1, OR2, OR4, OR5a and the screenshot review). Done since: the VM final
-pass ran at dc9d6aeb, and the commits from there to 91e438fd change no main
-or preload source; CI's required jobs are green at 91e438fd (run
+pass ran at 7c1fab06, and the commits from there to 6c1e0d52 change no main
+or preload source; CI's required jobs are green at 6c1e0d52 (run
 37553704348), and its Desktop test gate is red by design until the owner
 attests (#309).
 
@@ -144,13 +144,13 @@ help folder cannot be rebuilt.
 
 **Reviews.** Every phase had its spec and code-quality review, a batched
 fix pass per lane, and a re-review of those fixes; the re-review's own fix
-pass (41638f93, b4413a24) is verified, spec and quality PASS, and the WP1
-ledger is current at b4413a24 (0a643a5e). Recorded residuals and follow-ups
+pass (d7b38752, 56200cd5) is verified, spec and quality PASS, and the WP1
+ledger is current at 56200cd5 (a313d4e0). Recorded residuals and follow-ups
 are in each phase's record: among them the Past discussions picker when the
 resources folder sits inside a git repository (a follow-up proposal) and the
 POSIX quit check of a Codex agent's commands (VM).
 
-**Gate status.** ADR-009 pass: PASS at 1a51bb66 (four lenses, two fix rounds);
+**Gate status.** ADR-009 pass: PASS at 2d296eea (four lenses, two fix rounds);
 VM confirmations owed. The SSH live matrix at PR 4's final head (OR5:
 `pty-manager.ts` changed outside the SSH branch). The VM walks each phase
 lists, the e2e suite at the final head, CI with `ci-run` (the first Linux run
@@ -159,23 +159,23 @@ the owner's screenshot review, OR1 to OR4, the Desktop test gate, and
 questions 5 to 8. Findings about pre-existing behaviour raised by the reviews
 were routed privately.
 
-**VM checkpoints and CI.** VM checkpoints 1 and 2 ran at 69c98042 and
-passed, apart from four findings fixed in 2ef1c892, 00b8da6d, 3bb58680 and
-e30aded1 (the plan's 9.7 record), with P4.5's non-admin edit case going to
+**VM checkpoints and CI.** VM checkpoints 1 and 2 ran at 956df1a3 and
+passed, apart from four findings fixed in 5e5d0478, aa581eda, 5dfb19b8 and
+f102dd70 (the plan's 9.7 record), with P4.5's non-admin edit case going to
 OR6 and the memory delete check to OR4. PR 4's first CI run failed on POSIX
-in tests only (b76e9f6c, 1eba3623); on ext4 a file deleted and made again at
+in tests only (beee8507, 7fd211ed); on ext4 a file deleted and made again at
 once keeps its inode, recorded as a limit of the identity checks. Still owed
 on the VM: a picker launch showing the inline guidance in a new
 conversation, the compat test leaving `~/.codex` untouched, and an Ask
 Restart resuming on both assistants.
 
-**Final head.** The final-head VM run at f73f1785 passed (e2e 94 of 94, the
+**Final head.** The final-head VM run at c65d0b19 passed (e2e 94 of 94, the
 picker guidance, the compat test, an Ask Restart on both assistants, the Auto
 refusal, the capture tool's host safety); what it found since is fixed
-(eef195d8, 512e6bb4), and row 38 stays scheduled. The recaptured images wait
+(c1c34f1f, 59dd48c7), and row 38 stays scheduled. The recaptured images wait
 for the owner's review, with step-snap and the Mac images still to take.
-512e6bb4 fixes a boot chain latent since 2.1.0 that no shipped path hit. The
-dependency floors are raised (198b0412, ca965fd7); the electron-builder 26 and
+59dd48c7 fixes a boot chain latent since 2.1.0 that no shipped path hit. The
+dependency floors are raised (7d1deeed, 1be6f8c6); the electron-builder 26 and
 excalidraw chains need major changes and are the owner's. P4.10's second part
 is done; OR1, OR4, the VM rollback run and the release-level items stay
 owner-gated.
@@ -183,10 +183,10 @@ owner-gated.
 **Usage attribution, fix pass 5.** #625's attribution delta pass (four
 minors) and the two tests its spec review owed are answered on this branch:
 a session's usage is attributed only to the profile it runs under now, with
-ASCII-only case folding and an exact registry link first (a5b181ea);
+ASCII-only case folding and an exact registry link first (0b3f913c);
 attributions are kept, never queued, while the index is not listening
-(6f9cbd4f); the first-index and re-read progress tests (932b7d00); the guide
+(2d4ae702); the first-index and re-read progress tests (f536ad4d); the guide
 and app knowledge say how a resumed session is attributed (the records
-commit), and fix pass 6 brings the README's summary into line (cc6f2ac1).
+commit), and fix pass 6 brings the README's summary into line (158d5c2a).
 Confirmed: #625's delta ADR-009 confirmation over fix pass 5 (two lenses)
 PASS, and fix pass 5's spec and quality reviews PASS.

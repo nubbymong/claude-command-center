@@ -105,7 +105,7 @@ export function withoutLastStdoutLine(fixtureText: string): string {
 
 /** A difference between one OS's help and the fixtures, which were captured
  *  on Windows, reviewed and accepted by name (P4.10: CI run 37134624406 at
- *  fcfd2ae6, every capture read line by line; docs/wp1/evidence/
+ *  f4d98918, every capture read line by line; docs/wp1/evidence/
  *  ci-matrix.md, "Help captures reviewed"). On `platform`, for the listed
  *  versions and captures, the fixture's line `line` in `stream`, which must
  *  be there exactly once, reads as `becomes` (several lines, or none). */

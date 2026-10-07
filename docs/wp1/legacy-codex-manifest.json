@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-07T01:56:38.711Z",
-  "head": "3332c3ac9153f7f53d5303d1b1fef6da2312efcf",
-  "tree": "1b64d58229b80d233061584fda50ae2e366cf9ba",
+  "generatedAt": "2026-10-07T12:05:19.860Z",
+  "head": "a7ed55bbc0bb118a6f5ee80b20ef43bf1cc0ffa7",
+  "tree": "2e17bb338ea931f4e012cfa04fbc27993b25b1d0",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2813,
-  "excludedFileCount": 404,
-  "scannedFileCount": 2409,
+  "trackedFileCount": 2817,
+  "excludedFileCount": 405,
+  "scannedFileCount": 2412,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -176,7 +176,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 27
+      "lineCount": 28
     },
     {
       "path": "SECURITY.md",
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1251,
+      "lineCount": 1252,
       "truncated": true
     },
     {
@@ -353,7 +353,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 17
+      "lineCount": 28
     },
     {
       "path": "scripts/readme-shots/stage/fake-codex.js",
@@ -380,7 +380,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 51
+      "lineCount": 70
     },
     {
       "path": "scripts/readme-shots/stage/stage-root.js",
@@ -748,7 +748,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 114
+      "lineCount": 116
     },
     {
       "path": "src/main/insights-cross-account.ts",
@@ -3758,7 +3758,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 147
+      "lineCount": 148
     },
     {
       "path": "tests/unit/codex-web-sweep-race.test.ts",
@@ -3767,7 +3767,7 @@
         "P02",
         "P13"
       ],
-      "lineCount": 35
+      "lineCount": 90
     },
     {
       "path": "tests/unit/codex-web-sweep-store.test.ts",
@@ -4476,7 +4476,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 141
+      "lineCount": 163
     },
     {
       "path": "tests/unit/main/insights-codex-rollup.test.ts",
@@ -4494,7 +4494,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 127
+      "lineCount": 135
     },
     {
       "path": "tests/unit/main/insights-run-handler.test.ts",

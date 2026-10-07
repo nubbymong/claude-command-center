@@ -2204,7 +2204,7 @@ changed.
 ## VM gates on WINDOWS_1, and the defect they found (2026-09-23)
 
 The two packaged-app gates (PR gates 1 and 2), run on the Hyper-V guest
-WINDOWS_1 (Windows 11 22621, hostname WinDev2407Eval) against the INSTALLED
+WINDOWS_1 (Windows 11 22621) against the INSTALLED
 app, never in the owner's session.
 
 **Setup.** Installer built at `c9c908a5` (`AI-Code-Conductor-2.1.1-beta.1.exe`,

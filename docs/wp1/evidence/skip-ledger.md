@@ -6,11 +6,11 @@ This file is evidence for WP1.65 in `tests/wp1/traceability.json` ("No unexplain
 
 ## The run
 
-- CI run 37134624406 (`pull_request`, attempt 1, 2026-10-03), at commit fcfd2ae60b9174a15768c443056b068f4a9d61a3 (PR 628). It ran as GitHub's merge with beta (6a07c3fb74a255266b04234482323760bb9a6da1). `docs/wp1/evidence/ci-matrix.md` (Results) records the same run.
+- CI run 37134624406 (`pull_request`, attempt 1, 2026-10-03), at commit f4d98918d171ba380833f65defe8b7e678a047ea (PR 628). It ran as GitHub's merge with beta (6a07c3fb74a255266b04234482323760bb9a6da1). `docs/wp1/evidence/ci-matrix.md` (Results) records the same run.
 - Jobs read:
   - `Test (windows-2025)` (job 111236523318), `Test (macos-latest)` (job 111236523233) and `Test (ubuntu-latest)` (job 111236523243). Each runs `npx vitest run`, then `npm run test:unit:native`.
   - The six codex-conformance legs, for the two files that run there.
-- Source: every condition is cited at fcfd2ae6. Every file below is unchanged from there to f73f1785, the branch head this record was written at, except `tests/integration/codex-real-cli-conformance.test.ts`. That file is cited at its current lines, and the row also gives fcfd2ae6's lines. Beta's side of the merge (6a07c3fb) is not in the local clone and was not read. The conditions at fcfd2ae6 explain every count below.
+- Source: every condition is cited at f4d98918. Every file below is unchanged from there to c65d0b19, the branch head this record was written at, except `tests/integration/codex-real-cli-conformance.test.ts`. That file is cited at its current lines, and the row also gives f4d98918's lines. Beta's side of the merge (6a07c3fb) is not in the local clone and was not read. The conditions at f4d98918 explain every count below.
 
 ### Totals, the log against this ledger
 
@@ -31,7 +31,7 @@ One row per test file that skipped anything on any OS. A dash means nothing skip
 | File | Windows | macOS | Linux | Why it skips (from the source) | Where the skipped cases run |
 |---|---|---|---|---|---|
 | `tests/integration/codex-cli-compat.test.ts` | 6 (all) | 6 (all) | 6 (all) | Needs a `codex` on PATH (`codexOnPath`, line 30). Without one, `maybeIt` is `it.skip` (lines 63-64) for the 5 flag-drift cases, and a placeholder `it.skip` is registered (lines 112-113). The Test jobs install no Codex. HOST QUARANTINE. | The codex-conformance job: 5 passed on each of the six legs (the placeholder is not registered there) |
-| `tests/integration/codex-real-cli-conformance.test.ts` | 9 (all) | 9 (all) | 9 (all) | Needs `CCC_CODEX_CONFORMANCE_BIN` (`LIVE`, lines 53-54). `describe.skipIf(!LIVE)` (line 115) holds the 8 checks; `describe.skipIf(LIVE)` holds a placeholder `it.skip` (lines 257-258). Only the codex-conformance job sets the variable. At fcfd2ae6 the same gates were at lines 51, 108 and 249-250. HOST QUARANTINE. | The codex-conformance job: 8 passed on each of the six legs; the placeholder is skipped there too (1 per leg), by design |
+| `tests/integration/codex-real-cli-conformance.test.ts` | 9 (all) | 9 (all) | 9 (all) | Needs `CCC_CODEX_CONFORMANCE_BIN` (`LIVE`, lines 53-54). `describe.skipIf(!LIVE)` (line 115) holds the 8 checks; `describe.skipIf(LIVE)` holds a placeholder `it.skip` (lines 257-258). Only the codex-conformance job sets the variable. At f4d98918 the same gates were at lines 51, 108 and 249-250. HOST QUARANTINE. | The codex-conformance job: 8 passed on each of the six legs; the placeholder is skipped there too (1 per leg), by design |
 | `tests/integration/hooks/real-claude.test.ts` | 1 (all) | 1 (all) | 1 (all) | Opt-in. Needs `RUN_REAL_CLAUDE_HOOKS_TEST=1`, a `claude` on PATH, and that claude's `--settings` flag (lines 41-44). It spends API tokens, and the comment calls its assertion environmentally flaky (lines 29-38). No CI job sets the variable. | No CI or VM run found. The comment calls it "useful before cutting a beta release" |
 | `tests/unit/account-profiles-canonical.test.ts` | 1 | - | - | POSIX mode bits: `posixIt` is `it.skip` on win32 (line 32). The case checks that the credential file is 0o600. | macOS and Linux Test jobs |
 | `tests/unit/atomic-write-secure.test.ts` | 2 | - | - | `it.runIf(process.platform !== 'win32')` (lines 145, 153). The cases check 0600 over a loose-moded file, and that O_EXCL rejects a planted symlink. | macOS, Linux |
@@ -91,7 +91,7 @@ Quarantine here means HOST QUARANTINE: a file whose header carries that marker i
 
 ## Unexplained or to decide
 
-- Nothing the counts leave unexplained. On every OS, every file's skip and todo count matches a condition at fcfd2ae6, and the per-OS totals match the log.
+- Nothing the counts leave unexplained. On every OS, every file's skip and todo count matches a condition at f4d98918, and the per-OS totals match the log.
 - Cases that run in no CI job, with no VM run found:
   - `tests/unit/main/installer-nsis-behaviour.test.ts`, 13 cases. No runner has makensis. They run only on a Windows machine that has it. The file is not marked HOST QUARANTINE.
   - `tests/integration/hooks/real-claude.test.ts`, 1 case, and `tests/unit/sentinel-live.test.ts`, 2 cases: opt-in, they run the real `claude` and spend tokens.

@@ -242,7 +242,7 @@ function seedConfig() {
     // lastTrainingVersion above every card: the app stamps the newest card's
     // version, and its compare reads a prerelease like 2.1.1-beta.2 as 2.1.0,
     // so the 2.1.1 cards would count as new and the boot chain would wait on
-    // a tour nothing opens (no resume prompt; VM run at f73f1785).
+    // a tour nothing opens (no resume prompt; VM run at c65d0b19).
     setupVersion: APP_VERSION, lastSeenVersion: APP_VERSION, lastRunVersion: APP_VERSION, lastTrainingVersion: '99.99.99',
     // 2.1.1's one-time pages: Hello Codex and the multi-spawn intro, seen.
     helloCodexSeenVersion: APP_VERSION, multiSpawnIntroVersion: APP_VERSION,

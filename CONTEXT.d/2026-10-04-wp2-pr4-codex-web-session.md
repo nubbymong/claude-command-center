@@ -39,7 +39,7 @@ browser pane's chatgpt.com are refused with that reason, and Sign out of
 chatgpt.com and archive still clear the session (the newer store keeps its
 record). Both apply to the Codex record store only.
 
-**A pane sign-in that cannot be recorded (fix pass 9, bafde453).** It is
+**A pane sign-in that cannot be recorded (fix pass 9, b7a96be2).** It is
 cleared, as the window's is, and the account's chatgpt.com views close first
 with the reason, which the browser pane shows on its start page; the renderer
 is told once.
@@ -47,4 +47,4 @@ is told once.
 **Owed.** The reviews of fix pass 9; PB7b on the VM (unauthenticated cookie
 names, each sign-in method's first hop); OR2 on the final build. The second
 half's ADR-009 rounds have run (round 7 the last) and OR3's artifacts record
-is signed (67f44333). Completion plan P4.6 and OR2; parity checklist row 58.
+is signed (b2047f0d). Completion plan P4.6 and OR2; parity checklist row 58.

@@ -171,7 +171,7 @@ describe('each comparison fails on a deliberately wrong fixture (verify the veri
   })
 })
 
-// [host] P4.10: the help captures of CI run 37134624406 (fcfd2ae6) were
+// [host] P4.10: the help captures of CI run 37134624406 (f4d98918) were
 // reviewed per OS (docs/wp1/evidence/ci-matrix.md, "Help captures
 // reviewed"). The fixtures were captured on Windows; macOS and Linux differ
 // in reviewed ways only, which the comparison accepts by name before the help

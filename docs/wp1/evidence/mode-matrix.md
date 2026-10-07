@@ -37,15 +37,15 @@ Four runs of the whole e2e suite on the Windows test VM (WINDOWS_1), on 2026-10-
 
 | Run | Commit | VM local start (PDT) | Result |
 |---|---|---|---|
-| e2e-69c98042 | `69c9804232d067bdf93cfc57890b0a744dcc597a` | 05:34:41 | 94 of 94 passed, none skipped (Playwright 3.3 min) |
-| e2e-69c98042-run2 | `69c9804232d067bdf93cfc57890b0a744dcc597a` | 05:39:55 | 94 of 94 passed, none skipped (3.2 min) |
-| e2e-f73f1785 | `f73f1785392fe3c9156448e87b7f0a317ff3b7f0` | 11:12:32 | 94 of 94 passed, none skipped (3.4 min) |
-| e2e-bdc0c019 (2026-10-04) | `bdc0c019526bccec1223643cd0a4275844cf2162` | 04:54 | 94 of 94 passed, none skipped or flaky (4.2 min) |
+| e2e-956df1a3 | `956df1a3c32c03857fc55b9f3eec3046cd26c445` | 05:34:41 | 94 of 94 passed, none skipped (Playwright 3.3 min) |
+| e2e-956df1a3-run2 | `956df1a3c32c03857fc55b9f3eec3046cd26c445` | 05:39:55 | 94 of 94 passed, none skipped (3.2 min) |
+| e2e-c65d0b19 | `c65d0b1925d3df77fb50dafc68bc88870bcdf724` | 11:12:32 | 94 of 94 passed, none skipped (3.4 min) |
+| e2e-bb1b5e4a (2026-10-04) | `bb1b5e4a082dcd0e18230571c716157e774d6f36` | 04:54 | 94 of 94 passed, none skipped or flaky (4.2 min) |
 
 - Every cell of the matrix above passed in each run: `onboarding-provider-select.spec.ts` 3 tests (a fresh install with Claude Code only, both, and Codex only), `codex-session-creation.spec.ts` 2, `codex-reconfirm-upgrade.spec.ts` 3, `codex-mode-restart.spec.ts` 2, `codex-mode-enable-disable.spec.ts` 4, and `codex-real-launch.spec.ts` 3 (the two installs named, then a real launch of 0.153.4 through `codex.cmd` and of 0.155.1 through `codex.exe`, each through its first screens to an answered prompt). The 20 other specs passed their 77 tests.
 - Build: each run built its commit with electron-vite (exit 0), the main bundle checked for the commit's short sha; package version 2.1.1-beta.1.
 - Isolation: each run counted the VM user's real folders before and after: 76 `.claude` settings sidecars, 6,536 files under `~\.codex` and 554 under `~\.claude`, the same after as before, with no file under either written since the run's start; no app, Electron or Codex process was left. The helper's `ccc-e2e-*` data folders were left in `%TEMP%` (16 after the first run), as in the earlier records.
-- A run of `codex-real-launch.spec.ts` alone at 69c98042 (05:44:41) passed 3 of 3 in 37.1 s, the real folders again unchanged.
+- A run of `codex-real-launch.spec.ts` alone at 956df1a3 (05:44:41) passed 3 of 3 in 37.1 s, the real folders again unchanged.
 - The VM-side logs are kept with the runs (fictional data). Not run: macOS and Linux (these specs are VM-only).
 
 **The earlier full-suite record (21 specs, before PR 4's specs):** commit `0cb1bf31bf1f090c7fadd902c41219b0e2a36fa9`, the WP2 final candidate head, with no patch applied. Earlier runs are kept below as history.
@@ -61,7 +61,7 @@ Four runs of the whole e2e suite on the Windows test VM (WINDOWS_1), on 2026-10-
   - `c55ba0c7`: front-facing docs and in-app copy for Codex (README, user guide, app-knowledge, tips, Feature Guide, guided tour, Hello Codex), and the `package.json` description.
   - `0cb1bf31`: the legacy Codex ledger and manifest brought in step with that sweep, and two app-knowledge sentences shortened.
   - None of them touches an e2e spec.
-- Machine: Hyper-V VM WinDev2407Eval, Windows 11 Enterprise Evaluation 10.0.22621 (build 22621), 64-bit.
+- Machine: the Windows test VM (Hyper-V), Windows 11 Enterprise Evaluation 10.0.22621 (build 22621), 64-bit.
 - Toolchain: Node v24.16.0, Electron 43.7.1, @playwright/test 1.62.1, app 2.1.1-beta.1. The lockfile is unchanged since `38cbc9d7`; `package.json` changed only its description.
 - Build:
   - `npm ci` exits 255. Its postinstall `electron-rebuild` of node-pty and better-sqlite3 fails with MSB8040, because the Spectre-mitigated libraries are not installed on the VM. Both modules load their shipped N-API win32-x64 prebuilds, so the run is unaffected.
