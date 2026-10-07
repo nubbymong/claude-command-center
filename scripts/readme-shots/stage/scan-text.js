@@ -27,7 +27,10 @@ const GENERIC = [
   // version (v2.1.1.4, "version 2.1.1.4").
   { name: 'IPv4 address', re: /(?<![\w.])(?<!\b[Vv]ersion[\s:=]*)(?:(?:25[0-5]|2[0-4]\d|[01]?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d?\d)(?!\.?\w)/g },
   { name: 'private host', re: /\b[a-z0-9-]+\.(?:internal|local|lan|corp)\b/gi },
-  { name: 'e-mail outside the example domains', re: /[A-Za-z0-9._%+-]+@(?!example\.(?:dev|io|co)\b)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g },
+  // Bounded as an address is (RFC 5321: a local part of up to 64, labels of up
+  // to 63, a name of up to 253, so at most 127 labels), so a long token with no
+  // space costs the same at every start position instead of rescanning to its end.
+  { name: 'e-mail outside the example domains', re: /[A-Za-z0-9._%+-]{1,64}@(?!example\.(?:dev|io|co)\b)[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,125}\.[A-Za-z]{2,63}/g },
 ]
 
 /** The deny list: one literal term per line (matched case-insensitively

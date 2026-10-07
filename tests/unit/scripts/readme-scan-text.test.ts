@@ -83,6 +83,50 @@ describe('IPv4 addresses and version numbers', () => {
   })
 })
 
+describe('e-mail addresses', () => {
+  it('an address outside the example domains is caught', () => {
+    for (const s of ['sam@corp.com', 'a@example.com', 'a@corp.example.dev', 'mail first.last+tag@mail.example.org now']) {
+      expect(hits(s), s).not.toEqual([])
+    }
+  })
+
+  it('an address in the fictional example domains is not', () => {
+    for (const s of ['alex@example.dev', 'sam.rivera@example.io', 'jordan@example.co']) {
+      expect(hits(s), s).toEqual([])
+    }
+  })
+})
+
+// A field can hold one long token (base64, a hash list) with no space in it:
+// its scan must stay fast, or one shot stalls the capture. The bound is loose
+// on purpose; the scan takes milliseconds.
+describe('a long run with no spaces', () => {
+  const timed = (s: string): { ms: number; keys: string[] } => {
+    const t0 = performance.now()
+    const keys = Object.keys(SCAN.scanText(s, ['stand-in-term']))
+    return { ms: performance.now() - t0, keys }
+  }
+  const RUN = 'Zm9vYmFy'.repeat(25_000) // 200,000 characters, base64-like
+
+  it('200,000 characters scan in well under a second, with no hit', () => {
+    const r = timed(RUN)
+    expect(r.keys).toEqual([])
+    expect(r.ms).toBeLessThan(1000)
+  }, 60_000)
+
+  it('the same with an @ in the middle', () => {
+    const r = timed(RUN.slice(0, 100_000) + '@' + RUN.slice(100_000))
+    expect(r.keys).toEqual([])
+    expect(r.ms).toBeLessThan(1000)
+  }, 60_000)
+
+  it('a real address after the run is still caught, and fast', () => {
+    const r = timed(RUN + '|sam@corp.com')
+    expect(r.keys).toEqual(['e-mail outside the example domains: sam@corp.com'])
+    expect(r.ms).toBeLessThan(1000)
+  }, 60_000)
+})
+
 describe('where the deny list may live', () => {
   it('is refused anywhere inside the checkout, a folder named with two dots included', () => {
     const { repo } = layout()
