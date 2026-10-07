@@ -1,4 +1,4 @@
-## 2026-10-07 -- WP2 PR 4: fix passes 16 to 17c, the release review and its reviews
+## 2026-10-07 -- WP2 PR 4: fix passes 16 to 18, the release review and its reviews
 
 Fix pass 16 (aff08b70, 3332c3ac), for the release review of 2026-10-07,
 each fix with tests red before it (6 new tests; 7 mutants, 7 red). A Codex
@@ -57,10 +57,11 @@ lane's host is deliberately without one, so it moved to the linuxKey lane
 with the same assertions; that lane passed 4 of 4.
 
 Fix pass 17b, for fix pass 17's spec and quality reviews (PASS, with nits)
-and its ADR-009 re-attack (two minors), and fix pass 17c, for 17b's spec and
-quality reviews, each new test red before its change (17b: 4 new tests, 2
-changed for typing only, 6 mutants, 6 red; 17c: 2 new tests, 1 changed,
-9 mutants, 9 red). How the report's own earlier runs meet the read limit:
+and its ADR-009 re-attack (two minors), and fix passes 17c and 17d, for 17b's
+and then 17c's spec and quality reviews, each new test red before its change
+(17b: 4 new tests, 2 changed for typing only, 6 mutants, 6 red; 17c and 17d:
+3 new tests, 1 changed, 10 mutants, 10 red, 17d's test pinning where the
+first chunk ends). How the report's own earlier runs meet the read limit:
 - A file the read can tell, within its first chunk, is one of the report's
   own earlier runs is left out there, is not counted as a session, and spends
   none of the limit.
@@ -81,8 +82,24 @@ that does not fit what is left, and that the start sweep leaves an account
 it did not choose alone (a pane open on it stays open, and it is never
 barred). Two older test lines typecheck now with no change in what they
 test, and the sweep's comment says no wait comes between the record read
-and the bars.
+and the bars. Fix pass 17c passed its spec and quality reviews and the
+ADR-009 re-attack; 17d closed their two nits.
 
-Owed now: the confirmations of fix passes 16 to 17c by the same reviewers and
-attackers, and CI at their head; the PR-level ADR-009 pass at PR 4's final
-head; the SSH live matrix and the owner's checks.
+Fix pass 18: a Codex account stays barred until its storage clear actually
+ends. Every wipe of an account's chatgpt.com partition bars it from a
+sign-in or a pane. The wait for the storage clear stays bounded, so a
+sign-out, an archive or the start sweep still answers or moves on in time,
+but the bar now lifts only when the clear itself ends. A clear that ends
+with an error has ended too, so a failed wipe still lifts its bar at once;
+one that never ends keeps the account barred for the rest of the run, with
+the existing "being cleared" message. Overlapping wipes each lift only
+their own share, once. 3 new tests; 7 mutants, 6 red, and 1 equivalent
+survivor (removing only the once-only guard, which no path needs while each
+share is released once).
+
+The owner approved the README and Feature Guide images on 2026-10-07; they
+are committed separately.
+
+Owed now: the reviews and the ADR-009 confirmation of fix pass 18, and CI at
+the new head; the PR-level ADR-009 pass at PR 4's final head; the SSH live
+matrix and the owner's other checks.
