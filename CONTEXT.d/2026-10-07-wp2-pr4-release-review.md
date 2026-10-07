@@ -68,13 +68,13 @@ changed for typing only, 6 mutants, 6 red; 17c: 2 new tests, 1 changed,
   too, but spends its full size like any other file.
 - When the next file does not fit what is left but fits the whole limit, the
   read looks at its first chunk before stopping: an own run told there is
-  passed over at no cost and the read goes on; anything else stops the read
-  as before, with what that chunk held set aside and the file counted as not
-  read.
+  passed over at no cost to the limit and the read goes on; anything else
+  stops the read as before, with what that chunk held set aside and the file
+  counted as not read.
 - So the sessions read stay within the limit, and on top of it each such own
   run costs at most its first chunk (of at most 200 files), as does the one
   file the read stops at.
-A session behind an own run that fits the limit is read, and the run
+A session behind such an own run that fits the limit is read, and the run
 completes on it. New tests also pin that a session grown since the walk is
 read only to its size at the walk, that the read stops at the first session
 that does not fit what is left, and that the start sweep leaves an account
