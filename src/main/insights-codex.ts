@@ -67,8 +67,13 @@ export const CODEX_INSIGHTS_MAX_LINE_BYTES = 4 * 1024 * 1024
  *  A session larger than this on its own is never read in part, wherever it
  *  sits in the newest-first order: it is left out, and counted, and the read
  *  goes on past it, so no figure stands for a session it covers only the
- *  start of. The report's own earlier runs spend none of it: each is left
- *  out at its first record, with no more of it read than one 256 KB chunk. */
+ *  start of. A file the read can tell, within its first 256 KB chunk, is
+ *  one of the report's own earlier runs is left out there and spends none of
+ *  this, even when it does not fit what is left; a file that names a run
+ *  folder only later is left out too, but spends its full size. So the
+ *  sessions read stay within this limit, and on top of it each such own run
+ *  costs at most its first chunk (and there are at most 200 files), as does
+ *  the one file the read stops at. */
 export const CODEX_INSIGHTS_MAX_TOTAL_BYTES = 256 * 1024 * 1024
 /** That limit in words ("256 MB"), as the prompt, a run's reason and the
  *  report's subtitle say it. */
@@ -396,6 +401,9 @@ export function codexSessionFromLines(lines: Iterable<string>, excluded: (cwd: s
  *  (POSIX), and without waiting on a FIFO's writer. */
 const SESSION_OPEN_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0)
 
+/** How much of a rollout file one read of it takes at a time (its chunk). */
+const SESSION_READ_CHUNK_BYTES = 256 * 1024
+
 /** A sessions read in progress: stopped once its time limit has passed. */
 interface SessionsReadState { stopped: boolean; current: { destroy(): void } | null }
 
@@ -411,7 +419,9 @@ interface SessionsReadState { stopped: boolean; current: { destroy(): void } | n
  * same one (device and inode) the walk's lstat found; anything else is not
  * read and comes back `notTheFile`. A read stopped at the time limit lets
  * go of its stream and its file once each. `ownRun`: `excluded` named the
- * folder the session ran in, so the read left it out at its first record.
+ * folder the session ran in on a record within the file's first chunk, so
+ * the read left it out there. A file that names such a folder only later is
+ * left out all the same, but `ownRun` stays false.
  */
 async function readSessionFile(
   f: CodexRolloutFile,
@@ -428,7 +438,12 @@ async function readSessionFile(
     return { session: null, skippedLines: 0, notTheFile: (e as NodeJS.ErrnoException)?.code === 'ELOOP', ownRun: false }
   }
   let ownRun = false
-  const reader = codexSessionReader((cwd) => (ownRun = excluded(cwd)))
+  let chunks = 0
+  const reader = codexSessionReader((cwd) => {
+    const out = excluded(cwd)
+    ownRun = out && chunks <= 1
+    return out
+  })
   let stream: fs.ReadStream | null = null
   let partial = ''
   let skipping = false
@@ -438,9 +453,10 @@ async function readSessionFile(
     if (state.stopped) return { session: null, skippedLines: 0, notTheFile: false, ownRun: false }
     const st = await handle.stat({ bigint: true })
     if (!st.isFile() || st.nlink > 1n || st.dev !== f.dev || st.ino !== f.ino) return { session: null, skippedLines: 0, notTheFile: true, ownRun: false }
-    stream = handle.createReadStream({ encoding: 'utf8', start: 0, end: Math.max(0, maxBytes - 1), highWaterMark: 256 * 1024, autoClose: false })
+    stream = handle.createReadStream({ encoding: 'utf8', start: 0, end: Math.max(0, maxBytes - 1), highWaterMark: SESSION_READ_CHUNK_BYTES, autoClose: false })
     state.current = stream
     for await (const chunk of stream as AsyncIterable<string>) {
+      chunks++
       if (state.stopped) { going = false; break }
       let start = 0
       for (let nl = chunk.indexOf('\n', start); nl >= 0 && going; nl = chunk.indexOf('\n', start)) {
@@ -556,8 +572,11 @@ type SessionsReadOpts = { runsParent: string | null; now?: number; windowDays?: 
  *  limit; one larger than the whole limit, wherever it sits (after the
  *  report's own earlier runs or the user's newer sessions too), is left out
  *  and counted, and the read goes on to the next (never a part of a
- *  session); the report's own earlier runs, left out at their first record,
- *  spend none of the limit. The whole read, the walk included, ends at
+ *  session). One of the report's own earlier runs, told within its first
+ *  chunk, is left out there and spends none of the limit (one that does not
+ *  fit what is left is looked at before the read stops); one told only later
+ *  is left out too, but spends its full size (CODEX_INSIGHTS_MAX_TOTAL_BYTES
+ *  gives the bound). The whole read, the walk included, ends at
  *  `timeLimitMs` (CODEX_INSIGHTS_READ_TIME_LIMIT_MS): a read still going
  *  then is stopped, and the answer is `timedOut` with nothing read. Never
  *  throws. */
@@ -601,12 +620,22 @@ async function readSessionsWithin(sessionsDir: string, opts: SessionsReadOpts, s
       tooLarge++
       continue
     }
-    if (size > budget) break
+    if (size > budget) {
+      // It does not fit what is left. One of the report's own earlier runs
+      // spends none of the limit, so its first chunk is read before the read
+      // stops: an own run told there is passed over, and anything else stops
+      // the read here, with what that chunk held set aside (not read).
+      const peek = await readSessionFile(f, Math.min(size, SESSION_READ_CHUNK_BYTES), maxLine, excluded, state)
+      if (!peek.ownRun) break
+      read++
+      continue
+    }
     budget -= size
     read++
     const r = await readSessionFile(f, size, maxLine, excluded, state)
-    // The report's own earlier run is left out at its first record, so it
-    // spends none of the limit: the sessions after it get all of it.
+    // One of the report's own earlier runs, told within its first chunk, is
+    // left out there and spends none of the limit. One told only later is
+    // left out too, but spends its full size like any other file.
     if (r.ownRun) budget += size
     skippedLines += r.skippedLines
     if (r.notTheFile) links.linksSkipped++
