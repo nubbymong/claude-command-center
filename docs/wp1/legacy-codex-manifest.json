@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T17:44:11.538Z",
-  "head": "67b7aa903f212c2d1b69c374158145e6fb45ec74",
-  "tree": "02abab2efd11b1ab154969fe9a6e97b183518b5c",
+  "generatedAt": "2026-10-07T14:31:30.591Z",
+  "head": "c5c1b9387fde4cdce1d8980ca2103f8e6dc626e1",
+  "tree": "0c6275d856dcdc31e8f5839bbebce2ff153b089e",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2357,
-  "excludedFileCount": 382,
-  "scannedFileCount": 1975,
+  "trackedFileCount": 2380,
+  "excludedFileCount": 384,
+  "scannedFileCount": 1996,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 415,
-  "pathDigest": "48777585e81c415f63d074639129dee0d77aec825c4b728e38096cfc70938152",
+  "matchedPathCount": 416,
+  "pathDigest": "cc712733e6550c7393bb659fbd103be5beb85e5cacc8606824ef9db93e321bea",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -3078,6 +3078,13 @@
         "P13"
       ],
       "lineCount": 21
+    },
+    {
+      "path": "tests/unit/renderer/session-launch-mac-multi-account.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
     },
     {
       "path": "tests/unit/renderer/session-launch.test.ts",

@@ -14,6 +14,7 @@ import * as os from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { composeProviders } from '../../src/main/providers/compose'
 import { seedMacRealmVerdict } from './helpers/mac-realm-verdict-seed'
+import { setMacRealmVerdictHooks } from '../../src/main/mac-realm-verdict'
 
 let root: string
 
@@ -264,12 +265,18 @@ describe('readClaudeCliAuth — CLI probe preferred, and registered as a consume
       const realHome = process.env.HOME
       process.env.HOME = '/Users/someone'
       let seen: Record<string, string> | undefined
+      let seenCmd: string | undefined
+      let seenShell: unknown
       try {
         Object.defineProperty(process, 'platform', { value: 'darwin' })
         profiles.setMacMultiAccountProbe(() => flagOn)
         // The #172 guard passed for this realm (its own tests: mac-realm-guard.test.ts).
         seedMacRealmVerdict(dirname(root), join(root, ID))
-        execFileImpl = (_c, _a, o, cb) => {
+        // The guard's realm rule, as installMacRealmGuard wires it.
+        setMacRealmVerdictHooks({ realmDir: (h) => profiles.macProfileConfigDir(h), ensure: async () => {}, pinnedPath: () => null })
+        execFileImpl = (c, _a, o, cb) => {
+          seenCmd = c
+          seenShell = (o as { shell?: unknown }).shell
           seen = (o as { env: Record<string, string> }).env
           cb(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' })
         }
@@ -278,11 +285,21 @@ describe('readClaudeCliAuth — CLI probe preferred, and registered as a consume
       } finally {
         Object.defineProperty(process, 'platform', { value: realPlatform })
         profiles.setMacMultiAccountProbe(() => false)
+        setMacRealmVerdictHooks(null)
         if (realHome === undefined) delete process.env.HOME
         else process.env.HOME = realHome
       }
       expect(seen?.HOME).toBe('/Users/someone')
       expect(seen?.USERPROFILE).toBe(join(root, ID))
+      // Re-attack r3, MAJOR 1: on the realm the probe runs the VERIFIED binary,
+      // with no shell; otherwise the bare name through the shell, as before.
+      if (flagOn) {
+        expect(seenCmd).toBe(join(dirname(root), 'fake-claude-cli'))
+        expect(seenShell).toBe(false)
+      } else {
+        expect(seenCmd).toBe('claude')
+        expect(seenShell).toBe(true)
+      }
       if (flagOn) {
         // A profile home with no primary recorded (an empty profiles list):
         // not the primary, so isolated on its own config directory.

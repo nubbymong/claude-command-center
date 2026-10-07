@@ -33,6 +33,10 @@ export interface ClaudeReviewPorts extends ClaudeCliPorts {
    *  profile when it has no verdict yet (profileRealmLaunch refuses without
    *  one). Never rejects. Absent: nothing to check. */
   ensureLaunchVerdict?(profileId: string): Promise<void>
+  /** Re-attack r3, MAJOR 1: on the macOS realm, why `executable` is not the
+   *  binary the #172 verdict was taken for (it must be the same file), or
+   *  null. Absent: nothing to check. */
+  realmExecutableRefusal?(profileId: string, executable: string): string | null
   /** account-profiles' platform rule on its own (profileReviewRefusal): why
    *  this profile can never review here, or null; throws when it cannot
    *  tell. Synchronous; absent means no platform rule applies. */
@@ -147,6 +151,8 @@ export function createClaudeReviewLaunch(ports: ClaudeReviewPorts): {
           if (ports.ensureLaunchVerdict) await ports.ensureLaunchVerdict(profileId)
           const l = ports.profileRealmLaunch(profileId)
           if ('refused' in l) return refuse('realm-unavailable', l.refused)
+          const exeRefused = ports.realmExecutableRefusal ? ports.realmExecutableRefusal(profileId, exe.executable) : null
+          if (exeRefused) return refuse('realm-unavailable', exeRefused)
           return { ok: true, home: l.home, executable: exe.executable, baseEnv: l.baseEnv, realmEnv: l.realmEnv, sessionsDir: l.sessionsDir }
         } catch {
           return refuse('not-started')

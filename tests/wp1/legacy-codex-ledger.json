@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "48777585e81c415f63d074639129dee0d77aec825c4b728e38096cfc70938152",
-  "manifestHead": "67b7aa903f212c2d1b69c374158145e6fb45ec74",
+  "manifestPathDigest": "cc712733e6550c7393bb659fbd103be5beb85e5cacc8606824ef9db93e321bea",
+  "manifestHead": "c5c1b9387fde4cdce1d8980ca2103f8e6dc626e1",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -4423,6 +4423,16 @@
       "disposition": "added",
       "evidence": "WP2 commit 6c launch path and restart menu (WP1.42); tests/unit/renderer/terminalview-account-launch.test.tsx",
       "note": "Codex sessions get the two restarts"
+    },
+    {
+      "path": "tests/unit/renderer/session-launch-mac-multi-account.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "experimental macOS Claude multi-account (ADR-023, aicc_planning#172): a new test whose one Codex case asserts that Switch Account never applies to a Codex session, as tests/unit/renderer/session-launch.test.ts does; no Codex code path (WP1.70)",
+      "note": ""
     },
     {
       "path": "tests/unit/renderer/session-launch.test.ts",

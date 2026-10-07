@@ -643,7 +643,13 @@ function getForwardedArgs() {
 }
 
 // Resolve claude command — try native .exe first, then npm .cmd.
-function resolveClaudeCmd() {
+function resolveClaudeCmd(env = process.env) {
+  // macOS multi-account realm (ADR-023): the app hands over the ABSOLUTE
+  // binary the account's isolation check was taken for. Run exactly that --
+  // never a `claude` this shell's PATH might resolve to another binary.
+  // Set only for such a launch; the app removes any inherited value.
+  const pinned = env.CCC_CLAUDE_BIN
+  if (typeof pinned === 'string' && pinned && path.isAbsolute(pinned)) return pinned
   let cmd = 'claude'
   if (os.platform() === 'win32') {
     const { execSync } = require('child_process')
@@ -798,6 +804,7 @@ module.exports = {
   resolveRetargetCwd,
   displayPath,
   buildSpawnTarget,
+  resolveClaudeCmd,
   encodeProjectPath,
   resolveProjectDir,
   ensureCompanionDir,

@@ -16,7 +16,7 @@ import { BrowserWindow } from 'electron'
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveClaudeForPty, withProfileHome } from './pty-manager'
 import { gateManagedLaunch } from './managed-launch-diagnostics'
-import { ensureMacRealmVerdict, macRealmVerdictPending } from './mac-realm-verdict'
+import { ensureMacRealmVerdict, macRealmVerdictPending, macRealmLaunchBinary } from './mac-realm-verdict'
 import { spawnClaudeHeadless } from './claude-headless'
 import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
 import { providerLaunchRefusal } from './provider-launch-gate'
@@ -238,7 +238,6 @@ function findTrustedCwd(): string {
  * This is needed because /insights is a TUI slash command, not a CLI argument.
  */
 async function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Promise<{ code: number; output: string }> {
-  const { cmd } = resolveClaudeForPty()
   const cwd = findTrustedCwd()
   // The project gate, before the PTY exists: the run happens in `cwd`, whose
   // own settings files are gated like any other launch's. A refusal throws
@@ -246,6 +245,9 @@ async function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Pro
   const projectGate = home ? await gateManagedLaunch(cwd) : null
   // Decision aicc_planning#172 item 4: a macOS realm run needs the verdict.
   if (macRealmVerdictPending(home)) await ensureMacRealmVerdict(home)
+  // macOS realm: run the binary the verdict was taken for (re-attack r3,
+  // MAJOR 1) -- read AFTER the check, which may just have resolved it.
+  const cmd = macRealmLaunchBinary(home) ?? resolveClaudeForPty().cmd
   return new Promise((resolve) => {
     const reportPath = claudeReportPath(home)
     logInfo(`[insights] Spawning Claude PTY for /insights: ${cmd} in ${cwd} (home=${home ?? 'default'})`)

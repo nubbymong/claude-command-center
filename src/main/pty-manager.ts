@@ -68,7 +68,8 @@ import { forgetSessionForCanvas } from './canvas/canvas-session-link'
 import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
-import { ensureMacRealmVerdict, pinnedCliPathFor } from './mac-realm-verdict'
+import { ensureMacRealmVerdict, pinnedCliPathFor, macRealmLaunchBinary } from './mac-realm-verdict'
+import { realmShellClaudePrefix, realmShellCannotPin } from './mac-realm-shell'
 export { withProfileHome } from './account-profiles'
 import { gateManagedLaunchDirs, recordManagedLaunchPreflight, displayPath } from './managed-launch-diagnostics'
 import { stripSpoofableText } from '../shared/safe-text'
@@ -4416,6 +4417,16 @@ function spawnPtyResolved(
     }
     assertGatedDirectory(options, resolvedCwd, 'working directory', recordUnverifiedDirectory)
     const finalSpawnEnv = withProfileHome(spawnEnv, home, { launchId: sessionId, cwd: resolvedCwd, probe: false, projectGate: options?.projectGate ?? null, ...(pinnedCli ? { pinnedCli } : {}) })
+    // macOS realm (re-attack r3, MAJOR 1): the launch runs EXACTLY the binary
+    // its #172 verdict was taken for -- the pinned one when a pin is
+    // installed, else the installed CLI the guard resolved -- never a bare
+    // `claude` the interactive shell's PATH (.zshrc included) might resolve to
+    // another binary. The resume picker gets it through CCC_CLAUDE_BIN; any
+    // inherited value is dropped everywhere else. Null off the realm: the
+    // bare `claude` there is unchanged.
+    const realmLaunchBin = macRealmLaunchBinary(home, pinnedCli ? pinnedCliPathFor(pinnedCli.version) : null)
+    if (realmLaunchBin) finalSpawnEnv.CCC_CLAUDE_BIN = realmLaunchBin
+    else delete finalSpawnEnv.CCC_CLAUDE_BIN
     // Give the resume-picker (run inside this PTY) the CONFIG dir so it can read
     // session-state.json and label conversations with their CCC work name
     // (customName). Read-only, best-effort — never block the spawn (#130).
@@ -4482,9 +4493,12 @@ function spawnPtyResolved(
       // before any binary runs. -LiteralPath because Set-Location otherwise
       // treats its argument as a WILDCARD: a real directory named `proj[1m]`
       // never matches, and the session silently starts in the wrong place.
+      // macOS realm: pin the shell's hand-typed `claude` to the verified binary
+      // (mac-realm-shell.ts, re-attack r3 MAJOR 1).
+      if (realmShellCannotPin(realmLaunchBin, spawnCmd, spawnArgs)) logWarn(`[pty] ${sessionId}: macOS realm shell ${spawnCmd}: cannot pin claude to the verified binary; a hand-typed claude uses this shell's PATH`)
       const cdCmd = isWin
         ? `Set-Location -LiteralPath ${quoteArgForShell(resolvedCwd, true)}`
-        : `cd ${quoteArgForShell(resolvedCwd, false)} 2>/dev/null; clear`
+        : `${realmShellClaudePrefix(realmLaunchBin, spawnCmd, spawnArgs)}cd ${quoteArgForShell(resolvedCwd, false)} 2>/dev/null; clear`
 
       // Terminal-only first-run command. `{secret}` becomes a REFERENCE to the
       // CCC_ARG_SECRET env var (set from the keychain in buildClaudeLocalSpawn),
@@ -4519,7 +4533,8 @@ function spawnPtyResolved(
       //   3. Spawning claude.cmd directly via pty.spawn fails to propagate cwd on Windows
       // Without the explicit cd, conversations get stored under the wrong project hash
       // and won't appear when the user tries to /resume.
-      const { cmd } = resolveClaudeForPty(options?.legacyVersion)
+      // macOS realm: the verified binary (see realmLaunchBin above).
+      const cmd = realmLaunchBin ?? resolveClaudeForPty(options?.legacyVersion).cmd
 
       // T8b (bug #5): EXACT-CONVERSATION RESUME.
       //

@@ -19,12 +19,16 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { composeProviders } from '../../src/main/providers/compose'
+import { buildClaudeLaunchCommand } from '../../src/main/spawn-claude-command'
+import { realmShellClaudePrefix } from '../../src/main/mac-realm-shell'
 import {
   _resetMacRealmVerdictsForTest, ensureMacRealmVerdict, macRealmVerdictPending, hasMacRealmVerdict,
   MAC_REALM_UNVERIFIED, MAC_REALM_NOT_ISOLATED, CLI_RESOLVE_TTL_MS, setMacRealmVerdictHooks,
+  macRealmLaunchBinary, macRealmExecutableRefusal,
 } from '../../src/main/mac-realm-verdict'
 import {
   installMacRealmGuard, _setMacRealmGuardSeamsForTest, realmVerdictFromAuthStatus, macRealmCheckRetryable,
+  MAC_REALM_UNREADABLE, _settleBackgroundResolveForTest,
   type RealmProbeResult,
 } from '../../src/main/mac-realm-guard'
 
@@ -36,13 +40,26 @@ describe('realmVerdictFromAuthStatus (pure)', () => {
     expect(realmVerdictFromAuthStatus(out({ configDirectory: `${dir}${path.sep}` }), dir)).toBe('isolated')
     expect(realmVerdictFromAuthStatus(`some banner\n${out({ configDirectory: dir })}\n`, dir)).toBe('isolated')
   })
-  it('not isolated: another folder (the real ~/.claude), missing field, relative, unparseable, empty', () => {
+  it('not isolated: another folder (the real ~/.claude), missing field, relative', () => {
     expect(realmVerdictFromAuthStatus(out({ configDirectory: path.resolve('/Users/someone/.claude') }), dir)).toBe('not-isolated')
     expect(realmVerdictFromAuthStatus(out({ loggedIn: true }), dir)).toBe('not-isolated')
     expect(realmVerdictFromAuthStatus(out({ configDirectory: 'relative/.claude' }), dir)).toBe('not-isolated')
-    expect(realmVerdictFromAuthStatus('{not json', dir)).toBe('not-isolated')
-    expect(realmVerdictFromAuthStatus('', dir)).toBe('not-isolated')
-    expect(realmVerdictFromAuthStatus(out([dir]), dir)).toBe('not-isolated')
+  })
+
+  // Re-attack r3, MINOR 4: no JSON object at all is UNREADABLE (its own
+  // message), not "does not isolate".
+  it('r3 MINOR 4: unreadable when there is no JSON object at all', () => {
+    expect(realmVerdictFromAuthStatus('{not json', dir)).toBe('unreadable')
+    expect(realmVerdictFromAuthStatus('', dir)).toBe('unreadable')
+    expect(realmVerdictFromAuthStatus(out([dir]), dir)).toBe('unreadable')
+    expect(realmVerdictFromAuthStatus('error: unknown command auth', dir)).toBe('unreadable')
+  })
+
+  it('r3 MINOR 4: a warning line with a brace before the JSON, trailing text after it, or pretty-printed JSON still reads', () => {
+    expect(realmVerdictFromAuthStatus(`warning: {deprecated} option\n${out({ configDirectory: dir })}\nsee docs {here}\n`, dir)).toBe('isolated')
+    expect(realmVerdictFromAuthStatus(`{ not json at all\n${JSON.stringify({ loggedIn: false, configDirectory: dir }, null, 2)}\ntrailing note`, dir)).toBe('isolated')
+    // The LAST object carrying the field decides.
+    expect(realmVerdictFromAuthStatus(`{"configDirectory":"/Users/someone/.claude"}\n${out({ configDirectory: dir })}`, dir)).toBe('isolated')
   })
 })
 
@@ -169,7 +186,7 @@ describe('the macOS realm launch guard', () => {
     expect(hasMacRealmVerdict(dir)).toBe(true)
   })
 
-  it('the CLI is re-resolved after the TTL (a PATH that now finds another claude is noticed)', async () => {
+  it('the CLI is re-resolved after the TTL (in the background); a PATH that now finds another claude is checked on the next launch', async () => {
     const { otherHome, dir } = setup()
     asPlatform('darwin')
     await ensureMacRealmVerdict(otherHome)
@@ -179,9 +196,47 @@ describe('the macOS realm launch guard', () => {
     fs.mkdirSync(path.dirname(other2), { recursive: true })
     fs.writeFileSync(other2, 'another')
     cliPath = other2
+    // This launch keeps the unchanged previous binary (no wait on the lookup)...
     await ensureMacRealmVerdict(otherHome)
+    expect(hasMacRealmVerdict(dir)).toBe(true)
+    await _settleBackgroundResolveForTest()
     expect(resolves).toBe(2)
+    // ...and the next one checks the binary the lookup now finds.
+    await ensureMacRealmVerdict(otherHome)
     expect(probes.map((p) => p.file)).toEqual([path.join(tmp, 'bin', 'claude'), other2])
+  })
+
+  // Re-attack r3, MINOR 2: a lookup that fails after the TTL must not refuse
+  // an unchanged CLI.
+  it('r3 MINOR 2: after the TTL a failed CLI lookup keeps the previous, unchanged binary -- no refusal', async () => {
+    const { otherHome, dir } = setup()
+    asPlatform('darwin')
+    await ensureMacRealmVerdict(otherHome)
+    now += CLI_RESOLVE_TTL_MS + 1
+    _setMacRealmGuardSeamsForTest({ resolveCli: async () => { resolves++; return null } })
+    await ensureMacRealmVerdict(otherHome)
+    await _settleBackgroundResolveForTest()
+    expect(hasMacRealmVerdict(dir)).toBe(true)
+    expect(refusal(() => P.withProfileHome({ PATH: '/x' }, otherHome))).toBe('')
+    // A CHANGED binary is not kept: then the lookup decides.
+    fs.writeFileSync(cliPath, 'v2 changed, longer')
+    now += CLI_RESOLVE_TTL_MS + 1
+    await ensureMacRealmVerdict(otherHome)
+    expect(refusal(() => P.withProfileHome({ PATH: '/x' }, otherHome))).toMatch(/Claude Code was not found/)
+  })
+
+  // Re-attack r3, MINOR 3: within 30 s of the TTL a launch already counts as
+  // pending, so the check refreshes it before the choke point reads it.
+  it('r3 MINOR 3: within the last 30 s of the TTL the launch is pending and the check refreshes it', async () => {
+    const { otherHome, dir } = setup()
+    asPlatform('darwin')
+    await ensureMacRealmVerdict(otherHome)
+    now += CLI_RESOLVE_TTL_MS - 10_000
+    expect(hasMacRealmVerdict(dir)).toBe(true)
+    expect(macRealmVerdictPending(otherHome)).toBe(true)
+    await ensureMacRealmVerdict(otherHome)
+    now += 20_000 // past the ORIGINAL TTL
+    expect(hasMacRealmVerdict(dir)).toBe(true)
   })
 
   it('a different realm folder gets its own check', async () => {
@@ -208,16 +263,21 @@ describe('the macOS realm launch guard', () => {
     expect(probes).toHaveLength(2)
   })
 
-  it('missing field / non-zero exit without JSON: REFUSED the same way', async () => {
+  it('missing field: REFUSED (does not isolate); no JSON / non-zero exit without JSON / oversized output: REFUSED as unreadable', async () => {
     const { otherHome } = setup()
     asPlatform('darwin')
+    answer = () => ({ code: 0, stdout: JSON.stringify({ loggedIn: true }), timedOut: false })
+    await ensureMacRealmVerdict(otherHome)
+    expect(refusal(() => P.withProfileHome({ PATH: '/x' }, otherHome))).toContain(MAC_REALM_NOT_ISOLATED)
     for (const a of [
-      { code: 0, stdout: JSON.stringify({ loggedIn: true }), timedOut: false },
       { code: 1, stdout: 'error: unknown command auth', timedOut: false },
+      { code: null, stdout: '', timedOut: false, oversize: true },
     ]) {
       answer = () => a
       await ensureMacRealmVerdict(otherHome)
-      expect(refusal(() => P.withProfileHome({ PATH: '/x' }, otherHome))).toContain(MAC_REALM_NOT_ISOLATED)
+      const m = refusal(() => P.withProfileHome({ PATH: '/x' }, otherHome))
+      expect(m).toContain(MAC_REALM_UNREADABLE)
+      expect(m).not.toMatch(/did not answer in time/)
     }
   })
 
@@ -265,6 +325,55 @@ describe('the macOS realm launch guard', () => {
     expect(hasMacRealmVerdict(dir, pinned)).toBe(true)
   })
 
+  // ---- re-attack r3, MAJOR 1: the launch runs the VERIFIED binary ---------------
+
+  it('MAJOR 1: a realm launch runs exactly the binary the verdict was taken for; the pinned one when given; none off the realm', async () => {
+    const { otherHome, primaryHome } = setup()
+    asPlatform('darwin')
+    await ensureMacRealmVerdict(otherHome)
+    expect(macRealmLaunchBinary(otherHome)).toBe(cliPath)
+    expect(macRealmLaunchBinary(otherHome, '/opt/legacy/claude')).toBe('/opt/legacy/claude')
+    // The command line the PTY session types: the verified absolute path, single-quoted.
+    const line = buildClaudeLaunchCommand({ platform: 'posix', cwd: '/w', claudeBin: macRealmLaunchBinary(otherHome)!, extraFlags: '', agentsFlag: '', useResumePicker: false, pickerScript: null })
+    expect(line).toContain(`'${cliPath}'`)
+    // Off the realm: nothing -- the launch keeps its bare `claude`.
+    expect(macRealmLaunchBinary(primaryHome)).toBeNull()
+    for (const p of ['win32', 'linux'] as const) { asPlatform(p); expect(macRealmLaunchBinary(otherHome)).toBeNull() }
+  })
+
+  it('MAJOR 1: a verified path with spaces and a quote is quoted so the shell runs that one file', () => {
+    const weird = "/Users/a b/it's/claude"
+    const line = buildClaudeLaunchCommand({ platform: 'posix', cwd: '/w', claudeBin: weird, extraFlags: '', agentsFlag: '', useResumePicker: false, pickerScript: null })
+    expect(line).toContain(`'/Users/a b/it'\\''s/claude'`)
+    expect(realmShellClaudePrefix(weird, '/bin/zsh', ['-l'])).toBe(`unalias claude 2>/dev/null; claude() { '/Users/a b/it'\\''s/claude' "$@"; }; `)
+  })
+
+  it('MAJOR 1: a realm shell pins its hand-typed `claude` to the verified binary (zsh, bash, an elevated shell); nothing off the realm or for an unknown shell', () => {
+    expect(realmShellClaudePrefix('/v/claude', '/bin/zsh', ['-l'])).toMatch(/^unalias claude 2>\/dev\/null; claude\(\) \{ '\/v\/claude' "\$@"; \}; $/)
+    expect(realmShellClaudePrefix('/v/claude', '/bin/bash', ['-l'])).not.toBe('')
+    expect(realmShellClaudePrefix('/v/claude', 'sudo', ['/bin/zsh', '-l'])).not.toBe('')
+    expect(realmShellClaudePrefix(null, '/bin/zsh', ['-l'])).toBe('')
+    expect(realmShellClaudePrefix('/v/claude', '/usr/local/bin/fish', ['-l'])).toBe('')
+  })
+
+  it('MAJOR 1: the resume picker runs CCC_CLAUDE_BIN when the app hands it one (absolute only)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const picker = require('../../scripts/resume-picker.js') as { resolveClaudeCmd: (env?: Record<string, string | undefined>) => string }
+    expect(picker.resolveClaudeCmd({ CCC_CLAUDE_BIN: '/v/claude' })).toBe('/v/claude')
+    expect(picker.resolveClaudeCmd({ CCC_CLAUDE_BIN: 'relative/claude' })).not.toBe('relative/claude')
+  })
+
+  it('MAJOR 1: the reviewer refuses an executable that is not the verified file', async () => {
+    const { otherHome } = setup()
+    asPlatform('darwin')
+    await ensureMacRealmVerdict(otherHome)
+    expect(macRealmExecutableRefusal(otherHome, cliPath)).toBeNull()
+    const other2 = path.join(tmp, 'elsewhere-claude')
+    fs.writeFileSync(other2, 'x')
+    expect(macRealmExecutableRefusal(otherHome, other2)).toMatch(/not the one checked/)
+    asPlatform('linux')
+    expect(macRealmExecutableRefusal(otherHome, other2)).toBeNull()
+  })
   it('primary, win32 and linux: no probe ever runs', async () => {
     const { otherHome, primaryHome } = setup()
     asPlatform('darwin')
@@ -285,6 +394,33 @@ describe('every launch path asks for the verdict before its choke point (source 
     expect(read('account-web/claude-cli-auth.ts')).toMatch(/await ensureMacRealmVerdict\(home\)/)
     expect(read('providers/claude/review-launch.ts')).toMatch(/await ports\.ensureLaunchVerdict\(profileId\)[\s\S]*ports\.profileRealmLaunch\(profileId\)/)
     expect(read('providers/compose.ts')).toMatch(/ensureLaunchVerdict: \(profileId\) => ensureMacRealmVerdict\(/)
+  })
+
+  // Re-attack r3, MAJOR 1: and each runs the verified binary on the realm.
+  it('MAJOR 1: each launch path runs macRealmLaunchBinary on the realm (and the bare name otherwise)', () => {
+    expect(read('pty-manager.ts')).toMatch(/const realmLaunchBin = macRealmLaunchBinary\(home/)
+    expect(read('pty-manager.ts')).toMatch(/const cmd = realmLaunchBin \?\? resolveClaudeForPty\(/)
+    expect(read('pty-manager.ts')).toMatch(/finalSpawnEnv\.CCC_CLAUDE_BIN = realmLaunchBin/)
+    expect(read('pty-manager.ts')).toMatch(/realmShellClaudePrefix\(realmLaunchBin, spawnCmd, spawnArgs\)/)
+    expect(read('insights-runner.ts')).toMatch(/const cmd = macRealmLaunchBinary\(home\) \?\? resolveClaudeForPty\(\)\.cmd/)
+    expect(read('claude-headless.ts')).toMatch(/spawn\(realmBin, args, \{ shell: false/)
+    expect(read('account-web/claude-cli-auth.ts')).toMatch(/execFileAsync\(realmBin \?\? 'claude'[\s\S]*shell: !realmBin/)
+    expect(read('cloud-agent-manager.ts')).toMatch(/macRealmLaunchBinary\(agentHome/)
+    expect(read('providers/claude/review-launch.ts')).toMatch(/realmExecutableRefusal\(profileId, exe\.executable\)/)
+  })
+
+  // Re-attack r3, MINOR 5: the exemption flag stays in the two modules that own it.
+  it('MINOR 5: realmVerdictProbe appears only in account-profiles.ts and mac-realm-guard.ts', () => {
+    const users: string[] = []
+    const walk = (d: string) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const full = path.join(d, e.name)
+        if (e.isDirectory()) walk(full)
+        else if (/\.(ts|tsx|js)$/.test(e.name) && fs.readFileSync(full, 'utf8').includes('realmVerdictProbe')) users.push(path.relative(root, full).split(path.sep).join('/'))
+      }
+    }
+    walk(path.resolve(root, '..'))
+    expect(users.sort()).toEqual(['main/account-profiles.ts', 'main/mac-realm-guard.ts'].map((p) => path.relative(root, path.resolve(root, '..', p)).split(path.sep).join('/')).sort())
   })
   it('no other module calls withProfileHome (a new caller still meets the synchronous gate, but must be listed here)', () => {
     const callers: string[] = []

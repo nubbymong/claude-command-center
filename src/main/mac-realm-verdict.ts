@@ -48,17 +48,49 @@ let nowMs: () => number = () => Date.now()
 
 const key = (dir: string, cliPath: string) => `${dir}\u0000${cliPath}`
 
-/** The installed CLI as last resolved, when still within its TTL and its file
- *  unchanged; null otherwise (the guard must resolve again). */
-export function currentInstalledCli(): { path: string; stamp: string } | null {
+/** How long before the TTL runs out a launch already counts as needing a
+ *  refresh (re-attack r3, MINOR 3): the check and the synchronous choke point
+ *  are not one instant, and a TTL that lapses between them refused a launch
+ *  the check had just passed. */
+export const CLI_RESOLVE_TTL_MARGIN_MS = 30_000
+
+/** The installed CLI as last resolved, when still within its TTL (less
+ *  `marginMs`) and its file unchanged; null otherwise (the guard must resolve
+ *  again). */
+export function currentInstalledCli(marginMs = 0): { path: string; stamp: string } | null {
   if (!currentCli) return null
-  if (nowMs() - currentCli.resolvedAt >= CLI_RESOLVE_TTL_MS) return null
+  if (nowMs() - currentCli.resolvedAt >= CLI_RESOLVE_TTL_MS - marginMs) return null
   if (cliStampSync(currentCli.path) !== currentCli.stamp) return null
   return { path: currentCli.path, stamp: currentCli.stamp }
 }
 
 export function setCurrentInstalledCli(cli: { path: string; stamp: string } | null): void {
   currentCli = cli ? { ...cli, resolvedAt: nowMs() } : null
+}
+
+/** A background lookup's answer, adopted by the NEXT check rather than at
+ *  once: replacing the current CLI mid-launch would make the choke point refuse
+ *  a launch its check had just passed. */
+let nextCli: { path: string; stamp: string } | null = null
+
+export function setNextInstalledCli(cli: { path: string; stamp: string } | null): void {
+  nextCli = cli && currentCli && cli.path === currentCli.path && cli.stamp === currentCli.stamp ? null : cli
+}
+
+/** The background answer to adopt now (and forget), or null. */
+export function takeNextInstalledCli(): { path: string; stamp: string } | null {
+  const n = nextCli
+  nextCli = null
+  return n
+}
+
+/** The last resolved installed CLI WHATEVER its age, when its file is still
+ *  the same one (realpath, size, mtime): what a launch may keep using while a
+ *  fresh resolution runs in the background (re-attack r3, MINOR 2 -- a slow
+ *  or failed login-shell lookup must not refuse a CLI that has not changed). */
+export function previousInstalledCli(): { path: string; stamp: string } | null {
+  if (!currentCli) return null
+  return cliStampSync(currentCli.path) === currentCli.stamp ? { path: currentCli.path, stamp: currentCli.stamp } : null
 }
 
 export function recordMacRealmVerdict(dir: string, cli: { path: string; stamp: string }): void {
@@ -119,7 +151,29 @@ export function pinnedCliPathFor(version: string | undefined): string | null {
  *  positive verdict yet -- the caller must await ensureMacRealmVerdict. */
 export function macRealmVerdictPending(home: string | null, pinnedCliPath?: string | null): boolean {
   const dir = macRealmDirFor(home)
-  return dir !== null && !hasMacRealmVerdict(dir, pinnedCliPath)
+  if (dir === null) return false
+  // A background lookup found another binary: the next launch checks it.
+  if (!pinnedCliPath && nextCli) return true
+  // Within CLI_RESOLVE_TTL_MARGIN_MS of the TTL: pending already, so the
+  // check refreshes it before the choke point reads it.
+  if (!pinnedCliPath && currentInstalledCli(CLI_RESOLVE_TTL_MARGIN_MS) === null) return true
+  return !hasMacRealmVerdict(dir, pinnedCliPath)
+}
+
+/**
+ * The ABSOLUTE binary a macOS realm launch under `home` must run -- the one
+ * its verdict was taken for (re-attack r3, MAJOR 1): the pinned legacy binary
+ * when one is named, else the installed CLI the guard resolved. The launch
+ * paths run exactly this instead of a bare `claude` looked up on whatever PATH
+ * their shell builds (an interactive zsh reads .zshrc; the verdict's lookup is
+ * a login, non-interactive shell -- the two can find different binaries).
+ * Null when the launch is not a macOS realm launch (win32/linux, the primary,
+ * the setting off): those keep their bare `claude` unchanged.
+ */
+export function macRealmLaunchBinary(home: string | null, pinnedCliPath?: string | null): string | null {
+  if (macRealmDirFor(home) === null) return null
+  if (pinnedCliPath) return pinnedCliPath
+  return currentInstalledCli()?.path ?? previousInstalledCli()?.path ?? null
 }
 
 /** Run the realm check for a launch under `home` when it has no verdict.
@@ -129,9 +183,23 @@ export async function ensureMacRealmVerdict(home: string | null, pinnedCliPath?:
   try { await hooks.ensure(home, pinnedCliPath) } catch { /* the cache says what happened */ }
 }
 
+/** For a launcher that resolves its OWN executable (the Claude reviewer): why
+ *  `executable` is not the binary the realm verdict was taken for, or null.
+ *  Same file = same realpath. Null off the realm. */
+export function macRealmExecutableRefusal(home: string | null, executable: string): string | null {
+  const bin = macRealmLaunchBinary(home)
+  if (!bin) return null
+  const real = (p: string): string | null => { try { return fs.realpathSync(p) } catch { return null } }
+  const a = real(bin)
+  return a !== null && a === real(executable)
+    ? null
+    : 'the Claude Code this would run is not the one checked for this account folder; start it again'
+}
+
 /** Test seam. */
 export function _resetMacRealmVerdictsForTest(clock?: () => number): void {
   currentCli = null
+  nextCli = null
   verdicts.clear()
   refusals.clear()
   nowMs = clock ?? (() => Date.now())

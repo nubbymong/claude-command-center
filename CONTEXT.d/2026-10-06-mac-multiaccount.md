@@ -129,7 +129,18 @@ probe) awaits it, and withProfileHome / profileRealmLaunch refuse a realm
 launch with no verdict (fail closed). Verified 2026-10-07 on the operator's
 Mac, CLI 2.1.292: a SIGNED-OUT realm's `claude auth status` still prints
 configDirectory (`/tmp/ccc-x`, reported verbatim, not realpath'd to
-/private/tmp), so the add-account shell passes the guard. (5) ADR-009
+/private/tmp), so the add-account shell passes the guard. Re-attack r3 on
+the guard (fixed, each with a revert-proven test): every realm launch now
+RUNS the binary its verdict was taken for -- sessions and the resume picker
+(CCC_CLAUDE_BIN), Insights, headless and the status probe (absolute path, no
+shell), cloud agents (quoted), the reviewer (must be the same file) -- and a
+realm shell-only session (add-account, re-auth, plain) gets its hand-typed
+`claude` pinned to that binary by a shell function (zsh/bash/sh/ksh/dash;
+other shells logged); after the 10-min TTL an unchanged CLI keeps serving
+while a background lookup runs (a slow login shell no longer refuses);
+launches within 30 s of the TTL count as pending; the probe's output is
+scanned for the last JSON object with configDirectory, and output with no
+JSON (or over 1 MB) is refused as unreadable with its own message. (5) ADR-009
 adversarial review: pass 3 findings (4 MAJOR on capture/refresh token
 handling and setting-off launches, 12 minor) fixed with regression tests,
 each shown to fail with its fix reverted; re-attack round 1 (4 MAJOR on the
@@ -146,10 +157,13 @@ Both logins coexisted, isolated in both directions.
 
 **Mac test checklist (app build from this branch; Settings, Accounts, Claude
 card, toggle "Experimental: multiple Claude accounts on macOS" ON).**
-0. In Terminal, with no sign-in in it: `CLAUDE_CONFIG_DIR=/tmp/ccc-x claude`
-   `auth status`. Expect: JSON with `configDirectory` = `/tmp/ccc-x`. If the
-   field is missing when signed out, step 1 will be refused by the guard --
-   record the output (it decides a follow-up).
+0. DONE 2026-10-07 (CLI 2.1.292): signed-out `CLAUDE_CONFIG_DIR=/tmp/ccc-x`
+   `claude auth status` prints `configDirectory` = `/tmp/ccc-x`. Re-run it on
+   any other CLI version tested.
+0b. In the add-account tab, run `type claude`. Expect: `claude is a shell`
+   `function`; it runs the absolute path the app checked. Put an older
+   `claude` first on PATH in ~/.zshrc and start a B session: the session runs
+   the checked binary (`ps -o args` shows the absolute path), not the older.
 1. Add another account, `/login` as account B in the tab that opens. Expect:
    the account row shows B within ~5 s; Keychain Access shows a new item
    `Claude Code-credentials-XXXXXXXX`; no Keychain password dialog.

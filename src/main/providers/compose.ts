@@ -13,7 +13,7 @@ import { createCodexPackage, cliCommandLine, codexShellEnv, runCodexCli, default
 import type { CodexRealmSource } from './codex'
 import { findRealm } from '../../shared/providers'
 import { readProfilesStrict, updateProfilesStrict, mkdirSecure, profileRealmLaunch, profileReviewRefusal, recordProfileReviewPreflight, isValidProfileId, getProfileConfigDir } from '../account-profiles'
-import { ensureMacRealmVerdict } from '../mac-realm-verdict'
+import { ensureMacRealmVerdict, macRealmExecutableRefusal } from '../mac-realm-verdict'
 import { holdProfileForRun } from '../profile-consumers'
 import { resolveClaudeExecutable } from '../claude-cli-version'
 import { readConfigChecked } from '../config-manager'
@@ -63,6 +63,7 @@ export const claudeReviewPorts: ClaudeReviewPorts = {
   },
   profileRealmLaunch: (profileId) => profileRealmLaunch(profileId),
   ensureLaunchVerdict: (profileId) => ensureMacRealmVerdict(isValidProfileId(profileId) ? getProfileConfigDir(profileId) : null),
+  realmExecutableRefusal: (profileId, executable) => macRealmExecutableRefusal(isValidProfileId(profileId) ? getProfileConfigDir(profileId) : null, executable),
   profileReviewRefusal,
   // The hold first, then the wait for a refresh in flight (claude-headless's
   // order), then a fresh hold for the run; a cancel during the wait lets go.

@@ -29,8 +29,8 @@ given `CLAUDE_CONFIG_DIR=dir`, `.claude.json` written inside `dir`, and two
 sign-ins coexisting, isolated both ways. On 2026-10-07 `claude auth status`
 was confirmed to report `"configDirectory": "<dir>"` (and
 `"projectsDirectory": "<dir>/projects"`) under `CLAUDE_CONFIG_DIR`, and
-`~/.claude` without it. The oldest CLI version that behaves this way is not
-established (2.1.56 or later is expected, unverified).
+`~/.claude` without it, on Claude Code 2.1.292. The oldest CLI version that
+behaves this way is not established (2.1.56 or later is expected, unverified).
 
 ## Decision
 
@@ -92,11 +92,30 @@ decisions; it does not claim the owner's ratification beyond that record.
 - **Not yet verified inside the app on a Mac.** The mechanism was checked by
   hand with the CLI; the app build needs the Mac checklist in the CONTEXT
   fragment run, and the CLI version floor recorded.
-- **Open items.** The output of `claude auth status` for a realm that is
-  signed OUT has not been checked: if it omits `configDirectory`, the guard
-  refuses the add-account shell for a new profile, which would need a
-  follow-up. Pending refreshed tokens kept in memory are lost on an app exit
-  before a locked Keychain answers. A headless run spawns `claude` with the
-  app's own `PATH`, while the verdict is taken for the CLI the login shell
-  resolves; on a Mac where those differ, the verdict covers a different
-  binary than the one that runs.
+- **What the guard proves.** It proves that the CLI honours
+  `CLAUDE_CONFIG_DIR` for its config folder (`configDirectory`). On the
+  verified CLI, Claude Code 2.1.292, that coincides with the Keychain item
+  being suffixed for that folder (the 2026-10-06 hand check); the guard does
+  not read the Keychain item itself. On 2.1.292 a SIGNED-OUT realm's
+  `claude auth status` also prints `configDirectory`, verbatim as given
+  (e.g. `/tmp/ccc-x`, not realpath'd), so the add-account shell passes.
+- **The launch runs the binary that was checked.** Every realm launch runs
+  the absolute path its verdict was taken for, not a bare `claude` its own
+  shell would look up (an interactive zsh reads `.zshrc`, the verdict's
+  lookup is a login, non-interactive shell): sessions and the resume picker
+  (`CCC_CLAUDE_BIN`), Insights, headless runs and the status probe (no
+  shell), cloud agents (quoted), and the reviewer (refused unless its
+  executable is the same file). A realm shell-only session -- the add-account
+  and re-auth shells, or a plain shell on that account -- gets a `claude`
+  shell function pinned to that binary (zsh, bash, sh, ksh, dash; another
+  shell is logged and keeps its PATH). A pinned legacy CLI keeps its own
+  path. After the 10-minute TTL an unchanged CLI keeps serving while a fresh
+  lookup runs in the background; a launch within 30 seconds of the TTL
+  counts as pending. Output with no JSON object (or over 1 MB) is refused as
+  unreadable, with its own message.
+- **Open items.** Pending refreshed tokens kept in memory are lost on an app
+  exit before a locked Keychain answers. A command the user types in a realm
+  shell other than `claude` itself (an absolute path to another CLI, or a
+  shell that cannot take the pinning function) is not covered by the guard.
+  The oldest CLI version that honours `CLAUDE_CONFIG_DIR` this way is not
+  established; only 2.1.292 is verified.

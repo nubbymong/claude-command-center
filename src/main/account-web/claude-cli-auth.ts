@@ -33,7 +33,7 @@ import { logError, logInfo, logWarn } from '../debug-logger'
 import { gateManagedLaunch, peekGateVerdict } from '../managed-launch-diagnostics'
 import { getProfileConfigDir, getProfilesRoot, withProfileHome, MANAGED_LAUNCH_REFUSAL, profileCredentialLocation, readMacCredential, type ProfileCredentialLocation } from '../account-profiles'
 import { acquireProfileConsumer, pendingProfileRefresh } from '../profile-consumers'
-import { ensureMacRealmVerdict, macRealmVerdictPending } from '../mac-realm-verdict'
+import { ensureMacRealmVerdict, macRealmVerdictPending, macRealmLaunchBinary } from '../mac-realm-verdict'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
 
 const execFileAsync = promisify(execFile)
@@ -189,12 +189,15 @@ async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAu
     // comes from the Keychain read below instead.
     // Awaited only when one is missing: the common path stays synchronous.
     if (macRealmVerdictPending(home)) await ensureMacRealmVerdict(home)
+    // macOS realm (re-attack r3, MAJOR 1): exactly the verified binary, no
+    // shell. Everywhere else the bare name through the shell, as before.
+    const realmBin = macRealmLaunchBinary(home)
     if (existsSync(home)) {
-      const { stdout } = await execFileAsync('claude', ['auth', 'status'], {
+      const { stdout } = await execFileAsync(realmBin ?? 'claude', ['auth', 'status'], {
         encoding: 'utf-8',
         timeout: 10_000,
         windowsHide: true,
-        shell: true,          // resolves claude.cmd on Windows, as elsewhere in the app
+        shell: !realmBin,     // resolves claude.cmd on Windows, as elsewhere in the app
         // `claude auth status` is an AUTH path, so it is a managed launch and
         // gets the same hardening as a session: ambient authority variables
         // removed, the host control applied last. It used to hand-build

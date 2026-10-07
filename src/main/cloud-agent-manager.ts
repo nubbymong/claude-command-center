@@ -14,7 +14,8 @@ import { isValidLegacyVersion } from '../shared/legacy-version'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
 import { withProfileHome } from './pty-manager'
 import { gateManagedLaunch } from './managed-launch-diagnostics'
-import { ensureMacRealmVerdict, pinnedCliPathFor } from './mac-realm-verdict'
+import { ensureMacRealmVerdict, pinnedCliPathFor, macRealmLaunchBinary } from './mac-realm-verdict'
+import { quoteArgForShell } from '../shared/shell-quote'
 import type { ProjectGateResult, ProviderLaunchRefused } from '../shared/providers'
 import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
 import { providerLaunchRefusal } from './provider-launch-gate'
@@ -307,7 +308,13 @@ export async function dispatchAgent(params: {
 
   const pipeCmd = process.platform === 'win32' ? 'type' : 'cat'
   const permFlag = skipPerms ? ' --dangerously-skip-permissions' : ''
-  const shellCmd = `${pipeCmd} "${tmpFile}" | ${claudeBin}${permFlag}`
+  // macOS realm (re-attack r3, MAJOR 1): the binary the #172 verdict was
+  // taken for (the pinned one when installed, already in claudeBin), single-
+  // quoted for the POSIX shell this line runs in.
+  const agentHome = params.profileId && isValidProfileId(params.profileId) ? getProfileConfigDir(params.profileId) : null
+  const realmBin = macRealmLaunchBinary(agentHome, claudeBin !== 'claude' ? claudeBin : null)
+  const binForShell = realmBin ? quoteArgForShell(realmBin, false) : claudeBin
+  const shellCmd = `${pipeCmd} "${tmpFile}" | ${binForShell}${permFlag}`
 
   let releaseProfile: () => void = () => { /* default home, or not held yet: nothing held */ }
   let child: ChildProcess
