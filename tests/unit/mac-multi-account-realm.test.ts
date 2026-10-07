@@ -153,7 +153,10 @@ describe('the macOS realm on a profile home', () => {
     // The Keychain entry is keyed by the STRING: absolute, no tilde, no
     // trailing separator, NFC, and the same on every launch.
     expect(path.isAbsolute(dir)).toBe(true)
-    expect(dir.includes('~')).toBe(false)
+    // No tilde EXPANSION form: a leading `~` or a `~/` segment. A `~` inside a
+    // segment is legal (Windows 8.3 short names such as RUNNER~1 on CI).
+    expect(dir.startsWith('~')).toBe(false)
+    expect(/(^|[\\/])~([\\/]|$)/.test(dir)).toBe(false)
     expect(dir.endsWith(path.sep)).toBe(false)
     expect(dir).toBe(dir.normalize('NFC'))
     expect(profiles.withProfileHome(source(), otherHome).CLAUDE_CONFIG_DIR).toBe(dir)
