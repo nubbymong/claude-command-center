@@ -461,6 +461,12 @@ export const AUTHORITY_CLASSIFICATION = {
   // where profileRealmConfigRoot is null: nothing would set it and nothing
   // would remove it, so a poisoned ambient value would survive where it used
   // to be stripped (adversarial round 4).
+  // CLAUDE_CONFIG_DIR and CLAUDE_SECURESTORAGE_CONFIG_DIR take the SAME shape for
+  // the same reason: both are owned by the Claude package and both stay `strip`.
+  // CLAUDE_CONFIG_DIR is set by the patch ONLY on the experimental macOS
+  // multi-account realm (a non-primary profile, setting on); everywhere else
+  // nothing sets it, so it must keep being removed. `replace` would leave an
+  // inherited value standing on every platform the patch does not set it.
   // STATED LIMIT on HOME. USERPROFILE is set on every platform this app
   // redirects. HOME is set only on LINUX: on win32 the CLI ignores it (measured
   // against the pinned binary -- with HOME and USERPROFILE pointed at different

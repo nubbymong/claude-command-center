@@ -14,11 +14,12 @@
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { listProfiles, getProfileConfigDir, readProfileAccountEmail, atomicWriteSecure, hardenCredentialFile } from '../account-profiles'
+import { listProfiles, getProfileConfigDir, readProfileAccountEmail, atomicWriteSecure, hardenCredentialFile, profileCredentialLocation, readMacCredential, onProfileCredentialRemoved, type ProfileCredentialLocation } from '../account-profiles'
+import { readKeychainCreds, writeKeychainSecret } from '../claude-credential-store-darwin'
 import { isAccountActive } from '../../shared/account-types'
 import type { AccountProfile } from '../../shared/account-types'
 import { isProfileInUseByLiveSession, getClaudeProfileId } from '../claude-account-identity'
-import { noteProfileRefreshInFlight } from '../profile-consumers'
+import { noteProfileRefreshInFlight, setPendingWriteBackSettler } from '../profile-consumers'
 import { parseUsage } from './usage-buckets'
 import { loadSnapshots, saveSnapshots, type UsageSnapshot } from './usage-snapshots'
 import type { AccountUsage, UsageBucket, CreditsInfo } from '../../shared/usage-types'
@@ -32,6 +33,10 @@ interface StoredCreds {
   refreshToken: string | null
   /** The credentials file we actually read/parsed — where a refresh writes back. */
   credsPath: string | null
+  /** macOS with the experimental multi-account setting on: the Keychain
+   *  service the token was read from, and where a refresh writes back.
+   *  Never set anywhere else. */
+  keychainService?: string
   /** True when the account has credential material (a refresh/access token) or a
    *  credentials file we just couldn't parse this instant. Only when this is FALSE
    *  do we treat the account as genuinely signed out (and show a "Sign in" prompt). */
@@ -66,6 +71,13 @@ function parseRetryAfterMs(header: string | string[] | undefined): number | null
  *  transient parse failure would otherwise masquerade as "not signed in". Async
  *  only for the retry backoff. Never throws. */
 async function readProfileToken(profileId: string, isPrimary: boolean): Promise<StoredCreds> {
+  // The platform seam: on macOS with the experimental multi-account setting
+  // on, the credential is a Keychain item (account-profiles,
+  // profileCredentialLocation). Everywhere else this returns `file` and the
+  // read below runs exactly as before.
+  let loc: ProfileCredentialLocation | null = null
+  try { loc = profileCredentialLocation(profileId) } catch { loc = null }
+  if (loc && loc.kind === 'keychain') return readProfileTokenMac(loc)
   const candidates = [path.join(getProfileConfigDir(profileId), '.claude', '.credentials.json')]
   if (isPrimary) candidates.push(path.join(os.homedir(), '.claude', '.credentials.json'))
   let fileSeen = false
@@ -99,6 +111,39 @@ async function readProfileToken(profileId: string, isPrimary: boolean): Promise<
   // transient read, not a sign-out, so keep signedIn true to avoid a false "Sign
   // in"; only a genuinely absent file is treated as signed out.
   return { token: null, expiresAt: 0, refreshToken: null, credsPath: null, signedIn: fileSeen }
+}
+
+/** The macOS (setting on) half of readProfileToken, with the same meanings:
+ *  only a credential that is genuinely ABSENT is signed out; one that exists
+ *  but cannot be read (locked Keychain, a dialog, a timeout, an unexpected
+ *  shape) keeps signedIn true with no token, so the page shows last-known
+ *  usage or a refresh hint -- never "Sign in" on a guess. The write-back
+ *  target is wherever the read came from. */
+async function readProfileTokenMac(loc: Extract<ProfileCredentialLocation, { kind: 'keychain' }>): Promise<StoredCreds> {
+  const r = await readMacCredential(loc)
+  if (r.status === 'not-found') return { token: null, expiresAt: 0, refreshToken: null, credsPath: null, signedIn: false }
+  if (r.status === 'unknown') return { token: null, expiresAt: 0, refreshToken: null, credsPath: null, signedIn: true }
+  const c = r.creds
+  const target: CredTarget = r.source === 'keychain' ? { kind: 'keychain', service: loc.service } : { kind: 'file', path: r.file }
+  return {
+    token: c.accessToken,
+    expiresAt: c.expiresAt,
+    refreshToken: c.refreshToken,
+    credsPath: target.kind === 'file' ? target.path : null,
+    keychainService: target.kind === 'keychain' ? target.service : undefined,
+    signedIn: !!c.accessToken || !!c.refreshToken,
+  }
+}
+
+/** Where a refresh writes back: the credential file (every platform, as
+ *  before) or, on macOS with the setting on, the Keychain item it was read
+ *  from. */
+type CredTarget = { kind: 'file'; path: string } | { kind: 'keychain'; service: string }
+
+function credTargetOf(creds: StoredCreds): CredTarget | null {
+  if (creds.keychainService) return { kind: 'keychain', service: creds.keychainService }
+  if (creds.credsPath) return { kind: 'file', path: creds.credsPath }
+  return null
 }
 
 export type RawResult =
@@ -261,6 +306,90 @@ async function writeRefreshedCreds(
   return false
 }
 
+/** writeRefreshedCreds for a macOS Keychain item (experimental multi-account,
+ *  setting on). The SAME rotation-safety contract, step for step: re-read the
+ *  item and ABORT (false, item untouched) when its refresh token is no longer
+ *  the one we spent -- Claude Code, or a /login, rotated it mid-flight and
+ *  theirs is newer; preserve every other field; retry a transient failure
+ *  (the server-side rotation already happened). An item that has gone, or
+ *  cannot be read, is not overwritten: we never create a sign-in the user
+ *  removed, and never write blind. writeKeychainSecret verifies by read-back.
+ *  The window between the re-read and the write is the same width as the
+ *  file path's read-then-rename; neither platform holds a lock, and both rely
+ *  on the in-use guard (no rotation while a consumer runs) to keep the CLI
+ *  out of it. */
+async function writeRefreshedKeychain(
+  service: string,
+  spentRefreshToken: string,
+  t: { accessToken: string; refreshToken: string; expiresAt: number },
+): Promise<'ok' | 'rotated' | 'removed' | 'unknown'> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const cur = await readKeychainCreds(service, { fresh: true })
+    if (cur.status === 'not-found') {
+      logWarn('[account-usage] Keychain sign-in removed during refresh — not recreating it')
+      return 'removed'
+    }
+    if (cur.status === 'found') {
+      // Write only over the EXACT generation we spent (round 2, item 4): a
+      // newer sign-in -- including one stored with no refresh token at all --
+      // is never overwritten.
+      if (cur.creds.refreshToken !== spentRefreshToken) {
+        logWarn('[account-usage] credentials rotated by another writer during refresh — keeping theirs, discarding ours')
+        return 'rotated'
+      }
+      const obj = { ...cur.creds.obj } as Record<string, unknown>
+      obj.claudeAiOauth = { ...((obj.claudeAiOauth as Record<string, unknown>) ?? {}), accessToken: t.accessToken, refreshToken: t.refreshToken, expiresAt: t.expiresAt }
+      const w = await writeKeychainSecret(service, JSON.stringify(obj))
+      if (w.ok) return 'ok'
+      logWarn(`[account-usage] Keychain write of the refreshed token failed: ${w.reason}`)
+    }
+    if (attempt < 2) await sleep(100)
+  }
+  logWarn('[account-usage] could not persist the refreshed token to the Keychain yet (locked or not answering); kept in memory, retried on the next fetch')
+  return 'unknown'
+}
+
+/**
+ * Adversarial review pass 3, re-attack r12. A refresh whose POST succeeded has
+ * ALREADY spent the stored refresh token server-side. If the Keychain then
+ * cannot be read or written (locked, a dialog, a timeout), discarding the
+ * minted tokens -- what the file path does after its 3 quick retries, where a
+ * failure is a rare transient -- would strand the account on a dead token for
+ * as long as the Keychain stays locked, which on macOS is routine. So the
+ * minted tokens are KEPT IN MEMORY per profile and the write-back is retried
+ * at the start of every later fetch, with the same compare-before-write:
+ * another writer's newer sign-in, or a removed item, still wins and the
+ * pending tokens are dropped. While one is pending no second refresh runs
+ * (the stored refresh token is the spent one), and the pending access token
+ * is used for the usage call. Limits, stated: memory only (an app exit before
+ * the Keychain answers loses them -- the same outcome as discarding), and a
+ * consumer that starts while one is pending reads the spent token from the
+ * item, as it would have anyway.
+ */
+interface PendingWriteBack { service: string; spent: string; tokens: { accessToken: string; refreshToken: string; expiresAt: number } }
+const pendingKeychainWriteBack = new Map<string, PendingWriteBack>()
+
+/** Test seam: what is pending for a profile. */
+export function _pendingKeychainWriteBackForTest(profileId: string): PendingWriteBack | undefined {
+  return pendingKeychainWriteBack.get(profileId)
+}
+
+// Round 2, item 5: pending tokens never outlive the profile (or its item).
+try { onProfileCredentialRemoved((id) => { pendingKeychainWriteBack.delete(id) }) } catch { /* a test double without it */ }
+// Round 2, item 6: a launch waiting on this profile's refresh also waits
+// (bounded, profile-consumers) for a pending write-back to land.
+try { setPendingWriteBackSettler((id) => (pendingKeychainWriteBack.has(id) ? settlePendingWriteBack(id) : null)) } catch { /* a test double without it */ }
+
+async function settlePendingWriteBack(profileId: string): Promise<void> {
+  const p = pendingKeychainWriteBack.get(profileId)
+  if (!p) return
+  const r = await writeRefreshedKeychain(p.service, p.spent, p.tokens)
+  if (r !== 'unknown') {
+    pendingKeychainWriteBack.delete(profileId)
+    if (r === 'ok') logInfo(`[account-usage] persisted a pending refreshed token for profile=${profileId}`)
+  }
+}
+
 /** Per-profile in-flight guard so two concurrent fetches (fetchAll + a manual
  *  refreshOne) never double-refresh the same account and rotate twice. */
 const refreshInFlight = new Map<string, Promise<{ accessToken: string; expiresAt: number } | null>>()
@@ -268,10 +397,22 @@ const refreshInFlight = new Map<string, Promise<{ accessToken: string; expiresAt
 /** Mint + persist a fresh access token for a profile. Returns the new access
  *  token/expiry, or null on any failure (in which case credentials are untouched
  *  — a failed refresh NEVER logs the account out). */
-async function refreshProfileToken(profileId: string, refreshToken: string, credsPath: string): Promise<{ accessToken: string; expiresAt: number } | null> {
+async function refreshProfileToken(profileId: string, refreshToken: string, target: CredTarget): Promise<{ accessToken: string; expiresAt: number } | null> {
   const existing = refreshInFlight.get(profileId)
   if (existing) return existing
   const run = (async () => {
+    // Round 2, item 2: the token we are about to spend came from a status
+    // read, which may have been answered by a read that started before
+    // another writer rotated the item. Spending a stale refresh token logs
+    // the account out, so re-read the item NOW (a read of its own) and go on
+    // only if it still holds exactly that refresh token.
+    if (target.kind === 'keychain') {
+      const now = await readKeychainCreds(target.service, { fresh: true })
+      if (now.status !== 'found' || now.creds.refreshToken !== refreshToken) {
+        logWarn(`[account-usage] refresh skipped for profile=${profileId}: the Keychain item no longer holds the token that was read (or could not be re-read)`)
+        return null
+      }
+    }
     const res = await postTokenRefresh(refreshToken)
     if (!res.ok) { logWarn(`[account-usage] token refresh rejected for profile=${profileId}`); return null }
     const parsed = parseRefreshResponse(res.data)
@@ -280,7 +421,15 @@ async function refreshProfileToken(profileId: string, refreshToken: string, cred
     // this file for its own refresh, so landing the new lineage fast is what keeps
     // it signed in). writeRefreshedCreds aborts instead when ANOTHER writer rotated
     // mid-flight — their sign-in is newer than our rotation, keep theirs.
-    if (!(await writeRefreshedCreds(credsPath, refreshToken, parsed))) return null
+    let persisted: boolean
+    if (target.kind === 'file') {
+      persisted = await writeRefreshedCreds(target.path, refreshToken, parsed)
+    } else {
+      const r = await writeRefreshedKeychain(target.service, refreshToken, parsed)
+      if (r === 'unknown') pendingKeychainWriteBack.set(profileId, { service: target.service, spent: refreshToken, tokens: parsed })
+      persisted = r === 'ok' || r === 'unknown'
+    }
+    if (!persisted) return null
     logInfo(`[account-usage] refreshed access token for profile=${profileId}`)
     return { accessToken: parsed.accessToken, expiresAt: parsed.expiresAt }
   })()
@@ -429,7 +578,7 @@ function accountUsageWillNetwork(profile: AccountProfile): boolean {
 }
 
 /** Test seam: the live cache is module state and outlives a test file otherwise. */
-export function _resetLiveUsageForTest(): void { liveUsageByProfile.clear() }
+export function _resetLiveUsageForTest(): void { liveUsageByProfile.clear(); pendingKeychainWriteBack.clear() }
 
 /** Test seam: reset the hydrate latch + last-good map so a test can seed fresh
  *  snapshots. Without it the once-per-process hydrate keeps the first test's view. */
@@ -579,9 +728,18 @@ export async function fetchAccountUsage(profileId: string, opts?: { noRefresh?: 
     if (live) return { ...base, status: 'ok', stale: false, buckets: live.buckets, fetchedAt: live.fetchedAt }
   }
 
+  // r12: a refreshed token whose Keychain write-back is still pending is
+  // written first; while it stays pending, its access token is the one to use
+  // and no second refresh may spend the (already spent) stored refresh token.
+  await settlePendingWriteBack(profileId)
   const creds = await readProfileToken(profileId, isPrimary)
   let token = creds.token
   let expiresAt = creds.expiresAt
+  const pending = pendingKeychainWriteBack.get(profileId)
+  if (pending && creds.signedIn) {
+    token = pending.tokens.accessToken
+    expiresAt = pending.tokens.expiresAt
+  }
   // 60s skew guard: a token within 60s of expiry is treated as unusable so we
   // don't burn a request that will 401.
   let tokenUsable = !!token && !(expiresAt > 0 && expiresAt < Date.now() + 60_000)
@@ -607,8 +765,13 @@ export async function fetchAccountUsage(profileId: string, opts?: { noRefresh?: 
   //    its in-flight promise (noteProfileRefreshInFlight) and a consumer that
   //    starts mid-rotation waits for it (waitForProfileRefresh) before reading
   //    the credential file.
-  if (!opts?.noRefresh && !tokenUsable && creds.signedIn && creds.refreshToken && creds.credsPath && !isPrimary && !isProfileInUseByLiveSession(profileId)) {
-    const refreshed = await refreshProfileToken(profileId, creds.refreshToken, creds.credsPath)
+  //  - macOS (experimental multi-account on): the same guards, the same
+  //    in-flight publication; the write-back goes to the Keychain item the
+  //    token was read from, with the same compare-before-write
+  //    (writeRefreshedKeychain).
+  const target = credTargetOf(creds)
+  if (!pending && !opts?.noRefresh && !tokenUsable && creds.signedIn && creds.refreshToken && target && !isPrimary && !isProfileInUseByLiveSession(profileId)) {
+    const refreshed = await refreshProfileToken(profileId, creds.refreshToken, target)
     if (refreshed) {
       token = refreshed.accessToken
       expiresAt = refreshed.expiresAt

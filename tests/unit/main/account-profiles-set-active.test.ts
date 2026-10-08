@@ -27,6 +27,10 @@ vi.mock('../../../src/main/account-profiles', () => ({
   captureDetectedAccount: vi.fn(),
   backupProfileHomeToCanonical: vi.fn(),
   restoreProfileHomeFromCanonical: vi.fn(),
+  // The macOS multi-account delete path (ADR-024): a per-profile serialisation
+  // that runs the delete as is, and a Keychain item removal that is a no-op.
+  runSerialisedForProfile: (_id: string, fn: () => Promise<unknown>) => fn(),
+  removeProfileKeychainItem: async () => ({ ok: true }),
 }))
 vi.mock('../../../src/main/claude-account-identity', () => ({
   getAccountIdentity: vi.fn(), getDefaultAccountEmail: vi.fn(),

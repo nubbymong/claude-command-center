@@ -26,7 +26,7 @@ import {
 import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, healGlobalStatusline } from './statusline-watcher'
 import { recordLiveUsageForSession, setClaudeAccountDataAllowed, setLiveUsageTranscriptProfile } from './usage/account-usage'
 import { getProvider } from './providers'
-import { composeProviders, flushPendingProviderCliKills } from './providers/compose'
+import { composeProviders, flushPendingProviderCliKills, setMacRealmStatuslineProbe, claudeStatuslineNeedsMacRealmRedeploy } from './providers/compose'
 import { initAccountRegistry, reconcileLegacyAccountStores, getConsumerLeases } from './provider-account-registry'
 import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory, discoverProvidersAtStart, providerOnNow } from './provider-accounts'
 import { probeClaudeCliVersion, setClaudeCliProbeAllowed } from './claude-cli-version'
@@ -58,6 +58,9 @@ import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
 import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, getProfilesRoot, getProfileConfigDir, isValidProfileId } from './account-profiles'
+import { setMacMultiAccountProbe } from './account-profiles'
+import { isMacMultiAccountEnabled } from './mac-multi-account'
+import { installMacRealmGuard } from './mac-realm-guard'
 import { secureOwnerOnlyFolders } from './owner-only-folders'
 import { startCodexHookFolders, codexHookFoldersSettingsChanged } from './codex-hook-folders'
 import { startCodexUserSkills, codexUserSkillsSettingsChanged } from './canvas/codex-user-skills'
@@ -483,6 +486,14 @@ if (!gotTheLock) {
       app.exit(1)
       return
     }
+    // Experimental macOS multi-account (src/shared/mac-multi-account.ts):
+    // account-profiles asks this on every managed launch; it reads the saved
+    // settings and is off without reading anything on Windows and Linux.
+    // Injected, not imported there: config-manager imports account-profiles.
+    setMacMultiAccountProbe(() => isMacMultiAccountEnabled())
+    setMacRealmStatuslineProbe(() => isMacMultiAccountEnabled())
+    // Decision aicc_planning#172 item 4: the macOS realm launch guard.
+    installMacRealmGuard()
 
     // WP2: the provider account registry. Best-effort and after providers are
     // composed: a registry problem leaves it in recovery mode and never blocks
@@ -709,6 +720,11 @@ if (!gotTheLock) {
         // switch, onboarding, Settings): the accounts snapshot says so now, and
         // a provider the save turned on is looked for.
         try { getAccountsService()?.settingsChanged() } catch (err) { logError('[main] accounts settings change failed:', err) }
+        // Experimental macOS multi-account turned ON mid-run: the deployed
+        // statusline bridge predates it and lacks the realm snippet.
+        try {
+          if (claudeStatuslineNeedsMacRealmRedeploy()) void getProvider('claude').deployStatuslineScript?.(getResourcesDirectory())?.catch((err: unknown) => logError('[main] statusline redeploy failed:', err))
+        } catch (err) { logError('[main] statusline redeploy failed:', err) }
         // P3.4: a provider switched on has its status page read at once; one
         // switched off leaves the title bar and is not read again.
         void refreshServiceStatus().catch((err) => logError('[main] service status refresh failed:', err))

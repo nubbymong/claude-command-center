@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "f42e51d8ea747b7a1cdd459d41e4379f760d6b277fc5f2dd563c741442b4bc4a",
-  "manifestHead": "a7ed55bbc0bb118a6f5ee80b20ef43bf1cc0ffa7",
+  "manifestPathDigest": "d805296342cfd16dfa6388691efca112d3608a6bd5f7d38ec55e87e8fc561382",
+  "manifestHead": "a4c270bb1f3e3e54bed9fb8bf62c024c9540bf1d",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -6615,6 +6615,16 @@
       "note": "created by fix pass 13; node-pty faked, nothing spawned"
     },
     {
+      "path": "tests/unit/main/pty-restart-kill-keeps-resume.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "PR #629 (aicc_planning#172, the macOS desktop test): a Claude Restart / Switch account keeps its exact resume target when the old process ends before the respawn arrives (killPty with reason restart captures it; the next spawn of the id takes it); host platform and macOS with the experimental multi-account setting on; no Codex text changed (WP1.38); tests/unit/main/pty-restart-kill-keeps-resume.test.ts",
+      "note": "Codex appears only as a key of the mocked Conductor MCP server (registerCodexReviewSession); no Codex code path"
+    },
+    {
       "path": "tests/unit/main/pty-session-liveness.test.ts",
       "predicates": [
         "P13"
@@ -8931,6 +8941,16 @@
       "category": "TEST",
       "disposition": "replace",
       "evidence": "existing test retained; its cases are unchanged; WP2 PR 3 P3.10 round 1 (S1): three cases added, a Codex session shows its Watchdog pill and counts only the checks its CLI has (green with both on, partial 1 of 2, off), none without a watcher or on a shell session (WP1.33); tests/unit/renderer/session-header.test.tsx; WP2 PR 3 P3.10 round 2 (the round 1 re-review and the VM re-check) (WP1.33): cases added for the round's fixes; tests/unit/renderer/session-header.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/session-launch-mac-multi-account.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "experimental macOS Claude multi-account (ADR-024, aicc_planning#172): a new test whose one Codex case asserts that Switch Account never applies to a Codex session, as tests/unit/renderer/session-launch.test.ts does; no Codex code path (WP1.70)",
       "note": ""
     },
     {

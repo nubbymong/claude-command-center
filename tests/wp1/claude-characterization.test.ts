@@ -90,6 +90,12 @@ const launch = async (sid: string, opts: Record<string, unknown>) => {
   return spawned[spawned.length - 1]
 }
 const lastEnv = () => spawned[spawned.length - 1].env
+// macOS, experimentalMacMultiAccount OFF (the default): a NON-primary profile
+// launch is refused (aicc_planning#172 decision 3, ADR-024) -- nothing spawns.
+// The env characterization then runs on the PRIMARY profile, which is the only
+// one macOS can launch in that state and which keeps the base behaviour. On
+// win32/linux the non-primary profile is characterized exactly as before.
+const IS_DARWIN = process.platform === 'darwin'
 
 // ---------------------------------------------------------------------------
 // C1: local Claude spawn -> profile resolution -> child env. Real pty-manager
@@ -132,15 +138,22 @@ describe('C1: local Claude spawn resolves a profile and isolates it through USER
   })
 
   it('a requested valid profile becomes the child USERPROFILE; CLAUDE_CONFIG_DIR is never set; git/npm stay on the real home', async () => {
-    await launch('wp1-c1-requested', { shellOnly: false, profileId: workId })
+    let target = workId
+    if (IS_DARWIN) {
+      const before = spawned.length
+      await launch('wp1-c1-requested-refused', { shellOnly: false, profileId: workId })
+      expect(spawned.length, 'macOS: a non-primary launch with the setting off must not spawn').toBe(before)
+      target = primaryId
+    }
+    await launch('wp1-c1-requested', { shellOnly: false, profileId: target })
     const env = lastEnv()
-    expect(env.USERPROFILE).toBe(profiles.getProfileConfigDir(workId))
+    expect(env.USERPROFILE).toBe(profiles.getProfileConfigDir(target))
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
     expect(env.FROM_PROVIDER).toBe('1') // the provider env is extended, not replaced
     expect(env.CCC_CONFIG_DIR).toBe(getConfigDir())
     expect(env.GIT_CONFIG_GLOBAL).toBe(path.join(os.homedir(), '.gitconfig'))
     expect(env.npm_config_userconfig).toBe(path.join(os.homedir(), '.npmrc'))
-    if (process.platform === 'linux') expect(env.HOME).toBe(profiles.getProfileConfigDir(workId))
+    if (process.platform === 'linux') expect(env.HOME).toBe(profiles.getProfileConfigDir(target))
     else expect(env.HOME).toBeUndefined()
   })
 
@@ -167,19 +180,21 @@ describe('C1: local Claude spawn resolves a profile and isolates it through USER
   it('an inherited CCC_SESSION_WORKTREE is deleted for a session that does not designate its own worktree (ADR-016)', async () => {
     await launch('wp1-c1-wt-shell', { shellOnly: true })
     expect(lastEnv().CCC_SESSION_WORKTREE).toBeUndefined()
-    await launch('wp1-c1-wt-interactive', { shellOnly: false, profileId: workId }) // sandbox cwd is not a git checkout
+    // sandbox cwd is not a git checkout; macOS launches the primary (see IS_DARWIN)
+    await launch('wp1-c1-wt-interactive', { shellOnly: false, profileId: IS_DARWIN ? primaryId : workId })
     expect(lastEnv().CCC_SESSION_WORKTREE).toBeUndefined()
   })
 
   it('the redirected profile .local/bin is appended to PATH exactly once (case-insensitive) and the real entry stays first', async () => {
-    await launch('wp1-c1-path', { shellOnly: false, profileId: workId })
-    const localBin = path.join(profiles.getProfileConfigDir(workId), '.local', 'bin')
+    const target = IS_DARWIN ? primaryId : workId // macOS: see IS_DARWIN
+    await launch('wp1-c1-path', { shellOnly: false, profileId: target })
+    const localBin = path.join(profiles.getProfileConfigDir(target), '.local', 'bin')
     const parts = lastEnv().PATH.split(path.delimiter)
     expect(parts[0]).toBe('/usr/bin')
     expect(parts.filter((p) => p.toLowerCase() === localBin.toLowerCase())).toHaveLength(1)
     // Already present in a different case: not appended again.
     providerEnv = { ...providerEnv, PATH: `/usr/bin${path.delimiter}${localBin.toUpperCase()}` }
-    await launch('wp1-c1-path-dedupe', { shellOnly: false, profileId: workId })
+    await launch('wp1-c1-path-dedupe', { shellOnly: false, profileId: target })
     const parts2 = lastEnv().PATH.split(path.delimiter)
     expect(parts2.filter((p) => p.toLowerCase() === localBin.toLowerCase())).toHaveLength(1)
     expect(parts2).toHaveLength(2)
@@ -315,7 +330,8 @@ describe('C6: settleOnboardingFinish / settleWhatsNewOnly stamped shapes', () =>
 // ---------------------------------------------------------------------------
 describe('C5: accountProfiles handlers sequencing on the base', () => {
   const order: string[] = []
-  const state = { inUse: [] as boolean[], clearThrows: false, teardownThrows: false }
+  const serialised: string[] = []
+  const state = { inUse: [] as boolean[], clearThrows: false, teardownThrows: false, kc: { ok: true } as { ok: true } | { ok: false; reason: string }, sessions: [] as string[] }
   let store: Array<Record<string, unknown>> = []
 
   // The app's own window, and an event from its top frame: the account-profile
@@ -333,7 +349,7 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
   const invoke = (ch: string, ...args: any[]) => ipcHandlers.get(ch)!(fromApp({} as any), ...args)
 
   beforeEach(async () => {
-    order.length = 0; state.inUse = []; state.clearThrows = false; state.teardownThrows = false
+    order.length = 0; state.inUse = []; state.clearThrows = false; state.teardownThrows = false; state.kc = { ok: true }; state.sessions = []
     store = [{ id: 'primary', name: '', createdAt: 0, isPrimary: true }, { id: 'work', name: 'Work', createdAt: 0 }]
     vi.doMock('../../src/main/account-profiles', () => ({
       listProfiles: () => store.map((p) => ({ ...p })),
@@ -342,14 +358,17 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
       safeTeardownProfile: (id: string) => { order.push(`teardown:${id}`); if (state.teardownThrows) throw new Error('file locked') },
       readProfileAccountEmail: vi.fn(), getProfileConfigDir: vi.fn(), createProfile: vi.fn(), captureDetectedAccount: vi.fn(),
       backupProfileHomeToCanonical: vi.fn(), restoreProfileIdentityFromCanonical: vi.fn(), readProfileCredentialStamp: vi.fn(),
+      // The platform-seam variants (macOS Keychain); a no-op off macOS.
+      readProfileCredentialStampAsync: vi.fn(), captureDetectedAccountAsync: vi.fn(), restoreProfileIdentityFromCanonicalAsync: vi.fn(), captureDetectedAccountAndClearSource: vi.fn(),
+      removeProfileKeychainItem: async (id: string) => { order.push(`keychain:${id}`); return state.kc }, runSerialisedForProfile: (id: string, fn: () => Promise<unknown>) => { serialised.push(id); return fn() },
     }))
     vi.doMock('../../src/main/claude-account-identity', () => ({
       getAccountIdentity: vi.fn(), getDefaultAccountEmail: vi.fn(), getWatchedProfileId: vi.fn(), detectedNewAccountEmail: vi.fn(),
       isProfileInUseByLiveSession: () => { const v = state.inUse.shift() ?? false; order.push(`inUse:${v}`); return v },
-      sessionsOnProfile: () => [],
+      sessionsOnProfile: () => [...state.sessions],
     }))
     vi.doMock('../../src/main/usage/account-usage', () => ({ fetchAllAccountsUsage: vi.fn(), fetchAllAccountsUsageStreaming: vi.fn(), fetchAccountUsage: vi.fn() }))
-    vi.doMock('../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: () => [] }))
+    vi.doMock('../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: () => [], readAllProfileAuthInfoAsync: async () => [] }))
     vi.doMock('../../src/main/account-web/sign-in', () => ({ clearWebSession: async (id: string) => { order.push(`clear:${id}`); if (state.clearThrows) throw new Error('partition busy') } }))
     vi.doMock('../../src/main/account-web/session-store', () => ({ removeWebSession: (id: string) => { order.push(`removeWeb:${id}`) } }))
     vi.doMock('../../src/main/account-web/artifacts', () => ({ closeArtifacts: (id: string) => { order.push(`closeArtifacts:${id}`) } }))
@@ -381,10 +400,45 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
   })
 
   it('delete clears web state first, re-checks in-use after the await, and only then tears down', async () => {
-    state.inUse = [false, false]
+    state.inUse = [false, false, false]
     const r = await invoke(IPC.ACCOUNT_PROFILES_DELETE, { id: 'work' })
     expect(r).toEqual({ ok: true })
-    expect(order).toEqual(['inUse:false', 'closeArtifacts:work', 'closePanes:work', 'clear:work', 'inUse:false', 'removeWeb:work', 'teardown:work'])
+    expect(order).toEqual(['inUse:false', 'closeArtifacts:work', 'closePanes:work', 'clear:work', 'inUse:false', 'removeWeb:work', 'keychain:work', 'inUse:false', 'teardown:work'])
+  })
+
+  // Adversarial review pass 3, m1: the Keychain delete is awaited (up to the
+  // security timeout); a session that starts in that window stops the teardown.
+  it('m1: a session that started during the Keychain delete stops the teardown, and the error says the sign-in was already cleared', async () => {
+    state.inUse = [false, false, true]
+    state.sessions = ['sess-late']
+    const r = await invoke(IPC.ACCOUNT_PROFILES_DELETE, { id: 'work' })
+    expect(r.ok).toBe(false)
+    expect(String(r.error)).toMatch(/in use by an open session/)
+    expect(String(r.error)).toMatch(/Keychain sign-in were already cleared/)
+    // Merge review MINOR 2: beta's shape -- the code and the sessions holding
+    // the profile, which the Accounts row turns into Go to buttons.
+    expect(r.code).toBe('in-use-cleared')
+    expect(r.sessions).toEqual(['sess-late'])
+    expect(order).toEqual(['inUse:false', 'closeArtifacts:work', 'closePanes:work', 'clear:work', 'inUse:false', 'removeWeb:work', 'keychain:work', 'inUse:true'])
+  })
+
+  // Re-attack round 2, item 1: a delete runs in the profile's capture chain.
+  it('item1: delete runs through the per-profile chain shared with detected-account capture', async () => {
+    serialised.length = 0
+    state.inUse = [false, false, false]
+    const r = await invoke(IPC.ACCOUNT_PROFILES_DELETE, { id: 'work' })
+    expect(r).toEqual({ ok: true })
+    expect(serialised).toEqual(['work'])
+  })
+
+  // m12: the Keychain could not be asked -- the account is kept (fail closed).
+  it('m12: removeProfileKeychainItem -> ok:false refuses the delete with the reason; no teardown', async () => {
+    state.inUse = [false, false]; state.kc = { ok: false, reason: 'the Keychain did not answer in time' }
+    const r = await invoke(IPC.ACCOUNT_PROFILES_DELETE, { id: 'work' })
+    expect(r.ok).toBe(false)
+    expect(String(r.error)).toMatch(/Keychain sign-in could not be removed, so the account was not removed: the Keychain did not answer in time/)
+    expect(order).not.toContain('teardown:work')
+    expect(order[order.length - 1]).toBe('keychain:work')
   })
 
   it('a session that started during the clear stops the delete: web record dropped, no teardown', async () => {

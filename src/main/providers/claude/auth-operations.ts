@@ -22,7 +22,9 @@ export interface ClaudeProfileAuthStatus {
   error?: string
   /** Which source answered: the CLI's own status command, or the profile's
    *  credential file when the CLI did not answer. */
-  source?: 'cli-status' | 'credential-file'
+  /** 'keychain': macOS with the experimental multi-account setting on, the
+   *  profile's Keychain item answered (ADR-024). */
+  source?: 'cli-status' | 'credential-file' | 'keychain'
 }
 
 /** What the app's sign-out reports (ClaudeCliLogoutResult). */

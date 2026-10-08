@@ -9,6 +9,7 @@ import { gateManagedLaunch, peekGateVerdict } from './managed-launch-diagnostics
 import type { ProjectGateResult } from '../shared/providers'
 import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
 import { profileIdFromHome } from './profile-id'
+import { ensureMacRealmVerdict, macRealmVerdictPending, macRealmLaunchBinary } from './mac-realm-verdict'
 
 /** Grace added to a run's kill timeout for its consumer ref's leak bound: the
  *  spawner kills at `timeoutMs` and settles right after, so a ref that outlives
@@ -180,8 +181,15 @@ export function spawnClaudeHeadless(
   const release = profileId ? acquireProfileConsumer(profileId, { maxAgeMs: timeoutMs + HEADLESS_CONSUMER_GRACE_MS }) : null
   const pending = profileId ? pendingProfileRefresh(profileId) : null
   const cachedGate = profileId ? peekGateVerdict(cwd) : null
-  const p = pending || (profileId && cachedGate === undefined)
-    ? Promise.resolve(pending).then(() => cachedGate ?? gateManagedLaunch(cwd)).then((gate) => spawnNow(args, timeoutMs, stdinData, home, signal, cwd, gate, extraEnv, opts.onStdout))
+  // Decision aicc_planning#172 item 4: a macOS realm run with no verdict yet
+  // defers behind the check (withProfileHome refuses it otherwise).
+  const realmPending = macRealmVerdictPending(home)
+  const p = pending || (profileId && cachedGate === undefined) || realmPending
+    // The realm check runs LAST, after the project gate (re-attack r3, MINOR
+    // 3): its verdict is then read by the choke point with no wait in between.
+    ? (realmPending
+      ? Promise.resolve(pending).then(() => cachedGate ?? gateManagedLaunch(cwd)).then((gate) => ensureMacRealmVerdict(home).then(() => gate))
+      : Promise.resolve(pending).then(() => cachedGate ?? gateManagedLaunch(cwd))).then((gate) => spawnNow(args, timeoutMs, stdinData, home, signal, cwd, gate, extraEnv, opts.onStdout))
     : spawnNow(args, timeoutMs, stdinData, home, signal, cwd, cachedGate ?? null, extraEnv, opts.onStdout)
   if (release) p.then(release, release)
   return p
@@ -222,12 +230,18 @@ function spawnNow(
   return new Promise((resolve) => {
     logInfo(`[claude-headless] Spawning: claude ${args.join(' ')}${stdinData ? ' (with stdin)' : ''}${home ? ' (account home)' : ''}`)
 
-    const proc = spawn('claude', args, {
-      shell: true,
-      windowsHide: true,
-      env,
-      cwd,
-    })
+    // macOS realm (re-attack r3, MAJOR 1): exactly the binary the #172
+    // verdict was taken for, with no shell -- not a `claude` the app's PATH
+    // finds. Everywhere else: the bare name through the shell, as before.
+    const realmBin = macRealmLaunchBinary(home)
+    const proc = realmBin
+      ? spawn(realmBin, args, { shell: false, windowsHide: true, env, cwd })
+      : spawn('claude', args, {
+        shell: true,
+        windowsHide: true,
+        env,
+        cwd,
+      })
 
     // Pipe prompt via stdin if provided
     if (stdinData && proc.stdin) {

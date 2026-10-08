@@ -22,6 +22,65 @@ import * as os from 'os'
 import { SHIM_GATHER_JS, SHIM_STATUS_URL_JS } from './statusline-gather'
 
 /**
+ * macOS LOCAL bridge only (never the SSH shims, never win32/linux, where this
+ * is not even in the deployed script): a session on the experimental macOS
+ * multi-account realm runs with CLAUDE_CONFIG_DIR set and HOME left real, so
+ * the shared gather above read the REAL home's `.claude.json` -- another
+ * account's email. Re-read it from `$CLAUDE_CONFIG_DIR/.claude.json`, where
+ * the CLI keeps it there (verified on a Mac, 2026-10-06), and drop the
+ * gather's usage fetch for that session: its token lookup is
+ * `~/.claude/.credentials.json`, which on the realm is the wrong account's
+ * file when it exists at all. The session keeps the 5h/weekly figures Claude
+ * Code sends on stdin; the per-model buckets for that account come from the
+ * Account usage page (main reads its Keychain item). Plain ES5, like the
+ * gather.
+ *
+ * DEPLOYED ONLY WHILE THE SETTING IS ON (adversarial review pass 3, m6): the
+ * snippet is in the script only when the experimental macOS multi-account
+ * setting has been on during this run (macRealmSnippetWanted). With it off
+ * all run, the deployed macOS script is the same as before this feature, so
+ * an unmanaged `claude` the user runs with their own CLAUDE_CONFIG_DIR is not
+ * affected. Turning it on re-deploys (claudeStatuslineNeedsMacRealmRedeploy,
+ * from main's settings-saved hook); turning it off keeps the snippet until
+ * the next start, because realm sessions started while it was on are still
+ * running and would otherwise show the real home's account.
+ *
+ * The identity file is read only when it is a regular file under 5 MB: a
+ * FIFO or a device there (`/dev/zero`) would block or never end the read.
+ */
+export const MAC_REALM_GATHER_JS = `
+try{var cfgDM=process.env.CLAUDE_CONFIG_DIR;if(typeof cfgDM==='string'&&cfgDM&&path.isAbsolute(cfgDM)){delete s.accountEmail;fetchUsage=function(cbM){cbM(null);};var cjM=path.join(cfgDM,'.claude.json');var stM=fs.statSync(cjM);if(stM.isFile()&&stM.size<5*1024*1024){var jM=JSON.parse(fs.readFileSync(cjM,'utf-8'));if(jM&&jM.oauthAccount&&typeof jM.oauthAccount.emailAddress==='string')s.accountEmail=jM.oauthAccount.emailAddress;}}}catch(eM){}
+`
+
+/** Whether the experimental macOS multi-account setting is on. Injected by
+ *  the composition root (src/main/index.ts) so this provider module does not
+ *  import the settings reader; OFF until injected, and whenever it throws. */
+let macRealmProbe: () => boolean = () => false
+/** Whether the deployed script carries MAC_REALM_GATHER_JS (this run). */
+let macRealmDeployed = false
+
+export function setMacRealmStatuslineProbe(probe: () => boolean): void {
+  macRealmProbe = probe
+}
+
+/** Test seam: forget what was deployed and drop the probe. */
+export function _resetMacRealmStatuslineForTest(): void {
+  macRealmProbe = () => false
+  macRealmDeployed = false
+}
+
+function macRealmSnippetWanted(): boolean {
+  if (process.platform !== 'darwin') return false
+  if (macRealmDeployed) return true // sticky for the run (see MAC_REALM_GATHER_JS)
+  try { return macRealmProbe() === true } catch { return false }
+}
+
+/** True when the setting is on now but the deployed script predates it. */
+export function claudeStatuslineNeedsMacRealmRedeploy(): boolean {
+  return macRealmSnippetWanted() && !macRealmDeployed
+}
+
+/**
  * Deploy the statusline script that Claude Code will invoke.
  * The script reads JSON from stdin and writes to a per-session status file.
  *
@@ -52,6 +111,7 @@ export async function deployClaudeStatuslineScript(resourcesDir: string): Promis
   // remote shims; env fallbacks CLAUDE_MULTI_SESSION_ID / CCC_STATUS_URL).
   // The per-session status FILE is now the fallback, kept for sessions whose
   // settings predate the URL bake-in and for an MCP server that failed to bind.
+  const withMacRealm = macRealmSnippetWanted()
   const scriptContent = `#!/usr/bin/env node
 // AI Code Conductor - Statusline bridge script
 // Reads JSON from stdin (sent by Claude Code), enriches it with account +
@@ -103,7 +163,7 @@ process.stdin.on('end', () => {
     const iso = (t) => typeof t === 'number' ? new Date(t * 1000).toISOString() : (t || '');
     if (rl.five_hour) { s.rateLimitCurrent = Math.round(Number(rl.five_hour.used_percentage) || 0); s.rateLimitCurrentResets = iso(rl.five_hour.resets_at); }
     if (rl.seven_day) { s.rateLimitWeekly = Math.round(Number(rl.seven_day.used_percentage) || 0); s.rateLimitWeeklyResets = iso(rl.seven_day.resets_at); }
-    ${SHIM_GATHER_JS}
+    ${SHIM_GATHER_JS}${withMacRealm ? MAC_REALM_GATHER_JS : ''}
     // Fallback delivery: write the per-session status file for the app's
     // directory watcher. Suppress statusline display in the terminal either
     // way — the Conductor's own ContextBar shows all this data; a single
@@ -152,11 +212,19 @@ process.stdin.on('end', () => {
     if (!fs.existsSync(resourcesScriptsDir)) {
       fs.mkdirSync(resourcesScriptsDir, { recursive: true })
     }
-    fs.writeFileSync(
-      path.join(resourcesScriptsDir, 'claude-multi-statusline.js'),
-      scriptContent,
-      { mode: 0o755 }
-    )
+    // Temp file + rename (re-attack r11): the script is now rewritten while
+    // sessions run (the macOS realm redeploy), and a statusline tick reading
+    // a half-written script would fail or run a truncated program.
+    const scriptPath = path.join(resourcesScriptsDir, 'claude-multi-statusline.js')
+    const tmpPath = `${scriptPath}.${process.pid}.${Date.now()}.tmp`
+    try {
+      fs.writeFileSync(tmpPath, scriptContent, { mode: 0o755 })
+      fs.renameSync(tmpPath, scriptPath)
+    } catch (e) {
+      try { fs.rmSync(tmpPath, { force: true }) } catch { /* best-effort */ }
+      throw e
+    }
+    if (withMacRealm) macRealmDeployed = true
 
     // Resume-picker deploy is factored out into deployClaudeResumePickerScript
     // and called from index.ts boot chain alongside deployStatuslineScript.

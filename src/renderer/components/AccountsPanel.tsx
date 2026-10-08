@@ -27,6 +27,10 @@ import {
   blockerSessions, unnamedHolders,
 } from '../stores/providerAccountsStore'
 import { claudeCodeOn } from '../onboarding/hello-codex'
+import { replaceFailedConfigSave } from '../utils/config-saver'
+// The experimental macOS multi-account toggle (ADR-024).
+import ToggleSwitch from './github/config/ToggleSwitch'
+import { MAC_MULTI_ACCOUNT_SETTING, MAC_MULTI_ACCOUNT_MIN_CLI_UNVERIFIED, claudeMultiAccountBlocked } from '../../shared/mac-multi-account'
 import { ProviderMark } from './sidebar/Badges'
 import { Pill, MutedLine, ErrorLine, ReviewerLineBlock, RunningPill } from './settings/accounts/accounts-ui'
 import { AccountRow, AccountChip, LinkedLine, BlockerLine } from './settings/accounts/AccountRow'
@@ -63,7 +67,7 @@ function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile;
   const refusal = registryAccount?.reviewRefusal
   const refusalText = !refusal ? null
     : refusal.reason === 'platform'
-      ? (window.electronPlatform === 'darwin' ? "Can't run Claude reviews on macOS" : refusal.message)
+      ? (claudeMultiAccountBlocked(window.electronPlatform, useSettingsStore.getState().settings) ? "Can't run Claude reviews on macOS" : refusal.message)
       : "Can't check whether this account can run reviews right now"
 
   const active = isAccountActive(profile)
@@ -291,6 +295,31 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
   const claudeEnabled = useSettingsStore((s) => s.settings.claudeEnabled)
   const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const claudeOn = claudeCodeOn({ claudeEnabled }, snapshot)
+  // Experimental macOS multi-account (src/shared/mac-multi-account.ts). The
+  // same saved key main reads at launch; the toggle is offered on macOS only.
+  const macMultiSetting = useSettingsStore((s) => s.settings[MAC_MULTI_ACCOUNT_SETTING])
+  const updateSettings = useSettingsStore((s) => s.updateSettings)
+  const isMac = window.electronPlatform === 'darwin'
+  const multiBlocked = claudeMultiAccountBlocked(window.electronPlatform, { [MAC_MULTI_ACCOUNT_SETTING]: macMultiSetting })
+  // Main reads the SAVED file at every launch, so a toggle that did not save
+  // must not look saved: the UI and main would disagree, and a profile shown
+  // as available would be refused at launch (adversarial review pass 3, M4).
+  // The store is put back WITHOUT another save, and the failure is shown.
+  const [macMultiError, setMacMultiError] = useState<string | null>(null)
+  const toggleMacMulti = async (): Promise<void> => {
+    const prev = macMultiSetting
+    const next = prev !== true
+    setMacMultiError(null)
+    let saved: unknown
+    try { saved = await updateSettings({ [MAC_MULTI_ACCOUNT_SETTING]: next }) } catch { saved = false }
+    if (saved !== true) {
+      useSettingsStore.setState((s) => ({ settings: { ...s.settings, [MAC_MULTI_ACCOUNT_SETTING]: prev } }))
+      // R4: the failed payload (toggle flipped) is what Retry would write;
+      // make it the reverted settings instead.
+      replaceFailedConfigSave('settings', useSettingsStore.getState().settings)
+      setMacMultiError('The setting could not be saved, so it was not changed. Try again.')
+    }
+  }
   const primaryId = profiles.find((p) => p.isPrimary)?.id
 
   // On open, reconcile any "setup incomplete" account: the user's /login may have
@@ -332,13 +361,38 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
         ))}
       </div>
 
-      {/* Add an account. Windows-only: on macOS Claude Code keeps its
-          OAuth token in the login Keychain, which per-profile HOME redirection
-          cannot isolate, so added accounts would silently share one login
-          (Mac readiness review 2026-07-02). "Another" only when there is one
+      {/* Add an account. Off on macOS unless the experimental setting above
+          is on: there Claude Code keeps its OAuth token in the login Keychain,
+          which per-profile HOME redirection cannot isolate, so added accounts
+          would silently share one login (Mac readiness review 2026-07-02); the
+          setting isolates them by CLAUDE_CONFIG_DIR instead. "Another" only when there is one
           already. The notes are --text-muted: --color-overlay0 measured 2.1:1
           (dark) and 3.2:1 (light) on this card (VM audit 2026-09-25). */}
-      {claudeOn && (window.electronPlatform === 'darwin' ? (
+      {isMac && (
+        <div className="mt-3 flex items-start gap-3" data-testid="mac-multi-account-toggle">
+          <ToggleSwitch
+            state={macMultiSetting === true ? 'on' : 'off'}
+            onToggle={() => { void toggleMacMulti() }}
+            label="Experimental: multiple Claude accounts on macOS"
+            describedBy="mac-multi-account-warning"
+          />
+          <div className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-text">Experimental: multiple Claude accounts on macOS</div>
+            <div id="mac-multi-account-warning">
+              Gives each added account its own Claude Code config folder and Keychain sign-in.
+              Checked by hand with the Claude Code CLI on a Mac: two sign-ins stay separate.
+              Not yet tested inside this app on a Mac. The oldest Claude Code version this works
+              with is not confirmed ({MAC_MULTI_ACCOUNT_MIN_CLI_UNVERIFIED} or newer is expected).
+              Applies to sessions started after the change. While it is off, added
+              accounts on this Mac do not start: only your normal sign-in runs.
+            </div>
+            {macMultiError && (
+              <div role="alert" data-testid="mac-multi-account-save-error" className="text-red">{macMultiError}</div>
+            )}
+          </div>
+        </div>
+      )}
+      {claudeOn && (multiBlocked ? (
         <p className="mt-3 text-[11px] leading-relaxed rounded-lg border border-dashed border-surface1 py-2 px-4" style={{ color: 'var(--text-muted)' }} data-testid="accounts-mac-note">
           Multiple accounts are not available on macOS yet: Claude Code stores its sign-in
           token in the macOS Keychain, which is shared across the whole app, so added

@@ -19,6 +19,15 @@ const lastFailedData = new Map<string, unknown>()
 /** Keys already reported as refused, so a debounced storm logs once each. */
 const refusedOnce = new Set<string>()
 
+/** Replace the recorded FAILED payload of `key` (when there is one) with
+ *  `data`, so a later Retry (retryFailedConfigSaves) writes `data` and not a
+ *  change the UI has since put back. A no-op when nothing failed for `key`.
+ *  Used by the macOS multi-account toggle (re-attack R4): reverting the store
+ *  alone left Retry able to write the reverted value. */
+export function replaceFailedConfigSave(key: string, data: unknown): void {
+  if (lastFailedData.has(key)) lastFailedData.set(key, data)
+}
+
 async function tryOnce(key: string, data: unknown): Promise<boolean> {
   try {
     return await window.electronAPI.config.save(key, data)

@@ -154,7 +154,47 @@ export function noteProfileRefreshInFlight(profileId: string, refresh: Promise<u
  */
 export function pendingProfileRefresh(profileId: string): Promise<void> | null {
   const p = profileId ? refreshByProfile.get(profileId) : undefined
-  return p ? p.then(() => undefined, () => undefined) : null
+  // Re-attack round 2, item 6: after the refresh, a minted token whose macOS
+  // Keychain write-back is still pending is written BEFORE the consumer reads
+  // the item -- or the consumer would start on the spent refresh token.
+  // (Nothing pending = settle in the SAME tick as before: no extra await.)
+  if (p) return p.then(() => settleWriteBackOrNull(profileId) ?? undefined, () => settleWriteBackOrNull(profileId) ?? undefined)
+  return profileId ? (settleWriteBackOrNull(profileId)) : null
+}
+
+/** A pending Keychain write-back settler, registered by account-usage (this
+ *  module stays dependency-free). Returns null when nothing is pending, so a
+ *  consumer with nothing to wait for keeps a synchronous spawn. */
+let writeBackSettler: ((profileId: string) => Promise<unknown> | null) | null = null
+
+export function setPendingWriteBackSettler(fn: ((profileId: string) => Promise<unknown> | null) | null): void {
+  writeBackSettler = fn
+}
+
+/** The longest a launch waits for a pending write-back: past it the launch
+ *  goes ahead (fail open -- a locked Keychain must not hold a session start
+ *  forever), and says so. */
+export const PENDING_WRITE_BACK_WAIT_MS = 10_000
+
+function settleWriteBackOrNull(profileId: string): Promise<void> | null {
+  let p: Promise<unknown> | null = null
+  try { p = writeBackSettler ? writeBackSettler(profileId) : null } catch { p = null }
+  if (!p) return null
+  return new Promise<void>((resolve) => {
+    let done = false
+    const finish = (timedOut: boolean): void => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      if (timedOut) {
+        // eslint-disable-next-line no-console
+        console.warn(`[profile-consumers] ${profileId}: a refreshed token's Keychain write-back did not settle within ${PENDING_WRITE_BACK_WAIT_MS} ms; starting anyway`)
+      }
+      resolve()
+    }
+    const timer = setTimeout(() => finish(true), PENDING_WRITE_BACK_WAIT_MS)
+    p!.then(() => finish(false), () => finish(false))
+  })
 }
 
 /**

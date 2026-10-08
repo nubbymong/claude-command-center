@@ -12,6 +12,7 @@ import { useProviderAccountsStore, providerView, reviewerLine, reviewerNotice, a
 import ToggleSwitch from '../github/config/ToggleSwitch'
 import { ProviderMark } from '../sidebar/Badges'
 import { DialogCallout } from '../ui/Dialog'
+import { claudeMultiAccountBlocked } from '../../../shared/mac-multi-account'
 
 export type ReviewToolKey = 'codexReview' | 'claudeReview'
 
@@ -112,7 +113,7 @@ export function reviewToolView(snapshot: AccountsSnapshot | null, tool: ReviewTo
   if (!review.ready) return { disabled: true, message: noReviewMessage(snapshot, id, review), warn: true, reviewer: null, notice, note }
   // On macOS, once a Claude reviewer was cleared, reviews use the normal
   // Claude sign-in: say so rather than naming a profile.
-  if (!isCodex && ctx.platform === 'darwin' && snapshot.reviewerNotices.some((n) => n.providerId === 'claude')) {
+  if (!isCodex && claudeMultiAccountBlocked(ctx.platform, ctx.settings) && snapshot.reviewerNotices.some((n) => n.providerId === 'claude')) {
     return { disabled: false, message: null, reviewer: { text: 'your normal Claude sign-in', suffix: null, changeable: false }, notice, note }
   }
   const line = reviewerLine(snapshot, id)

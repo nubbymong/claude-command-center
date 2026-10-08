@@ -114,6 +114,33 @@ describe('useReauthAccount completion', () => {
     expect(onDone).not.toHaveBeenCalled()
   })
 
+  // Adversarial review pass 3, m7: a locked macOS Keychain answers the stamp
+  // as UNKNOWN. Taken as "no stamp" baseline, the first read after the unlock
+  // (the SAME sign-in as before) looked like a new login and completed.
+  it('m7: an UNKNOWN first read is no baseline -- an unlock alone never completes; a real login after it does', async () => {
+    credentialStampMock.mockReset()
+    credentialStampMock.mockResolvedValueOnce({ ok: true, stamp: null, signedIn: false, unknown: true })
+    credentialStampMock.mockResolvedValue({ ok: true, stamp: 'kc:same', signedIn: true })
+    const { result, unmount: u } = renderHook(() => useReauthAccount())
+    unmount = u
+    const onDone = vi.fn()
+    await act(async () => { result.current({ id: 'profile-aaa111', name: 'Work' }, onDone); for (let i = 0; i < 4; i++) await Promise.resolve() })
+    // r9: the BASELINE read asks main for a fresh read (no 30 s unknown cache).
+    expect(credentialStampMock.mock.calls[0]).toEqual(['profile-aaa111', { fresh: true }])
+    await tick(); await tick(); await tick()
+    expect(session()?.needsLogin).toBe(true)
+    expect(onDone).not.toHaveBeenCalled()
+    // Unknown reads in the middle change nothing either.
+    credentialStampMock.mockResolvedValue({ ok: true, stamp: null, signedIn: false, unknown: true })
+    await tick(); await tick()
+    expect(onDone).not.toHaveBeenCalled()
+    // Now a real /login lands.
+    credentialStampMock.mockResolvedValue({ ok: true, stamp: 'kc:new', signedIn: true })
+    await tick()
+    expect(onDone).toHaveBeenCalledTimes(1)
+    expect(session()?.needsLogin).toBe(false)
+  })
+
   it('an older preload without the stamp API keeps the previous email-only rule', async () => {
     api.accountProfiles.credentialStamp = undefined
     const { result, unmount: u } = renderHook(() => useReauthAccount())

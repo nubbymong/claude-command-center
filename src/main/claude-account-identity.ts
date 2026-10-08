@@ -5,7 +5,7 @@
 // v1.5.9 chip removal (whose source was the GLOBAL last-login at tick time).
 import fs, { promises as fsp } from 'node:fs'; import path from 'node:path'
 import { BrowserWindow } from 'electron'
-import { readProfileAccountEmail, getProfileConfigDir, sharedRoot, listProfiles, isValidProfileId, backupProfileHomeToCanonical } from './account-profiles'
+import { readProfileAccountEmail, getProfileConfigDir, sharedRoot, listProfiles, isValidProfileId, backupProfileHomeToCanonical, profileIdentityFile, profileDetectionCapturable } from './account-profiles'
 import { hasTransientProfileConsumer } from './profile-consumers'
 import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
@@ -124,7 +124,10 @@ function identityFilePath(profileId: string | undefined): string {
   // getProfileConfigDir's throw escape here would take down the main process on
   // a bad id; an invalid one resolves the shared identity file instead.
   return isValidProfileId(profileId)
-    ? path.join(getProfileConfigDir(profileId), '.claude.json')
+    ? (process.platform === 'darwin'
+      // The experimental macOS realm keeps it inside the profile's config dir.
+      ? profileIdentityFile(getProfileConfigDir(profileId))
+      : path.join(getProfileConfigDir(profileId), '.claude.json'))
     : path.join(path.dirname(sharedRoot()), '.claude.json')
 }
 
@@ -145,6 +148,16 @@ export function recheckSessionIdentity(sessionId: string, profileId: string | un
   if (!email || bySession.get(sessionId) === email) return null
   bySession.set(sessionId, email) // mid-session change: bypass the first-capture guard
   return email
+}
+
+/** Whether a detected /login on this profile may be offered for capture.
+ *  False only for the macOS primary with the experimental multi-account
+ *  setting on (account-profiles, profileDetectionCapturable): that /login
+ *  replaced the user's normal sign-in itself, and capture would refuse it. The
+ *  session's chip still follows the new account; no prompt is raised that
+ *  could only fail. A throw is read as capturable: the capture IPC re-checks. */
+function detectionCapturable(profileId: string): boolean {
+  try { return profileDetectionCapturable(profileId) } catch { return true }
 }
 
 /** Notify renderers that a session's /login authenticated an account not yet
@@ -170,6 +183,7 @@ export function recheckAll(): void {
       // "new account" prompt ONCE per (profile, email) so we never double-prompt or
       // double-capture.
       if (detectedByProfile.get(profileId) === changed) continue
+      if (!detectionCapturable(profileId)) continue
       detectedByProfile.set(profileId, changed)
       broadcastNewAccountDetected(sessionId, profileId, changed)
     } else {
@@ -305,6 +319,7 @@ async function recheckAllAsyncInner(): Promise<void> {
       const known = listProfiles().map((p) => p.accountEmail).filter((e): e is string => !!e)
       if (classifyIdentityChange(sessionId, changed, before, known).kind === 'capture') {
         if (detectedByProfile.get(profileId) === changed) continue
+        if (!detectionCapturable(profileId)) continue
         detectedByProfile.set(profileId, changed)
         broadcastNewAccountDetected(sessionId, profileId, changed)
       } else {
@@ -323,6 +338,13 @@ async function recheckAllAsyncInner(): Promise<void> {
  * as the user is working -- starving the very backup this exists to deliver
  * (quality review of the #598 pass).
  */
+// macOS with the experimental multi-account setting on: the token is a
+// Keychain item, which this stat cannot see (it sees only the file the CLI
+// falls back to). Nothing is lost: the canonical backup never copies a
+// Keychain token (captureDetectedAccountAsync), and nothing reinstalls a
+// canonical token on any platform (rc.15 R4), so a rotation has nothing to
+// follow there. Polling `security` every 5 s per profile to drive a no-op
+// backup is deliberately not done.
 async function credentialRotationStamp(profileId: string): Promise<string | null> {
   try { return String((await fsp.stat(path.join(getProfileConfigDir(profileId), '.claude', '.credentials.json'))).mtimeMs) } catch { return null }
 }

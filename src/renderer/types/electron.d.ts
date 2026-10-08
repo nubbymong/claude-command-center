@@ -158,12 +158,12 @@ export interface ElectronAPI {
     delete: (id: string) => Promise<{ ok: boolean; error?: string; code?: 'in-use' | 'in-use-cleared'; sessions?: string[]; unnamed?: number }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     /** Credential generation (stat stamp + signed-in), never token contents (rc.14 review F7). */
-    credentialStamp?: (id: string) => Promise<{ ok: boolean; stamp: string | null; signedIn: boolean }>
+    credentialStamp?: (id: string, opts?: { fresh?: boolean }) => Promise<{ ok: boolean; stamp: string | null; signedIn: boolean; unknown?: boolean }>
     /** Per-profile credential state: forced-login countdown + identity cross-check. */
     authInfo: () => Promise<import('../../shared/account-auth').ProfileAuthInfo[]>
     create: (name?: string) => Promise<import('../../shared/account-types').AccountProfile>
     globalEmail: () => Promise<string | null>
-    captureDetected: (sessionId: string, name?: string) => Promise<import('../../shared/account-types').AccountProfile | null>
+    captureDetected: (sessionId: string, name?: string) => Promise<import('../../shared/account-types').AccountProfile | { error: string } | null>
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
     /** Managed-launch preflight reports, newest first: what the account
      *  isolation hardening did to recent launches, and anything it could not
