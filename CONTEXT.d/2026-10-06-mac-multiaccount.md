@@ -165,7 +165,14 @@ Test-only: the refused-gate test counts only an `auth` run (the preflight's
 read-only `command -v claude` version lookup also runs on POSIX); the C1
 characterization asserts the non-primary refusal on macOS and characterizes
 the primary there; pty-spawn-waits-for-refresh runs as linux on a macOS host
-(its profiles are non-primary by design).
+(its profiles are non-primary by design). Mac desktop test: Switch account
+did not resume the conversation. Cause (all platforms, lost on macOS): the
+renderer's Restart kills the old PTY in its own IPC before the respawn; a
+fast exit ends the run and the transcript binder drops the exact bind, so
+the spawn captured no target and opened the picker. Fix: killPty with reason
+'restart' captures the target while the bind is held; the next spawn of the
+id takes it when its own capture is empty (pty-manager.ts). Transcripts were
+already shared (<profile>/.claude/projects links to ~/.claude/projects).
 
 **Mac check (2026-10-06, operator's Mac, manual CLI, not the app).** With
 `CLAUDE_CONFIG_DIR=<dir>` and `/login`: Keychain item
