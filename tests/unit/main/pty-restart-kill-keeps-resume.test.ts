@@ -120,6 +120,13 @@ const makeDir = (prefix: string): string => {
 }
 
 const HOST_PLATFORM = process.platform
+// The 'host' variant is the per-profile-home path (win32/linux). On a macOS
+// host it would run with the multi-account setting OFF, where a non-primary
+// launch is refused by design (aicc_planning#172 decision 3) -- nothing to
+// resume (macOS CI, PR #629). Run it as linux there, the pattern of
+// pty-spawn-waits-for-refresh.test.ts; macOS itself is the 'darwin-realm'
+// variant (setting on).
+const PER_PROFILE_PLATFORM: NodeJS.Platform = HOST_PLATFORM === 'darwin' ? 'linux' : HOST_PLATFORM
 let hostPlatformDescriptor: PropertyDescriptor | undefined
 
 for (const mode of ['host', 'darwin-realm'] as const) {
@@ -129,7 +136,7 @@ for (const mode of ['host', 'darwin-realm'] as const) {
     let thirdId = ''
     beforeEach(() => {
       hostPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-      if (mode === 'darwin-realm') Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+      Object.defineProperty(process, 'platform', { value: mode === 'darwin-realm' ? 'darwin' : PER_PROFILE_PLATFORM, configurable: true })
       const root = makeDir('switch-resume-root-')
       fs.mkdirSync(path.join(root, 'global', '.claude'), { recursive: true })
       profiles._setRootsForTest({ resourcesDir: root, sharedRoot: path.join(root, 'global', '.claude') })

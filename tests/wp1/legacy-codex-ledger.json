@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "4f9de4caef9cc77224d8f5c54e1675e24875818fdb35089cd6a0f120602dff80",
-  "manifestHead": "7e99af60e8439eca27c387bec6f2ef0b4a8c4af6",
+  "manifestPathDigest": "d805296342cfd16dfa6388691efca112d3608a6bd5f7d38ec55e87e8fc561382",
+  "manifestHead": "a4c270bb1f3e3e54bed9fb8bf62c024c9540bf1d",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -6613,6 +6613,16 @@
       "disposition": "added",
       "evidence": "new test for WP2 PR 4 fix pass 13 (cdde4930): with the real spawnPty and the real MCP record, a session id launched on Codex and relaunched on Claude (and the other way round) is recorded as its new assistant's, the record is released when its process ends, a same-assistant relaunch keeps it and no other session is touched (WP1.68); tests/unit/main/pty-mcp-provider-revive.test.ts, tests/unit/main/conductor-mcp-provider-binding.test.ts; WP2 PR 4 fix pass 13c (36229fd5): the replaced process exits late after a relaunch on the other assistant, in both directions, and the new record stands",
       "note": "created by fix pass 13; node-pty faked, nothing spawned"
+    },
+    {
+      "path": "tests/unit/main/pty-restart-kill-keeps-resume.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "PR #629 (aicc_planning#172, the macOS desktop test): a Claude Restart / Switch account keeps its exact resume target when the old process ends before the respawn arrives (killPty with reason restart captures it; the next spawn of the id takes it); host platform and macOS with the experimental multi-account setting on; no Codex text changed (WP1.38); tests/unit/main/pty-restart-kill-keeps-resume.test.ts",
+      "note": "Codex appears only as a key of the mocked Conductor MCP server (registerCodexReviewSession); no Codex code path"
     },
     {
       "path": "tests/unit/main/pty-session-liveness.test.ts",
