@@ -8,11 +8,15 @@ import { PROVIDER_IDS } from '../../shared/providers'
 import type { ProviderPackageFactory } from './core'
 import { registerProviderPackage, listProviderPackages, tryGetProviderPackage } from './core'
 import { createClaudePackage } from './claude'
+// The macOS realm statusline probe (ADR-024), handed on to the boot code
+// through the composition root, the one main module that imports a package.
+export { setMacRealmStatuslineProbe, claudeStatuslineNeedsMacRealmRedeploy } from './claude'
 import type { ClaudeLegacyAccountsIo, ClaudeReviewPorts, ClaudeAuthPorts } from './claude'
 import { createCodexPackage, cliCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps, flushPendingCodexKills } from './codex'
 import type { CodexRealmSource, CodexCommand, CodexRunOptions, CodexRunResult } from './codex'
 import { findRealm, realmOperable } from '../../shared/providers'
-import { readProfilesStrict, updateProfilesStrict, mkdirSecure, profileRealmLaunch, profileReviewRefusal, recordProfileReviewPreflight } from '../account-profiles'
+import { readProfilesStrict, updateProfilesStrict, mkdirSecure, profileRealmLaunch, profileReviewRefusal, recordProfileReviewPreflight, isValidProfileId, getProfileConfigDir } from '../account-profiles'
+import { ensureMacRealmVerdict, macRealmExecutableRefusal, macRealmVerdictPending, macRealmLaunchBinary } from '../mac-realm-verdict'
 import { holdProfileForRun } from '../profile-consumers'
 import { readClaudeCliAuth, logoutClaudeCli } from '../account-web/claude-cli-auth'
 import type { ClaudeCliAuthRunner } from '../account-web/claude-cli-auth'
@@ -81,6 +85,8 @@ export const claudeReviewPorts: ClaudeReviewPorts = {
     return realm && realm.lifecycle === 'active' ? { ok: true, realm } : { ok: false }
   },
   profileRealmLaunch: (profileId) => profileRealmLaunch(profileId),
+  ensureLaunchVerdict: (profileId) => ensureMacRealmVerdict(isValidProfileId(profileId) ? getProfileConfigDir(profileId) : null),
+  realmExecutableRefusal: (profileId, executable) => macRealmExecutableRefusal(isValidProfileId(profileId) ? getProfileConfigDir(profileId) : null, executable),
   profileReviewRefusal,
   // The hold first, then the wait for a refresh in flight (claude-headless's
   // order), then a fresh hold for the run; a cancel during the wait lets go.
@@ -107,6 +113,7 @@ export function claudeCliAuthRunner(
   const cwd = typeof executable === 'string' && executable ? pathApi.dirname(executable) : ''
   return {
     cwd,
+    executable,
     run: async (args, env, timeoutMs) => {
       const cmd = cliCommandLine(executable, args, platform, codexShellEnv(env, platform), 'Claude Code')
       if ('refused' in cmd) return { refused: cmd.refused, exitCode: null, stdout: '', timedOut: false }
@@ -130,8 +137,19 @@ export function claudeCliAuthRunner(
  *  the same snapshot read the reviewer uses. */
 export const claudeAuthPorts: ClaudeAuthPorts = {
   lookupRealm: (ref) => claudeReviewPorts.lookupRealm(ref),
-  readStatus: (profileId, executable) => readClaudeCliAuth(profileId, claudeCliAuthRunner(executable)),
-  logout: (profileId, input) => logoutClaudeCli(profileId, { runner: claudeCliAuthRunner(input.executable), acknowledgeComputerSignIn: input.acknowledged === true }),
+  readStatus: async (profileId, executable) => readClaudeCliAuth(profileId, claudeCliAuthRunner(await claudeAuthExecutable(profileId, executable))),
+  logout: async (profileId, input) => logoutClaudeCli(profileId, { runner: claudeCliAuthRunner(await claudeAuthExecutable(profileId, input.executable)), acknowledgeComputerSignIn: input.acknowledged === true }),
+}
+
+/** The executable a sign-in status or sign-out of `profileId` runs: the one
+ *  the Claude package's discovery proved -- except on the macOS multi-account
+ *  realm (ADR-024), where it is the binary the #172 verdict was taken for, the
+ *  verdict being checked first (withProfileHome refuses the run without it).
+ *  Exported for its test. */
+export async function claudeAuthExecutable(profileId: string, discovered: string): Promise<string> {
+  const home = isValidProfileId(profileId) ? getProfileConfigDir(profileId) : null
+  if (macRealmVerdictPending(home)) await ensureMacRealmVerdict(home)
+  return macRealmLaunchBinary(home) ?? discovered
 }
 
 /** Keyed by `ProviderId`, so a provider added to the union but not composed

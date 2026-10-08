@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-07T12:05:19.860Z",
-  "head": "a7ed55bbc0bb118a6f5ee80b20ef43bf1cc0ffa7",
-  "tree": "2e17bb338ea931f4e012cfa04fbc27993b25b1d0",
+  "generatedAt": "2026-10-08T01:08:51.584Z",
+  "head": "a4c270bb1f3e3e54bed9fb8bf62c024c9540bf1d",
+  "tree": "ed7fcc99a77a49b68f5b7f1ce8847e37ae05e01e",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2817,
-  "excludedFileCount": 405,
-  "scannedFileCount": 2412,
+  "trackedFileCount": 2845,
+  "excludedFileCount": 407,
+  "scannedFileCount": 2438,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 848,
-  "pathDigest": "f42e51d8ea747b7a1cdd459d41e4379f760d6b277fc5f2dd563c741442b4bc4a",
+  "matchedPathCount": 850,
+  "pathDigest": "d805296342cfd16dfa6388691efca112d3608a6bd5f7d38ec55e87e8fc561382",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -1365,7 +1365,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 450,
+      "lineCount": 451,
       "truncated": true
     },
     {
@@ -4676,6 +4676,13 @@
       "lineCount": 29
     },
     {
+      "path": "tests/unit/main/pty-restart-kill-keeps-resume.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
       "path": "tests/unit/main/pty-session-liveness.test.ts",
       "predicates": [
         "P13"
@@ -6343,6 +6350,13 @@
         "P13"
       ],
       "lineCount": 13
+    },
+    {
+      "path": "tests/unit/renderer/session-launch-mac-multi-account.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
     },
     {
       "path": "tests/unit/renderer/session-launch.test.ts",

@@ -5,15 +5,16 @@ import { ipcStreamEnd } from '../../shared/ipc-stream'
 import {
   listProfiles, upsertProfile, safeTeardownProfile,
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
-  captureDetectedAccount, backupProfileHomeToCanonical, restoreProfileIdentityFromCanonical,
-  readProfileCredentialStamp,
+  backupProfileHomeToCanonical,
+  readProfileCredentialStampAsync, captureDetectedAccountAndClearSource,
+  removeProfileKeychainItem, runSerialisedForProfile,
 } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
 import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession, sessionsOnProfile, detectedNewAccountEmail } from '../claude-account-identity'
 import { profileConsumerCount } from '../profile-consumers'
 import { appWindowSender } from './trusted-sender'
 import { fetchAllAccountsUsage, fetchAllAccountsUsageStreaming, fetchAccountUsage, knownUsageLabels, claudeAccountDataAllowed } from '../usage/account-usage'
-import { readAllProfileAuthInfo } from '../account-auth-info'
+import { readAllProfileAuthInfoAsync } from '../account-auth-info'
 import { logError, logWarn } from '../debug-logger'
 import { clearWebSession } from '../account-web/sign-in'
 import { removeWebSession } from '../account-web/session-store'
@@ -68,10 +69,12 @@ export function registerAccountProfilesHandlers(getWindow: () => BrowserWindow |
   // Usage track MP3 (D5): while Claude Code is switched off no credential
   // file is read; the answer is no accounts (Insights then shows no sign-in
   // warning). The rule is main's own, set at start (setClaudeAccountDataAllowed).
-  handle(IPC.ACCOUNT_PROFILES_AUTH_INFO, () => {
+  // Through the platform seam: the files as always, or on macOS with the
+  // experimental multi-account setting on, the Keychain (account-auth-info).
+  handle(IPC.ACCOUNT_PROFILES_AUTH_INFO, async () => {
     try {
       if (!claudeAccountDataAllowed()) return []
-      return readAllProfileAuthInfo()
+      return await readAllProfileAuthInfoAsync()
     } catch (err) {
       logError('[account-profiles] authInfo failed:', err)
       return []
@@ -190,7 +193,15 @@ export function registerAccountProfilesHandlers(getWindow: () => BrowserWindow |
   // ASYNC because the delete now AWAITS the web-session clear before it destroys
   // anything (#216). Losing the `async` here in a merge would make that await a
   // no-op returned to the caller and quietly restore the bug it fixed.
+  // Re-attack round 2, item 1: a delete runs in the same per-profile chain as a
+  // detected-account capture (runSerialisedForProfile), so the two never
+  // interleave on one profile -- a capture never sees its source item vanish
+  // to a delete half-way and mistake that for anything else.
   handle(IPC.ACCOUNT_PROFILES_DELETE, async (_e, p: { id: string }) => {
+    if (!p || !isValidProfileId(p.id)) return { ok: false, error: 'invalid profile id' }
+    return runSerialisedForProfile(p.id, () => deleteProfileOnce(p))
+  })
+  const deleteProfileOnce = async (p: { id: string }) => {
     // safeTeardownProfile validates the id + asserts path containment + refuses a
     // reparse-point root; it throws on an invalid/escaping id.
     if (!p || !isValidProfileId(p.id)) return { ok: false, error: 'invalid profile id' }
@@ -243,6 +254,25 @@ export function registerAccountProfilesHandlers(getWindow: () => BrowserWindow |
     // after the teardown below: if that throws, the account survives with a
     // record claiming a web session whose partition has already been wiped.
     removeWebSession(p.id)
+    // macOS with the experimental multi-account setting on: the profile's
+    // sign-in is a Keychain item, not a file in the folder below, so the
+    // teardown would leave a live token behind. Delete it FIRST; if the
+    // Keychain cannot be asked, keep the account (fail closed). A no-op on
+    // win32/linux, macOS-off, and for the primary (the normal sign-in).
+    const kc = await removeProfileKeychainItem(p.id)
+    if (!kc.ok) {
+      logError(`[account-profiles] delete refused for ${p.id}: Keychain item not removed (${kc.reason})`)
+      return { ok: false, error: `The account's macOS Keychain sign-in could not be removed, so the account was not removed: ${kc.reason}` }
+    }
+    // The Keychain delete above was awaited (up to the `security` timeout), and
+    // a session can spawn on this profile in that time: check again before the
+    // teardown (adversarial review pass 3, m1). The Keychain item is already
+    // gone at this point, so the error says so rather than "nothing changed".
+    if (isProfileInUseByLiveSession(p.id)) {
+      // Beta's shape for a cleared-then-in-use delete: the code and the sessions
+      // holding the profile, so the Accounts panel names them.
+      return { ok: false, code: 'in-use-cleared', error: 'This account is in use by an open session, so it was not removed. Its claude.ai sign-in and its macOS Keychain sign-in were already cleared; close its sessions, then remove it again (or sign it in again to keep it).', ...holdersOf(p.id) }
+    }
     // safeTeardownProfile can throw on a Windows file lock (e.g. an actively-rewritten
     // .claude.json) mid-recursion -- return a structured failure instead of rejecting
     // the invoke, so the renderer can surface it rather than swallowing the rejection.
@@ -253,7 +283,7 @@ export function registerAccountProfilesHandlers(getWindow: () => BrowserWindow |
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
     return { ok: true }
-  })
+  }
 
   handle(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, (_e, p: { id: string }) => {
     if (!p || !isValidProfileId(p.id)) return { ok: false, email: null }
@@ -272,12 +302,14 @@ export function registerAccountProfilesHandlers(getWindow: () => BrowserWindow |
   // email on disk, so refreshIdentity alone "completed" a login that never
   // happened. This returns a generation stamp (stat) and a signed-in flag;
   // token contents never cross the bridge.
-  handle(IPC.ACCOUNT_PROFILES_CREDENTIAL_STAMP, (_e, p: { id: string }) => {
+  // On macOS with the setting on the stamp is a one-way hash of the Keychain
+  // secret (readProfileCredentialStampAsync); still no token crosses.
+  handle(IPC.ACCOUNT_PROFILES_CREDENTIAL_STAMP, async (_e, p: { id: string; fresh?: boolean }) => {
     if (!p || !isValidProfileId(p.id)) return { ok: false, stamp: null, signedIn: false }
-    return { ok: true, ...readProfileCredentialStamp(p.id) }
+    return { ok: true, ...(await readProfileCredentialStampAsync(p.id, { fresh: p.fresh === true })) }
   })
   handle(IPC.ACCOUNT_PROFILES_CREATE, (_e, p: { name?: string }) => createProfile(p?.name))
-  handle(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, (_e, p: { sessionId: string; name?: string }) => {
+  handle(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, async (_e, p: { sessionId: string; name?: string }) => {
     if (!p || !p.sessionId) return null
     // Bug 2: the /login wrote the new account into the session's SHARED profile home.
     // Resolve that profile, capture the new account out of it into a fresh profile,
@@ -299,9 +331,14 @@ export function registerAccountProfilesHandlers(getWindow: () => BrowserWindow |
       logWarn(`[account-profiles] capture refused for session ${p.sessionId}: no new account is detected in profile ${profileId}`)
       return null
     }
-    const np = captureDetectedAccount(profileId, p.name)
-    if (np) { try { restoreProfileIdentityFromCanonical(profileId) } catch { /* best-effort */ } }
-    return np
+    // The seam: the file capture + best-effort restore on win32/linux (and
+    // macOS with the setting off), exactly as before; Keychain to Keychain on
+    // the macOS realm, where a source that cannot be cleared -- or that no
+    // longer holds the copied secret -- ROLLS THE CAPTURE BACK and returns
+    // `{ error }` for the prompt to show (adversarial review pass 3, M2/M3):
+    // two items holding one single-use refresh token is never reported as a
+    // success.
+    return await captureDetectedAccountAndClearSource(profileId, p.name)
   })
   handle(IPC.ACCOUNT_GLOBAL_EMAIL_GET, () => getDefaultAccountEmail())
 }

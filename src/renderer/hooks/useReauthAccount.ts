@@ -15,6 +15,26 @@ import type { AccountProfile } from '../../shared/account-types'
 const POLL_MS = 4000
 const MAX_ATTEMPTS = 300 // ~20 min backstop; the session-gone check is the real bound
 
+type StampRead = { ok?: boolean; stamp: string | null; signedIn: boolean; unknown?: boolean } | null | undefined
+
+/** A stamp read that can serve as a baseline: a definite answer. A read main
+ *  marks `unknown` (a locked macOS Keychain) is not one -- taking it as "no
+ *  stamp" made the first read after an unlock look like a fresh sign-in
+ *  (adversarial review pass 3, m7). Exported for testing. */
+export function knownStamp(r: StampRead): r is { stamp: string | null; signedIn: boolean } {
+  return !!r && r.unknown !== true
+}
+
+/** Whether the re-auth is still pending, given the baseline taken when the
+ *  shell opened (undefined = no definite baseline yet) and the latest read.
+ *  Never completes from an unknown baseline or on an unknown read. Exported
+ *  for testing. */
+export function reauthPending(baseline: string | null | undefined, now: StampRead): boolean {
+  if (baseline === undefined) return true
+  if (!knownStamp(now)) return true
+  return !now.signedIn || now.stamp === baseline
+}
+
 function pollForReauth(profileId: string, sessionId: string, onDone: () => void): void {
   let attempts = 0
   // rc.14 review F7 (aicc_planning#51): an EXPIRED account still has its email
@@ -25,10 +45,20 @@ function pollForReauth(profileId: string, sessionId: string, onDone: () => void)
   // opened, and to read as signed in. The stamp is stat-only (no token crosses
   // the bridge). An older preload without the stamp API keeps the old rule.
   const stampApi = window.electronAPI.accountProfiles.credentialStamp
-  let baseline: string | null | undefined // undefined until the first read returns
-  if (stampApi) {
-    stampApi(profileId).then((r) => { baseline = r ? r.stamp : null }).catch(() => { baseline = null })
+  // undefined until a DEFINITE read returns. An unknown or failed read leaves
+  // it unset, and every tick retries it before anything can complete.
+  let baseline: string | null | undefined
+  let baselineInFlight = false
+  const takeBaseline = async (): Promise<void> => {
+    if (!stampApi || baseline !== undefined || baselineInFlight) return
+    baselineInFlight = true
+    try {
+      // r9: the baseline read bypasses main's 30 s unknown cache.
+      const r = await stampApi(profileId, { fresh: true })
+      if (knownStamp(r)) baseline = r.stamp
+    } catch { /* stays unset; retried next tick */ } finally { baselineInFlight = false }
   }
+  void takeBaseline()
   const timer = setInterval(async () => {
     attempts++
     const exists = useSessionStore.getState().sessions.some((s) => s.id === sessionId)
@@ -40,8 +70,13 @@ function pollForReauth(profileId: string, sessionId: string, onDone: () => void)
       // abandoned login tab stops polling after ~20 min like any other.
       let pending = false
       if (res && res.email && stampApi) {
-        const now = await stampApi(profileId)
-        pending = !now || !now.signedIn || baseline === undefined || now.stamp === baseline
+        if (baseline === undefined) {
+          // No definite baseline yet: this tick only tries to take one.
+          await takeBaseline()
+          pending = true
+        } else {
+          pending = reauthPending(baseline, await stampApi(profileId))
+        }
       }
       if (res && res.email && !pending) {
         clearInterval(timer)

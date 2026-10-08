@@ -22,6 +22,7 @@ import { settleOnboardingFinish, settleWhatsNewOnly } from './settle'
 import { seenVersion } from './whats-new-gate'
 import { usesClaude, usesCodex, claudeWasMissingAtSetup, codexWasChosenOnUpgrade } from './provider-choice'
 import { useSettingsStore } from '../stores/settingsStore'
+import { claudeMultiAccountBlocked } from '../../shared/mac-multi-account'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 
@@ -203,8 +204,9 @@ const PAGES: BuiltStep[] = [
     // Multi-account isolation is Windows-only: on macOS Claude Code's OAuth
     // token lives in the login Keychain, which HOME redirection cannot
     // isolate, so the page's "logins never mix" promise would be false there
-    // (Mac readiness review 2026-07-02). Skip the page on darwin.
-    when: () => claudeChosen() && window.electronPlatform !== 'darwin',
+    // (Mac readiness review 2026-07-02). Skip the page on darwin unless the
+    // experimental macOS multi-account setting is on.
+    when: () => claudeChosen() && !claudeMultiAccountBlocked(window.electronPlatform, useSettingsStore.getState().settings),
     render: (nav) => <AccountsStep onNext={nav.onNext} onBack={nav.onBack} />,
   },
   {

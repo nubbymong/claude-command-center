@@ -46,6 +46,10 @@ export type { ClaudeLegacyAccountsIo } from './legacy-store'
 // The reviewer for Codex sessions (WP2 commit 5b): its launch, discovery and
 // adapter, and the ports the composition root hands it.
 export { createClaudeReviewLaunch } from './review-launch'
+// Experimental macOS multi-account (ADR-024): the local statusline bridge's
+// realm snippet is deployed only while the setting is on; the composition root
+// wires the probe and asks whether a redeploy is due.
+export { setMacRealmStatuslineProbe, claudeStatuslineNeedsMacRealmRedeploy } from './statusline'
 export type { ClaudeReviewPorts } from './review-launch'
 export { createClaudeReviewOperations, parseClaudeResult, CLAUDE_REVIEW_ARGS, CLAUDE_REVIEW_MAX_STDOUT, CLAUDE_REVIEW_HOLD_GRACE_MS } from './review'
 export type { ClaudeCliPorts, ClaudeCliCommand, ClaudeCliRunOptions, ClaudeCliRunResult, ClaudeReviewDeps, ClaudeResultOutcome } from './review'
@@ -194,7 +198,12 @@ export const claudeCapabilities: ProviderCapabilities = {
   'auth.status': { state: 'unknown', note: 'the profile\'s claude auth status, which exists once the composition root hands the package its sign-in ports; this package has none' },
   'auth.logout': { state: 'unknown', note: 'the profile\'s claude auth logout, which exists once the composition root hands the package its sign-in ports; this package has none' },
   'auth.retireReplaced': { state: 'unsupported', note: 'a Claude profile signs in again in its own home; nothing is replaced' },
-  'realm.isolated': { state: 'unknown', platformOverrides: { darwin: 'unsupported' }, note: 'profile homes; not on macOS in WP1 (D2); not wired through this package yet' },
+  // macOS stays `unsupported` even with the experimental setting on: the key
+  // could only move to `experimental` (or `supported`) once this package
+  // exposes the `realms` operation that backs it, and registration refuses
+  // that claim without one. Nothing reads this key to gate a feature; the
+  // macOS opt-in is gated by src/shared/mac-multi-account.ts (ADR-024).
+  'realm.isolated': { state: 'unknown', platformOverrides: { darwin: 'unsupported' }, note: 'profile homes; not on macOS in WP1 (D2) unless the experimental macOS multi-account setting is on (ADR-024); not wired through this package yet' },
   'account.labelFields': { state: 'unknown', note: 'email read from the profile identity file; not wired through this package yet' },
   'account.usage': { state: 'unknown', note: 'the per-account usage fetch lives in src/main/usage, not on this package; wired in a later slice' },
   'session.launch': { state: 'supported' },
@@ -272,9 +281,22 @@ export function claudeAmbientAuthVariables(): readonly string[] {
  *    (core.pager, core.sshCommand, alias.*, filter.*), so owning them would be
  *    the PATH hijack one indirection later.
  *  All three stay in the launch path, where withProfileHome already composes
- *  them. Registration refuses them (NEVER_OWNED_LAUNCH_VARIABLES). */
+ *  them. Registration refuses them (NEVER_OWNED_LAUNCH_VARIABLES).
+ *
+ *  CLAUDE_CONFIG_DIR is owned for ONE realm only: the experimental macOS
+ *  multi-account realm (src/shared/mac-multi-account.ts), where HOME cannot be
+ *  redirected (#117) and CLAUDE_CONFIG_DIR is what Claude Code documents as
+ *  keying its config directory and macOS Keychain entry. It keeps the shape of
+ *  ANTHROPIC_CONFIG_DIR and CLAUDE_SECURESTORAGE_CONFIG_DIR: ruled `strip` in
+ *  the authority manifest, so an inherited value is removed on EVERY platform
+ *  and every launch, and re-set by the patch only where this app has a value --
+ *  which is a non-primary profile on macOS with the setting on, and nowhere
+ *  else (account-profiles.ts, profileRealmSet). Owner decision D1 says
+ *  CLAUDE_CONFIG_DIR "is not an implementation mechanism"; this macOS-only,
+ *  opt-in use needs an owner decision superseding D1/D2 before it ships. */
 export const claudeOwnedLaunchVariables: readonly string[] = [
   'USERPROFILE', 'HOME', 'ANTHROPIC_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+  'CLAUDE_CONFIG_DIR',
 ]
 
 /** Created by the composition root; importing this entry point has no side

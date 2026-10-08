@@ -15,6 +15,7 @@ import type {
 } from '../../shared/providers'
 import { SIGN_IN_METHODS } from '../../shared/providers'
 import { useSettingsStore } from './settingsStore'
+import { claudeMultiAccountBlocked } from '../../shared/mac-multi-account'
 
 interface ProviderAccountsState {
   /** The latest snapshot the main process published; null until the first
@@ -527,7 +528,9 @@ export function showsReviewerBadge(account: AccountView): boolean {
 export function reviewerNotice(snapshot: AccountsSnapshot | null, providerId: ProviderId, platform: string): string | null {
   const notice = snapshot?.reviewerNotices.find((n) => n.providerId === providerId)
   if (!notice) return null
-  if (providerId === 'claude' && platform === 'darwin') {
+  // The macOS sentence holds only while macOS keeps Claude to one account:
+  // with the experimental multi-account setting on, every profile can review.
+  if (providerId === 'claude' && claudeMultiAccountBlocked(platform, useSettingsStore.getState().settings)) {
     return 'Your earlier Claude reviewer was cleared: on macOS only the normal Claude sign-in can be the Claude reviewer.'
   }
   const name = providerId === 'claude' ? 'Claude' : (providerView(snapshot, providerId)?.displayName ?? providerId)

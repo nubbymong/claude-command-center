@@ -17,6 +17,8 @@ import { isValidLegacyVersion } from '../shared/legacy-version'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
 import { withProfileHome } from './pty-manager'
 import { gateManagedLaunch } from './managed-launch-diagnostics'
+import { ensureMacRealmVerdict, pinnedCliPathFor, macRealmLaunchBinary } from './mac-realm-verdict'
+import { quoteArgForShell } from '../shared/shell-quote'
 import type { ProjectGateResult, ProviderLaunchRefused, ProviderId } from '../shared/providers'
 import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
 import { providerLaunchRefusal } from './provider-launch-gate'
@@ -296,6 +298,9 @@ export async function dispatchAgent(params: DispatchAgentParams): Promise<CloudA
     // counts only when it is below the floor, so a failed install that falls
     // back to the installed CLI can only err loud, never a false "supported").
     const pinnedCli = params.legacyVersion?.enabled ? legacyCliPin(params.legacyVersion) : undefined
+    // Decision aicc_planning#172 item 4: a macOS realm agent needs the verdict
+    // for the CLI it will run (withProfileHome refuses it otherwise).
+    await ensureMacRealmVerdict(params.profileId && isValidProfileId(params.profileId) ? getProfileConfigDir(params.profileId) : null, pinnedCli?.installed ? pinnedCliPathFor(pinnedCli.version) : null)
     ;({ env: spawnEnvVars, resolvedProfileId, accountEmail } = resolveAgentEnv(params.profileId, params.projectPath, projectGate, pinnedCli))
 
     agent = {
@@ -385,7 +390,13 @@ export async function dispatchAgent(params: DispatchAgentParams): Promise<CloudA
 
   const pipeCmd = process.platform === 'win32' ? 'type' : 'cat'
   const permFlag = skipPerms ? ' --dangerously-skip-permissions' : ''
-  const shellCmd = `${pipeCmd} "${tmpFile}" | ${claudeBin}${permFlag}`
+  // macOS realm (re-attack r3, MAJOR 1): the binary the #172 verdict was
+  // taken for (the pinned one when installed, already in claudeBin), single-
+  // quoted for the POSIX shell this line runs in.
+  const agentHome = params.profileId && isValidProfileId(params.profileId) ? getProfileConfigDir(params.profileId) : null
+  const realmBin = macRealmLaunchBinary(agentHome, claudeBin !== 'claude' ? claudeBin : null)
+  const binForShell = realmBin ? quoteArgForShell(realmBin, false) : claudeBin
+  const shellCmd = `${pipeCmd} "${tmpFile}" | ${binForShell}${permFlag}`
 
   let releaseProfile: () => void = () => { /* default home, or not held yet: nothing held */ }
   let child: ChildProcess

@@ -63,6 +63,7 @@ import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
 import { useConfigWriteLockStore } from './stores/configWriteLockStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { claudeMultiAccountBlocked } from '../shared/mac-multi-account'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
 import { CodexReconfirmPage } from './onboarding/CodexReconfirmPage'
 import { decideCodexReconfirm, codexAnswered, codexReconfirmDue } from './onboarding/codex-reconfirm-gate'
@@ -1399,17 +1400,27 @@ export default function App() {
             the tour's centered steps paint a click-capturing full-viewport dim
             (z-60) over these (z-40/z-50), stranding a real decision prompt
             underneath. State is kept, so they surface once the overlay closes. */}
-        {/* darwin: multi-account is Windows-only (Keychain token can't be
-            isolated per profile), so never offer to capture a second account. */}
-        {newAccountDetected && window.electronPlatform !== 'darwin' && bootGate === null && (
+        {/* macOS: offered ONLY with the experimental multi-account setting on
+            (claudeMultiAccountBlocked is false then), which is intended. With
+            it on, main captures a non-primary profile's /login Keychain item
+            to Keychain item through the ASYNC path
+            (captureDetectedAccountAndClearSource); the synchronous
+            captureDetectedAccount refuses the realm, and the macOS primary is
+            never offered (profileDetectionCapturable). Main answers
+            `{ error }` when it refused or rolled the capture back: the prompt
+            stays open and shows it, rather than closing as if it worked.
+            With the setting off on macOS, never offered (one sign-in). */}
+        {newAccountDetected && !claudeMultiAccountBlocked(window.electronPlatform, useSettingsStore.getState().settings) && bootGate === null && (
           <NewAccountPrompt
             email={newAccountDetected.email}
             onDismiss={() => setNewAccountDetected(null)}
             onAdd={async (name) => {
               const np = await window.electronAPI.accountProfiles.captureDetected(newAccountDetected.sessionId, name || undefined)
               await useAccountProfilesStore.getState().hydrate()
+              if (np && 'error' in np) return np.error
               if (np) useSessionStore.getState().updateSession(newAccountDetected.sessionId, { profileId: np.id })
               setNewAccountDetected(null)
+              return null
             }}
           />
         )}

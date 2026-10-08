@@ -15,7 +15,9 @@ import {
 
 interface Props {
   email: string
-  onAdd: (name: string) => void | Promise<void>
+  /** Resolves to an error message when the add failed (the prompt then stays
+   *  open and shows it), or nothing / null when it is done. */
+  onAdd: (name: string) => void | string | null | Promise<void | string | null>
   onDismiss: () => void
 }
 
@@ -26,6 +28,7 @@ export default function NewAccountPrompt({ email, onAdd, onDismiss }: Props) {
   const [closing, setClosing] = useState(false)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -56,8 +59,10 @@ export default function NewAccountPrompt({ email, onAdd, onDismiss }: Props) {
   const handleAdd = async () => {
     if (busy || closing) return
     setBusy(true)
+    setError(null)
     try {
-      await onAdd(name.trim())
+      const r = await onAdd(name.trim())
+      if (typeof r === 'string' && r) setError(r)
     } finally {
       setBusy(false)
     }
@@ -125,6 +130,11 @@ export default function NewAccountPrompt({ email, onAdd, onDismiss }: Props) {
               style={DIALOG_INPUT_STYLE}
             />
           </div>
+          {error && (
+            <p role="alert" data-testid="new-account-error" className="text-xs leading-relaxed" style={{ color: 'var(--status-danger)' }}>
+              {error}
+            </p>
+          )}
         </DialogBody>
 
         <DialogFooter>

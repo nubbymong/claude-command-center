@@ -139,7 +139,19 @@ async function settle(fetching: Promise<unknown>): Promise<void> {
   await gateSettled()
 }
 
+// These cases are about refresh/spawn ORDERING, which is platform-neutral, and
+// their profiles are non-primary by design (the refresh never touches the
+// primary). On a macOS host with experimentalMacMultiAccount OFF a non-primary
+// launch is refused outright (aicc_planning#172 decision 3, ADR-024; r7 when no
+// primary is set), so nothing would spawn and the ordering is unobservable
+// (macOS CI, PR #629). Run them as linux there -- the same pattern as
+// claude-cli-auth-read.test.ts; the refusal has its own tests.
+const HOST_PLATFORM = process.platform
+const PER_PROFILE_PLATFORM: NodeJS.Platform = HOST_PLATFORM === 'darwin' ? 'linux' : HOST_PLATFORM
+let hostPlatformDescriptor: PropertyDescriptor | undefined
 beforeEach(() => {
+  hostPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { value: PER_PROFILE_PLATFORM, configurable: true })
   sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-vitest-refresh-pty-'))
   profiles._setRootsForTest({ resourcesDir: sandbox, sharedRoot: path.join(sandbox, 'global', '.claude') })
   fs.mkdirSync(path.join(sandbox, 'global', '.claude'), { recursive: true })
@@ -171,6 +183,7 @@ afterEach(() => {
   consumers._resetProfileConsumersForTest()
   profiles._setRootsForTest(null)
   fs.rmSync(sandbox, { recursive: true, force: true })
+  if (hostPlatformDescriptor) Object.defineProperty(process, 'platform', hostPlatformDescriptor)
 })
 
 describe('a local spawn waits out an in-flight refresh of its profile (Codex R3, flipped)', () => {

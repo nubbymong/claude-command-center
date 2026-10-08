@@ -80,6 +80,8 @@ import { registerCodexCanvasRoots } from './canvas/codex-canvas-roots'
 import { noteCodexSessionGuidance, forgetCodexSessionGuidance } from './canvas/codex-guidance'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
+import { ensureMacRealmVerdict, pinnedCliPathFor, macRealmLaunchBinary } from './mac-realm-verdict'
+import { realmShellPinLines, realmShellCannotPin, shellOnlyOpeningLines } from './mac-realm-shell'
 export { withProfileHome } from './account-profiles'
 import { gateManagedLaunchDirs, recordManagedLaunchPreflight, displayPath } from './managed-launch-diagnostics'
 import { stripSpoofableText } from '../shared/safe-text'
@@ -1266,6 +1268,56 @@ function clearLastResumeTarget(sessionId: string): void {
   lastResumeTarget.delete(sessionId)
 }
 
+/**
+ * The resume target of the conversation a live Claude session is on, read off
+ * the transcript binder, or null. #480: ONLY from an EXACT (authenticated)
+ * bind. The previous getLatestTranscriptPath() also returned heuristic binds --
+ * a newest-file scan of the shared per-repo transcript folder -- which resumed
+ * a SIBLING card's conversation when several cards ran in one repo. An
+ * exact-only capture means "resume the conversation the hook confirmed for
+ * THIS session, or start fresh"; a fresh start beats reopening a stranger.
+ * Fail-open: any miss or error is null.
+ */
+function captureLiveResumeTarget(sessionId: string): { uuid: string; cwd: string } | null {
+  try {
+    const binder = getTranscriptBinder()
+    let latest = binder?.getExactResumeTarget(sessionId) ?? null
+    // Hooks-off fallback: when no EXACT source can ever arrive (hooks disabled
+    // or gateway down), fall back to the heuristic bind and WARN. In that
+    // degraded config there is no authenticated source, so best-effort resume
+    // beats never resuming -- but it can cross if cards share a repo folder.
+    if (!latest && !isExactBindSourceActive()) {
+      latest = binder?.getLatestTranscriptPath(sessionId) ?? null
+      if (latest) {
+        logWarn(`[pty] #480 hooks-off resume fallback for ${sessionId}: hooks inactive, using heuristic bind ${latest} (best-effort; may cross if multiple cards share this repo)`)
+      }
+    }
+    return latest ? resolveResumeTargetFromTranscript(latest) : null
+  } catch (err) {
+    logWarn(`[pty] T8b resume-target capture failed for ${sessionId}: ${(err as Error)?.message ?? err}`)
+    return null
+  }
+}
+
+/**
+ * The resume target a Restart's KILL captured (killPty, reason 'restart'),
+ * keyed by session id, for the spawn that follows it. The renderer kills the
+ * old PTY in its own IPC before it remounts the view that spawns the next
+ * one; if the old process exits in between, its exit ends the run and the
+ * transcript binder forgets the bind, so the spawn's own capture finds
+ * nothing. Taken (deleted) by the next spawn of the id, whatever it is;
+ * deleted by a close; NOT by cleanupSessionResources, which the Restart's
+ * own kill runs. Bounded, oldest first.
+ */
+const restartResumeTargets = new Map<string, { uuid: string; cwd: string }>()
+export const RESTART_RESUME_TARGETS_MAX = 512
+
+function takeRestartResumeTarget(sessionId: string): { uuid: string; cwd: string } | undefined {
+  const target = restartResumeTargets.get(sessionId)
+  restartResumeTargets.delete(sessionId)
+  return target
+}
+
 // SSH tmux enhancement (item 4): the connection target for each live SSH
 // session, captured at spawn so endSshRemote can open a SEPARATE ssh exec to
 // kill the remote tmux session + sidecars without touching the live PTY (where
@@ -2307,31 +2359,23 @@ function spawnPtyResolved(
   // NOTE: stored into lastResumeTarget AFTER killPty (which clears the map), so
   // a fresh capture survives its own kill instead of being wiped by it.
   let capturedResumeTarget: { uuid: string; cwd: string } | null = null
+  // Taken (and so deleted) by every entry, whatever kind of spawn it is, so a
+  // target the Restart's kill captured can never reach a later, unrelated
+  // spawn of this id.
+  const restartTarget = takeRestartResumeTarget(sessionId)
   if (!options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude') {
-    try {
-      // #480: resume ONLY from an EXACT (authenticated) bind. The previous
-      // getLatestTranscriptPath() also returned heuristic binds — a newest-file
-      // scan of the shared per-repo transcript folder — which resumed a SIBLING
-      // card's conversation when several cards ran in one repo. An exact-only
-      // capture means "resume the conversation the hook confirmed for THIS
-      // session, or start fresh"; a fresh start beats reopening a stranger.
-      const binder = getTranscriptBinder()
-      let latest = binder?.getExactResumeTarget(sessionId) ?? null
-      // Hooks-off fallback: when no EXACT source can ever arrive (hooks disabled
-      // or gateway down), fall back to the heuristic bind and WARN. In that
-      // degraded config there is no authenticated source, so best-effort resume
-      // beats never resuming — but it can cross if cards share a repo folder.
-      if (!latest && !isExactBindSourceActive()) {
-        latest = binder?.getLatestTranscriptPath(sessionId) ?? null
-        if (latest) {
-          logWarn(`[pty] #480 hooks-off resume fallback for ${sessionId}: hooks inactive, using heuristic bind ${latest} (best-effort; may cross if multiple cards share this repo)`)
-        }
-      }
-      if (latest) {
-        capturedResumeTarget = resolveResumeTargetFromTranscript(latest)
-      }
-    } catch (err) {
-      logWarn(`[pty] T8b resume-target capture failed for ${sessionId}: ${(err as Error)?.message ?? err}`)
+    capturedResumeTarget = captureLiveResumeTarget(sessionId)
+    // The renderer's Restart / Switch account KILLS the old PTY (pty:kill,
+    // reason 'restart') before it remounts the view that sends this spawn.
+    // When the old process exits in between, its exit ends the run and the
+    // binder forgets the bind, so the capture above finds nothing -- and the
+    // conversation was not resumed (the picker opened instead). macOS loses
+    // that race on every switch (a killed process exits within milliseconds
+    // there; the operator's Mac test of PR #629). The kill captured the
+    // target while the bind was still held (killPty), and it is used here.
+    if (!capturedResumeTarget && restartTarget) {
+      capturedResumeTarget = restartTarget
+      logInfo(`[pty] T8b resume target for ${sessionId} taken from its Restart's kill (the old run had ended before this spawn)`)
     }
   }
 
@@ -5530,7 +5574,15 @@ function spawnPtyResolved(
       const pending = (managedPickerLaunch(options) ? pickerCandidateDirs(resolvedCwd) : Promise.resolve<string[]>([]))
         .then(async (candidates) => {
           const dirs = [...new Set([...gateDirs, ...candidates])]
-          return { verdict: await gateManagedLaunchDirs(dirs), dirs }
+          const verdict = await gateManagedLaunchDirs(dirs)
+          // Decision aicc_planning#172 item 4: on the macOS realm, the check
+          // that the CLI this session runs (the pinned one, when a pin is
+          // installed) keeps this account's sign-in separate. Its outcome is
+          // cached; withProfileHome refuses the launch below without a
+          // positive one, and that refusal prints like any other.
+          const realmPin = !options?.shellOnly && options?.legacyVersion?.enabled ? legacyCliPin(options.legacyVersion) : undefined
+          if (resolvedProfileId) await ensureMacRealmVerdict(getProfileConfigDir(resolvedProfileId), realmPin?.installed ? pinnedCliPathFor(realmPin.version) : null)
+          return { verdict, dirs }
         })
       deferSpawnUntil(win, sessionId, resolvedProfileId, inheritedTeardown, pending,
         `checking the project settings in ${gateDirs.map(describePathForLog).join(' and ')}${managedPickerLaunch(options) ? ' and every worktree the resume picker may open' : ''} before the managed launch`,
@@ -5572,6 +5624,16 @@ function spawnPtyResolved(
     }
     assertGatedDirectory(options, resolvedCwd, 'working directory', recordUnverifiedDirectory)
     const finalSpawnEnv = withProfileHome(spawnEnv, home, { launchId: sessionId, cwd: resolvedCwd, probe: false, projectGate: options?.projectGate ?? null, ...(pinnedCli ? { pinnedCli } : {}) })
+    // macOS realm (re-attack r3, MAJOR 1): the launch runs EXACTLY the binary
+    // its #172 verdict was taken for -- the pinned one when a pin is
+    // installed, else the installed CLI the guard resolved -- never a bare
+    // `claude` the interactive shell's PATH (.zshrc included) might resolve to
+    // another binary. The resume picker gets it through CCC_CLAUDE_BIN; any
+    // inherited value is dropped everywhere else. Null off the realm: the
+    // bare `claude` there is unchanged.
+    const realmLaunchBin = macRealmLaunchBinary(home, pinnedCli ? pinnedCliPathFor(pinnedCli.version) : null)
+    if (realmLaunchBin) finalSpawnEnv.CCC_CLAUDE_BIN = realmLaunchBin
+    else delete finalSpawnEnv.CCC_CLAUDE_BIN
     // Give the resume-picker (run inside this PTY) the CONFIG dir so it can read
     // session-state.json and label conversations with their CCC work name
     // (customName). Read-only, best-effort — never block the spawn (#130).
@@ -5647,6 +5709,9 @@ function spawnPtyResolved(
       // before any binary runs. -LiteralPath because Set-Location otherwise
       // treats its argument as a WILDCARD: a real directory named `proj[1m]`
       // never matches, and the session silently starts in the wrong place.
+      // macOS realm: pin the shell's hand-typed `claude` to the verified binary
+      // (mac-realm-shell.ts, re-attack r3 MAJOR 1).
+      if (realmShellCannotPin(realmLaunchBin, spawnCmd, spawnArgs)) logWarn(`[pty] ${sessionId}: macOS realm shell ${spawnCmd}: cannot pin claude to the verified binary; a hand-typed claude uses this shell's PATH`)
       const cdCmd = isWin
         ? `Set-Location -LiteralPath ${quoteArgForShell(resolvedCwd, true)}`
         : `cd ${quoteArgForShell(resolvedCwd, false)} 2>/dev/null; clear`
@@ -5665,13 +5730,12 @@ function spawnPtyResolved(
         // the registered one.
         if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) { abandonLaunchHold(); return }
         try {
-          ptyProcess.write(cdCmd + '\r')
-          // Queued straight after the cd: the shell runs them in order, so the
-          // command always starts in the configured directory.
-          if (launchLine) {
-            logInfo(`[pty-manager] shell-only first-run command for ${sessionId}: ${launchLine}`)
-            ptyProcess.write(launchLine + '\r')
-          }
+          // The opening cd line exactly as on base, then (macOS realm only)
+          // the `claude` pin as separate lines, then the first-run command:
+          // the shell runs them in order, so the command starts in the
+          // configured directory with `claude` pinned (mac-realm-shell.ts).
+          if (launchLine) logInfo(`[pty-manager] shell-only first-run command for ${sessionId}: ${launchLine}`)
+          for (const line of shellOnlyOpeningLines(cdCmd, isWin ? [] : realmShellPinLines(realmLaunchBin, spawnCmd, spawnArgs), launchLine)) ptyProcess.write(line + '\r')
           releaseLaunchHold()
         } catch { abandonLaunchHold() /* session died mid-launch */ }
       }, 300)
@@ -5684,7 +5748,8 @@ function spawnPtyResolved(
       //   3. Spawning claude.cmd directly via pty.spawn fails to propagate cwd on Windows
       // Without the explicit cd, conversations get stored under the wrong project hash
       // and won't appear when the user tries to /resume.
-      const { cmd } = resolveClaudeForPty(options?.legacyVersion)
+      // macOS realm: the verified binary (see realmLaunchBin above).
+      const cmd = realmLaunchBin ?? resolveClaudeForPty(options?.legacyVersion).cmd
 
       // T8b (bug #5): EXACT-CONVERSATION RESUME.
       //
@@ -6911,8 +6976,24 @@ export function killPty(sessionId: string, opts: KillPtyOptions = {}): void {
       if (oldest === undefined) break
       restartKills.delete(oldest)
     }
+    // The conversation a live Claude session is on, read NOW, while the
+    // binder still holds the bind (see restartResumeTargets). Only a running
+    // Claude PTY; the next spawn applies it under its own Claude-only rule.
+    restartResumeTargets.delete(sessionId)
+    if (ptySessions.get(sessionId)?.agent === 'claude') {
+      const target = captureLiveResumeTarget(sessionId)
+      if (target) {
+        restartResumeTargets.set(sessionId, target)
+        while (restartResumeTargets.size > RESTART_RESUME_TARGETS_MAX) {
+          const oldest = restartResumeTargets.keys().next().value
+          if (oldest === undefined) break
+          restartResumeTargets.delete(oldest)
+        }
+      }
+    }
   } else if (opts.reason === 'close') {
     restartKills.delete(sessionId)
+    restartResumeTargets.delete(sessionId)
   }
   // rc.15 review R3: a spawn still waiting for its profile's refresh has no PTY
   // yet -- cancel the wait (its hold goes with it); there is nothing else to kill.

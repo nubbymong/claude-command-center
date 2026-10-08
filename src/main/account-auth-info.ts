@@ -10,7 +10,8 @@
 
 import { existsSync, readFileSync, statSync } from 'fs'
 import { join } from 'path'
-import { getProfileConfigDir, listProfiles } from './account-profiles'
+import { getProfileConfigDir, listProfiles, profileIdentityFile, profileCredentialLocation, readMacCredential, type ProfileCredentialLocation } from './account-profiles'
+import type { ClaudeKeychainCreds } from './claude-credential-store-darwin'
 import { canonicaliseEmail } from '../shared/account-chip-color'
 import type { ProfileAuthInfo } from '../shared/account-auth'
 import { logWarn } from './debug-logger'
@@ -25,6 +26,16 @@ function readJson(file: string): any | null {
     // not take out the whole panel.
     return null
   }
+}
+
+/** The identity file of a profile whose sign-in is in the macOS Keychain
+ *  (experimental multi-account ON): the realm's `<configDir>/.claude.json`, or
+ *  for the primary the real `~/.claude.json` (profileIdentityFile). Only the
+ *  Keychain path below asks; the file path is base behaviour, unchanged, on
+ *  every platform (macOS CI, PR #629: base macOS read `<home>/.claude.json`
+ *  and so must macOS with the setting off). */
+function keychainIdentityFileFor(home: string): string {
+  return profileIdentityFile(home)
 }
 
 function positiveNumber(value: unknown): number | undefined {
@@ -72,8 +83,56 @@ export function readProfileAuthInfo(profileId: string, accountEmail?: string): P
  */
 export function readAllProfileAuthInfo(): ProfileAuthInfo[] {
   const profiles = listProfiles()
-  const infos = profiles.map((p) => readProfileAuthInfo(p.id, p.accountEmail))
+  return crossCheckAuthInfo(profiles.map((p) => readProfileAuthInfo(p.id, p.accountEmail)))
+}
 
+/** The ProfileAuthInfo of a parsed credential, wherever it was read from. */
+function infoFromCreds(base: Pick<ProfileAuthInfo, 'profileId' | 'accountEmail' | 'oauthEmail'>, creds: ClaudeKeychainCreds, credentialsUpdatedAt: number | undefined): ProfileAuthInfo {
+  return {
+    ...base,
+    hasRefreshToken: !!creds.refreshToken,
+    expiresAt: positiveNumber(creds.expiresAt),
+    refreshTokenExpiresAt: creds.refreshTokenExpiresAt,
+    subscriptionType: creds.subscriptionType,
+    credentialsUpdatedAt,
+  }
+}
+
+/**
+ * readProfileAuthInfo through the platform seam (profileCredentialLocation).
+ * win32/linux and macOS with the setting off: the file read above, unchanged.
+ * macOS with the setting on: the profile's Keychain item (or the file Claude
+ * Code falls back to). An item that cannot be read is `credentialsUnknown`,
+ * never `credentialsMissing`: "Not signed in" would be a guess. The Keychain
+ * has no cheap modification time, so `credentialsUpdatedAt` is left unset
+ * there, which keeps a past auth failure showing (authFailureStillApplies
+ * fails toward the warning) until a login moves the refresh-token expiry.
+ */
+export async function readProfileAuthInfoAsync(profileId: string, accountEmail?: string): Promise<ProfileAuthInfo> {
+  let loc: ProfileCredentialLocation
+  try { loc = profileCredentialLocation(profileId) } catch { return readProfileAuthInfo(profileId, accountEmail) }
+  if (loc.kind === 'file') return readProfileAuthInfo(profileId, accountEmail)
+  const oauthEmail: string | undefined = readJson(keychainIdentityFileFor(getProfileConfigDir(profileId)))?.oauthAccount?.emailAddress
+  const base = { profileId, accountEmail, oauthEmail }
+  const r = await readMacCredential(loc)
+  if (r.status === 'not-found') return { ...base, credentialsMissing: true }
+  if (r.status === 'unknown') return { ...base, credentialsUnknown: true }
+  let updatedAt: number | undefined
+  if (r.source === 'file') { try { updatedAt = statSync(r.file).mtimeMs } catch { updatedAt = undefined } }
+  return infoFromCreds(base, r.creds, updatedAt)
+}
+
+/** readAllProfileAuthInfo through the platform seam. Identical to the sync
+ *  read wherever no profile is on the Keychain. */
+export async function readAllProfileAuthInfoAsync(): Promise<ProfileAuthInfo[]> {
+  const profiles = listProfiles()
+  const infos: ProfileAuthInfo[] = []
+  // One at a time: each Keychain read is a `security` process.
+  for (const p of profiles) infos.push(await readProfileAuthInfoAsync(p.id, p.accountEmail))
+  return crossCheckAuthInfo(infos)
+}
+
+function crossCheckAuthInfo(infos: ProfileAuthInfo[]): ProfileAuthInfo[] {
   for (const info of infos) {
     if (info.oauthEmail && info.accountEmail) {
       info.identityMismatch = canonicaliseEmail(info.oauthEmail) !== canonicaliseEmail(info.accountEmail)

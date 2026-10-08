@@ -237,19 +237,78 @@ describe('logoutClaudeCli: the CLI\'s own sign-out in exactly this profile\'s ho
   })
 
   it('macOS: every profile runs on the Mac\'s one sign-in, so every sign-out needs the acknowledgement, and HOME stays the real home', async () => {
-    // Any profile, the primary or not, and whatever the profile list says.
+    // Any profile asks for the acknowledgement. The sign-out itself then runs
+    // for the primary; a NON-primary profile with the experimental macOS
+    // multi-account setting off is refused at the launch choke point instead
+    // (decision aicc_planning#172 item 3, ADR-024): it would act on the
+    // primary's sign-in under its own label.
     const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
     const runner = fakeRunner()
     try {
-      expect(await logoutClaudeCli(ID, { runner })).toEqual({ ran: false, after: null, refused: 'computer-sign-in' })
+      for (const id of [PRIMARY, ID]) expect(await logoutClaudeCli(id, { runner })).toEqual({ ran: false, after: null, refused: 'computer-sign-in' })
       expect(runner.calls).toEqual([])
-      expect(await logoutClaudeCli(ID, { runner, acknowledgeComputerSignIn: true })).toMatchObject({ ran: true })
+      expect(await logoutClaudeCli(PRIMARY, { runner, acknowledgeComputerSignIn: true })).toMatchObject({ ran: true })
+      expect(await logoutClaudeCli(ID, { runner, acknowledgeComputerSignIn: true })).toEqual({ ran: false, after: null, refused: 'host-control' })
     } finally {
       Object.defineProperty(process, 'platform', realPlatform)
     }
     expect(runner.calls).toHaveLength(2)
-    for (const c of runner.calls) expect(c.env.HOME).not.toBe(home(ID))
+    for (const c of runner.calls) expect(c.env.HOME).not.toBe(home(PRIMARY))
+  })
+
+  // ADR-024: with the experimental macOS multi-account setting ON a non-primary
+  // profile runs on its own CLAUDE_CONFIG_DIR and Keychain item, so its
+  // sign-out does not reach this computer's own sign-in: no acknowledgement is
+  // asked for it. (Without the #172 verdict the launch itself is then refused
+  // at the choke point; that is the guard's own test.)
+  it('macOS, multi-account ON: a non-primary sign-out does not ask for the computer-sign-in acknowledgement; the primary still does', async () => {
+    const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    profiles.setMacMultiAccountProbe(() => true)
+    const runner = fakeRunner()
+    try {
+      expect((await logoutClaudeCli(ID, { runner })).refused).not.toBe('computer-sign-in')
+      expect(await logoutClaudeCli(PRIMARY, { runner })).toEqual({ ran: false, after: null, refused: 'computer-sign-in' })
+    } finally {
+      profiles.setMacMultiAccountProbe(() => false)
+      Object.defineProperty(process, 'platform', realPlatform)
+    }
+  })
+
+  // Merge review MINOR 1 (ADR-024): a runner's binary is chosen before the
+  // waits; if it is not (or no longer) the file the realm's #172 verdict was
+  // taken for, the run is refused in the same tick as its start.
+  it('macOS realm: a sign-out or status read whose runner is not the verified binary is refused; the verified one runs', async () => {
+    const { seedMacRealmVerdict } = await import('./helpers/mac-realm-verdict-seed')
+    const verdict = await import('../../src/main/mac-realm-verdict')
+    const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    profiles.setMacMultiAccountProbe(() => true)
+    verdict.setMacRealmVerdictHooks({ realmDir: (h) => profiles.macProfileConfigDir(h), ensure: async () => {}, pinnedPath: () => null })
+    try {
+      seedMacRealmVerdict(sandbox, home(ID))
+      const verified = join(sandbox, 'fake-claude-cli')
+      const other = join(sandbox, 'other-claude')
+      fs.writeFileSync(other, 'another binary')
+      const wrong = { ...fakeRunner(), executable: other }
+      expect(await logoutClaudeCli(ID, { runner: wrong })).toEqual({ ran: false, after: null, refused: 'host-control' })
+      expect(wrong.calls).toEqual([])
+      await readClaudeCliAuth(ID, wrong)
+      expect(wrong.calls).toEqual([])
+      const unnamed = fakeRunner()
+      await readClaudeCliAuth(ID, unnamed)
+      expect(unnamed.calls).toEqual([])
+      const right = fakeRunner()
+      const rightRunner = { cwd: right.cwd, run: right.run, executable: verified }
+      expect(await logoutClaudeCli(ID, { runner: rightRunner })).toMatchObject({ ran: true })
+      expect(right.calls.map((c) => c.args[1])).toEqual(['logout', 'status'])
+    } finally {
+      verdict.setMacRealmVerdictHooks(null)
+      verdict._resetMacRealmVerdictsForTest()
+      profiles.setMacMultiAccountProbe(() => false)
+      Object.defineProperty(process, 'platform', realPlatform)
+    }
   })
 
   it('holds the profile for the whole run (past the 30 s default bound), waits for a token rotation in flight, and lets go after', async () => {

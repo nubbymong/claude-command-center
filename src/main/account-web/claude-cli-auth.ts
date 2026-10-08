@@ -32,9 +32,10 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError, logInfo, logWarn } from '../debug-logger'
 import { gateManagedLaunch, peekGateVerdict } from '../managed-launch-diagnostics'
-import { getProfileConfigDir, getProfilesRoot, getPrimaryProfileId, withProfileHome, readProfilesStrict, removeProfileIdentityCredentials, MANAGED_LAUNCH_REFUSAL } from '../account-profiles'
+import { getProfileConfigDir, getProfilesRoot, getPrimaryProfileId, withProfileHome, readProfilesStrict, removeProfileIdentityCredentials, MANAGED_LAUNCH_REFUSAL, profileCredentialLocation, readMacCredential, macProfileConfigDir, type ProfileCredentialLocation } from '../account-profiles'
 import { acquireProfileConsumer, holdProfileForRun, pendingProfileRefresh } from '../profile-consumers'
 import { isProfileInUseByLiveSession, sessionsOnProfile } from '../claude-account-identity'
+import { ensureMacRealmVerdict, macRealmVerdictPending, macRealmLaunchBinary, macRealmExecutableRefusal } from '../mac-realm-verdict'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
 
 /** promisify(execFile), made when a CLI runs rather than when this module
@@ -55,8 +56,9 @@ export interface ClaudeCliAuthStatus {
   email?: string
   /** Organisation the CLI reports. Display only. */
   orgName?: string
-  /** Which source answered: the CLI's own status command, or the credential file. */
-  source?: 'cli-status' | 'credential-file'
+  /** Which source answered: the CLI's own status command, the credential file,
+   *  or (macOS, experimental multi-account on) the Keychain item. */
+  source?: 'cli-status' | 'credential-file' | 'keychain'
   /** Set when nothing could be determined. */
   error?: string
   /** WP2: the CLI was not asked because Claude Code is switched off (or its
@@ -151,6 +153,10 @@ const signOutsInFlight = new Map<string, Promise<void>>()
 export interface ClaudeCliAuthRunner {
   /** The folder the CLI runs in: the project gate reads this one. */
   readonly cwd: string
+  /** The executable this runner starts. On the macOS multi-account realm
+   *  (ADR-024) a run is refused unless it is the very file the realm's #172
+   *  verdict was taken for (realmRunnerRefusal); absent there = refused. */
+  readonly executable?: string
   run(args: readonly string[], env: Record<string, string>, timeoutMs: number): Promise<ClaudeCliAuthRun>
 }
 
@@ -169,6 +175,22 @@ export interface ClaudeCliAuthRun {
   killSettled?: Promise<void>
 }
 
+/**
+ * Merge review MINOR 1 (ADR-024): on the macOS realm, why `runner` may not run
+ * now, or null. The runner's binary was chosen before the waits (the profile
+ * hold, the project gate); if another binary has been verified since and this
+ * one changed, withProfileHome would pass on the NEW verdict while the OLD file
+ * runs under the realm env -- a CLI that ignores CLAUDE_CONFIG_DIR would then
+ * act on the primary's sign-in. Checked right after withProfileHome, in the
+ * same tick as the start. Null off the realm (win32/linux, the primary, the
+ * setting off).
+ */
+function realmRunnerRefusal(home: string, runner: ClaudeCliAuthRunner): string | null {
+  if (macRealmLaunchBinary(home) === null) return null
+  if (!runner.executable) return 'the Claude Code this would run was not named, so it could not be checked for this account folder'
+  return macRealmExecutableRefusal(home, runner.executable)
+}
+
 const STATUS_TIMEOUT_MS = 10_000
 /** How long past its own time limits a runner-run check or sign-out may hold
  *  the profile: the project gate, and a slow kill of a stopped process tree.
@@ -180,9 +202,10 @@ const CLI_HOLD_GRACE_MS = 60_000
 // context named in place, as at every managed launch), with HOME pointed at
 // the profile home as well, except on macOS. There withProfileHome leaves HOME
 // at the real home on purpose (the login keychain is found through it, #117),
-// so every profile on a Mac runs on the Mac's one Claude Code sign-in (D2), and
-// a check or a sign-out reads and acts on that sign-in, as a session on the
-// profile does. Object.assign MUTATES the result rather than spreading it into
+// so every profile on a Mac runs on the Mac's one Claude Code sign-in (D2) --
+// except, with the experimental multi-account setting on, a non-primary
+// profile, which runs on its own CLAUDE_CONFIG_DIR (ADR-024) -- and a check or
+// a sign-out reads and acts on that sign-in, as a session on the profile does. Object.assign MUTATES the result rather than spreading it into
 // a literal: the realm patch builds it with a null prototype (see
 // src/shared/providers/realm-env.ts).
 
@@ -254,6 +277,14 @@ async function readClaudeCliAuthUncached(profileId: string, runner?: ClaudeCliAu
     const probeCwd = runner ? runner.cwd : process.cwd()
     const projectGate = peekGateVerdict(probeCwd) ?? await gateManagedLaunch(probeCwd)
     const home = join(getProfilesRoot(), profileId)
+    // Decision aicc_planning#172 item 4: on the macOS realm the probe needs
+    // the verdict too; without one withProfileHome refuses it and the answer
+    // comes from the Keychain read below instead.
+    // Awaited only when one is missing: the common path stays synchronous.
+    if (macRealmVerdictPending(home)) await ensureMacRealmVerdict(home)
+    // macOS realm (re-attack r3, MAJOR 1): exactly the verified binary, no
+    // shell. Everywhere else the bare name through the shell, as before.
+    const realmBin = macRealmLaunchBinary(home)
     if (existsSync(home)) {
       // `claude auth status` is an AUTH path, so it is a managed launch and
       // gets the same hardening as a session: ambient authority variables
@@ -262,20 +293,32 @@ async function readClaudeCliAuthUncached(profileId: string, runner?: ClaudeCliAu
       // withProfileHome exists to own -- and being the one launch path that
       // built its own env is exactly how it would have kept inheriting an
       // ambient ANTHROPIC_API_KEY and reported the wrong account as signed
-      // in. For HOME, see the note on the CLI auth environment above.
+      // in. For HOME, see the note on the CLI auth environment above: never
+      // on macOS, setting on or off (#117). On macOS a NON-primary profile
+      // reaches this line only with the experimental multi-account setting
+      // ON (withProfileHome refuses it otherwise, MAC_MULTI_ACCOUNT_OFF_REFUSAL),
+      // on the real HOME plus its own CLAUDE_CONFIG_DIR = its own sign-in.
       const env = Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-status', cwd: probeCwd, probe: true, projectGate }), process.platform === 'darwin' ? {} : { HOME: home })
-      if (runner) {
+      // On the macOS realm the runner's executable is the verified binary (the
+      // composition root swaps it in, compose.ts claudeAuthExecutable) -- and is
+      // checked again HERE, in the same tick as the start (merge review MINOR 1).
+      const runnerRefused = runner ? realmRunnerRefusal(home, runner) : null
+      if (runner && runnerRefused) {
+        logWarn(`[account-web] profile ${profileId}: the CLI auth probe was refused -- ${runnerRefused}. Falling back to the stored sign-in.`)
+      } else if (runner) {
         const r = await runner.run(['auth', 'status'], env, STATUS_TIMEOUT_MS)
         if (r.killSettled instanceof Promise) kill = r.killSettled
         // `claude auth status` exits 1 when signed out, its answer on stdout.
         const parsed = r.refused !== undefined || r.spawnError !== undefined || r.timedOut ? null : parseAuthStatus(r.stdout)
         if (parsed) return parsed
       } else {
-        const { stdout } = await execFileAsync('claude', ['auth', 'status'], {
+        // macOS realm (re-attack r3, MAJOR 1): exactly the verified binary, no
+        // shell. Everywhere else the bare name through the shell, as before.
+        const { stdout } = await execFileAsync(realmBin ?? 'claude', ['auth', 'status'], {
           encoding: 'utf-8',
           timeout: STATUS_TIMEOUT_MS,
           windowsHide: true,
-          shell: true,          // resolves claude.cmd on Windows, as elsewhere in the app
+          shell: !realmBin,     // resolves claude.cmd on Windows, as elsewhere in the app
           env,
         })
         const parsed = parseAuthStatus(stdout)
@@ -311,6 +354,25 @@ async function readClaudeCliAuthUncached(profileId: string, runner?: ClaudeCliAu
   //    account rendered "not signed in", telling the user to /login. Less
   //    informative than the CLI (no email/org) but needs no subprocess, so a
   //    missing or broken CLI still yields a usable signed-in/out answer.
+  // macOS with the experimental multi-account setting on: the sign-in is a
+  // Keychain item (profileCredentialLocation), read in Claude Code's own order
+  // -- the item, then its fallback file. An item that cannot be read is
+  // UNKNOWN, never "signed out" (that would tell a signed-in user to /login).
+  if (process.platform === 'darwin') {
+    let loc: ProfileCredentialLocation | null = null
+    try { loc = profileCredentialLocation(profileId) } catch { loc = null }
+    if (loc && loc.kind === 'keychain') {
+      const r = await readMacCredential(loc)
+      if (r.status === 'not-found') return { authenticated: false }
+      if (r.status === 'unknown') return { authenticated: false, error: `could not determine CLI auth state (macOS Keychain: ${r.reason})` }
+      return {
+        authenticated: !!r.creds.accessToken,
+        subscriptionType: r.creds.subscriptionType,
+        expiresAt: r.creds.expiresAt > 0 ? r.creds.expiresAt : undefined,
+        source: r.source === 'keychain' ? 'keychain' : 'credential-file',
+      }
+    }
+  }
   try {
     const configDir = getProfileConfigDir(profileId)
     if (!configDir) return { authenticated: false }
@@ -350,15 +412,20 @@ const LOGOUT_TIMEOUT_MS = 30_000
 
 /** Whether signing this profile out reaches this computer's own Claude Code
  *  sign-in, the one the user's Claude Code uses outside the app:
- *  - macOS: every profile. withProfileHome leaves HOME at the real home there,
- *    so the login keychain, and with it the Mac's one Claude Code sign-in, is
- *    what every profile's session runs on (D2, #117);
+ *  - macOS: every profile, EXCEPT one on the experimental multi-account realm
+ *    (ADR-024): withProfileHome leaves HOME at the real home there, so the
+ *    login keychain, and with it the Mac's one Claude Code sign-in, is what
+ *    every other profile's session runs on (D2, #117). A realm profile runs on
+ *    its own CLAUDE_CONFIG_DIR and its own suffixed Keychain item, so its
+ *    sign-out reaches only that (proved by the #172 guard's verdict);
  *  - elsewhere: the primary profile, whose credentials the app keeps on the
  *    same token as the user's own login (syncPrimaryCredentialsWithGlobal).
  *  A profile list that cannot be read counts as shared: the acknowledgement
  *  is then asked for rather than skipped. */
 function profileSharesComputerSignIn(profileId: string): boolean {
-  if (process.platform === 'darwin') return true
+  if (process.platform === 'darwin') {
+    try { return macProfileConfigDir(join(getProfilesRoot(), profileId)) === null } catch { return true }
+  }
   let all: ReturnType<typeof readProfilesStrict>
   try { all = readProfilesStrict() } catch { return true }
   if (all === null) return true
@@ -440,6 +507,13 @@ async function runLogout(profileId: string, runner: ClaudeCliAuthRunner): Promis
     // opened on the profile meanwhile refuses the sign-out. The sessions are
     // what is asked; the hold above is this run's own.
     if (sessionsOnProfile(profileId).length > 0) return refusedLogout('in-use')
+    // macOS realm (merge review MINOR 1): the binary must still be the one the
+    // realm's verdict was taken for -- checked in the same tick as the start.
+    const exeRefused = realmRunnerRefusal(home, runner)
+    if (exeRefused) {
+      logWarn(`[account-web] profile ${profileId}: the CLI sign-out was refused -- ${exeRefused}. Nothing was run.`)
+      return refusedLogout('host-control')
+    }
     const out = await runner.run(['auth', 'logout'], env, LOGOUT_TIMEOUT_MS)
     await ended(out)
     if (out.refused !== undefined || out.spawnError !== undefined) {

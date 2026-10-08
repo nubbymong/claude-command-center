@@ -20,6 +20,11 @@ export interface ProfileAuthInfo {
   oauthEmail?: string
   /** No readable/parseable .credentials.json in this profile's home. */
   credentialsMissing?: boolean
+  /** The credential store could not be read (macOS Keychain locked, denied,
+   *  timed out, or an item in an unexpected shape). Not "signed out": nothing
+   *  is known. Only ever set on macOS with the experimental multi-account
+   *  setting on. */
+  credentialsUnknown?: boolean
   hasRefreshToken?: boolean
   /** Access-token expiry, epoch ms. Auto-renewed; not a user-facing countdown. */
   expiresAt?: number
@@ -119,9 +124,12 @@ const DAY_MS = 86400000
  * wall clock. Pure, and shared so main and renderer cannot disagree about what a
  * given credential state means.
  */
-export function describeAuthWindow(info: Pick<ProfileAuthInfo, 'credentialsMissing' | 'hasRefreshToken' | 'refreshTokenExpiresAt'>, now: number): AuthWindow {
+export function describeAuthWindow(info: Pick<ProfileAuthInfo, 'credentialsMissing' | 'hasRefreshToken' | 'refreshTokenExpiresAt' | 'credentialsUnknown'>, now: number): AuthWindow {
   if (info.credentialsMissing) {
     return { daysUntilForcedLogin: null, tone: 'expired', label: 'Not signed in' }
+  }
+  if (info.credentialsUnknown) {
+    return { daysUntilForcedLogin: null, tone: 'unknown', label: 'Sign-in state unknown — the macOS Keychain could not be read' }
   }
   if (info.hasRefreshToken === false) {
     return { daysUntilForcedLogin: null, tone: 'expired', label: 'Sign-in incomplete — no refresh token stored' }

@@ -3,6 +3,8 @@
 // Small pure helpers for the session-launch path in TerminalView, extracted so
 // the launch decisions are unit-testable (TerminalView itself is xterm-bound).
 import type { ProviderId } from '../../shared/types'
+import { claudeMultiAccountBlocked } from '../../shared/mac-multi-account'
+import { useSettingsStore } from '../stores/settingsStore'
 
 /** How the partner terminal's strip names the assistant of the session it
  *  sits beside: beside a Codex session it reads "not Codex", with the way
@@ -67,10 +69,12 @@ export function canSwitchAccountForSession(opts: {
   // which per-profile HOME redirection cannot isolate — switching would
   // relabel the session while every API call kept using the shared token
   // (Mac readiness review 2026-07-02, confirmed blocker). Multi-account is
-  // Windows-only until a darwin Keychain-swap engine exists. (This rule is
-  // Claude Code's; a Codex session switches as it launches, in the account's
-  // own folder.)
-  if (typeof window !== 'undefined' && window.electronPlatform === 'darwin') return false
+  // off on macOS unless the experimental setting is on, which gives each
+  // non-primary profile its own CLAUDE_CONFIG_DIR and so its own Keychain
+  // entry (src/shared/mac-multi-account.ts, ADR-024). (This rule is Claude
+  // Code's; a Codex session switches as it launches, in the account's own
+  // folder.)
+  if (typeof window !== 'undefined' && claudeMultiAccountBlocked(window.electronPlatform, useSettingsStore.getState().settings)) return false
   return opts.profileCount >= 2
 }
 

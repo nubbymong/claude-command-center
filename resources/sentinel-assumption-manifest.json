@@ -90,7 +90,7 @@
   {
     "id": "account-identity",
     "area": "accounts",
-    "contract": "The active Claude account identity lives in ~/.claude.json at oauthAccount.emailAddress (string) and optionally oauthAccount.displayName, oauthAccount.accountUuid. This file follows USERPROFILE on Windows (not CLAUDE_CONFIG_DIR). Per-account isolation in the Conductor sets USERPROFILE to a profile-specific directory containing a private .claude.json.",
+    "contract": "The active Claude account identity lives in ~/.claude.json at oauthAccount.emailAddress (string) and optionally oauthAccount.displayName, oauthAccount.accountUuid. This file follows USERPROFILE on Windows (not CLAUDE_CONFIG_DIR). Per-account isolation in the Conductor sets USERPROFILE to a profile-specific directory containing a private .claude.json. On macOS with the experimental multi-account setting on (ADR-024), a non-primary profile runs with CLAUDE_CONFIG_DIR=<profile>/.claude and its identity is <that directory>/.claude.json.",
     "files": [
       "src/main/account-identity.ts",
       "src/main/providers/claude/statusline.ts"
