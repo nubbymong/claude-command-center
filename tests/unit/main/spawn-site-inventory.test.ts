@@ -189,25 +189,57 @@ function promisedPrograms(): string[] {
 const PROMISED = promisedPrograms()
 /** A program's name without the extension Windows tries for it. */
 const programName = (s: string): string => s.toLowerCase().replace(/\.(exe|com|cmd|bat)$/, '')
-/** The program a site names by a bare string as its first argument, if any. */
+/** The program a site names by a bare string as its first argument, if any:
+ *  the first word of a bare string, so a command line (`'git status'`,
+ *  `'gh auth token'`, which a shell looks up) names its program, as a lone
+ *  name does. A first word with a folder in it is not a bare name
+ *  (relativeProgram reads that). */
 function bareProgram(site: string): string | null {
-  const m = /\(\s*['"`]([^'"`\\/]+)['"`]\s*$/.exec(site)
+  const m = /\(\s*['"`]\s*([^'"`\s\\/]+)(?:\s[^'"`]*)?['"`]\s*$/.exec(site)
   return m ? programName(m[1]) : null
+}
+/** The program a site names by a literal relative path as its first argument
+ *  (`'.\\gh.exe'`, `'bin/node.exe'`): a path with a folder in it that is
+ *  neither drive-absolute nor a share, which Windows reads against the working
+ *  folder. A template literal that interpolates its folder is a start through a
+ *  variable, not read here. */
+function relativeProgram(site: string): string | null {
+  const m = /\(\s*['"`]([^'"`\s]*[\\/][^'"`\s]*)['"`]\s*$/.exec(site)
+  if (!m || m[1].includes('${') || /^(?:[A-Za-z]:[\\/]|[\\/]{2})/.test(m[1])) return null
+  return programName(m[1].split(/[\\/]+/).pop() ?? '')
+}
+/** Every promised program that a quoted literal anywhere in a site's text names
+ *  by its first word: the whole first argument (`exec('npm ci'`) and a bare
+ *  name inside an expression (`spawn(bin ?? 'gh'`, `spawn(win ? 'gh.exe' : 'gh'`)
+ *  alike. A literal with a folder in it is not a bare name. */
+function promisedLiterals(site: string): string[] {
+  const out = new Set<string>()
+  for (const m of site.slice(site.indexOf(' :: ') + 4).matchAll(/['"`]([^'"`\\/]+)['"`]/g)) {
+    const p = programName(m[1].trim().split(/\s+/)[0] ?? '')
+    if (PROMISED.includes(p)) out.add(p)
+  }
+  return [...out]
 }
 /** Whether a reason names one of the promised programs. */
 function namesPromised(text: string): boolean {
   return PROMISED.some((p) => new RegExp(`\\b(${p === 'claude' ? 'claude|Claude Code' : p})\\b`, 'i').test(text))
 }
-/** Why a reviewed list lets a promised program start by a bare name on
- *  Windows: one line per problem, none when it does not. A site naming one by
- *  a bare string runs off Windows only; a by-name site says which programs it
+/** Why a reviewed list lets a promised program start by a bare name, or by a
+ *  path Windows reads against the working folder, on Windows: one line per
+ *  problem, none when it does not. A site naming one by a bare string (alone,
+ *  as a command line's first word, or inside an expression) or by a literal
+ *  relative path runs off Windows only; a by-name site says which programs it
  *  starts (`programs`, the bare string's among them), none promised, and its
  *  reason names none. */
 function promiseViolations(sites: Record<string, Entry>): string[] {
   const out: string[] = []
   for (const [site, e] of Object.entries(sites)) {
     const bare = bareProgram(site)
-    if (bare && PROMISED.includes(bare) && e.how !== 'not-windows') out.push(`${site}: ${bare} by a bare name is reviewed as ${e.how}`)
+    if (e.how !== 'not-windows') {
+      for (const p of promisedLiterals(site)) out.push(`${site}: ${p} by a bare name is reviewed as ${e.how}`)
+      const rel = relativeProgram(site)
+      if (rel && PROMISED.includes(rel)) out.push(`${site}: ${rel} by a relative path is reviewed as ${e.how}`)
+    }
     if (e.how !== 'by-name') continue
     const programs = Array.isArray(e.programs) ? e.programs.map(programName) : []
     if (programs.length === 0) out.push(`${site}: a by-name site names no programs`)
@@ -274,6 +306,34 @@ describe('every process the app starts is a reviewed site', () => {
     expect(promiseViolations({ 'x.ts :: spawn(bin': { count: 1, how: 'by-name', programs: ['node.exe'], reason: 'a tool by its name' } })).toEqual(['x.ts :: spawn(bin: node is a promised program'])
     expect(promiseViolations({ 'x.ts :: spawn(bin': { count: 1, how: 'by-name', programs: ['ssh'], reason: 'ssh, or else Claude Code' } })).toEqual(['x.ts :: spawn(bin: a by-name reason names a promised program'])
     expect(promiseViolations({ 'x.ts :: spawn(bin': { count: 1, how: 'by-name', programs: ['ssh'], reason: 'ssh for the GitHub host' } })).toEqual([])
+    // A command line as the first argument names its program by its first
+    // word: a shell looks that word up, the working folder first on Windows.
+    expect(promiseViolations({ "x.ts :: execSync('git status'": { count: 1, how: 'by-name', programs: ['git status'], reason: 'r' } })).toEqual([
+      "x.ts :: execSync('git status': git by a bare name is reviewed as by-name",
+      "x.ts :: execSync('git status': its programs leave out git",
+    ])
+    expect(promiseViolations({ "x.ts :: execSync('gh auth token'": { count: 1, how: 'by-name', programs: ['gh auth token'], reason: 'r' } })).toEqual([
+      "x.ts :: execSync('gh auth token': gh by a bare name is reviewed as by-name",
+      "x.ts :: execSync('gh auth token': its programs leave out gh",
+    ])
+    expect(promiseViolations({ "x.ts :: execSync('gh auth token'": { count: 1, how: 'by-name', programs: ['gh auth token'], reason: 'the GitHub CLI token through the system shell' } }))
+      .toContain("x.ts :: execSync('gh auth token': gh by a bare name is reviewed as by-name")
+    expect(promiseViolations({ "x.ts :: exec('npm ci'": { count: 1, how: 'system-folder', reason: 'r' } })).toEqual(["x.ts :: exec('npm ci': npm by a bare name is reviewed as system-folder"])
+    expect(promiseViolations({ "x.ts :: exec('node --version'": { count: 1, how: 'not-windows', reason: 'r' } })).toEqual([])
+    // A bare name inside an expression is a bare name too.
+    expect(promiseViolations({ "x.ts :: spawn(bin ?? 'gh'": { count: 1, how: 'full-path', reason: 'r' } })).toEqual(["x.ts :: spawn(bin ?? 'gh': gh by a bare name is reviewed as full-path"])
+    expect(promiseViolations({ "x.ts :: spawn(win ? 'gh.exe' : 'gh'": { count: 1, how: 'full-path', reason: 'r' } })).toEqual(["x.ts :: spawn(win ? 'gh.exe' : 'gh': gh by a bare name is reviewed as full-path"])
+    expect(promiseViolations({ "x.ts :: spawn(bin ?? 'gh'": { count: 1, how: 'not-windows', reason: 'r' } })).toEqual([])
+    // A literal relative path is read against the working folder.
+    expect(promiseViolations({ "x.ts :: execFile('.\\\\gh.exe'": { count: 1, how: 'full-path', reason: 'r' } })).toEqual(["x.ts :: execFile('.\\\\gh.exe': gh by a relative path is reviewed as full-path"])
+    expect(promiseViolations({ "x.ts :: spawn('bin/node.exe'": { count: 1, how: 'full-path', reason: 'r' } })).toEqual(["x.ts :: spawn('bin/node.exe': node by a relative path is reviewed as full-path"])
+    expect(promiseViolations({ "x.ts :: spawn('bin/node.exe'": { count: 1, how: 'not-windows', reason: 'r' } })).toEqual([])
+    // Controls: a program outside the promise by name, a promised one by a
+    // drive-absolute path or a share, and a folder interpolated from a variable.
+    expect(promiseViolations({ "x.ts :: execFile('ssh'": { count: 1, how: 'by-name', programs: ['ssh'], reason: 'ssh for the GitHub host' } })).toEqual([])
+    expect(promiseViolations({ "x.ts :: execFile('C:\\\\Tools\\\\gh.exe'": { count: 1, how: 'full-path', reason: 'r' } })).toEqual([])
+    expect(promiseViolations({ "x.ts :: execFile('\\\\\\\\host\\\\share\\\\gh.exe'": { count: 1, how: 'full-path', reason: 'r' } })).toEqual([])
+    expect(promiseViolations({ "x.ts :: execFile(`${dir}\\\\gh.exe`": { count: 1, how: 'full-path', reason: 'r' } })).toEqual([])
   })
 })
 
