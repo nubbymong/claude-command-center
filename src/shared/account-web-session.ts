@@ -351,19 +351,17 @@ export const CODEX_WEB_SERVICE: WebServiceDescriptor = Object.freeze({
   // UNVERIFIED: the owner's sign-in run confirms where the email sits in it.
   identityEmailPath: Object.freeze(['user', 'email']),
   // The sign-in methods' hosts. Microsoft is a sign-in method too (chatgpt.com
-  // may hide its button). A credential-free probe (2026-10-09: an Electron
-  // window under the app's user agent, no address or password typed) verified
-  // its main-frame hops: auth.openai.com, then login.microsoftonline.com, then
-  // login.live.com, which asks for the email and, by its own page config, also
-  // takes the password and the stay-signed-in answer. OpenAI sends it to
-  // Microsoft's personal-account endpoint, so in the probe a work or school
-  // address was refused on login.live.com; a work account's own single sign-on
-  // was not probed. Verified up to the email page only, not a completed
-  // sign-in. UNVERIFIED: the other methods' hosts (email and phone, Google,
-  // Apple: the methods PB7 saw offered); the owner's sign-in run confirms
-  // them. Left out until a sign-in shows it needs them: login.microsoft.com
-  // (passkey sign-in) and account.live.com (password reset and security
-  // checks); a blocked host shows in the run's off-site hosts log line.
+  // may hide its button). It goes to Microsoft's personal-account (consumers)
+  // endpoint, so a work or school account's own single sign-on is not covered.
+  // A credential-free probe verified Microsoft's main-frame hops up to its email
+  // page, not a completed sign-in: auth.openai.com, then
+  // login.microsoftonline.com, then login.live.com, whose page config also takes
+  // the password and the stay-signed-in answer there. UNVERIFIED: the other
+  // methods' hosts (email and phone, Google, Apple); the owner's sign-in run
+  // confirms them. Left out until a sign-in shows it needs them:
+  // login.microsoft.com (passkey sign-in) and account.live.com (password reset
+  // and security checks); a blocked host shows in the run's off-site hosts log
+  // line.
   signInHosts: Object.freeze([
     'auth.openai.com',
     'accounts.google.com',
