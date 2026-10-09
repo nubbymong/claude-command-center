@@ -41,7 +41,7 @@ describe('the Codex package names a realm\'s own folders (launch.accountFolders)
     expect(await h.codex.launch!.accountFolders!(null as never)).toBeNull()
   })
 
-  it('the canonical-home check folds case by the account-folder checks\' rule (P4.4 review B-3): a non-ASCII case pair is the same home, the Kelvin sign another', async () => {
+  it('the canonical-home check reads a case-only difference by the account-folder real-path rule (P4.4 review B-3): a non-ASCII case pair is the same home where the folder reads both spellings as one entry, the Kelvin sign another', async () => {
     // The auth operations alone, the realm record and the home's identity given.
     const opsFor = (home: string, canonical: string) => createCodexAuthOperations({
       lookupRealm: async (ref: { authRealmId: string }) => ({
@@ -50,6 +50,8 @@ describe('the Codex package names a realm\'s own folders (launch.accountFolders)
         roots: { resourcesDir: 'C:\\res', externalDefaultHome: home },
       }),
       realmIdentity: () => ({ canonical, dev: '1', ino: '2', isDirectory: true }),
+      // Every spelling of a name is the folder's one entry (a case-insensitive folder).
+      folderFs: { lstat: async () => ({ dev: 1n, ino: 2n }), realpath: async (p: string) => p },
       executablePorts: { platform: 'win32' },
     } as never)
     const ref = { authRealmId: 'realm-ext' }

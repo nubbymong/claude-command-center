@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { parseCodexLoginStatus, createCodexAuthOperations, createCodexOutputRedactor, createCodexPackage, createCodexRealmLocks } from '../../src/main/providers/codex'
 import type { CodexAuthDeps, CodexDiscovery, CodexDiscoveryDeps, CodexCommand, CodexRunOptions, CodexRunResult, CodexRealmFsPort } from '../../src/main/providers/codex'
 import type { RealmUse } from '../../src/shared/providers'
+import type { FolderCheckFs } from '../../src/main/utils/path-validator'
 
 describe('codex login status', () => {
   it('classifies the pinned CLI outputs, on either stream', () => {
@@ -140,6 +141,8 @@ function world(over: Partial<CodexAuthDeps> = {}, script: Script = {}) {
 }
 
 const argsOf = (runs: Run[]) => runs.map((r) => r.args.join(' '))
+/** A folder that reads every spelling of a name as its one entry. */
+const ONE_ENTRY: FolderCheckFs = { lstat: async () => ({ dev: 9n, ino: 11n }) as never, realpath: async (p) => p }
 const SIGNED_IN_ACCOUNT = { ok: true, state: 'signed-in', credential: 'account' }
 
 describe('Codex status (A7, D3)', () => {
@@ -215,8 +218,38 @@ describe('Codex status (A7, D3)', () => {
       expect(await w.ops.status(MANAGED)).toMatchObject({ ok: false, code: 'realm-unavailable' })
       expect(w.runs).toEqual([])
     }
-    // Case alone is not a different folder on Windows.
-    expect(await world({ realmIdentity: (h) => ({ canonical: h.toUpperCase(), dev: '9', ino: '11', isDirectory: true }) }).ops.status(MANAGED)).toMatchObject({ ok: true })
+    // Case alone is not a different folder where the folder reads both
+    // spellings as one entry (a case-insensitive folder).
+    expect(await world({ realmIdentity: (h) => ({ canonical: h.toUpperCase(), dev: '9', ino: '11', isDirectory: true }), folderFs: ONE_ENTRY }).ops.status(MANAGED)).toMatchObject({ ok: true })
+  })
+
+  it('a realm home whose real path differs from it only in case is its own only where each folder reads both spellings as one entry', async () => {
+    const upper = (h: string) => ({ canonical: h.toUpperCase(), dev: '9', ino: '11', isDirectory: true })
+    // A case-sensitive folder holds two entries: the other spelling can be a
+    // link to another folder. Refused, and nothing runs.
+    let n = 0
+    const twoEntries: FolderCheckFs = { lstat: async () => ({ dev: 9n, ino: BigInt(++n) }) as never, realpath: async (p) => p }
+    const noAnswer: FolderCheckFs = { lstat: async () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }) }, realpath: async (p) => p }
+    for (const folderFs of [twoEntries, noAnswer]) {
+      const w = world({ realmIdentity: upper, folderFs })
+      expect(await w.ops.status(MANAGED)).toMatchObject({ ok: false, code: 'realm-unavailable' })
+      expect(await w.ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'realm-unavailable' })
+      expect(await w.ops.usageSessionsDir(MANAGED)).toBeNull()
+      expect(await w.ops.accountFolders(MANAGED)).toBeNull()
+      expect(w.runs).toEqual([])
+    }
+    // The same spellings, read as one entry: the home's own.
+    const w = world({ realmIdentity: upper, folderFs: ONE_ENTRY })
+    expect(await w.ops.usageSessionsDir(MANAGED)).toBe(`${HOME_A}\\sessions`)
+    expect(await w.ops.accountFolders(MANAGED)).toMatchObject({ configFile: `${HOME_A}\\config.toml` })
+  })
+
+  it('a run holds the realm only while its real path is still exactly the one checked', async () => {
+    // Checked in its own spelling, then read again in another case.
+    let n = 0
+    const w = world({ realmIdentity: (h) => ({ canonical: ++n === 1 ? h : h.toUpperCase(), dev: '9', ino: '11', isDirectory: true }), folderFs: ONE_ENTRY })
+    expect(await w.ops.status(MANAGED)).toMatchObject({ ok: false, code: 'realm-unavailable' })
+    expect(w.runs).toEqual([])
   })
 
   it('a too-new CLI is allowed (warned elsewhere, never blocked)', async () => {
