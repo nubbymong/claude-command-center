@@ -243,7 +243,7 @@ On macOS and Linux, when your login shell is not sh, bash, zsh, dash or ksh, Cla
 
 On Windows the app looks for Claude Code, node, git, gh and npm only in the folders that PATH names with a full path, never in the current folder. If a session or a check says one of them was not found in a folder PATH names, add the folder that holds it (for Claude Code, the folder with claude.exe or claude.cmd) to your PATH as a full path, then restart the app.
 
-In a Windows Claude session, cmd.exe starts a program from the project folder only when you name it with .\\ in front (.\\build.cmd rather than build.cmd). Terminal tabs are unchanged.
+In a Windows Claude session, cmd.exe starts a program from the project folder only when you name it with .\\ in front (.\\build.cmd rather than build.cmd). Terminal tabs you open are unchanged.
 
 The app's status line is not set up when the path of the resources folder or of your home folder holds a $, a backtick, a double quote or a control character, or a % or ! on Windows, or a backslash on macOS and Linux; the log says so, and a status line of your own still shows. Workaround: choose a resources folder whose path has none of these. A home folder path that holds one has no workaround yet.
 

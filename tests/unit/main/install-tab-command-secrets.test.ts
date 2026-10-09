@@ -78,6 +78,9 @@ describe('the install tab gets none of the command-button secrets', () => {
     expect(secretVars(spawnedEnv())).toEqual([])
     // The command itself still reaches the spawn, unchanged.
     expect(spawnPty.mock.calls[0][2].terminalOptions.command).toBe('npm install -g @openai/codex')
+    // So does the mark pty-manager reads to keep the tab's program lookup to
+    // the folders PATH names in full (install-tab-program-lookup.test.ts).
+    expect(spawnPty.mock.calls[0][2].terminalOptions.noCommandSecrets).toBe(true)
   })
 
   it("the tab's plain shell after a Restart (its command spent) stays without them", async () => {

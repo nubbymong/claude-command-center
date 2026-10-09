@@ -290,9 +290,10 @@ export function withoutCurrentFolderLookup<T extends Record<string, string | und
  *  spelling (withoutCurrentFolderLookup). A program the child starts by a bare
  *  name (an npm shim's `node`) is then found only in a folder PATH names in
  *  full: never in the child's working folder, nor in one named relative to it.
- *  A Claude session's launch, the setup terminal, the /insights terminal and
- *  every start through windowsStartCommand (a cloud agent, a headless run,
- *  the sign-in check, npm) use it. `env` itself is not changed. */
+ *  A Claude session's launch, the setup terminal, the /insights terminal, the
+ *  install or update tab and every start through windowsStartCommand (a cloud
+ *  agent, a headless run, the sign-in check, npm) use it. `env` itself is not
+ *  changed. */
 export function withFullyQualifiedProgramLookup<T extends Record<string, string | undefined>>(env: T): T & { NoDefaultCurrentDirectoryInExePath: string } {
   const out: Record<string, string | undefined> = withoutCurrentFolderLookup(env)
   for (const key of Object.keys(out)) {

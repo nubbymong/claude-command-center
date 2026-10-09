@@ -159,6 +159,48 @@ describe('a terminal tab keeps the environment it is given', () => {
   })
 })
 
+describe('the install or update tab finds what its line starts only in the folders PATH names in full', () => {
+  // The tab the app opens to run its own install or update line
+  // (fullyQualifiedLookup, from terminalOptions.noCommandSecrets): its shell,
+  // and what that line starts by a bare name (npm.cmd's node), never looks in
+  // the tab's working folder nor in a folder named relative to it.
+  const PATHS = '.;tools;..\\up;C:\\Tools;\\\\server\\share\\bin'
+
+  it('Windows: PATH kept to its fully qualified folders, and the lookup setting in one spelling', () => {
+    const source = { ...WIN_SOURCE, Path: PATHS, nodefaultcurrentdirectoryinexepath: '' }
+    expect(buildClaudeLocalSpawn({ ...BASE_OPTS, shellOnly: true, fullyQualifiedLookup: true }, source)).toEqual({
+      cmd: SOURCE_SHELL,
+      args: [],
+      env: { ...WIN_SOURCE, ...APP_OWNED, Path: 'C:\\Tools;\\\\server\\share\\bin', [LOOKUP_SETTING]: '1' },
+    })
+    expect(source.Path).toBe(PATHS)
+  })
+
+  it('Windows, elevated: the same environment under its helper', () => {
+    expect(buildClaudeLocalSpawn({ ...BASE_OPTS, shellOnly: true, elevated: true, fullyQualifiedLookup: true }, WIN_SOURCE)).toEqual({
+      cmd: 'C:\\SourceTools\\gsudo.exe',
+      args: [SOURCE_SHELL],
+      env: { ...WIN_SOURCE, ...APP_OWNED, [LOOKUP_SETTING]: '1' },
+    })
+  })
+
+  it('a plain tab with the same PATH keeps it whole, with no lookup setting (the control)', () => {
+    const { env } = buildClaudeLocalSpawn({ ...BASE_OPTS, shellOnly: true }, { ...WIN_SOURCE, Path: PATHS })
+    expect(env.Path).toBe(PATHS)
+    expect(env[LOOKUP_SETTING]).toBeUndefined()
+  })
+
+  it('off Windows: nothing is added or left out', () => {
+    host.platform = 'linux'
+    const source = { SHELL: '/bin/zsh', PATH: '.:bin:/usr/bin', CCC_TEST_ONLY_IN_SOURCE: 'from-source' }
+    expect(buildClaudeLocalSpawn({ ...BASE_OPTS, shellOnly: true, fullyQualifiedLookup: true }, source)).toEqual({
+      cmd: '/bin/zsh',
+      args: ['-l'],
+      env: { ...source, ...APP_OWNED },
+    })
+  })
+})
+
 describe('the environment is built from the one the caller passes', () => {
   it('never from this process\'s own, and the caller\'s env is left as it was', () => {
     const source = { ...WIN_SOURCE }

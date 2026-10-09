@@ -2400,8 +2400,10 @@ function spawnPtyResolved(
     rows?: number
     ssh?: SSHOptions
     shellOnly?: boolean
-    /** Terminal-only launcher: command + args run once when the shell opens. */
-    terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean }
+    /** Terminal-only launcher: command + args run once when the shell opens.
+     *  `noCommandSecrets` marks the install or update tab the app opens to run
+     *  its own line (openCommandTerminal). */
+    terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean; noCommandSecrets?: boolean }
     /** Secret argument resolved from the OS keychain in the IPC handler (main only). */
     terminalSecret?: string
     /** Command-button secrets for this shell, keyed by command id (main only). */
@@ -5684,6 +5686,9 @@ function spawnPtyResolved(
       rows,
       shellOnly: options?.shellOnly,
       elevated: options?.elevated ?? options?.terminalOptions?.elevated,
+      // The install or update tab finds what its line starts only in the
+      // folders PATH names in full on Windows (buildClaudeLocalSpawn).
+      fullyQualifiedLookup: options?.shellOnly === true && options?.terminalOptions?.noCommandSecrets === true,
       terminalSecret: options?.terminalSecret,
       commandSecrets: options?.commandSecrets,
       legacyVersion: options?.legacyVersion,

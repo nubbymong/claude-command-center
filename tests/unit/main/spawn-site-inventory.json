@@ -282,7 +282,7 @@
   "src/main/pty-manager.ts :: pty.spawn(spawnCmd": {
    "count": 3,
    "how": "full-path",
-   "reason": "A session's own program as its provider builds it: on Windows PowerShell by its full path in the system folder for a Claude session or a terminal tab, gsudo by the full path found in PATH's folders for an elevated tab, Codex or its cmd.exe line by full paths, and the Codex resume list's node by the full path found in PATH's fully qualified folders (none found: nothing starts)."
+   "reason": "A session's own program as its provider builds it: on Windows PowerShell by its full path in the system folder for a Claude session or a terminal tab, gsudo by the full path found in PATH's folders for an elevated tab, Codex or its cmd.exe line by full paths, and the Codex resume list's node by the full path found in PATH's fully qualified folders (none found: nothing starts). The install or update tab the app opens to type its own npm line starts with its program lookup kept to PATH's fully qualified folders and NoDefaultCurrentDirectoryInExePath set, so that npm.cmd and the node it starts by a bare name are found only there."
   },
   "src/main/pty-manager.ts :: pty.spawn(sshBinary": {
    "count": 1,

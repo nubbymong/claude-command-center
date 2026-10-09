@@ -877,7 +877,7 @@ describe('app knowledge for the 2.1.1-beta.2 hardening', () => {
       /Workaround: add the line nvm use --silent \$nvm_default_version to your config\.fish outside any is-interactive block\./,
       /also add Claude Code's folder to PATH in \.zprofile \(macOS\) or \.profile \(Linux; \.bash_profile if you have one\) in your home folder; until then the app may report Claude Code as not found/,
       /add the folder that holds it \(for Claude Code, the folder with claude\.exe or claude\.cmd\) to your PATH as a full path, then restart the app\./,
-      /only when you name it with \.\\ in front \(\.\\build\.cmd rather than build\.cmd\)\. Terminal tabs are unchanged\./,
+      /only when you name it with \.\\ in front \(\.\\build\.cmd rather than build\.cmd\)\. Terminal tabs you open are unchanged\./,
       /a status line of your own still shows\. Workaround: choose a resources folder whose path has none of these\./,
       /give an option's value after an = sign when the value starts with letters and a colon/,
       /and write a list with no space after its commas \(--allowedTools=Bash,Edit rather than --allowedTools=Bash, Edit\)\./,

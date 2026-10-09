@@ -186,19 +186,27 @@ export function buildClaudeLocalSpawn(
   // check (which already uses -l, see index.ts cli:check) passes.
   const shellArgs = os.platform() === 'win32' ? [] : ['-l']
 
+  // The install or update tab the app opens to run its own line
+  // (opts.fullyQualifiedLookup): on Windows that line's program, and what it
+  // starts by a bare name (npm.cmd's node), is found only in the folders PATH
+  // names in full, never in the tab's working folder nor in one named relative
+  // to it (withFullyQualifiedProgramLookup), as in a Claude session. Any other
+  // terminal tab keeps the user's own lookup rules.
+  const tabEnv = opts.shellOnly && opts.fullyQualifiedLookup && os.platform() === 'win32' ? withFullyQualifiedProgramLookup(env) : env
+
   if (opts.shellOnly && opts.elevated) {
     // Windows: gsudo by the full path found in PATH's folders, never by name;
     // without it no elevated terminal starts.
     if (os.platform() === 'win32') {
       const gsudo = findOnWindowsPath(['gsudo.exe'], source)
       if (!gsudo) throw new Error('An elevated terminal needs gsudo, which was not found in a folder PATH names (gsudo.exe)')
-      return { cmd: gsudo, args: [shell, ...shellArgs], env }
+      return { cmd: gsudo, args: [shell, ...shellArgs], env: tabEnv }
     }
-    return { cmd: 'sudo', args: [shell, ...shellArgs], env }
+    return { cmd: 'sudo', args: [shell, ...shellArgs], env: tabEnv }
   }
 
   if (opts.shellOnly) {
-    return { cmd: shell, args: shellArgs, env }
+    return { cmd: shell, args: shellArgs, env: tabEnv }
   }
 
   // Claude session: spawn shell only; pty-manager writes the cd+claude command
@@ -225,6 +233,6 @@ export function buildClaudeLocalSpawn(
   // (withFullyQualifiedProgramLookup: the lookup setting in one spelling, so
   // the session's environment reads the same however it was inherited, and
   // only fully qualified PATH folders). A terminal tab above keeps the user's
-  // own lookup rules.
+  // own lookup rules, except the install or update tab.
   return { cmd: shell, args: shellArgs, env: withFullyQualifiedProgramLookup(env) }
 }

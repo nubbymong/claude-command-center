@@ -10,6 +10,12 @@ export interface SpawnOptions {
   ssh?: SshConfig
   shellOnly?: boolean
   elevated?: boolean
+  /** A tab the app opens to run one line it built (the install or update tab,
+   *  terminalOptions.noCommandSecrets). On Windows its shell, and what that line
+   *  starts by a bare name (npm.cmd's node), finds programs only in the folders
+   *  PATH names in full (withFullyQualifiedProgramLookup). Any other terminal
+   *  tab keeps the user's own lookup. */
+  fullyQualifiedLookup?: boolean
   /** Terminal-only secret argument, resolved from the OS keychain in main. Placed
    *  in the spawn ENV (never interpolated into the command text) so it cannot land
    *  in the shell's on-disk history. See buildSpawnCommand + the shell-only write. */
