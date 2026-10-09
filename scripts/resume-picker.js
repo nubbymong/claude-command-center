@@ -400,8 +400,8 @@ function mergeAndLabel(conversationsBySource, cap = 20) {
 }
 
 // ── Time formatting ─────────────────────────────────────────────────
-function timeAgo(ms) {
-  const sec = Math.floor((Date.now() - ms) / 1000)
+function timeAgo(ms, now = Date.now()) {
+  const sec = Math.floor((now - ms) / 1000)
   if (sec < 60) return 'just now'
   const min = Math.floor(sec / 60)
   if (min < 60) return `${min}m ago`
@@ -435,9 +435,37 @@ const C = {
   surface: '\x1b[38;2;69;71;90m',
 }
 
+// ── Display text ────────────────────────────────────────────────────
+// Everything the picker shows that it did not write itself -- the folder, a
+// work name, a title or message, a model, a session id, a worktree's name --
+// is shown as plain text, by the same rule the app applies everywhere else
+// (src/shared/safe-text.ts, which this script cannot import; a parity test
+// holds the copies to one answer): every character a reader cannot see --
+// the C0 and C1 controls and every character Unicode counts as
+// default-ignorable (the bidi marks, overrides and isolates, the zero-width
+// and invisible formatters, the fillers, the variation selectors, the TAG
+// block) -- and, named one by one, the line and paragraph separators, the
+// braille blank, the interlinear annotation marks and a lone half of a
+// surrogate pair, each replaced by a space; then cut at `max` code points,
+// never inside a surrogate pair. The only escapes the picker prints are its
+// own colours (C above).
+const SPOOFABLE = /[\p{Cc}\p{Default_Ignorable_Code_Point}\u2028\u2029\u2800\ufff9-\ufffb\ud800-\udfff]/gu
+function displayText(raw, max = 500) {
+  const clean = (raw === undefined || raw === null ? '' : String(raw)).replace(SPOOFABLE, ' ')
+  const points = Array.from(clean)
+  return points.length <= max ? clean : points.slice(0, max).join('')
+}
+// A name on its way to a refusal message, read at the moment something has
+// gone wrong: the same rule.
+function displayPath(raw, max = 500) {
+  return displayText(raw, max)
+}
+
+/** Cut to `maxLen` code points, the last one an ellipsis when it was cut. */
 function truncate(str, maxLen) {
-  if (str.length <= maxLen) return str
-  return str.slice(0, maxLen - 1) + '…'
+  const points = Array.from(str)
+  if (points.length <= maxLen) return str
+  return points.slice(0, Math.max(0, maxLen - 1)).join('') + '…'
 }
 
 // ── Layout width ────────────────────────────────────────────────────
@@ -492,6 +520,90 @@ function readSidecarName(transcriptFilePath) {
   } catch { return null }
 }
 
+// ── The picker's lines ──────────────────────────────────────────────
+// The ONE place the lines the picker prints are built, from the folder it was
+// started in, the conversations, their work names and the layout width
+// (computeLayoutWidth). `names` answers a conversation's work name: a
+// function of the conversation, or a Map keyed by session id. `opts.now`
+// fixes the clock and `opts.hasWorktrees` adds the worktree note. Pure: main()
+// prints the lines as they come back. Every field shown here goes through
+// displayText first and is then cut to fit (see "Display text").
+function pickerLines(cwd, conversations, names, width, opts) {
+  const o = opts || {}
+  const nameOf = typeof names === 'function'
+    ? names
+    : (conv) => (names && typeof names.get === 'function' ? names.get(conv.sessionId) : undefined)
+  const list = Array.isArray(conversations) ? conversations : []
+  const maxWidth = width
+  const innerWidth = maxWidth - 6
+  const dirDisplay = truncate(displayText(cwd), innerWidth)
+  const lines = []
+
+  lines.push('')
+  lines.push(`  ${C.surface}╭─${C.blue} Resume Conversation ${C.surface}─ ${C.subtext}${dirDisplay} ${C.surface}${'─'.repeat(Math.max(0, maxWidth - 26 - Array.from(dirDisplay).length))}╮${C.reset}`)
+  if (o.hasWorktrees) {
+    const note = truncate('includes git worktrees — ⑂ tags the worktree', innerWidth)
+    lines.push(`  ${C.surface}│${C.reset}  ${C.dim}${C.overlay}${note}${C.reset}`)
+  }
+  lines.push(`  ${C.surface}│${C.reset}`)
+
+  for (let i = 0; i < list.length; i++) {
+    const conv = list[i]
+    const num = String(i + 1).padStart(2)
+    const workName = nameOf(conv)
+    const lastMessages = Array.isArray(conv.lastMessages) ? conv.lastMessages : []
+    // Best available label, most→least useful: the user's own work name, then
+    // Claude's AI title, then the first real user message, then the last prompt,
+    // then the most recent user message. "(continued session)" only when the
+    // conversation truly yielded no readable text (#130).
+    const recent = lastMessages.length ? lastMessages[lastMessages.length - 1] : null
+    const primary = workName || conv.aiTitle || conv.firstMessage || conv.lastPrompt || recent || '(continued session)'
+    const shownPrimary = truncate(displayText(primary), innerWidth - 6)
+    const primaryColored = workName
+      ? `${C.bold}${C.peach}${shownPrimary}${C.reset}`
+      : `${C.text}${shownPrimary}${C.reset}`
+    const meta = [
+      timeAgo(conv.mtime, o.now),
+      formatSize(conv.size),
+      conv.model ? displayText(conv.model, 64) : null,
+      conv.sessionId ? displayText(conv.sessionId, 64) : null,
+    ].filter(Boolean).join(' · ')
+
+    // Title line. A non-main worktree conversation gets a distinct themed tag
+    // (⑂ = branch/fork glyph) appended so the worktree is CALLED OUT.
+    let titleLine = `  ${C.surface}│${C.reset}  ${C.green}${num}${C.reset}  ${primaryColored}`
+    if (conv.worktreeLabel) {
+      titleLine += `  ${C.mauve}⑂ ${truncate(displayText(conv.worktreeLabel, 64), 24)}${C.reset}`
+    }
+    lines.push(titleLine)
+    // Meta line
+    lines.push(`  ${C.surface}│${C.reset}      ${C.overlay}${meta}${C.reset}`)
+    // When we led with the work name, show the AI title / first message beneath
+    // so the row still says what the conversation was about.
+    const sub = workName ? (conv.aiTitle || conv.firstMessage || conv.lastPrompt) : null
+    if (sub) {
+      lines.push(`  ${C.surface}│${C.reset}      ${C.dim}${C.subtext}${truncate(displayText(sub), innerWidth - 10)}${C.reset}`)
+    }
+
+    // Last 5 user messages (dim, indented)
+    for (const msg of lastMessages) {
+      const line = truncate(displayText(msg), innerWidth - 10)
+      lines.push(`  ${C.surface}│${C.reset}      ${C.dim}${C.subtext}> ${line}${C.reset}`)
+    }
+
+    if (i < list.length - 1) {
+      lines.push(`  ${C.surface}│${C.reset}      ${C.surface}${'─'.repeat(Math.max(0, innerWidth - 6))}${C.reset}`)
+    }
+  }
+
+  lines.push(`  ${C.surface}│${C.reset}`)
+  lines.push(`  ${C.surface}│${C.reset}  ${C.yellow} n${C.reset}  ${C.text}New conversation${C.reset}`)
+  lines.push(`  ${C.surface}│${C.reset}`)
+  lines.push(`  ${C.surface}╰${'─'.repeat(maxWidth - 4)}╯${C.reset}`)
+  lines.push('')
+  return lines
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 async function main() {
   const cwd = process.cwd()
@@ -520,75 +632,12 @@ async function main() {
   }
 
   // ── Display ─────────────────────────────────────────────────────
-  const maxWidth = computeLayoutWidth(process.stdout.columns)
-  const innerWidth = maxWidth - 6
-  const dirDisplay = truncate(cwd, innerWidth)
-
-  // Map resume UUID -> CCC work name so a renamed session is recognizable here.
+  // Map resume UUID -> CCC work name so a renamed session is recognizable here;
+  // the name sidecar beside the transcript wins (#536).
   const workNames = loadWorkNames(process.env.CCC_CONFIG_DIR)
-
-  console.log('')
-  console.log(`  ${C.surface}╭─${C.blue} Resume Conversation ${C.surface}─ ${C.subtext}${dirDisplay} ${C.surface}${'─'.repeat(Math.max(0, maxWidth - 26 - dirDisplay.length))}╮${C.reset}`)
-  if (hasWorktrees) {
-    const note = truncate('includes git worktrees — ⑂ tags the worktree', innerWidth)
-    console.log(`  ${C.surface}│${C.reset}  ${C.dim}${C.overlay}${note}${C.reset}`)
-  }
-  console.log(`  ${C.surface}│${C.reset}`)
-
-  for (let i = 0; i < conversations.length; i++) {
-    const conv = conversations[i]
-    const num = String(i + 1).padStart(2)
-    const workName = readSidecarName(conv.filePath) || workNames.get(conv.sessionId)
-    // Best available label, most→least useful: the user's own work name, then
-    // Claude's AI title, then the first real user message, then the last prompt,
-    // then the most recent user message. "(continued session)" only when the
-    // conversation truly yielded no readable text (#130).
-    const recent = conv.lastMessages.length ? conv.lastMessages[conv.lastMessages.length - 1] : null
-    const primary = workName || conv.aiTitle || conv.firstMessage || conv.lastPrompt || recent || '(continued session)'
-    const primaryColored = workName
-      ? `${C.bold}${C.peach}${truncate(primary, innerWidth - 6)}${C.reset}`
-      : `${C.text}${truncate(primary, innerWidth - 6)}${C.reset}`
-    const meta = [
-      timeAgo(conv.mtime),
-      formatSize(conv.size),
-      conv.model || null,
-      conv.sessionId || null,
-    ].filter(Boolean).join(' · ')
-
-    // Title line. A non-main worktree conversation gets a distinct themed tag
-    // (⑂ = branch/fork glyph) appended so the worktree is CALLED OUT.
-    let titleLine = `  ${C.surface}│${C.reset}  ${C.green}${num}${C.reset}  ${primaryColored}`
-    if (conv.worktreeLabel) {
-      titleLine += `  ${C.mauve}⑂ ${truncate(conv.worktreeLabel, 24)}${C.reset}`
-    }
-    console.log(titleLine)
-    // Meta line
-    console.log(`  ${C.surface}│${C.reset}      ${C.overlay}${meta}${C.reset}`)
-    // When we led with the work name, show the AI title / first message beneath
-    // so the row still says what the conversation was about.
-    const sub = workName ? (conv.aiTitle || conv.firstMessage || conv.lastPrompt) : null
-    if (sub) {
-      console.log(`  ${C.surface}│${C.reset}      ${C.dim}${C.subtext}${truncate(sub, innerWidth - 10)}${C.reset}`)
-    }
-
-    // Last 5 user messages (dim, indented)
-    if (conv.lastMessages.length > 0) {
-      for (const msg of conv.lastMessages) {
-        const line = truncate(msg, innerWidth - 10)
-        console.log(`  ${C.surface}│${C.reset}      ${C.dim}${C.subtext}> ${line}${C.reset}`)
-      }
-    }
-
-    if (i < conversations.length - 1) {
-      console.log(`  ${C.surface}│${C.reset}      ${C.surface}${'─'.repeat(Math.max(0, innerWidth - 6))}${C.reset}`)
-    }
-  }
-
-  console.log(`  ${C.surface}│${C.reset}`)
-  console.log(`  ${C.surface}│${C.reset}  ${C.yellow} n${C.reset}  ${C.text}New conversation${C.reset}`)
-  console.log(`  ${C.surface}│${C.reset}`)
-  console.log(`  ${C.surface}╰${'─'.repeat(maxWidth - 4)}╯${C.reset}`)
-  console.log('')
+  const nameOf = (conv) => readSidecarName(conv.filePath) || workNames.get(conv.sessionId)
+  const shown = pickerLines(cwd, conversations, nameOf, computeLayoutWidth(process.stdout.columns), { hasWorktrees })
+  for (const line of shown) console.log(line)
 
   // ── Read choice ─────────────────────────────────────────────────
   process.stdout.write(`  ${C.blue}>${C.reset} `)
@@ -859,21 +908,6 @@ function isGatedDir(dir, gated) {
 // git listed when the session started, so this refuses only a worktree that
 // appeared since. Pure, so the decision has a test; the caller exits on
 // `refused` and says why.
-// A directory name on its way to the terminal as PROSE. The same class the
-// app strips everywhere else (src/shared/safe-text.ts, which this script
-// cannot import): C0 and C1 controls, the bidi overrides, marks and isolates,
-// the zero-width and invisible formatters, the line and paragraph separators
-// and the TAG block, each replaced by a space; cut at 500 code points, never
-// inside a surrogate pair. A worktree name may carry ESC on Linux and macOS,
-// and the refusal message is read at the moment something has gone wrong.
-const SPOOFABLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]/gu
-function displayPath(raw, max = 500) {
-  const clean = String(raw).replace(SPOOFABLE, ' ')
-  if (clean.length <= max) return clean
-  const points = Array.from(clean)
-  return points.length <= max ? clean : points.slice(0, max).join('')
-}
-
 function resolveRetargetCwd(resumeId, sourceCwd, currentCwd, env, existsSync) {
   if (!resumeId || !sourceCwd) return { cwd: null }
   try {
@@ -893,6 +927,7 @@ module.exports = {
   isGatedDir,
   resolveRetargetCwd,
   displayPath,
+  displayText,
   buildSpawnTarget,
   encodeProjectPath,
   resolveProjectDir,
@@ -904,6 +939,8 @@ module.exports = {
   mergeAndLabel,
   parseConversation,
   computeLayoutWidth,
+  pickerLines,
+  colours: C,
   loadWorkNames,
   readSidecarName,
   sanitizeMessageText,
