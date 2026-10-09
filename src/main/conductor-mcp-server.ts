@@ -39,6 +39,7 @@ import type { VisionCommand, VisionResult } from './vision-manager'
 // mocks vision-manager still gets the real class to test against.
 import { VisionPortHeldError } from './vision-browser-owner'
 import { readConfig } from './config-manager'
+import { readConductorToolSettings } from './conductor-tools-switch'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
 import { getInstallSecret } from './install-secret'
 import { isPackagedApp } from './update-watcher'
@@ -845,15 +846,13 @@ export async function startMcpServer(
     // without an app restart. Absent keys mean ON (pre-upgrade configs). The
     // spawn paths also skip attaching the server entirely when the master is
     // off; this filter is belt-and-braces for stale session configs.
-    const toolCfg = readConfig<{
-      conductorToolsEnabled?: boolean
-      conductorTools?: { vision?: boolean; codexReview?: boolean; claudeReview?: boolean; hostTransfer?: boolean; canvas?: boolean }
-      codexEnabled?: boolean
-      codexAnswered?: boolean
-    }>('settings')
-    const toolsMaster = toolCfg?.conductorToolsEnabled !== false
+    // One CHECKED read gives the master, the groups and the Codex answer
+    // below: settings that are there but cannot be read or parsed leave the
+    // master off, so this connection is registered no tool at all.
+    const { tools: toolSwitches, settings: savedSettings } = readConductorToolSettings()
+    const toolsMaster = toolSwitches.master
     const toolOn = (k: 'vision' | 'codexReview' | 'claudeReview' | 'hostTransfer' | 'canvas') =>
-      toolsMaster && toolCfg?.conductorTools?.[k] !== false
+      toolsMaster && toolSwitches.switches !== null && toolSwitches.switches[k] !== false
 
     // Diagnostics (opt-in, verbose-gated): wrap server.tool ONCE so every tool
     // request is logged at a single narrow point -- name + resolved cccSessionId
@@ -1088,7 +1087,7 @@ export async function startMcpServer(
       toolsMaster,
       codexReviewOn: toolOn('codexReview'),
       claudeReviewOn: toolOn('claudeReview'),
-      codexEnabled: toolCfg?.codexEnabled === true && toolCfg?.codexAnswered === true,
+      codexEnabled: savedSettings?.codexEnabled === true && savedSettings?.codexAnswered === true,
       // Never lets a readiness check take the other tools down with it.
       codexReviewReady: () => { try { return getAccountsService()?.reviewReady('codex') === true } catch { return false } },
       claudeReviewReady: () => { try { return getAccountsService()?.reviewReady('claude') === true } catch { return false } },

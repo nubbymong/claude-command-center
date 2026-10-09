@@ -26,6 +26,7 @@ vi.mock('../../../src/main/vision-manager', () => ({
 // P4.2).
 vi.mock('../../../src/main/config-manager', () => ({
   readConfig: vi.fn(() => ({ codexEnabled: true, codexAnswered: true })),
+  readConfigChecked: vi.fn(() => ({ value: { codexEnabled: true, codexAnswered: true }, outcome: 'ok' })),
   saveConfig: vi.fn(),
 }))
 

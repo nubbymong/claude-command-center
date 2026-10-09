@@ -12,7 +12,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
-const settings: { value: Record<string, unknown> } = { value: {} }
+// The saved settings, and how the checked read of them came out ('ok' unless
+// a test says the file could not be read).
+const settings: { value: Record<string, unknown>; outcome: 'ok' | 'unparseable' | 'failed' } = { value: {}, outcome: 'ok' }
 
 vi.mock('../../../src/main/vision-manager', () => ({
   startGlobalVision: vi.fn(),
@@ -25,7 +27,10 @@ vi.mock('../../../src/main/vision-manager', () => ({
 }))
 
 vi.mock('../../../src/main/config-manager', () => ({
-  readConfig: vi.fn((name: string) => (name === 'settings' ? settings.value : null)),
+  readConfig: vi.fn((name: string) => (name === 'settings' && settings.outcome === 'ok' ? settings.value : null)),
+  readConfigChecked: vi.fn((name: string) => (name !== 'settings'
+    ? { value: null, outcome: 'absent' }
+    : settings.outcome === 'ok' ? { value: settings.value, outcome: 'ok' } : { value: null, outcome: settings.outcome })),
   saveConfig: vi.fn(),
 }))
 
@@ -62,12 +67,23 @@ afterAll(() => {
   server.stopMcpServer()
 })
 
+/** The tools a connection lists; none when the server registered no tool at
+ *  all (the SDK then answers tools/list "method not found"). */
+async function listed(client: Client): Promise<string[]> {
+  try {
+    return (await client.listTools()).tools.map((t) => t.name)
+  } catch (err) {
+    if ((err as { code?: number }).code === -32601) return []
+    throw err
+  }
+}
+
 async function claudeSessionTools(sessionId: string): Promise<string[]> {
   const token = server.issueMcpSessionToken(sessionId, 'claude')
   const client = new Client({ name: 'review-switches-claude', version: '0.0.0' })
   await client.connect(new SSEClientTransport(new URL(`http://127.0.0.1:${port}/sse?cccSessionId=${encodeURIComponent(sessionId)}&token=${token}`)))
   try {
-    return (await client.listTools()).tools.map((t) => t.name)
+    return await listed(client)
   } finally {
     await client.close()
   }
@@ -81,7 +97,7 @@ async function codexSessionTools(sessionId: string): Promise<string[]> {
   })
   await client.connect(transport)
   try {
-    return (await client.listTools()).tools.map((t) => t.name)
+    return await listed(client)
   } finally {
     await client.close()
   }
@@ -125,5 +141,42 @@ describe('each review direction follows its own switch', () => {
     // The other direction's switch does not decide it.
     settings.value = { conductorTools: { codexReview: false } }
     expect(await codexSessionTools('rs-codex-3')).toContain('claude_review')
+  })
+})
+
+// The master switch and the groups come from one CHECKED read of the saved
+// settings: settings that are there but cannot be read or parsed leave the
+// built-in tools off, on both routes, until they can be read again.
+describe('the built-in tools are off while the settings cannot be read', () => {
+  const GATED = ['fetch_host_screenshot', 'vision_status', 'open_in_app_browser', 'canvas_render', 'codex_review', 'claude_review']
+
+  it.each(['failed', 'unparseable'] as const)('a Claude connection and a Codex connection are offered none of the built-in tools (%s)', async (outcome) => {
+    settings.value = { ...CODEX_ON }
+    settings.outcome = outcome
+    try {
+      const claude = await claudeSessionTools(`rs-unreadable-claude-${outcome}`)
+      const codex = await codexSessionTools(`rs-unreadable-codex-${outcome}`)
+      for (const name of GATED) {
+        expect(claude, name).not.toContain(name)
+        expect(codex, name).not.toContain(name)
+      }
+      expect(claude).toEqual([])
+      expect(codex).toEqual([])
+    } finally {
+      settings.outcome = 'ok'
+    }
+    // The same settings, readable again: the tools are back on the next connection.
+    expect(await claudeSessionTools(`rs-readable-claude-${outcome}`)).toEqual(expect.arrayContaining(['fetch_host_screenshot', 'vision_status', 'canvas_render', 'codex_review']))
+    expect(await codexSessionTools(`rs-readable-codex-${outcome}`)).toEqual(expect.arrayContaining(['fetch_host_screenshot', 'vision_status', 'canvas_render', 'claude_review']))
+  })
+
+  it('saved off is off whatever the groups say', async () => {
+    settings.value = { ...CODEX_ON, conductorToolsEnabled: false, conductorTools: { vision: true, canvas: true } }
+    try {
+      expect(await claudeSessionTools('rs-master-off-claude')).toEqual([])
+      expect(await codexSessionTools('rs-master-off-codex')).toEqual([])
+    } finally {
+      settings.value = {}
+    }
   })
 })

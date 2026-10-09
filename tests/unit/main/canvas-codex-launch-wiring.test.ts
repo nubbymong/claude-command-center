@@ -84,6 +84,7 @@ vi.mock('../../../src/main/services/pty-integrity-monitor', () => ({ getPtyInteg
 vi.mock('../../../src/main/config-manager', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/config-manager')>()),
   readConfig: (key: string) => (key === 'settings' ? h.settings : {}),
+  readConfigChecked: (key: string) => ({ value: key === 'settings' ? h.settings : {}, outcome: 'ok' }),
   getConfigDir: () => os.tmpdir(),
 }))
 vi.mock('../../../src/main/account-profiles', async (importOriginal) => ({

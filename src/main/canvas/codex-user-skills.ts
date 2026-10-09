@@ -47,6 +47,7 @@ import { atomicWriteSecure } from '../account-profiles'
 import { getDataDirectory } from '../ipc/setup-handlers'
 import { canvasSkillFiles } from './canvas-plugin'
 import { logInfo, logWarn } from '../debug-logger'
+import { conductorToolSwitchesOfSettings } from '../conductor-tools-switch'
 import { stageCanvasSkillsIn, removeCanvasSkillsFrom, canvasSkillsLeft, realRealmSkillsIo, type CanvasSkillsStaging, type RealmSkillsIo } from './codex-realm-skills'
 
 /** The record's file name, in the app's data folder. */
@@ -373,7 +374,10 @@ export function codexUserSkillsWanted(w: Pick<CodexUserSkillsWiring, 'settings' 
   let s: Record<string, unknown> | null
   try { s = w.settings() } catch { return null }
   if (!s || typeof s !== 'object') return null
-  if (s.conductorToolsEnabled === false) return false
+  // The master switch, read the one way every reader of it reads it.
+  const tools = conductorToolSwitchesOfSettings(s)
+  if (tools.switches === null) return null
+  if (!tools.master) return false
   try { return w.codexOn() === true } catch { return null }
 }
 
