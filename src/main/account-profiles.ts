@@ -14,7 +14,7 @@ import path from 'node:path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { isValidProfileId, profileIdFromHome, PROFILES_ROOT_DIRNAME } from './profile-id'
 import { atomicWriteFileSync } from './atomic-write'
-import { secureFoldersWindows } from './owner-only-folders'
+import { secureFoldersWindows, OWNER_ONLY_INSIDE_REASONS } from './owner-only-folders'
 import type { OwnerOnlyFolderResult } from './owner-only-folders'
 import { logInfo, logWarn } from './debug-logger'
 import { recordSettingsSanitise, recordAmbientStrip, clearSettingsSanitise } from './managed-launch-state'
@@ -805,7 +805,12 @@ function writeProfileHomeIdentity(home: string, data: string | Uint8Array): void
 // the user and SYSTEM, passed to what is inside; nothing inherited from above;
 // the Administrators group accepted beside them) in this run:
 //
-//   1. In place: the folder is given the rule and read back.
+//   1. In place: the folder is given the rule and read back, and so is
+//      everything already inside it (the sign-in files among it): each entry
+//      takes the folder's rights, and the folder passes only when every
+//      entry read back is this user's or the Administrators group's and lets
+//      no other account in. An entry another account owns, one that cannot
+//      be read or put right, or a link to a file, refuses it.
 //   2. Where that is refused (its owner cannot be made this user, say), a new
 //      folder is made beside it by the rule and read back, everything plain in
 //      the old one is copied in as new files (each takes the new folder's
@@ -1169,6 +1174,7 @@ const LOGGED_REASONS = new Set([
   'SYSTEM is missing', 'the folder cannot be named safely', 'a name in its path ends in a dot or a space',
   'the answer could not be read', 'the answer does not match what was asked',
   'its owner could not be read', 'it was replaced while it was checked',
+  ...OWNER_ONLY_INSIDE_REASONS,
 ])
 function loggedReason(a: { answer: OwnerOnlyFolderResult | undefined } | undefined): string {
   const detail = typeof a?.answer?.detail === 'string' ? a.answer.detail : 'no answer'

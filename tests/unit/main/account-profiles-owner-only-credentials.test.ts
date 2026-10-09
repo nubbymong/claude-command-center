@@ -929,7 +929,7 @@ describe('at start: the rule is turned on and every profile checked before the s
       const user = 'S-1-5-21-1-2-3-1001'
       for (const d of dirs) if (!fs.existsSync(d) && fs.existsSync(path.dirname(d))) fs.mkdirSync(d)
       const full = (sid: string) => ({ sid, rights: 0x1f01ff, allow: true, inherited: false, flags: 3 })
-      return JSON.stringify({ user, folders: dirs.map((dir) => ({ dir, error: null, owner: user, protected: true, rules: [full(user), full('S-1-5-18')] })) })
+      return JSON.stringify({ user, folders: dirs.map((dir) => ({ dir, error: null, owner: user, protected: true, rules: [full(user), full('S-1-5-18')], inside: [], insideError: null })) })
     }
     await startOwnerOnlyCredentialFolders(() => {
       copyCredentialFile(src, path.join(claudeDir, '.credentials.json'))
@@ -941,5 +941,50 @@ describe('at start: the rule is turned on and every profile checked before the s
     expect(syncPowerShell).toEqual([])
     if (onWindows) expect(asyncPowerShell[0]).toEqual([home, claudeDir, identityDir])
     else expect(asyncPowerShell).toEqual([])
+  })
+})
+
+// The app's own rule reads back what is inside each sign-in folder too
+// (owner-only-folders.ts): a folder whose own rights read back owner-only, but
+// whose sign-in file still lets another account in, is not taken as checked in
+// place. It is made anew (the sign-in carried into the new folder, where it
+// takes that folder's rights), and then the sign-in is written. Windows
+// PowerShell answers as the rule's script prints (no process starts).
+describe('the app\'s own rule reads back what is inside a sign-in folder too', () => {
+  const onWindows = process.platform === 'win32'
+
+  it('a config folder read back owner-only whose sign-in file still lets another group in is made anew, the sign-in carried, before anything is written there', async () => {
+    upsertProfile({ id: ID, name: '', accountEmail: '', createdAt: 1 })
+    const user = 'S-1-5-21-1-2-3-1001'
+    const full = (sid: string) => ({ sid, rights: 0x1f01ff, allow: true, inherited: false, flags: 3 })
+    const inherited = (sid: string, rights = 0x1f01ff) => ({ sid, rights, allow: true, inherited: true, flags: 0 })
+    powershellAnswer = (dirs) => {
+      for (const d of dirs) if (!fs.existsSync(d) && fs.existsSync(path.dirname(d))) fs.mkdirSync(d)
+      return JSON.stringify({ user, folders: dirs.map((dir) => ({
+        dir, error: null, owner: user, protected: true, rules: [full(user), full('S-1-5-18')],
+        // The config folder in place: its sign-in file, the Administrators group's, with another group's inherited read.
+        inside: dir === claudeDir ? [{ name: '.credentials.json', link: false, folder: false, owner: 'S-1-5-32-544', rules: [inherited(user), inherited('S-1-5-18'), inherited('S-1-5-21-1-2-3-1007', 0x1200a9)] }] : [],
+        insideError: null,
+      })) })
+    }
+    linkShared()
+    const id = idOf(claudeDir)
+    const before = snapshot(claudeDir)
+    await startOwnerOnlyCredentialFolders(() => {})
+    if (!onWindows) {
+      // POSIX: the rule is off; nothing was asked.
+      expect(asyncPowerShell).toEqual([])
+      return
+    }
+    expect(asyncPowerShell[0]).toEqual([home, claudeDir, identityDir])
+    expect(asyncPowerShell).toContainEqual([`${claudeDir}${STAGED}`])
+    // Another folder now, holding what the old one held (times kept) and its shared folders, linked again.
+    expect(idOf(claudeDir)).not.toBe(id)
+    expect(snapshot(claudeDir)).toEqual(before)
+    expect(leftovers()).toEqual([])
+    expect(refusals()).toEqual([])
+    // Checked: the write lands.
+    copyCredentialFile(src, path.join(claudeDir, '.credentials.json'))
+    expect(fs.readFileSync(path.join(claudeDir, '.credentials.json'), 'utf8')).toBe(NEW_CREDENTIAL)
   })
 })

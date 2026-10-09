@@ -30,8 +30,9 @@ const win = vi.hoisted(() => ({
   /** Each folder's owner and rights as SDDL, by its path in lower case. */
   acl: new Map<string, { owner: string; dacl: string }>(),
   started: [] as string[],
-  /** The rule's read script and the variable its folders come through (set below, once the module is loaded). */
+  /** The rule's read scripts and the variable its folders come through (set below, once the module is loaded). */
   readScript: '',
+  insideScript: '',
   dirsEnv: '',
   /** Module folders (lower case) whose Microsoft.PowerShell.Security Windows PowerShell cannot load (PowerShell 7's). */
   brokenModules: new Set<string>(),
@@ -58,7 +59,7 @@ vi.mock('node:child_process', async (importOriginal) => {
       const key = Object.keys(env).sort().find((n) => n.toUpperCase() === 'PSMODULEPATH')
       const modulePath = key === undefined ? undefined : env[key]
       win.modulePaths.push(modulePath)
-      if (script !== win.readScript) {
+      if (script !== win.readScript && script !== win.insideScript) {
         cb(Object.assign(new Error('Cannot invoke method. Method invocation is supported only on core types in this language mode.'), { code: 1 }), '', '')
         return
       }
@@ -74,6 +75,19 @@ vi.mock('node:child_process', async (importOriginal) => {
         return
       }
       const dirs = String(env[win.dirsEnv] ?? '').split('\n').filter(Boolean)
+      if (script === win.insideScript) {
+        // What is inside each folder, from the real folders (the call's own left out), as the read prints it.
+        const skip = new Set(String(env.CCC_OWNER_ONLY_SKIP ?? '').split('\n').filter(Boolean).map(k))
+        cb(null, JSON.stringify(dirs.map((d) => ({
+          error: false,
+          inside: fsm.readdirSync(d).map((name) => `${d}\\${name}`).filter((q) => !skip.has(k(q))).map((q) => {
+            const st = fsm.lstatSync(q)
+            const a = aclOf(q)
+            return { name: [...q.slice(d.length + 1)].map((c) => c.charCodeAt(0)), attributes: st.isDirectory() ? 0x10 : 0x20, sddl: `O:${a.owner}${a.dacl}` }
+          }),
+        }))), '')
+        return
+      }
       const out = dirs.map((d) => {
         let st: import('node:fs').Stats | null = null
         try { st = fsm.lstatSync(d) } catch { st = null }
@@ -89,10 +103,12 @@ vi.mock('node:child_process', async (importOriginal) => {
     }
     if (name === 'whoami.exe') { cb(null, `"box\\person","${USER}"\r\n`, ''); return }
     if (name === 'icacls.exe') {
-      if (args[1] === '/restore') {
-        const [entry, dacl] = fsm.readFileSync(args[2]).toString('utf16le').split('\r\n')
-        const target = `${args[0].replace(/\\$/, '')}\\${entry}`
-        win.acl.set(k(target), { ...aclOf(target), dacl })
+      if (args[1] === '/inheritance:r') {
+        // The rights alone: inheritance off, the two granted (each `*SID:(OI)(CI)F`).
+        const granted = args.slice(3, 5).map((g) => g.replace(/^\*/, '').replace(/:\(OI\)\(CI\)F$/, ''))
+        win.acl.set(k(args[0]), { ...aclOf(args[0]), dacl: `D:PAI(A;OICI;FA;;;${granted[1] === 'S-1-5-18' ? 'SY' : granted[1]})(A;OICI;FA;;;${granted[0]})` })
+      } else if (args[1] === '/reset') {
+        win.acl.set(k(args[0]), { ...aclOf(args[0]), dacl: `D:AI(A;ID;FA;;;SY)(A;ID;FA;;;${USER})` })
       } else if (args[1] === '/setowner') {
         win.acl.set(k(args[0]), { ...aclOf(args[0]), owner: args[2].replace(/^\*/, '') })
       }
@@ -105,8 +121,9 @@ vi.mock('node:child_process', async (importOriginal) => {
   return { ...real, execFile, execFileSync: vi.fn(no), spawn: vi.fn(no), spawnSync: vi.fn(no), execSync: vi.fn(no) }
 })
 
-import { secureFoldersWindows, secureOwnerOnlyFolders, OWNER_ONLY_READ_SCRIPT, OWNER_ONLY_DIRS_ENV } from '../../../src/main/owner-only-folders'
+import { secureFoldersWindows, secureOwnerOnlyFolders, OWNER_ONLY_READ_SCRIPT, OWNER_ONLY_INSIDE_SCRIPT, OWNER_ONLY_DIRS_ENV } from '../../../src/main/owner-only-folders'
 win.readScript = OWNER_ONLY_READ_SCRIPT
+win.insideScript = OWNER_ONLY_INSIDE_SCRIPT
 win.dirsEnv = OWNER_ONLY_DIRS_ENV
 
 const PREFIX = 'ccc-owner-only-default-'
@@ -169,8 +186,8 @@ describe.runIf(process.platform === 'win32')('the app\'s owner-only rule answers
     const out = await secureFoldersWindows(dirs)
     expect(out.map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only'], [true, 'owner-only']])
     for (const d of dirs) expect(ownerOnly(d)).toEqual({ owner: USER, dacl: `D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;${USER})` })
-    // The script, the read and the read-back: three calls, none with the inherited path.
-    expect(win.modulePaths).toEqual([windowsPowerShellModules(), windowsPowerShellModules(), windowsPowerShellModules()])
+    // The script, the read, a read of what is inside each folder and the read-back: five calls, none with the inherited path.
+    expect(win.modulePaths).toEqual([windowsPowerShellModules(), windowsPowerShellModules(), windowsPowerShellModules(), windowsPowerShellModules(), windowsPowerShellModules()])
     // And the managed folders' rule the same.
     win.modulePaths.length = 0
     const root = path.join(base, 'realms')

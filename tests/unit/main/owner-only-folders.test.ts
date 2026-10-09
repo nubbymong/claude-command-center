@@ -4,9 +4,11 @@
 // (started asynchronously from the system folder by its full path) makes each
 // missing folder inside the one before it, sets its owner to the user and its
 // rights to the user and SYSTEM with inheritance off, and reads owner and
-// rights back by SID; the app uses a folder only when that read holds exactly
-// the user and SYSTEM (the Administrators group accepted), owned by the user,
-// inheritance off. No process starts here: the runner is injected, and
+// rights back by SID, then reads what is inside it; the app uses a folder
+// only when that read holds exactly the user and SYSTEM (the Administrators
+// group accepted), owned by the user, inheritance off, and what is inside
+// reads back owner-only too (owner-only-folders-inside.test.ts has that
+// verdict). No process starts here: the runner is injected, and
 // child_process is replaced for the runner's own case. The real resulting
 // rights are owner-only-folders-real.test.ts (CI and the VM).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -42,7 +44,7 @@ const LOCAL_GROUP = 'S-1-5-21-1111111111-2222222222-3333333333-1005'
 const CI_OI = 3
 const rule = (sid: string, extra: Partial<{ rights: number; allow: boolean; inherited: boolean; flags: number }> = {}) =>
   ({ sid, rights: FULL, allow: true, inherited: false, flags: CI_OI, ...extra })
-const good = (dir: string) => ({ dir, error: null, owner: USER, protected: true, rules: [rule(USER), rule(OWNER_ONLY_SYSTEM_SID)] })
+const good = (dir: string) => ({ dir, error: null, owner: USER, protected: true, rules: [rule(USER), rule(OWNER_ONLY_SYSTEM_SID)], inside: [], insideError: null })
 
 beforeEach(() => {
   started.length = 0
@@ -86,7 +88,7 @@ describe('ownerOnlyVerdict: exactly the user and SYSTEM (Administrators accepted
 // Administrators group.
 describe('owner-only reads compare full SIDs, never names or SDDL abbreviations', () => {
   const ADMIN_500 = 'S-1-5-21-1111111111-2222222222-3333333333-500'
-  const asRead = (owner: string, sids: string[]) => ({ dir: 'C:\\a', error: null, owner, protected: true, rules: sids.map((s) => rule(s)) })
+  const asRead = (owner: string, sids: string[]) => ({ dir: 'C:\\a', error: null, owner, protected: true, rules: sids.map((s) => rule(s)), inside: [], insideError: null })
 
   it('the built-in Administrator passes as any user', async () => {
     const out = await secureFoldersWindows(['C:\\Data\\hooks'], async () => JSON.stringify({ user: ADMIN_500, folders: [asRead(ADMIN_500, [ADMIN_500, OWNER_ONLY_SYSTEM_SID])] }))
@@ -162,7 +164,7 @@ describe('secureFoldersWindows: one PowerShell call for every folder, in order',
     expect(script).toContain(read)
     expect(script).toContain(`if ($was -ne $user.Value -and $was -ne '${OWNER_ONLY_ADMINISTRATORS_SID}') { throw 'its owner is not this user' }`)
     expect(script.indexOf(read)).toBeGreaterThan(script.indexOf('CreateDirectory'))
-    expect(script.indexOf(read)).toBeLessThan(script.indexOf('$s.SetOwner($user)'))
+    expect(script.indexOf(read)).toBeLessThan(script.indexOf('$o.SetOwner($user)'))
     expect(script.indexOf(read)).toBeLessThan(script.indexOf('SetAccessControl'))
     // What is there once the script made it is looked at again: a link put there meanwhile is refused.
     expect(script).toContain('[void][IO.Directory]::CreateDirectory($d)\n      $attr = [IO.File]::GetAttributes($d)\n')
@@ -272,7 +274,7 @@ describe('secureFoldersWindows: any Unicode folder name (round 5)', () => {
   it('the script writes its answer in ASCII only, every other character escaped', async () => {
     let script = ''
     await secureFoldersWindows(['C:\\x'], async (s) => { script = s; return '' })
-    expect(script).toMatch(/ConvertTo-Json -Compress -Depth 6/)
+    expect(script).toMatch(/ConvertTo-Json -Compress -Depth 10/)
     expect(script).toMatch(/-gt 126/)
     expect(script).toMatch(/ToString\('x4'\)/)
     expect(script.indexOf('ConvertTo-Json')).toBeLessThan(script.indexOf('-gt 126'))

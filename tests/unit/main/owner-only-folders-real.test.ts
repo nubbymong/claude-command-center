@@ -38,7 +38,7 @@ const made: string[] = []
 const links: string[] = []
 
 afterAll(() => {
-  for (const l of links.splice(0)) { try { fs.rmdirSync(l) } catch { /* gone */ } }
+  for (const l of links.splice(0)) { try { fs.rmdirSync(l) } catch { try { fs.unlinkSync(l) } catch { /* gone */ } } }
   // TEST CLEANUP GUARD: only this suite's own folders, by their prefix and parent.
   const tmpReal = fs.realpathSync.native(os.tmpdir())
   for (const d of made.splice(0)) {
@@ -340,5 +340,116 @@ describe.runIf(IS_WIN)('secureFoldersWindows under Constrained Language Mode: th
     expect(linked.map((r) => [r.ok, r.detail])).toEqual([[false, 'a link'], [false, 'its parent was refused']])
     expect(sddl(target, scratch)).toBe(before)
     expect(fs.existsSync(path.join(target, 'child'))).toBe(false)
+  })
+})
+
+// What is already inside a folder made owner-only in place gets exactly the
+// folder's rights, by either route: every file and folder below it, at any
+// depth, is left with only the user's and SYSTEM's entries, inherited from the
+// folder -- an entry of another account's own included, and one with
+// inheritance off -- and the folder passes. A junction inside is not followed:
+// what it points to keeps its rights. An entry another account owns refuses
+// the folder and keeps its own entries; a link to a file inside refuses it and
+// what it points to keeps its rights.
+/** An inherited allow entry, full control, for `sid` (the inherited flag, 0x10, set; whether it is passed on to what
+ *  is below -- 0x3, which icacls /reset leaves on a file's entries and Windows' own write does not -- not compared:
+ *  a file has nothing below it). */
+const inheritedFull = (sid: string) => `0|I|2032127|${sid}`
+/** acesBySid's entries with their flags read as inherited (I) or not (-). */
+const asInherited = (aces: string[]): string[] => aces.map((a) => { const [t, f, m, sid] = a.split('|'); return `${t}|${Number(f) & 16 ? 'I' : '-'}|${m}|${sid}` }).sort()
+/** A file's or folder's owner by SID, read with Windows PowerShell. */
+async function ownerOfEntry(p: string): Promise<string> {
+  return (await runWindowsPowerShell("$s = if ([IO.Directory]::Exists($env:CCC_T_P)) { [IO.Directory]::GetAccessControl($env:CCC_T_P, 'Owner') } else { [IO.File]::GetAccessControl($env:CCC_T_P, 'Owner') }; $s.GetOwner([Security.Principal.SecurityIdentifier]).Value", { CCC_T_P: p })).trim()
+}
+const grant = (p: string, ...args: string[]) => execFileSync(ICACLS, [p, ...args], { stdio: 'ignore', windowsHide: true, timeout: 30_000 })
+
+/** A folder (inside a temp folder that lets Everyone in) holding what an earlier run may have left: a file inheriting
+ *  Everyone; one with an entry of its own for the Users group; one with inheritance off and its own entries (Everyone
+ *  among them); a folder two deep with a file with an entry of its own; and a junction to a folder outside it. */
+function folderWithInside() {
+  const top = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), PREFIX)))
+  made.push(top)
+  const scratch = path.join(top, 'scratch')
+  fs.mkdirSync(scratch)
+  grant(top, '/grant', '*S-1-1-0:(OI)(CI)F')
+  const home = path.join(top, 'home')
+  fs.mkdirSync(path.join(home, 'sub', 'deep'), { recursive: true })
+  for (const f of ['a.json', 'b.json', 'c.json', path.join('sub', 'deep', 'd.json')]) fs.writeFileSync(path.join(home, f), '{}')
+  grant(path.join(home, 'b.json'), '/grant', '*S-1-5-32-545:(R)')
+  grant(path.join(home, 'c.json'), '/inheritance:d')
+  grant(path.join(home, 'c.json'), '/grant', '*S-1-5-32-545:(R)')
+  grant(path.join(home, 'sub', 'deep', 'd.json'), '/grant', '*S-1-5-32-545:(R)')
+  const target = path.join(top, 'target')
+  fs.mkdirSync(target)
+  fs.writeFileSync(path.join(target, 't.json'), '{}')
+  grant(path.join(target, 't.json'), '/grant', '*S-1-5-32-545:(R)')
+  const link = path.join(home, 'link')
+  fs.symlinkSync(target, link, 'junction')
+  links.push(link)
+  return { top, scratch, home, target }
+}
+
+async function insideTakesTheFolderRights(route: (dirs: string[]) => ReturnType<typeof secureFoldersWindows>): Promise<void> {
+  const f = folderWithInside()
+  const user = (await runWindowsPowerShell('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value', {})).trim()
+  // Control: each of them lets another account in before.
+  for (const e of ['a.json', 'b.json', 'c.json', path.join('sub', 'deep', 'd.json')]) expect(sddl(path.join(f.home, e), f.scratch), e).toMatch(/S-1-1-0|WD|BU|S-1-5-32-545/)
+  const before = [sddl(f.target, f.scratch), sddl(path.join(f.target, 't.json'), f.scratch)]
+  const out = await route([f.home])
+  expect(out.map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only']])
+  for (const e of ['a.json', 'b.json', 'c.json', path.join('sub', 'deep', 'd.json')]) {
+    const s = sddl(path.join(f.home, e), f.scratch)
+    expect(s.startsWith('D:AI'), `${e}: ${s}`).toBe(true)
+    expect(asInherited(await acesBySid(s)), `${e}: ${s}`).toEqual([inheritedFull(user), inheritedFull(SYSTEM_SID)].sort())
+    expect([user, ADMINISTRATORS_SID], e).toContain(await ownerOfEntry(path.join(f.home, e)))
+  }
+  // A folder's entries are passed on to what is inside it too (0x13).
+  for (const d of ['sub', path.join('sub', 'deep')]) expect(await acesBySid(sddl(path.join(f.home, d), f.scratch)), d).toEqual([`0|19|2032127|${user}`, `0|19|2032127|${SYSTEM_SID}`].sort())
+  // The junction was not followed.
+  expect([sddl(f.target, f.scratch), sddl(path.join(f.target, 't.json'), f.scratch)]).toEqual(before)
+}
+
+async function refusesAnotherAccountsEntry(route: (dirs: string[]) => ReturnType<typeof secureFoldersWindows>, ctx: { skip: (note?: string) => void }): Promise<void> {
+  const f = folderWithInside()
+  const theirs = path.join(f.home, 'sub', 'theirs.json')
+  fs.writeFileSync(theirs, '{}')
+  grant(theirs, '/grant', '*S-1-5-32-545:(R)')
+  if (!giveTo(theirs, SYSTEM_SID)) return ctx.skip(NEEDS_ELEVATION)
+  const out = await route([f.home])
+  expect(out.map((r) => [r.ok, r.detail])).toEqual([[false, "an entry inside it is another account's"]])
+  expect(await ownerOfEntry(theirs)).toBe(SYSTEM_SID)
+  // Not reset: its own entry for the Users group is still there.
+  expect(sddl(theirs, f.scratch)).toMatch(/\(A;;(?:FR|0x120089);;;(?:BU|S-1-5-32-545)\)/)
+}
+
+async function refusesALinkToAFile(route: (dirs: string[]) => ReturnType<typeof secureFoldersWindows>, ctx: { skip: (note?: string) => void }): Promise<void> {
+  const f = folderWithInside()
+  const cred = path.join(f.home, '.credentials.json')
+  try { fs.symlinkSync(path.join(f.target, 't.json'), cred, 'file') } catch { return ctx.skip('a symbolic link to a file needs the right to make one') }
+  links.push(cred)
+  const before = sddl(path.join(f.target, 't.json'), f.scratch)
+  const out = await route([f.home])
+  expect(out.map((r) => [r.ok, r.detail])).toEqual([[false, 'a link to a file is inside it']])
+  expect(sddl(path.join(f.target, 't.json'), f.scratch)).toBe(before)
+}
+
+describe.runIf(IS_WIN)('secureFoldersWindows: what is already inside a folder made owner-only in place', () => {
+  it('everything inside, at any depth, ends with the folder\'s rights alone; a junction inside is not followed', async () => {
+    await insideTakesTheFolderRights((dirs) => secureFoldersWindows(dirs))
+  })
+  it('the same under Constrained Language Mode, with Windows\' own programs', async () => {
+    await insideTakesTheFolderRights((dirs) => secureFoldersWindows(dirs, constrained, nativeOwnerOnlyTools))
+  })
+  it('an entry another account owns refuses the folder and keeps its own entries', async (ctx) => {
+    await refusesAnotherAccountsEntry((dirs) => secureFoldersWindows(dirs), ctx)
+  })
+  it('the same under Constrained Language Mode', async (ctx) => {
+    await refusesAnotherAccountsEntry((dirs) => secureFoldersWindows(dirs, constrained, nativeOwnerOnlyTools), ctx)
+  })
+  it('a link to a file inside refuses the folder; what it points to keeps its rights', async (ctx) => {
+    await refusesALinkToAFile((dirs) => secureFoldersWindows(dirs), ctx)
+  })
+  it('the same under Constrained Language Mode', async (ctx) => {
+    await refusesALinkToAFile((dirs) => secureFoldersWindows(dirs, constrained, nativeOwnerOnlyTools), ctx)
   })
 })
