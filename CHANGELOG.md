@@ -63,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keyboard focus is easier to see: switches, and every field and list in Settings, show a clear ring when you reach them with Tab. Status labels on the Conductor MCP page and the badges in setup are easier to read, in both themes.
 - The app now runs on Electron 44, with Chromium 152. On a Mac it needs macOS 13 (Ventura) or later, so a Mac on macOS 12 stays on an earlier version (see Known issues in the Feature Guide). From this version on, the updater does not offer a Mac a version that needs a newer macOS than the one it runs.
 - Mac: this version's download has a new file name, ending in macos13.dmg, so the updater in an earlier version does not offer it. On macOS 12, stay on 2.1.1-beta.1. On macOS 13 or later, download this version's .dmg from the Releases page on GitHub once by hand; the updater offers the versions after it as before.
+- A Codex review, and an Insights report, Sentinel analysis or cloud agent that runs on Codex, keeps its Codex account in use until anything it left running has been ended.
+- The app starts normally even when the Insights catalogue cannot be updated or has been edited into another shape.
 
 ### Fixed
 - On Windows the app finds Codex as a terminal does: the first codex.exe or codex.cmd in the folders PATH lists, in their order, so a Codex installed with npm earlier in PATH is no longer passed over for a codex.exe later in it.
@@ -93,6 +95,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A canvas review with one note now says 1 note, not 1 notes, in the line it writes into the session.
 - The Cost over time chart in Tokenomics reads clearly on long ranges such as All: the dates under it are spaced to fit the width of the chart instead of running together, carry the year when the range crosses one, and its text and dots are no longer stretched or squashed with the window.
 - On Windows, a new Codex session no longer starts with text such as ]10;rgb:eeee/f2f2/f7f7 already in its prompt. Codex asks the terminal for its colours as it starts and waits a tenth of a second for the answer. The terminal could answer later than that while it was still drawing, which happened more often after the move to Electron 44, and Codex then took the late answer for typed text, so the next Enter would have sent it. The app now answers Codex at once, with the colours the terminal shows.
+- When the app's settings cannot be read, the built-in tools stay off until they can.
+- The built-in tools' credentials are issued for each run of the app and refused once their session ends; an SSH Persistent session that stays running on its host keeps its own across a restart of the app.
+- A Codex review now runs without the Codex settings file or the rules files of the account it runs on.
+- Failure text from a review, a Codex Insights run, a Codex cloud agent or a Sentinel analysis that runs on Codex hides credentials written inside URLs and session values.
+- On Windows a Codex session's PATH keeps only absolute folders, as it already did on macOS and Linux.
+- On Windows a Claude session's PATH keeps only absolute folders too, and so does the PATH of the terminals in which the app sets up Claude Code and runs its /insights command, and of a cloud agent, a Sentinel or Insights run, a Claude review or the check of whether one can run, the sign-in check, the Claude Code version check during onboarding, the list of versions to pin and a pinned version's install.
+- On Windows the app finds node, git, Claude Code and its helper tools only in the folders PATH names or in the Windows system folder, never in the current folder.
+- A Claude Code or Codex session in a network folder that its npm launcher cannot start from is refused, with the reason (see Known issues in the Feature Guide).
+- Ask Conductor's conversation list stays inside its help folder, even when the resources folder is inside a git repository or the environment names another one.
+- Names and paths shown from outside the app drop more invisible characters.
+- Sentinel's proposed model entries follow the same name rule as the model picker.
+- A Claude Code config's extra CLI arguments are now held to a rule of the same shape as a Codex config's: an option the app sets, or one that changes the conversation, where or how the session runs, its permission mode or the settings it reads (shown in Claude Code's help or not), is refused, and so is a word Claude Code would read as a command or as a server to run the session on, or that starts or ends with a comma. A saved value the rule refuses is left off when the session starts (see Known issues in the Feature Guide).
+- A Claude Code session's extra CLI arguments now come after the app's own options on its start line. On Windows each word reaches a local Claude Code session as one argument, exactly as typed.
+- With an npm-installed Claude Code on Windows, the resume list hands agent templates and other options to Claude Code exactly as written, or starts nothing and says why (see Known issues in the Feature Guide).
+- On macOS and Linux a Claude session starts under your login shell when it is sh, bash, zsh, dash or ksh, and otherwise under zsh on macOS, or elsewhere under bash (zsh, then sh, where bash is missing); with fish or PowerShell 7.3 or later as your login shell it finds Claude Code where that shell finds it (see Known issues in the Feature Guide).
+- On macOS and Linux, a terminal tab whose shell is outside the sh family, such as fish or PowerShell, opens in its folder, and the app types no folder line into it.
+- A session's status bar shows only its own status updates.
+- The app's status line is not set up from a resources or home folder path that a shell would read as more than a path; the log says why, and a status line of your own still shows (see Known issues in the Feature Guide).
+- A Claude session whose account is no longer set up here starts nothing and says so; it never runs on another account in its place.
+- Closing or ending an SSH session removes the files the app last wrote for it from the host it wrote them to, when the app can reach that host with a key or a saved password, over a separate connection, Windows hosts included, also after a Restart or once the connection has ended. Nothing is typed into the session's terminal, a session left running in tmux keeps its files until End, and closing a session that never started Claude Code opens no second connection.
+- The GitHub session context, Insights, the canvas review notice, saved passwords and claude.ai sign-in answer only the app's own window.
+- On Windows, an account's sign-in is written only into folders the app has made readable by you alone and checked: the account's own folder, its Claude Code folder and its identity copy (see Known issues in the Feature Guide).
+- A web sign-in you cancel or leave unfinished never stays signed in after a restart, for every account.
+- The account view opens a link in your browser, or follows a popup, only right after your own click, tap, Enter or Space in the view.
+- Insights keeps its reports only in its own folder, and keeps Claude Code's report exactly as it was written (see Known issues in the Feature Guide).
+- Insights shows no report, rather than waiting, when a report cannot be read.
+- The cross-account roll-up's written analysis is shown as plain text.
 
 ## [2.1.1-beta.1] - 2026-09-16
 

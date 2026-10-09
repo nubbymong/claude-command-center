@@ -797,3 +797,104 @@ describe('Claude usage by account, said where Ask Conductor reads it (MP10)', ()
     expect(guide).toMatch(/with one exception: when a local session that reads \*Not recorded\* is later resumed in the app under an account profile, its earlier usage moves to that profile's account too\./)
   })
 })
+
+// [host] The 2.1.1-beta.2 entry states the hardening this release ships, one
+// line per guarantee, found by its highlight as the blocks above find it. The
+// pins match key phrases, so a copy edit that keeps the guarantee keeps them.
+describe('What\'s New (2.1.1-beta.2): the hardening it ships, as guarantees', () => {
+  const top = changelog.find((e) => e.highlights?.startsWith('Codex becomes a full second assistant'))!
+  const all = () => top.changes.map((c) => c.description).join('\n')
+  it('lists each guarantee, in plain ASCII', () => {
+    for (const said of [
+      /When the app's settings cannot be read, the built-in tools stay off until they can\./,
+      /refused once their session ends; an SSH Persistent session that stays running on its host keeps its own across a restart of the app\./,
+      /A Codex review now runs without the Codex settings file or the rules files of the account it runs on\./,
+      /Failure text from a review, a Codex Insights run, a Codex cloud agent or a Sentinel analysis that runs on Codex hides credentials written inside URLs and session values\./,
+      /cloud agent that runs on Codex, keeps its Codex account in use until anything it left running has been ended\./,
+      /On Windows a Codex session's PATH keeps only absolute folders/,
+      /On Windows a Claude session's PATH keeps only absolute folders too, and so does the PATH of the terminals in which the app sets up Claude Code and runs its \/insights command, and of a cloud agent, a Sentinel or Insights run, a Claude review or the check of whether one can run, the sign-in check, the Claude Code version check during onboarding, the list of versions to pin and a pinned version's install\./,
+      /only in the folders PATH names or in the Windows system folder, never in the current folder\./,
+      /A Claude Code or Codex session in a network folder that its npm launcher cannot start from is refused, with the reason/,
+      /Ask Conductor's conversation list stays inside its help folder/,
+      /Names and paths shown from outside the app drop more invisible characters\./,
+      /Sentinel's proposed model entries follow the same name rule as the model picker\./,
+      /A Claude Code config's extra CLI arguments are now held to a rule of the same shape as a Codex config's/,
+      /and so is a word Claude Code would read as a command or as a server to run the session on, or that starts or ends with a comma\./,
+      /extra CLI arguments now come after the app's own options on its start line\. On Windows each word reaches a local Claude Code session as one argument, exactly as typed\./,
+      /the resume list hands agent templates and other options to Claude Code exactly as written, or starts nothing and says why/,
+      /starts under your login shell when it is sh, bash, zsh, dash or ksh/,
+      /On macOS and Linux, a terminal tab whose shell is outside the sh family, such as fish or PowerShell, opens in its folder, and the app types no folder line into it\./,
+      /A session's status bar shows only its own status updates\./,
+      /the log says why, and a status line of your own still shows/,
+      /starts nothing and says so; it never runs on another account in its place\./,
+      /Closing or ending an SSH session removes the files the app last wrote for it from the host it wrote them to, when the app can reach that host with a key or a saved password/,
+      /answer only the app's own window\./,
+      /an account's sign-in is written only into folders the app has made readable by you alone and checked/,
+      /A web sign-in you cancel or leave unfinished never stays signed in after a restart/,
+      /only right after your own click, tap, Enter or Space in the view\./,
+      /Insights keeps its reports only in its own folder/,
+      /Insights shows no report, rather than waiting, when a report cannot be read\./,
+      /The cross-account roll-up's written analysis is shown as plain text\./,
+      /The app starts normally even when the Insights catalogue cannot be updated or has been edited into another shape\./,
+    ]) expect(all()).toMatch(said)
+    for (const c of top.changes) expect(c.description, c.description.slice(0, 40)).toMatch(/^[\x20-\x7e]*$/)
+  })
+
+  it('the review line names only what the review leaves out by its own flags, and no handler line claims more than its own channels', () => {
+    expect(all()).not.toMatch(/review[^.]*without[^.]*hooks/i)
+    expect(all()).not.toMatch(/as the others do/)
+  })
+})
+
+// [host] What the 2.1.1-beta.2 hardening adds where Ask Conductor and the
+// Feature Guide read it: the extra CLI arguments rule for Claude Code, a
+// session whose account is gone, and each known issue it ships with, with
+// its workaround.
+describe('app knowledge for the 2.1.1-beta.2 hardening', () => {
+  const body = (id: string) => APP_KNOWLEDGE_SECTIONS.find((s) => s.id === id)!.body
+  it('says what a Claude Code config\'s extra CLI arguments refuse, and how to give a folder or a value', () => {
+    const s = body('sessions')
+    expect(s).toMatch(/For Claude Code, the extra CLI arguments come after the app's own options, and what the app sets, or what changes the conversation, where or how the session runs, its permission mode or the settings it reads, is refused, whether Claude Code's help lists it or not/)
+    expect(s).toMatch(/--cloud, --bare and --safe-mode among them\./)
+    expect(s).toMatch(/a word that starts with an address, a name and a colon as a web address does, which Claude Code can read as a server to run the session on: give a folder as --add-dir=docs, and an option's value after an = sign\./)
+    expect(s).toMatch(/an option's value after an = sign\. So is a word that starts or ends with a comma: give a comma only inside a word, such as --allowedTools=Bash,Edit\./)
+  })
+
+  it('says a Claude session whose account is gone starts nothing, in the words the app shows', () => {
+    expect(body('accounts')).toMatch(/starts nothing and says so: This session's Claude account is no longer set up here\. Choose an account for it and start it again\. It never runs on another account in its place\./)
+  })
+
+  it('each known issue it ships with carries its workaround', () => {
+    const k = body('known-issues')
+    for (const said of [
+      /cannot start through the npm launcher, claude\.cmd or codex\.cmd, so the app refuses it and says why\. Workaround: open the folder from a mapped drive letter, or install the native Claude Code or the standalone Codex\./,
+      /Ask Conductor cannot start, on either assistant, when the resources folder's path holds a ; on Windows \(a : on macOS and Linux\) or a control character; it says so and starts nothing\. Workaround: choose a resources folder whose path has none\./,
+      /holds a % sign or a control character: it starts nothing, and names the template or option where it can\. Workaround: remove the % sign, or install the native Claude Code\./,
+      /other variables set only in that shell's own configuration are not passed on\. Workaround: set them in \.zshenv \(macOS\) or \.bashrc \(Linux\) in your home folder as well\./,
+      /also add Claude Code's folder to PATH in \.zprofile \(macOS\) or \.profile \(Linux; \.bash_profile if you have one\) in your home folder; until then the app may report Claude Code as not found/,
+      /add the folder that holds it \(for Claude Code, the folder with claude\.exe or claude\.cmd\) to your PATH as a full path, then restart the app\./,
+      /only when you name it with \.\\ in front \(\.\\build\.cmd rather than build\.cmd\)\. Terminal tabs are unchanged\./,
+      /a status line of your own still shows\. Workaround: choose a resources folder whose path has none of these\./,
+      /give an option's value after an = sign when the value starts with letters and a colon/,
+      /and write a list with no space after its commas \(--allowedTools=Bash,Edit rather than --allowedTools=Bash, Edit\)\./,
+      /that account cannot be used and nothing is written there\. Workaround: make your Windows user the owner of AI Code Conductor's resources folder/,
+      /make sure Windows PowerShell, whoami and icacls are allowed to run for your user/,
+      /Insights runs only when the insights folder in your resources folder is a real folder, not a link or junction/,
+      /and on macOS and Linux one you own whose permissions let only you write to it\./,
+      /On macOS the app keeps your accounts' sign-in folders in your resources folder to you alone, and the Insights and Sentinel folders there writable only by you, through their owner and permissions\. That holds when the resources folder is on a volume that honours ownership/,
+      /Workaround: keep the resources folder on your Mac's own disk, or on a drive whose Get Info has Ignore ownership on this volume turned off/,
+    ]) expect(k).toMatch(said)
+  })
+
+  it('says on macOS that the sign-in folders stay yours only while only you can write to the resources folder, and how to keep it so', () => {
+    const k = body('known-issues')
+    expect(k).toMatch(/That holds when the resources folder is on a volume that honours ownership, only you can write to the resources folder, and no access entry on it, or passed down to it from a folder above, lets another user in\./)
+    expect(k).toMatch(/Ignore ownership on this volume turned off, as a folder only you can write to, and not inside a folder you have opened to other users with access entries/)
+  })
+
+  it('names each Windows program the sign-in folder check starts, so a check that gets no answer points at the right one', () => {
+    const k = body('known-issues')
+    expect(k).toMatch(/If the app cannot check those folders \(Windows PowerShell, or whoami or icacls, which the app starts when Windows PowerShell gives it no answer, did not answer in time or is not allowed to run\), it writes nothing there and says so/)
+    expect(k).toMatch(/make sure Windows PowerShell, whoami and icacls are allowed to run for your user, since the app uses them to check those folders' rights\./)
+  })
+})
