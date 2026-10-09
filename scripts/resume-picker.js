@@ -949,10 +949,10 @@ function notStartedMessage(cmd, args, env = process.env, cwd) {
       const value = inline ? args[refused].slice(inline.length + 1) : args[refused]
       const name = typeof value === 'string' ? refusedTemplateName(value) : null
       const which = name ? `the agent template "${displayText(name, 64)}"` : 'an agent template'
-      return `Not starting Claude Code: ${which} holds a % sign or a control character, which an npm-installed Claude Code on Windows cannot be given exactly as written. Remove it from the template, or install the native Claude Code.`
+      return `Not starting Claude Code: ${which} holds a % sign or a control character, which Claude Code started through its claude.cmd or claude.bat launcher cannot be given exactly as written. Remove it from the template, or install the native Claude Code.`
     }
     const what = flag ? `the value of ${displayText(flag, 64)}` : 'an argument'
-    return `Not starting Claude Code: ${what} holds a % sign or a control character, which an npm-installed Claude Code on Windows cannot be given exactly as written. Remove it, or install the native Claude Code.`
+    return `Not starting Claude Code: ${what} holds a % sign or a control character, which Claude Code started through its claude.cmd or claude.bat launcher cannot be given exactly as written. Remove it, or install the native Claude Code.`
   }
   return 'Not starting Claude Code: the Windows folder (SystemRoot) is not a plain absolute folder, so the system cmd.exe cannot be named.'
 }

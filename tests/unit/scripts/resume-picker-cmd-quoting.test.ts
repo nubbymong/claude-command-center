@@ -243,6 +243,12 @@ describe('a claude.bat launcher starts exactly as a claude.cmd does', () => {
       expect(picker.notStartedMessage(BAT, args, ENV), JSON.stringify(args)).toBe(picker.notStartedMessage(SHIM, args, ENV))
     }
     expect(picker.notStartedMessage(BAT, ['--agents', two], ENV)).toContain('the agent template "coverage" holds a % sign or a control character')
+    // The words fit a hand-written claude.bat as well as npm's claude.cmd.
+    for (const args of [['--agents', two], ['--model', '100%']]) {
+      const said = picker.notStartedMessage(BAT, args, ENV)
+      expect(said, JSON.stringify(args)).toContain('which Claude Code started through its claude.cmd or claude.bat launcher cannot be given exactly as written')
+      expect(said, JSON.stringify(args)).not.toMatch(/npm/i)
+    }
     for (const unsafe of ['C:\\a%PATH%\\claude.bat', 'C:\\a&b\\claude.bat', 'C:\\a^b\\claude.bat', 'C:\\a"b\\claude.bat']) {
       expect(picker.buildSpawnTarget(unsafe, ['--model', 'opus'], 'win32', ENV), unsafe).toBeNull()
       expect(picker.notStartedMessage(unsafe, [], ENV), unsafe).toContain('cmd.exe would re-read a character in that path')
