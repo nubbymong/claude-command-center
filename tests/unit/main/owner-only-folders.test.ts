@@ -35,6 +35,9 @@ import {
 
 const USER = 'S-1-5-21-1111111111-2222222222-3333333333-1001'
 const FULL = 2032127
+/** ReadAndExecute, Synchronize; and a local group of this machine (synthetic). */
+const READ_EXECUTE = 1179817
+const LOCAL_GROUP = 'S-1-5-21-1111111111-2222222222-3333333333-1005'
 const CI_OI = 3
 const rule = (sid: string, extra: Partial<{ rights: number; allow: boolean; inherited: boolean; flags: number }> = {}) =>
   ({ sid, rights: FULL, allow: true, inherited: false, flags: CI_OI, ...extra })
@@ -60,6 +63,8 @@ describe('ownerOnlyVerdict: exactly the user and SYSTEM (Administrators accepted
       ['inheritance on', { ...good('C:\\a'), protected: false }],
       ['an inherited entry', { ...good('C:\\a'), rules: [rule(USER), rule(OWNER_ONLY_SYSTEM_SID, { inherited: true })] }],
       ['another principal', { ...good('C:\\a'), rules: [rule(USER), rule(OWNER_ONLY_SYSTEM_SID), rule('S-1-1-0')] }],
+      ['another local group, inherited, with read rights', { ...good('C:\\a'), rules: [rule(USER), rule(OWNER_ONLY_SYSTEM_SID), rule(LOCAL_GROUP, { rights: READ_EXECUTE, inherited: true })] }],
+      ['another local group, its own entry, with read rights', { ...good('C:\\a'), rules: [rule(USER), rule(OWNER_ONLY_SYSTEM_SID), rule(LOCAL_GROUP, { rights: READ_EXECUTE })] }],
       ['a deny entry', { ...good('C:\\a'), rules: [rule(USER), rule(OWNER_ONLY_SYSTEM_SID), rule(USER, { allow: false })] }],
       ['no SYSTEM', { ...good('C:\\a'), rules: [rule(USER)] }],
       ['the user without full control', { ...good('C:\\a'), rules: [rule(USER, { rights: 1179817 }), rule(OWNER_ONLY_SYSTEM_SID)] }],

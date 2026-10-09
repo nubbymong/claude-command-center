@@ -33,7 +33,7 @@ import type { CodexConversationCarry } from './conversation-carry'
 import { codexExternalDefaultHome, codexHomeDisplay, codexManagedRealmSkillsDir } from './realm-paths'
 import { createCodexLiveUsage, createCodexUsageOperations, createCodexCarryMarks, codexRolloutIdFromName, newestCarriedStamp, realCodexUsageFsPort } from './usage'
 import type { CodexLiveUsage, CodexUsageFsPort, CodexCarryMarks, CodexCarryMarksPort } from './usage'
-import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort, CodexRealmFolderLimits } from './realm-folders'
+import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort, CodexRealmFolderDeps, CodexRealmFolderLimits } from './realm-folders'
 import { removeConductorVisionFromCodexConfig } from './mcp-config'
 import {
   codexPricingKeys, priceForModel, codexCachedInputPer1M,
@@ -43,6 +43,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { sweepStaleFolders } from '../../stale-folder-sweep'
+import { secureOwnerOnlyFolders } from '../../owner-only-folders'
 import { logWarn } from '../../debug-logger'
 
 // WP2 Codex adapter: the CLI contract, install recipes, the allowlisted
@@ -421,6 +422,11 @@ export interface CodexPackageDeps {
   authPorts?: Partial<Omit<CodexAuthDeps, 'proven' | 'lookupRealm' | 'takeSecret' | 'locks'>>
   /** Replaces the real folder filesystem, for a test. */
   realmFs?: CodexRealmFsPort
+  /** The owner-only folder rule for a test's folder filesystem (realmFs).
+   *  Read only with realmFs: the real filesystem always gets the app's own
+   *  rule, and a test filesystem is not this disk, so without one its
+   *  folders are taken as already made owner-only. */
+  secureFolders?: CodexRealmFolderDeps['secureFolders']
   /** Smaller bounds on the folder walks, for a test. */
   realmLimits?: Partial<CodexRealmFolderLimits>
   /** Replaces the inherited CODEX_HOME and the home directory, for a test. */
@@ -532,7 +538,9 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
       ),
       // P3.6: a switched session's conversation is carried with the real
       // file system (conversation-carry.ts), under these same realm locks.
-      realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks, carry: deps.conversationCarry ?? carryCodexRollout, marks: carryMarks, newestStamp: deps.newestCopiedStamp ?? ((dir, id) => newestCarriedStamp(dir, id, deps.now ? deps.now() : Date.now())), ...(deps.now ? { now: deps.now } : {}), ...(deps.realmLimits ? { limits: deps.realmLimits } : {}) }),
+      // The managed folders on this disk get the app's owner-only folder
+      // rule; a test's folder filesystem brings its own.
+      realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks, secureFolders: deps.realmFs ? (deps.secureFolders ?? testFolderRule) : secureOwnerOnlyFolders, carry: deps.conversationCarry ?? carryCodexRollout, marks: carryMarks, newestStamp: deps.newestCopiedStamp ?? ((dir, id) => newestCarriedStamp(dir, id, deps.now ? deps.now() : Date.now())), ...(deps.now ? { now: deps.now } : {}), ...(deps.realmLimits ? { limits: deps.realmLimits } : {}) }),
       // The user's own ~/.codex (or inherited CODEX_HOME), adopted only when
       // the user chooses to use it and it is signed in (owner decision
       // 2026-09-26): realm-only, never vouched for (design 6.3).
@@ -580,6 +588,10 @@ export function codexExecutableKey(p: CodexDiscovery | null): { key: string; ver
   const version = typeof p.version === 'string' ? p.version : null
   return { key: JSON.stringify([id.path, id.size, id.mtimeMs, id.ctimeMs, id.dev, id.ino, version]), version }
 }
+
+/** A test folder filesystem's folders, which are not on this disk: each
+ *  answered as made owner-only (no process runs, nothing on disk changes). */
+const testFolderRule: NonNullable<CodexRealmFolderDeps['secureFolders']> = async (dirs) => dirs.map((dir) => ({ dir, ok: true, detail: 'owner-only' }))
 
 /** The real filesystem behind the managed folders. */
 function realRealmFsPort(platform: NodeJS.Platform, mkdirSecure: (dir: string) => void): CodexRealmFsPort {

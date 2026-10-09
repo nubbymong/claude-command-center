@@ -205,7 +205,8 @@ type RealmRecord = Extract<CodexFolderLookup, { ok: true }>['realm']
 const managed = (id: string, lifecycle: RealmRecord['lifecycle'] = 'pending'): RealmRecord => ({ id, providerId: 'codex', kind: 'codex-home', ownership: 'conductor-managed', pathRef: `managed:${id}`, lifecycle })
 const external = (id: string): RealmRecord => ({ id, providerId: 'codex', kind: 'codex-home', ownership: 'external-default', pathRef: 'external-default', lifecycle: 'active' })
 
-interface WorldOpts { platform?: NodeJS.Platform; configured?: string; env?: Record<string, string> }
+type OwnerOnlyAnswer = ReadonlyArray<{ dir: string; ok: boolean; detail?: string }>
+interface WorldOpts { platform?: NodeJS.Platform; configured?: string; env?: Record<string, string>; secure?: (dirs: readonly string[]) => Promise<OwnerOnlyAnswer> }
 function world(o: WorldOpts = {}) {
   const platform = o.platform ?? 'win32'
   const win = platform === 'win32'
@@ -229,9 +230,16 @@ function world(o: WorldOpts = {}) {
     return r.ok ? { ok: true, realm, roots: r.roots } : { ok: false }
   }
   const locks = createCodexRealmLocks()
-  const folders = createCodexRealmFolders({ lookupRealm, fs, locks })
+  // The owner-only folder rule: each call recorded; every folder answered
+  // owner-only unless the test says otherwise.
+  const secured: string[][] = []
+  const secureFolders = async (dirs: readonly string[]): Promise<OwnerOnlyAnswer> => {
+    secured.push([...dirs])
+    return o.secure ? o.secure(dirs) : dirs.map((dir) => ({ dir, ok: true, detail: 'owner-only' }))
+  }
+  const folders = createCodexRealmFolders({ lookupRealm, fs, locks, secureFolders })
   const roots = () => resolveCodexRealmRoots({ resourcesDir: configured, env, homeDir: USER }, fs)
-  return { fs, api, RES, USER, ROOT, home, realms, folders, locks, roots, lookupRealm, lookups: () => lookups, win }
+  return { fs, api, RES, USER, ROOT, home, realms, folders, locks, roots, lookupRealm, lookups: () => lookups, win, secured, secureFolders }
 }
 
 const A = { authRealmId: RA }
@@ -433,11 +441,64 @@ describe('creating a managed folder before sign-in', () => {
     expect(w.fs.node(w.home(RA)).mode).toBe(0o700)
   })
 
-  it('Windows: creates the folders and makes no permission change at all (ACL hardening is deferred, #103)', async () => {
+  it('Windows: a managed account folder is made owner-only and read back before use: the root first, then the home', async () => {
     const w = world()
     expect(await w.folders.prepare(A)).toEqual({ ok: true, created: true })
     expect(w.fs.node(w.home(RA)).kind).toBe('dir')
+    expect(w.secured).toEqual([[w.ROOT, w.home(RA)]])
+    // No mode bits on Windows: the rights come from the owner-only rule.
     expect(w.fs.ops.filter((o) => o.startsWith('chmod'))).toEqual([])
+    // A second prepare asks again: the folder an earlier attempt left is re-checked.
+    expect(await w.folders.prepare(A)).toEqual({ ok: true, created: false })
+    expect(w.secured).toEqual([[w.ROOT, w.home(RA)], [w.ROOT, w.home(RA)]])
+  })
+
+  it('Windows: a root or home that does not read back owner-only refuses the folder, and the folders just made are taken back', async () => {
+    const answers: Array<[string, (dirs: readonly string[]) => Promise<OwnerOnlyAnswer>]> = [
+      ['the root refused (and the home below it)', async (d) => d.map((dir, i) => ({ dir, ok: false, detail: i === 0 ? 'its owner is not this user' : 'its parent was refused' }))],
+      ['the home refused', async (d) => d.map((dir, i) => ({ dir, ok: i === 0, detail: i === 0 ? 'owner-only' : 'an inherited entry' }))],
+      ['the rule throws', async () => { throw new Error('the rights could not be set or read') }],
+      ['one answer short', async (d) => [{ dir: d[0], ok: true }]],
+      ['one answer too many', async (d) => [...d.map((dir) => ({ dir, ok: true })), { dir: 'C:\\other', ok: true }]],
+      ['the answers out of place', async (d) => [...d].reverse().map((dir) => ({ dir, ok: true }))],
+      ['not a list', async () => ({ ok: true }) as never],
+      ['ok not exactly true', async (d) => d.map((dir) => ({ dir, ok: 1 as never }))],
+    ]
+    for (const [name, secure] of answers) {
+      const w = world({ secure })
+      expect(await w.folders.prepare(A), name).toMatchObject({ ok: false, code: 'permissions' })
+      expect(w.fs.exists(w.home(RA)), name).toBe(false)
+      expect(w.fs.exists(w.ROOT), name).toBe(false)
+    }
+  })
+
+  it('Windows: a refused folder that an earlier attempt left is kept as it is, and another realm\'s root is never taken back', async () => {
+    let refuse = false
+    const w = world({ secure: async (d) => d.map((dir) => ({ dir, ok: !refuse })) })
+    expect(await w.folders.prepare(B)).toMatchObject({ ok: true, created: true })
+    expect(await w.folders.prepare(A)).toMatchObject({ ok: true, created: true })
+    refuse = true
+    // A's home was made by the earlier attempt: refused now, it stays.
+    expect(await w.folders.prepare(A)).toMatchObject({ ok: false, code: 'permissions' })
+    expect(w.fs.exists(w.home(RA))).toBe(true)
+    // A new home refused: taken back; the root (B's folder is in it) stays.
+    w.realms.set(RX, managed(RX))
+    expect(await w.folders.prepare(X)).toMatchObject({ ok: false, code: 'permissions' })
+    expect(w.fs.exists(w.home(RX))).toBe(false)
+    expect(w.fs.exists(w.home(RB))).toBe(true)
+  })
+
+  it('Windows: without the owner-only rule no managed folder is prepared', async () => {
+    const w = world()
+    const folders = createCodexRealmFolders({ lookupRealm: w.lookupRealm, fs: w.fs, locks: createCodexRealmLocks() })
+    expect(await folders.prepare(A)).toMatchObject({ ok: false, code: 'permissions' })
+    expect(w.fs.exists(w.home(RA))).toBe(false)
+  })
+
+  it('POSIX: the owner-only rule is never asked (the folders are made 0700)', async () => {
+    const w = world({ platform: 'linux', secure: async () => { throw new Error('never on POSIX') } })
+    expect(await w.folders.prepare(A)).toEqual({ ok: true, created: true })
+    expect(w.secured).toEqual([])
   })
 
   it('a SUBST resources directory yields the home at its canonical path', async () => {
@@ -588,6 +649,7 @@ describe('creating a managed folder before sign-in', () => {
     w.fs.mirror('L:\\', 'C:\\data\\')
     let n = 0
     const folders = createCodexRealmFolders({
+      secureFolders: w.secureFolders,
       // While the second lookup is in flight, another realm's prepare fills the new root.
       lookupRealm: async (ref) => { if (++n === 2) w.fs.dir(w.home(RB)); return w.lookupRealm(ref) },
       fs: w.fs,
@@ -1086,7 +1148,7 @@ describe('confirmation-round regressions (ADR-009)', () => {
     const w = world()
     const g = gatedLookup(w, 2)
     const locks = createCodexRealmLocks()
-    const folders = createCodexRealmFolders({ lookupRealm: g.lookupRealm, fs: w.fs, locks })
+    const folders = createCodexRealmFolders({ secureFolders: w.secureFolders, lookupRealm: g.lookupRealm, fs: w.fs, locks })
     const p = folders.prepare(A)
     await tick()
     expect(w.fs.exists(w.home(RA))).toBe(true)
@@ -1100,7 +1162,7 @@ describe('confirmation-round regressions (ADR-009)', () => {
   it('prepare never takes back, after its await, a folder another call removed and made again', async () => {
     const w = world()
     const g = gatedLookup(w, 2)
-    const folders = createCodexRealmFolders({ lookupRealm: g.lookupRealm, fs: w.fs, locks: createCodexRealmLocks() })
+    const folders = createCodexRealmFolders({ secureFolders: w.secureFolders, lookupRealm: g.lookupRealm, fs: w.fs, locks: createCodexRealmLocks() })
     const p = folders.prepare(A)
     await tick()
     w.fs.rmdir(w.home(RA))
@@ -1115,7 +1177,7 @@ describe('confirmation-round regressions (ADR-009)', () => {
     const w = world()
     w.fs.dir('C:\\other')
     const g = gatedLookup(w, 2)
-    const folders = createCodexRealmFolders({ lookupRealm: g.lookupRealm, fs: w.fs, locks: createCodexRealmLocks() })
+    const folders = createCodexRealmFolders({ secureFolders: w.secureFolders, lookupRealm: g.lookupRealm, fs: w.fs, locks: createCodexRealmLocks() })
     const p = folders.prepare(A)
     await tick()
     g.release(async () => ({ ok: true, realm: managed(RA), roots: { resourcesDir: 'C:\\other', externalDefaultHome: null } }))
