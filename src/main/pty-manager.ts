@@ -37,7 +37,7 @@ import { codexFolderKey } from './logging/codex-folder-key'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { getCodexLogBinder } from './logging/codex-log-binder'
 import { resolveResumeTargetFromTranscript, claudeProjectDirName, UUID_RE, canonicalizeTranscriptPath } from './logging/transcript-discovery'
-import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag, expandResumeTargetCwd, parseWorktreePaths } from './spawn-claude-command'
+import { buildClaudeLaunchCommand, claudeAgentsObject, claudeLaunchProgram, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag, expandResumeTargetCwd, parseWorktreePaths } from './spawn-claude-command'
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
@@ -56,7 +56,7 @@ import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
 import type { TelemetrySource, SessionRunScreen, SpawnOptions, SshCapableProvider } from './providers/types'
 import { resolveCwd, isHomeOrAncestor } from './path-utils'
-import { buildTerminalLaunchLine } from './terminal-launch-line'
+import { AGENTS_ENV, agentsEnvValue, agentsRef, buildTerminalLaunchLine } from './terminal-launch-line'
 import { findOnWindowsPathAsync } from './windows-programs'
 import { windowsPathFolderIsFullyQualified } from './providers/windows-path-names'
 import { isShFamilyShell, localSessionShell } from './login-shell'
@@ -6079,6 +6079,23 @@ function spawnPtyResolved(
       assertGatedDirectory(options, claudeCwd, 'resume directory', recordUnverifiedDirectory)
       logInfo(`[pty-manager] Launching Claude via shell in PTY: ${spawnCmd} -> ${cmd} cwd=${describePathForLog(claudeCwd)} (resumePicker=${!!options?.useResumePicker}, resume=${resumeUuid ?? 'none'})`)
 
+      // Asked once: the launch line below starts the picker exactly when this
+      // spawn's agent templates were written for it.
+      const pickerScript = getResumePickerPath()
+      // This session's agent templates, as the one object keyed by name that
+      // Claude Code's --agents takes; a set it would not take is refused here,
+      // before anything starts (claudeAgentsObject). Windows: they ride the
+      // session's environment, written for the program the launch line starts
+      // (agentsEnvValue), and the line names the variable only, so Claude Code
+      // gets the JSON whole. Elsewhere they stay on the line (agentsFlag
+      // below), single-quoted for the sh family.
+      const agentTemplates = options?.agentsConfig && options.agentsConfig.length > 0 ? claudeAgentsObject(options.agentsConfig) : null
+      if (agentTemplates && os.platform() === 'win32') {
+        finalSpawnEnv[AGENTS_ENV] = agentsEnvValue(agentTemplates, claudeLaunchProgram({
+          claudeBin: cmd, useResumePicker: !!options?.useResumePicker, pickerScript, resumeUuid,
+        }))
+      }
+
       claudeLaunchedAt = Date.now()
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
         name: 'xterm-256color',
@@ -6341,10 +6358,15 @@ function spawnPtyResolved(
         else userArgs = options.extraArgs.trim()
       }
 
-      // Build --agents flag if agent templates are configured
+      // The agent templates: on Windows by reference to the variable set before
+      // the spawn, read off the env this spawn actually got (as askPrompt
+      // below), so the line names the variable exactly when it is set.
+      const agentsFromEnv = os.platform() === 'win32' && finalSpawnEnv[AGENTS_ENV] !== undefined
       let agentsFlag = ''
-      if (options?.agentsConfig && options.agentsConfig.length > 0) {
-        const agentsJson = JSON.stringify(options.agentsConfig)
+      if (agentsFromEnv) {
+        logInfo(`[pty] Agents for ${sessionId}: --agents ${agentsRef()} (${finalSpawnEnv[AGENTS_ENV].length} characters in the session environment)`)
+      } else if (agentTemplates) {
+        const agentsJson = JSON.stringify(agentTemplates)
         // Through the shared helper. Agent templates are free text a user
         // types (and JSON from the resources dir), so a curly apostrophe in a
         // description is ORDINARY PROSE — it broke launches by accident long
@@ -6371,9 +6393,13 @@ function spawnPtyResolved(
         claudeBin: cmd,
         extraFlags,
         agentsFlag,
+        agentsFromEnv,
+        // Its length only: the line is refused when the program it starts
+        // would be handed a longer command line than Windows allows.
+        agentsValueLength: agentsFromEnv ? finalSpawnEnv[AGENTS_ENV].length : undefined,
         userArgs,
         useResumePicker: !!options?.useResumePicker,
-        pickerScript: getResumePickerPath(),
+        pickerScript,
         resumeUuid,
         // Boolean only: the question itself travels in the spawn env
         // (CCC_ASK_PROMPT), never through the command string.

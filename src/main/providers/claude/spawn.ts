@@ -1,6 +1,6 @@
 import * as os from 'os'
 import { commandSecretEnvName } from '../../../shared/command-secret'
-import { askPromptEnvValue } from '../../terminal-launch-line'
+import { AGENTS_ENV, askPromptEnvValue } from '../../terminal-launch-line'
 import { findOnWindowsPath, windowsEnvValue, withFullyQualifiedProgramLookup } from '../../windows-programs'
 import { CLAUDE_NOT_ON_PATH, CLAUDE_WINDOWS_NAMES, claudeInLoginShellPathForLaunch, recentClaudeInLoginShellPath, recentClaudeOnWindows, recordClaudeOnWindows } from '../../claude-cli-probe'
 import { resolveVersionBinary } from '../../legacy-version-manager'
@@ -79,6 +79,10 @@ export function buildClaudeLocalSpawn(
   source: NodeJS.ProcessEnv = process.env,
 ): { cmd: string; args: string[]; env: Record<string, string> } {
   const env: Record<string, string> = { ...source, CLAUDE_MULTI_SESSION_ID: opts.sessionId } as Record<string, string>
+  // The agent templates' variable is the app's own, set for one launch only
+  // (pty-manager, from this session's templates): a value inherited from the
+  // app's environment, in any spelling, reaches no session.
+  for (const k of Object.keys(env)) if (k.toUpperCase() === AGENTS_ENV) delete env[k]
 
   // Tell Claude Code (and any TUI) the host terminal's light/dark scheme via
   // COLORFGBG, which Claude reads FIRST when auto-detecting its theme. Without
