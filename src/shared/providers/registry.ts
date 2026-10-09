@@ -159,9 +159,10 @@ const TIME_MAX = 8.64e15
  *  profile-id rule -- one definition, never a second hand-copied regex. */
 export const isLegacyId = isValidProfileId
 
-/** Invisible characters stripSpoofableText leaves in: every other format
- *  character, lone surrogates, variation selectors (the payload channel of
- *  variation-selector smuggling) and the fillers that render as blank. */
+/** The invisible characters a label drops outright: every format character,
+ *  lone surrogates, variation selectors (the payload channel of
+ *  variation-selector smuggling), the default-ignorable code points, the
+ *  noncharacters and the fillers that render as blank. */
 const INVISIBLE = /[\p{Cf}\p{Cs}\p{Default_Ignorable_Code_Point}\p{Noncharacter_Code_Point}\u{1d159}\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u2800\u3164\ufe00-\ufe0f\uffa0\ufffc\u{e0100}-\u{e01ef}]/gu
 /** At most four combining marks on one base: enough for every script's
  *  stacking, not enough for a mark flood over neighbouring rows. */
@@ -171,10 +172,13 @@ const MARK_FLOOD = /(\p{M}{4})\p{M}+/gu
  *  character out, whitespace collapsed, mark runs bounded, trimmed, and at
  *  most `max` UTF-16 units (the unit the Claude rename handler caps in) without
  *  splitting a surrogate pair. Empty means "no label", never an empty string.
+ *  The invisible characters go first, so a label keeps its letters together:
+ *  the shared shown-text pass that follows replaces what it catches with a
+ *  space.
  *  Idempotent, so a parsed document re-normalises to itself. */
 export function normaliseLabel(raw: unknown, max: number): string | undefined {
   if (typeof raw !== 'string') return undefined
-  const clean = stripSpoofableText(raw, max * 4).replace(INVISIBLE, '').replace(/\s+/g, ' ').replace(MARK_FLOOD, '$1').trim()
+  const clean = stripSpoofableText(raw.replace(INVISIBLE, ''), max * 4).replace(INVISIBLE, '').replace(/\s+/g, ' ').replace(MARK_FLOOD, '$1').trim()
   let out = ''
   for (const ch of clean) {
     if (out.length + ch.length > max) break
