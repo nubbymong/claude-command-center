@@ -63,6 +63,15 @@ describe('the canvas permission guard and Chromium 152 permission names', () => 
     for (const p of CHECK_NAMES) expect(g.check(p, 'ccc-ux://0123456789abcdef'), p).toBe(false)
   })
 
+  // Every document inside canvas content, whatever address it reports
+  // (srcdoc, blank, blob, data, an opaque origin, or none at all).
+  it('a frame inside canvas content is refused every declared permission, by request and by check', () => {
+    const g = install()
+    const nested = ['about:srcdoc', 'about:blank', 'blob:ccc-ux://0123456789abcdef/0b7c1f9e-0000-4000-8000-000000000000', 'data:text/html,x', '']
+    for (const url of nested) for (const p of REQUEST_NAMES) expect(g.request(p, url), `${p} ${url}`).toBe(false)
+    for (const origin of ['null', '']) for (const p of CHECK_NAMES) expect(g.check(p, origin), `${p} ${origin}`).toBe(false)
+  })
+
   it('the app\'s own pages keep the answer they had (granted), for every declared name', () => {
     const g = install()
     for (const url of APP_PAGES) {

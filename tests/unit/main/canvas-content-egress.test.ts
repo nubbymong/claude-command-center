@@ -846,10 +846,44 @@ describe('installCanvasPermissionGuard', () => {
     expect(check('clipboard-sanitized-write', 'http://localhost:5173')).toBe(true)
   })
 
-  it('denies a request that carries no requesting url only when it is a canvas one', () => {
-    const { request } = install()
-    // Unknown origin is the app's own window in practice; the canvas frames
-    // always report theirs. Documented rather than silently either way.
-    expect(request('geolocation', undefined)).toBe(true)
+  it('a permission request with no page address is refused', () => {
+    // A request that names no page is not one of the app's own pages.
+    const { request, check } = install()
+    expect(request('geolocation', undefined)).toBe(false)
+    expect(request('geolocation', '')).toBe(false)
+    expect(check('geolocation', '')).toBe(false)
+  })
+
+  it('a frame inside canvas content is refused every permission', () => {
+    const { request, check } = install()
+    const nested = [
+      'about:srcdoc',
+      'about:blank',
+      'about:blank#x',
+      'blob:ccc-ux://aaaaaaaaaaaaaaaaaaaaaaaa/0b7c1f9e-0000-4000-8000-000000000000',
+      'blob:CCC-UX://aaaaaaaaaaaaaaaaaaaaaaaa/0b7c1f9e-0000-4000-8000-000000000000',
+      'blob:null/0b7c1f9e-0000-4000-8000-000000000000',
+      'blob:blob:http://localhost:5173/0b7c1f9e',
+      'data:text/html,<p>x</p>',
+      'javascript:void(0)',
+      'not a url',
+    ]
+    for (const permission of ['geolocation', 'media', 'clipboard-read', 'clipboard-sanitized-write', 'notifications', 'openExternal', 'pointerLock']) {
+      for (const url of nested) expect(request(permission, url), `${permission} ${url}`).toBe(false)
+      // An opaque origin (a sandboxed or nested frame) reports 'null'.
+      for (const origin of ['null', '', 'about:srcdoc', 'ccc-ux://aaaaaaaaaaaaaaaaaaaaaaaa']) {
+        expect(check(permission, origin), `${permission} check ${origin}`).toBe(false)
+      }
+    }
+  })
+
+  it('the app\'s own pages keep their grants, in every spelling they report', () => {
+    const { request, check } = install()
+    for (const url of ['file:///C:/app/index.html', 'http://localhost:5173/', 'blob:http://localhost:5173/0b7c1f9e', 'blob:file:///0b7c1f9e']) {
+      expect(request('clipboard-sanitized-write', url), url).toBe(true)
+    }
+    for (const origin of ['file://', 'file:///', 'http://localhost:5173']) {
+      expect(check('clipboard-sanitized-write', origin), origin).toBe(true)
+    }
   })
 })

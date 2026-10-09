@@ -1379,16 +1379,45 @@ export function installCanvasFrameNavigationGuard(contents: FrameNavigationEmitt
 // Permission requests
 // ---------------------------------------------------------------------------
 
-/** True for a document served by this protocol. Origin-scoped rather than
- *  blanket so the guard below cannot be widened by accident into "deny the app
- *  its own clipboard". */
-export function isCanvasOrigin(url: string | undefined | null): boolean {
+/**
+ * True only for a requester whose address has a real origin of its own
+ * outside canvas content: a `file:` address (the packaged renderer, reported
+ * as origin `file://`) or a web origin (the dev server's `http:`). On the
+ * default session, where the guard below is installed, those are the app's
+ * own pages: every window that loads web content runs on a partition of its
+ * own. Scoped by address rather than blanket, so the guard cannot be widened
+ * by accident into "deny the app its own clipboard". Everything else is
+ * canvas content, whatever it reports:
+ *  - no address, an empty one, or one that does not parse;
+ *  - `about:` (a srcdoc or blank frame), `data:`, `javascript:`, and any
+ *    other address with no origin of its own (the WHATWG opaque origin);
+ *  - the opaque origin itself, which the check handler is given as `null`;
+ *  - `ccc-ux:` in any case.
+ * A `blob:` address is judged by the address it wraps (`blob:ccc-ux://...` is
+ * canvas content; a blob wrapping another blob is refused).
+ *
+ * It answers true for any web origin, so it is no "is this one of our pages"
+ * test for a caller on another session.
+ */
+export function isNonCanvasRequester(url: string | undefined | null): boolean {
+  return outsideCanvasAddress(url, true)
+}
+
+function outsideCanvasAddress(url: string | undefined | null, unwrapBlob: boolean): boolean {
   if (typeof url !== 'string' || url.length === 0) return false
+  let parsed: URL
   try {
-    return new URL(url).protocol === `${CCC_UX_SCHEME}:`
+    parsed = new URL(url)
   } catch {
     return false
   }
+  if (parsed.protocol === 'blob:') return unwrapBlob && outsideCanvasAddress(parsed.pathname, false)
+  if (parsed.protocol === `${CCC_UX_SCHEME}:`) return false
+  // A file: address (the app's packaged renderer). WHATWG gives every file:
+  // address an opaque origin; Chromium reports it as `file://`. Canvas content
+  // cannot frame a file: page (its CSP allows frames from its own origin only).
+  if (parsed.protocol === 'file:') return true
+  return parsed.origin !== 'null'
 }
 
 export interface PermissionCapableSession {
@@ -1416,19 +1445,23 @@ export interface PermissionCapableSession {
  * geolocation, camera, microphone, midi or clipboard-read and be granted
  * silently — and `captureHeadless` runs such a document with no UI at all.
  *
- * SCOPED TO ccc-ux ORIGINS, NOT BLANKET, AND THAT IS DELIBERATE. The default
+ * SCOPED TO CANVAS CONTENT, NOT BLANKET, AND THAT IS DELIBERATE. The default
  * session also serves the app's own renderer, whose `navigator.clipboard.write`
  * calls (the Copy buttons on this very feature's empty state, on Cloud Agents,
  * and in both Excalidraw panes) go through this handler as
- * `clipboard-sanitized-write`. `() => false` would break a shipped feature to
- * close a canvas hole; refusing by origin closes the hole exactly. Non-canvas
- * origins are granted, which is the behaviour that shipped.
+ * `clipboard-sanitized-write`. `() => false` would break a shipped feature;
+ * deciding by requester refuses canvas content and nothing else. A requester
+ * outside canvas content is granted, which is the behaviour that shipped.
+ *
+ * The rule: a requester is granted only when its address has a real origin of
+ * its own outside canvas content (isNonCanvasRequester); every document inside
+ * canvas content, whatever address it reports, is refused.
  */
 export function installCanvasPermissionGuard(sess: PermissionCapableSession): void {
   sess.setPermissionRequestHandler((_webContents, _permission, callback, details) => {
-    callback(!isCanvasOrigin(details?.requestingUrl))
+    callback(isNonCanvasRequester(details?.requestingUrl))
   })
   // The synchronous half: `navigator.permissions.query`, device enumeration and
-  // the checks Chromium makes without a request. Same origin rule.
-  sess.setPermissionCheckHandler((_webContents, _permission, requestingOrigin) => !isCanvasOrigin(requestingOrigin))
+  // the checks Chromium makes without a request. Same rule, on the origin.
+  sess.setPermissionCheckHandler((_webContents, _permission, requestingOrigin) => isNonCanvasRequester(requestingOrigin))
 }
