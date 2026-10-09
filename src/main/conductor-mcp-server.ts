@@ -110,8 +110,28 @@ export function getConductorMcpSecret(): string {
   return getInstallSecret()
 }
 
+/** 32 random bytes made in memory when this module loads, mixed into every
+ *  run credential: a credential this run issues is worth nothing to the next
+ *  one. Never written, logged or sent. */
+const RUN_NONCE_HEX = crypto.randomBytes(32).toString('hex')
+
+/** How a session's credential is formed for its launch:
+ *  - 'run': HMAC(secret, 'run:' + this run's nonce + ':' + sessionId), valid
+ *    in this app run only (every local launch, every non-persistent remote);
+ *  - 'stable': HMAC(secret, sessionId), the same in every run, for a remote
+ *    session kept running across an app restart that reconnects still holding
+ *    the credential it was given. */
+export type McpCredentialForm = 'run' | 'stable'
+
+function tokenOfForm(sessionId: string, form: McpCredentialForm): string {
+  const input = form === 'stable' ? sessionId : `run:${RUN_NONCE_HEX}:${sessionId}`
+  return crypto.createHmac('sha256', getConductorMcpSecret()).update(input, 'utf8').digest('hex')
+}
+
 /**
- * The token a given session presents to the MCP server: HMAC(secret, sessionId).
+ * The token a given session presents to the MCP server now: an HMAC of the
+ * session id under the secret, in the form its launch was issued (a run
+ * credential when it holds none).
  *
  * This replaces the install-wide secret in every session config (local
  * --mcp-config, the SSH remote shim, the Codex env token). It commits to the
@@ -121,44 +141,94 @@ export function getConductorMcpSecret(): string {
  * independently-supplied, unauthenticated parameter.
  */
 export function mcpSessionToken(sessionId: string): string {
-  return crypto.createHmac('sha256', getConductorMcpSecret()).update(sessionId, 'utf8').digest('hex')
+  return tokenOfForm(sessionId, sessionRecords.get(sessionId)?.form ?? 'run')
 }
 
 export type McpClientProvider = 'claude' | 'codex'
 
-/** The provider each session's credential was issued to for its current
- *  launch, recorded when the app hands the session its token and read back
- *  when the session connects: a connection's tool set follows the session it
- *  authenticated as. The latest issue for a session id stands, except that a
- *  Codex record is kept for the launch: a launch's provider is fixed when it
- *  starts, so a later Claude issue for a Codex launch's id is not one to
+/** What each session's credential was issued as for its current launch: the
+ *  provider it went to and the form it takes. Recorded when the app hands the
+ *  session its token and read back on every request: a connection's tool set
+ *  follows the session it authenticated as, and a session that holds no
+ *  record is served nothing. The latest issue's provider stands, except that
+ *  a Codex record is kept for the launch: a launch's provider is fixed when
+ *  it starts, so a later Claude issue for a Codex launch's id is not one to
  *  honour. The record is released when the session's process is torn down
  *  (releaseMcpSessionProvider), so the next launch under the same id (an Ask
  *  tab revived on another assistant) records its own. One small entry per
  *  session id. */
-const sessionProviders = new Map<string, McpClientProvider>()
+interface McpSessionRecord {
+  provider: McpClientProvider
+  form: McpCredentialForm
+  /** Which launch this record is for: a number given when a launch's first
+   *  issue makes the record, kept by every later issue in that launch, and
+   *  never given again in this app run. A request is served for the launch
+   *  it was admitted under (sessionLaunchOf), and the next launch under the
+   *  same id has another. */
+  launch: number
+}
+const sessionRecords = new Map<string, McpSessionRecord>()
+/** The last launch number given (McpSessionRecord.launch). */
+let lastSessionLaunch = 0
+
+/** The launch a session's record is for now, or null when it holds none. */
+function sessionLaunchOf(sessionId: string): number | null {
+  return sessionRecords.get(sessionId)?.launch ?? null
+}
+
+/** Session ids already logged as refused for holding no record (once each
+ *  until they are issued again, so a remote that keeps posting is one line). */
+const noRecordLogged = new Set<string>()
 
 /** Hand a session its MCP credential, recording the provider it goes to.
  *  Every writer of a session's MCP config, SSH shim or Codex environment
- *  issues through here, never through `mcpSessionToken` directly. */
-export function issueMcpSessionToken(sessionId: string, provider: McpClientProvider): string {
-  if (sessionProviders.get(sessionId) !== 'codex') sessionProviders.set(sessionId, provider)
-  return mcpSessionToken(sessionId)
+ *  issues through here, never through `mcpSessionToken` directly.
+ *
+ *  The launch's first issue fixes the credential's form: `persistent` for a
+ *  remote session kept running across an app restart, a run credential
+ *  otherwise. Every later issue in the same launch keeps that form, so a
+ *  credential already handed out stays the one the session holds. */
+export function issueMcpSessionToken(sessionId: string, provider: McpClientProvider, opts?: { persistent?: boolean }): string {
+  const held = sessionRecords.get(sessionId)
+  const asked: McpCredentialForm = opts?.persistent === true ? 'stable' : 'run'
+  const form: McpCredentialForm = held?.form ?? asked
+  if (held && typeof opts?.persistent === 'boolean' && asked !== held.form) {
+    logWarn(`[vision-mcp] sid=${sessionId}: a later credential issue asked for the ${asked} form; the launch keeps the ${held.form} form it was first issued`)
+  }
+  sessionRecords.set(sessionId, { provider: held?.provider === 'codex' ? 'codex' : provider, form, launch: held?.launch ?? ++lastSessionLaunch })
+  noRecordLogged.delete(sessionId)
+  return tokenOfForm(sessionId, form)
 }
 
 /** Release a session's record when its process is torn down
  *  (pty-manager.ts cleanupSessionResources, which runs before every launch
- *  and when a session ends). Until its next launch issues again, the
- *  session's credential is served no tool set on either route. */
+ *  and when a session ends), and close every tool stream that session opened.
+ *  Until its next launch issues again, the session's credential is refused on
+ *  every route; a connection the next launch makes gets that launch's tool
+ *  set. Only this session's streams: an exact match on the session id. */
 export function releaseMcpSessionProvider(sessionId: string): void {
-  sessionProviders.delete(sessionId)
+  sessionRecords.delete(sessionId)
+  for (const [transportId, owner] of [...transportOwners]) {
+    if (owner !== sessionId) continue
+    const transport = transports.get(transportId)
+    transports.delete(transportId)
+    transportOwners.delete(transportId)
+    // close() may answer with a promise: a failure there is the stream
+    // already being gone, never an error to surface.
+    try { void Promise.resolve(transport?.close?.()).catch(() => {}) } catch { /* already closed */ }
+  }
 }
 
 /** The provider a session's credential was issued to for its current launch,
- *  or null when none was: such a session is not offered a tool set on the SSE
- *  route. */
+ *  or null when none was: such a session is served nothing. */
 export function mcpSessionProvider(sessionId: string): McpClientProvider | null {
-  return sessionProviders.get(sessionId) ?? null
+  return sessionRecords.get(sessionId)?.provider ?? null
+}
+
+/** What a /mcp tool call still running when its session ended answers in
+ *  place of its tool's own answer: nothing of what the tool produced. */
+export function endedSessionToolResult(): { isError: true; content: Array<{ type: 'text'; text: string }> } {
+  return { isError: true, content: [{ type: 'text', text: 'This session has ended, so this tool call\'s answer is not returned.' }] }
 }
 
 const BEARER_SCHEME = 'bearer'
@@ -309,9 +379,13 @@ function tokensMatch(presented: string, expected: string): boolean {
  *
  * The bound session comes from the token, never from the query string. The
  * request must carry a `cccSessionId`, and the presented token must equal
- * `mcpSessionToken(that id)` — i.e. HMAC(secret, id). Because only this process
- * holds the key, a presented token PROVES the caller was issued that exact
- * session's credential: claiming another session's id fails the HMAC compare.
+ * `mcpSessionToken(that id)` — the HMAC of that id in the form its launch was
+ * issued, so a run credential from another app run, or a credential of the
+ * other form, never verifies. Because only this process holds the key, a
+ * presented token PROVES the caller was issued that exact session's
+ * credential: claiming another session's id fails the HMAC compare. Whether
+ * the session still holds a credential at all is the request handler's next
+ * check, on every route.
  *
  * Returns the authenticated session id, or null for any failure (no/short
  * token, refused Bearer header, missing/oversized cccSessionId, mismatch). The
@@ -835,6 +909,9 @@ export async function startMcpServer(
     source: 'claude' | 'codex' | 'unknown' = 'unknown',
     boundSessionId: string | null = null,
     transport: 'sse' | 'http' = 'sse',
+    /** The launch the request was admitted under (sessionLaunchOf), for the
+     *  /mcp route's check below. */
+    admittedLaunch: number | null = null,
   ) => {
     const server = new McpServer(
       { name: 'conductor', version: '1.1.0' },
@@ -859,9 +936,25 @@ export async function startMcpServer(
     // + transport on entry, ok/duration on completion (logWarn on failure with
     // the error MESSAGE only). The MCP SDK always passes the handler as the LAST
     // argument to server.tool(...); we replace just that function with a
-    // transparent wrapper that forwards the SAME args/`this`, returns the
-    // original result unchanged, and rethrows on error. Tool ARGUMENTS and
-    // RESULTS are never logged -- metadata only. Zero behavior change.
+    // wrapper that forwards the SAME args/`this`, returns the original result
+    // unchanged, and rethrows on error. Tool ARGUMENTS and RESULTS are never
+    // logged -- metadata only.
+    //
+    // One rule beyond logging, on the /mcp route only: a call is admitted there
+    // while its session holds a credential issued to Codex (the route's check),
+    // and one still running when that launch ends gives back none of its
+    // tool's answer, value or failure: the session's record is checked again as
+    // the call returns (sessionEndedFor), and must still be the launch the call
+    // was admitted under, so a later launch of the same session id is not
+    // handed an earlier launch's answer. The stream routes need no such check:
+    // ending a session closes its streams (releaseMcpSessionProvider).
+    const sessionEndedFor = (): boolean =>
+      transport === 'http' && (boundSessionId === null || mcpSessionProvider(boundSessionId) !== 'codex' ||
+        admittedLaunch === null || sessionLaunchOf(boundSessionId) !== admittedLaunch)
+    const endedAnswer = (toolName: string) => {
+      logWarn(`[vision-mcp] /mcp ${toolName} (sid=${boundSessionId ?? 'unresolved'}) returned after its session ended; its answer was not passed on`)
+      return endedSessionToolResult()
+    }
     const rawTool = server.tool.bind(server)
     server.tool = (...toolArgs: any[]) => {
       const toolName = typeof toolArgs[0] === 'string' ? toolArgs[0] : 'unknown'
@@ -884,16 +977,17 @@ export async function startMcpServer(
             return result.then(
               (value: any) => {
                 logDebug(`[mcp] tool=${toolName} done ok=${value?.isError ? 'false' : 'true'} dur=${Date.now() - startedAt}ms`)
-                return value
+                return sessionEndedFor() ? endedAnswer(toolName) : value
               },
               (err: any) => {
                 logWarn(`[mcp] tool=${toolName} FAILED dur=${Date.now() - startedAt}ms`, err?.message ?? String(err))
+                if (sessionEndedFor()) return endedAnswer(toolName)
                 throw err
               },
             )
           }
           logDebug(`[mcp] tool=${toolName} done ok=${result?.isError ? 'false' : 'true'} dur=${Date.now() - startedAt}ms`)
-          return result
+          return sessionEndedFor() ? endedAnswer(toolName) : result
         }
       }
       return rawTool(...toolArgs)
@@ -1264,14 +1358,34 @@ export async function startMcpServer(
         return
       }
 
+      // A credential is served only while its session holds one: none was
+      // issued in this run, or its session has ended (released at teardown).
+      // Every route below acts for this session, so every route refuses alike,
+      // with the 403 /sse and /mcp have always answered.
+      if (!sessionRecords.has(authedSession)) {
+        if (!noRecordLogged.has(authedSession)) {
+          noRecordLogged.add(authedSession)
+          const route = (req.url ?? '').split('?')[0].slice(0, 32)
+          logWarn(`[vision-mcp] Refused ${req.method} ${route} (sid=${authedSession}): no credential is issued to this session now`)
+        }
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
+        res.end('Forbidden')
+        return
+      }
+      // The launch this request is admitted under: a route that answers later
+      // (a /mcp tool call, a /status body) answers only while the session's
+      // record is still for this launch.
+      const admittedLaunch = sessionLaunchOf(authedSession)
+
       if (req.method === 'GET' && req.url && req.url.startsWith('/sse')) {
         // The bound session is the AUTHENTICATED one, not a re-parse of the
         // query — the token proved it. Its provider is the one its credential
         // was issued to (issueMcpSessionToken); the request does not say.
         const boundSessionId = authedSession
         const source = mcpSessionProvider(boundSessionId)
+        // Always set here (a session holding no record was refused above);
+        // kept so the type, and any later reordering, still answer 403.
         if (!source) {
-          logWarn(`[vision-mcp] Refused SSE connection (sid=${boundSessionId}): no credential was issued to this session in this run`)
           res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
           res.end('Forbidden')
           return
@@ -1383,11 +1497,11 @@ export async function startMcpServer(
           // Authenticated session, not a query re-parse (GHSA-q83v-phcc-hgv4).
           const boundSessionId = authedSession
           // WP2 PR 4, P4.2 review (A42-1): served only to a session whose
-          // credential this run issued to Codex, as /sse refuses a session with
-          // none. The HMAC key outlives a run, so a credential from an earlier
-          // one still verifies, and since P4.2 this route also carries the
-          // vision and in-app browser tools. A Claude session's credential gets
-          // nothing here either: its tool set is the SSE route's.
+          // credential was issued to Codex for its current launch (the record
+          // check above has already refused a session holding none). Since
+          // P4.2 this route also carries the vision and in-app browser tools.
+          // A Claude session's credential gets nothing here either: its tool
+          // set is the SSE route's.
           if (mcpSessionProvider(boundSessionId) !== 'codex') {
             logWarn(`[vision-mcp] Refused /mcp request (sid=${boundSessionId}): no Codex credential was issued to this session in this run`)
             res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
@@ -1395,7 +1509,7 @@ export async function startMcpServer(
             return
           }
           const source = 'codex' as const
-          const server = createServer(source, boundSessionId, 'http')
+          const server = createServer(source, boundSessionId, 'http', admittedLaunch)
           // Stateless: a request's cancel arrives on a POST of its own, to a
           // fresh server that never saw the request. Route it to the review
           // that request is serving, by the session THIS connection
@@ -1441,6 +1555,15 @@ export async function startMcpServer(
         })
         req.on('end', () => {
           if (refused) return
+          // The session's record is checked again once the body is read: a
+          // status sent while its launch ran, arriving after it ended (also
+          // when the same session id has been launched again since), is not
+          // taken (the same 403 as the check at the top).
+          if (admittedLaunch === null || sessionLaunchOf(authedSession) !== admittedLaunch) {
+            res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
+            res.end('Forbidden')
+            return
+          }
           const decision = ingestStatusPayload(authedSession, Buffer.concat(chunks).toString('utf-8'))
           res.writeHead(decision.status, { 'Content-Type': 'text/plain; charset=utf-8' })
           res.end(decision.body)
