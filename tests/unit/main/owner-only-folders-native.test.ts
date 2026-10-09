@@ -14,8 +14,14 @@
 //
 // Host-safe: no process starts and no real folder is touched. Windows'
 // programs, the file system and PowerShell are an in-memory fake (the real
-// round trip is owner-only-folders-real.test.ts, CI and the VM).
+// round trip is owner-only-folders-real.test.ts, CI and the VM). Where
+// Windows PowerShell is handed a module path it cannot load the read's
+// cmdlets from (PowerShell 7 leaves its own modules first in the module path
+// of what it starts), the answers it gave are replayed as captured: every
+// call gets Windows PowerShell's own modules folder, and a read that stops
+// at loading its modules is no read, never a folder passed.
 import { describe, it, expect, vi } from 'vitest'
+import path from 'node:path'
 
 vi.mock('node:child_process', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:child_process')>()
@@ -24,7 +30,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 })
 
 import {
-  secureFoldersWindows, secureFoldersNative, folderReadFromSddl, sidFromWhoami, ownerOnlyVerdict,
+  secureFoldersWindows, secureFoldersNative, folderReadFromSddl, sidFromWhoami, ownerOnlyVerdict, windowsPowerShellEnv,
   OWNER_ONLY_SCRIPT, OWNER_ONLY_READ_SCRIPT, OWNER_ONLY_DIRS_ENV, OWNER_ONLY_SYSTEM_SID, OWNER_ONLY_ADMINISTRATORS_SID,
 } from '../../../src/main/owner-only-folders'
 import type { NativeOwnerOnlyTools } from '../../../src/main/owner-only-folders'
@@ -389,6 +395,91 @@ describe('the owner-only rule answers where Windows PowerShell gives its script 
     m.add('C:\\r', { kind: 'dir' })
     const out = await secureFoldersNative(['C:\\r\\a', 'C:\\r\\f'], m.tools, m.run)
     expect(out!.map((r) => [r.dir, r.ok])).toEqual([['C:\\r\\a', true], ['C:\\r\\f', true]])
+  })
+})
+
+describe('Windows PowerShell handed a module path it cannot load the read\'s cmdlets from', () => {
+  // Captured from real Windows PowerShell 5.1 under Constrained Language Mode,
+  // started (through node) by PowerShell 7, which leaves its own modules
+  // first in the module path of what it starts; the folders, in order: one
+  // already there, a junction, one missing. The read without its modules
+  // loaded first gave each folder's Get-Acl failure inside that folder's own
+  // try (the first answer); the read as it is stops at loading them
+  // (PowerShell 7's Microsoft.PowerShell.Security, whose type data clashes
+  // with Windows PowerShell's own), exit 1 and nothing printed (the second).
+  const PER_FOLDER_FAILURE = '[{"error":true,"attributes":16,"missing":false,"sddl":null},{"error":true,"attributes":1040,"missing":false,"sddl":null},{"error":false,"attributes":null,"missing":true,"sddl":null}]'
+  const AN_EXISTING_FOLDER_FAILED = '[{"error":true,"attributes":16,"missing":false,"sddl":null}]'
+  const MODULES_FAILURE = [
+    'Command failed',
+    'Import-Module : The following error occurred while loading the extended type data file: Error in TypeData ',
+    '"System.Security.AccessControl.ObjectSecurity": The member Sddl is already present.',
+    '    + FullyQualifiedErrorId : FormatXmlUpdateException,Microsoft.PowerShell.Commands.ImportModuleCommand',
+  ].join('\r\n')
+  const DIRS = ['C:\\r\\existing', 'C:\\r\\link', 'C:\\r\\missing']
+  const withThree = () => {
+    const m = machine()
+    m.add('C:\\r', { kind: 'dir' })
+    m.add('C:\\r\\existing', { kind: 'dir', owner: OTHER, dacl: 'D:(A;;FA;;;WD)' })
+    m.add('C:\\r\\link', { kind: 'link', owner: OTHER, dacl: 'D:(A;;FA;;;WD)' })
+    return m
+  }
+
+  it('the read loads its cmdlets\' modules first, outside every folder\'s own try, so a module that cannot load stops the whole read', () => {
+    const lines = OWNER_ONLY_READ_SCRIPT.split('\n')
+    expect(lines[0]).toBe("$ErrorActionPreference = 'Stop'")
+    const imports = lines.indexOf('Import-Module -Name Microsoft.PowerShell.Management, Microsoft.PowerShell.Security, Microsoft.PowerShell.Utility')
+    expect(imports).toBe(1)
+    expect(imports).toBeLessThan(lines.findIndex((l) => l.startsWith('foreach (')))
+    expect(lines.slice(0, imports + 1).join('\n')).not.toMatch(/\btry\b/)
+  })
+
+  it('a read that stops at loading its modules is no read: nothing is made or written, and every folder says unread, never refused', async () => {
+    const m = withThree()
+    const run = async (script: string, env: Record<string, string>) => {
+      if (script === OWNER_ONLY_READ_SCRIPT) throw Object.assign(new Error(MODULES_FAILURE), { code: 1, stdout: '' })
+      return m.run(script, env)
+    }
+    const out = await secureFoldersWindows(DIRS, run, m.tools)
+    expect(out.map((r) => [r.dir, r.ok, r.unread])).toEqual(DIRS.map((d) => [d, false, true]))
+    expect(icacls(m)).toEqual([])
+    expect(m.made).toEqual([])
+    expect(m.entries.get('c:\\r\\existing')).toMatchObject({ owner: OTHER, dacl: 'D:(A;;FA;;;WD)' })
+  })
+
+  it('a read of each folder that failed is never a pass: the folder already there and the junction are refused unwritten, and a folder made beside them is refused at its read-back', async () => {
+    const m = withThree()
+    let n = 0
+    const run = async (script: string, env: Record<string, string>) => {
+      if (script !== OWNER_ONLY_READ_SCRIPT) return m.run(script, env)
+      const dirs = env[OWNER_ONLY_DIRS_ENV].split('\n')
+      if (++n === 1) { expect(dirs).toEqual(DIRS); return PER_FOLDER_FAILURE }
+      expect(dirs).toEqual(['C:\\r\\missing'])
+      return AN_EXISTING_FOLDER_FAILED
+    }
+    const out = await secureFoldersWindows(DIRS, run, m.tools)
+    expect(out.map((r) => [r.ok, r.detail, r.unread])).toEqual([
+      [false, 'it could not be read', undefined],
+      [false, 'it could not be read', undefined],
+      [false, 'its rights could not be read back', undefined],
+    ])
+    expect(icacls(m).map((c) => c.args[0])).toEqual(['C:\\r', 'C:\\r\\missing'])
+    expect(m.entries.get('c:\\r\\existing')).toMatchObject({ owner: OTHER, dacl: 'D:(A;;FA;;;WD)' })
+    expect(m.entries.get('c:\\r\\link')).toMatchObject({ owner: OTHER, dacl: 'D:(A;;FA;;;WD)' })
+  })
+
+  it('every Windows PowerShell call gets Windows PowerShell\'s own modules folder as its module path, whatever it inherited and in whatever spelling', () => {
+    const root = process.env.SystemRoot
+    const want = path.win32.join(typeof root === 'string' && /^[A-Za-z]:\\/.test(root) ? root : 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'Modules')
+    const inherited = {
+      PSModulePath: 'C:\\Users\\person\\Documents\\PowerShell\\Modules;C:\\Program Files\\PowerShell\\Modules;c:\\program files\\powershell\\7\\Modules;C:\\Program Files\\WindowsPowerShell\\Modules;C:\\WINDOWS\\system32\\WindowsPowerShell\\v1.0\\Modules',
+      PSMODULEPATH: 'C:\\x', psmodulepath: 'C:\\y', Path: 'C:\\bin', HOME: 'C:\\h',
+    }
+    const env = windowsPowerShellEnv(inherited, { [OWNER_ONLY_DIRS_ENV]: 'C:\\r\\a' })
+    expect(Object.keys(env).filter((k) => k.toUpperCase() === 'PSMODULEPATH')).toEqual(['PSModulePath'])
+    expect(env.PSModulePath).toBe(want)
+    expect(env).toMatchObject({ Path: 'C:\\bin', HOME: 'C:\\h', [OWNER_ONLY_DIRS_ENV]: 'C:\\r\\a' })
+    // Nothing a call adds can hand it another one either.
+    expect(windowsPowerShellEnv({}, { psModulePath: 'C:\\x' })).toEqual({ PSModulePath: want })
   })
 })
 

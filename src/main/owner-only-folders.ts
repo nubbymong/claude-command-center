@@ -28,6 +28,13 @@
 // with a script that uses only what that mode allows (Get-Item, Get-Acl and
 // its SDDL, which names every account by SID or by a fixed abbreviation, in
 // any language), and judged by the same verdict. Same order, same refusals.
+//
+// Every Windows PowerShell call gets Windows PowerShell's own modules folder
+// as its module path (windowsPowerShellEnv), never the one this process
+// inherited: PowerShell 7 puts its own modules first in the module path of
+// every program it starts, and Windows PowerShell then cannot load the
+// cmdlets the read uses (Get-Acl: "found in the module
+// 'Microsoft.PowerShell.Security', but the module could not be loaded").
 import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -66,13 +73,33 @@ function powershellPath(): string {
   return path.win32.join(systemFolder(), 'WindowsPowerShell', 'v1.0', 'powershell.exe')
 }
 
+/** Windows PowerShell's own modules folder ($PSHOME\Modules), by its
+ *  absolute path in the system folder. */
+function windowsPowerShellModules(): string {
+  return path.win32.join(systemFolder(), 'WindowsPowerShell', 'v1.0', 'Modules')
+}
+
+/** The environment a Windows PowerShell call gets: `base` with `extraEnv`
+ *  added, and the module path Windows PowerShell's own modules folder only
+ *  (see the file's header). Every spelling of its name is replaced: Windows
+ *  names are case-insensitive, and a child handed two would keep either. */
+export function windowsPowerShellEnv(base: Readonly<Record<string, string | undefined>>, extraEnv: Readonly<Record<string, string>>): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {}
+  for (const [k, v] of Object.entries({ ...base, ...extraEnv })) {
+    if (k.toUpperCase() !== 'PSMODULEPATH') env[k] = v
+  }
+  env.PSModulePath = windowsPowerShellModules()
+  return env
+}
+
 /** Run one Windows PowerShell script, asynchronously, with `extraEnv` added
- *  to this process's environment. Resolves its standard output. */
+ *  to this process's environment and the module path Windows PowerShell's
+ *  own (windowsPowerShellEnv). Resolves its standard output. */
 export function runWindowsPowerShell(script: string, extraEnv: Record<string, string>): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(powershellPath(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
       encoding: 'utf8', windowsHide: true, timeout: POWERSHELL_TIMEOUT_MS, maxBuffer: 1024 * 1024,
-      env: { ...process.env, ...extraEnv },
+      env: windowsPowerShellEnv(process.env, extraEnv),
     }, (err, stdout) => {
       if (err) reject(err)
       else resolve(String(stdout))
@@ -311,9 +338,14 @@ export const nativeOwnerOnlyTools: NativeOwnerOnlyTools = {
  *  Constrained Language Mode allows: cmdlets (Test-Path, Get-Item, Get-Acl),
  *  plain hashtables and ConvertTo-Json. Every value it prints is ASCII (an
  *  SDDL string, a number or a flag), so no console encoding can change it.
- *  The folders come through the environment, one a line, never the text. */
+ *  The folders come through the environment, one a line, never the text.
+ *  The cmdlets' modules are loaded first, outside every folder's own try: a
+ *  module that cannot be loaded stops the whole read, which is then no read
+ *  at all (its folders unread), never a read of each folder that failed (its
+ *  folders refused). */
 export const OWNER_ONLY_READ_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
+  'Import-Module -Name Microsoft.PowerShell.Management, Microsoft.PowerShell.Security, Microsoft.PowerShell.Utility',
   '$out = @()',
   'foreach ($d in ($env:' + OWNER_ONLY_DIRS_ENV + " -split \"`n\")) {",
   '  if (-not $d) { continue }',
@@ -439,8 +471,8 @@ const ownerOnlySddl = (userSid: string): string => `D:PAI(A;OICI;FA;;;SY)(A;OICI
  * with the same refusals.
  *
  *  1. The user's SID (whoami), and a read of every folder (what is there,
- *     its attributes): without either, nothing is changed and the answer is
- *     null (no read).
+ *     its attributes): without either (a read whose cmdlets could not be
+ *     loaded included), nothing is changed and the answer is null (no read).
  *  2. Each folder in turn: below a refused folder, refused; below a folder
  *     of this call that is now a link, refused; one already there must be a
  *     real folder (never a link, a junction or any reparse point); a missing

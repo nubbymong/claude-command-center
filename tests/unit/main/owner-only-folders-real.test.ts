@@ -10,7 +10,10 @@
 // with any Unicode name make the same round trip; a name ending in a dot is
 // refused and nothing is made for it. Under Constrained Language Mode, where
 // the script gives no read, the rule's fallback with Windows' own programs
-// leaves the same rights, and refuses a link the same way.
+// leaves the same rights, and refuses a link the same way -- also when the
+// module path this process has names, first, a Microsoft.PowerShell.Security
+// Windows PowerShell cannot load (as PowerShell 7 leaves it for every program
+// it starts, CI's test step included).
 //
 // HOST QUARANTINE: this suite writes a temp directory, changes rights on it
 // and starts processes (Windows PowerShell and icacls). It runs in CI and on
@@ -197,6 +200,65 @@ describe.runIf(IS_WIN)('secureFoldersWindows under Constrained Language Mode: th
     links.push(link)
     const out = await secureFoldersWindows([link, path.join(link, 'child')], constrained, nativeOwnerOnlyTools)
     expect(out.map((r) => [r.ok, r.detail])).toEqual([[false, 'a link'], [false, 'its parent was refused']])
+    expect(sddl(target, scratch)).toBe(before)
+    expect(fs.existsSync(path.join(target, 'child'))).toBe(false)
+  })
+
+  it('with a Microsoft.PowerShell.Security that cannot load first in this process\'s module path: the same rights for a folder already there and one it makes, and a link refused', async () => {
+    const top = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), PREFIX)))
+    made.push(top)
+    const scratch = path.join(top, 'scratch')
+    fs.mkdirSync(scratch)
+    // A module folder whose Microsoft.PowerShell.Security names a library that is not there.
+    const modules = path.join(top, 'modules')
+    fs.mkdirSync(path.join(modules, 'Microsoft.PowerShell.Security'), { recursive: true })
+    fs.writeFileSync(path.join(modules, 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1'),
+      "@{\r\n  ModuleVersion = '99.0.0'\r\n  RootModule = 'missing-on-purpose.dll'\r\n  CmdletsToExport = @('Get-Acl', 'Set-Acl')\r\n}\r\n")
+    const saved = { modules: process.env.PSModulePath, cache: process.env.PSModuleAnalysisCachePath }
+    const broken = `${modules};${saved.modules ?? ''}`
+    // What Windows PowerShell learns of the modules it looks at stays in this folder.
+    const cache = path.join(top, 'module-analysis-cache')
+    // Control: a Windows PowerShell handed that module path itself cannot load Get-Acl.
+    let controlRefused = false
+    try {
+      execFileSync(path.join(SYSROOT, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+        ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', "$ErrorActionPreference = 'Stop'; $null = Get-Acl -LiteralPath $env:SystemRoot"],
+        { stdio: 'ignore', windowsHide: true, timeout: 60_000, env: { ...process.env, PSModulePath: broken, PSModuleAnalysisCachePath: cache } })
+    } catch { controlRefused = true }
+    expect(controlRefused).toBe(true)
+
+    const existing = path.join(top, 'existing')
+    fs.mkdirSync(existing)
+    execFileSync(ICACLS, [existing, '/grant', '*S-1-5-32-545:(R)'], { stdio: 'ignore', windowsHide: true, timeout: 30_000 })
+    const fresh = path.join(existing, 'fresh')
+    const target = path.join(top, 'target')
+    fs.mkdirSync(target)
+    const before = sddl(target, scratch)
+    const link = path.join(top, 'link')
+    fs.symlinkSync(target, link, 'junction')
+    links.push(link)
+    const user = (await runWindowsPowerShell('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value', {})).trim()
+
+    process.env.PSModulePath = broken
+    process.env.PSModuleAnalysisCachePath = cache
+    let out: Awaited<ReturnType<typeof secureFoldersWindows>>
+    let linked: Awaited<ReturnType<typeof secureFoldersWindows>>
+    try {
+      out = await secureFoldersWindows([existing, fresh], constrained, nativeOwnerOnlyTools)
+      linked = await secureFoldersWindows([link, path.join(link, 'child')], constrained, nativeOwnerOnlyTools)
+    } finally {
+      if (saved.modules === undefined) delete process.env.PSModulePath
+      else process.env.PSModulePath = saved.modules
+      if (saved.cache === undefined) delete process.env.PSModuleAnalysisCachePath
+      else process.env.PSModuleAnalysisCachePath = saved.cache
+    }
+    expect(out.map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only'], [true, 'owner-only']])
+    for (const d of [existing, fresh]) {
+      const s = sddl(d, scratch)
+      expect(s.startsWith('D:P'), s).toBe(true)
+      expect(await acesBySid(s), s).toEqual([fullFor(user), fullFor(SYSTEM_SID)].sort())
+    }
+    expect(linked.map((r) => [r.ok, r.detail])).toEqual([[false, 'a link'], [false, 'its parent was refused']])
     expect(sddl(target, scratch)).toBe(before)
     expect(fs.existsSync(path.join(target, 'child'))).toBe(false)
   })
