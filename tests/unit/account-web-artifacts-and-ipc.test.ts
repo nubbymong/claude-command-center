@@ -13,6 +13,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const created: { opts: any; win: any }[] = []
 const openedExternal: string[] = []
 const permissionHandlers: any[] = []
+/** When set, the window's loadURL rejects with it (as Electron's does, the URL in the message). */
+let loadFails: (Error & { code?: string; errno?: number }) | null = null
 
 class FakeWindow {
   webContents: any
@@ -20,11 +22,16 @@ class FakeWindow {
   private closedCb?: () => void
   constructor(public opts: any) {
     const handlers: Record<string, Function> = {}
+    const sessionEvents: Record<string, Function> = {}
     this.webContents = {
       handlers,
       on: (ev: string, fn: Function) => { handlers[ev] = fn },
       setWindowOpenHandler: (fn: Function) => { handlers.__open = fn },
-      session: { setPermissionRequestHandler: (fn: any) => permissionHandlers.push(fn) },
+      session: {
+        events: sessionEvents,
+        setPermissionRequestHandler: (fn: any) => permissionHandlers.push(fn),
+        on: (ev: string, fn: Function) => { sessionEvents[ev] = fn },
+      },
       loadURL: async () => {},
     }
     created.push({ opts, win: this })
@@ -32,10 +39,11 @@ class FakeWindow {
   focus() {}
   isDestroyed() { return this.destroyed }
   close() { this.destroyed = true; this.closedCb?.() }
+  destroy() { this.destroyed = true; this.closedCb?.() }
   on(ev: string, fn: () => void) { if (ev === 'closed') this.closedCb = fn }
   // loadURL lives on the WINDOW, not on webContents — matching the real API the
   // code under test calls.
-  async loadURL(_u: string) {}
+  async loadURL(_u: string) { if (loadFails) throw loadFails }
 }
 
 vi.mock('electron', () => ({
@@ -48,8 +56,42 @@ vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.f
 const { openArtifacts, ARTIFACTS_URL } = await import('../../src/main/account-web/artifacts')
 const { webPartitionForProfile } = await import('../../src/shared/account-web-session')
 const { safeExternalHttpsHref } = await import('../../src/shared/safe-url')
+const { logError } = await import('../../src/main/debug-logger')
 
-beforeEach(() => { created.length = 0; openedExternal.length = 0; permissionHandlers.length = 0 })
+beforeEach(() => {
+  created.length = 0; openedExternal.length = 0; permissionHandlers.length = 0
+  loadFails = null
+  vi.mocked(logError).mockClear()
+})
+
+const errorLines = (): string[] => vi.mocked(logError).mock.calls.map((c) => c.map(String).join(' '))
+
+describe('every window on an account partition blocks downloads', () => {
+  it('the artifacts window blocks a download on its partition and logs the host only', () => {
+    openArtifacts('profile-dl1')
+    const ses = created[0].win.webContents.session
+    const download = ses.events['will-download']
+    expect(typeof download).toBe('function')
+    const ev = { preventDefault: vi.fn() }
+    download(ev, { getURL: () => 'https://files.example/export/page.html?sig=DOWNLOAD-VALUE#part' })
+    expect(ev.preventDefault).toHaveBeenCalledTimes(1)
+    const lines = errorLines().filter((l) => /download/.test(l))
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('files.example')
+    expect(lines[0]).not.toMatch(/DOWNLOAD-VALUE|page\.html|\/export|\?|#/)
+  })
+
+  it('a page load that fails is logged by host and code, never the URL', async () => {
+    loadFails = Object.assign(new Error("ERR_ABORTED (-3) loading 'https://claude.ai/artifacts?code=LOAD-VALUE'"), { code: 'ERR_ABORTED', errno: -3 })
+    openArtifacts('profile-dl2')
+    await new Promise((r) => setTimeout(r, 0))
+    const lines = errorLines().filter((l) => /could not load|failed to load/.test(l))
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('claude.ai')
+    expect(lines[0]).toContain('ERR_ABORTED -3')
+    expect(lines[0]).not.toMatch(/LOAD-VALUE|\/artifacts|\?|loading '/)
+  })
+})
 
 describe('the artifacts window', () => {
   it('opens on THAT ACCOUNT’S partition — never a shared one', () => {
