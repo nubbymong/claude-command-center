@@ -40,6 +40,9 @@ const TEST_DATA = await vi.hoisted(async () => (await import('../../../helpers/t
 vi.mock('../../../../src/main/config-manager', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../src/main/config-manager')>()),
   readConfig: () => ({}),
+  // The built-in tools switches' checked read: a fresh install, so no
+  // settings file on disk decides it.
+  readConfigChecked: () => ({ outcome: 'absent', value: null }),
   getConfigDir: () => (globalThis as any).__mockResourcesDir ?? '/cfg',
 }))
 

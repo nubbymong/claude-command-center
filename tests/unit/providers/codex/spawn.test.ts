@@ -13,6 +13,19 @@ vi.mock('child_process', async (importOriginal) => {
   }
 })
 
+// The disk, for the picker route's node lookup on Windows: the one file a
+// test names answers as node.exe; every other path as the real disk answers.
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return {
+    ...actual,
+    statSync: vi.fn((p: unknown, o?: unknown) => {
+      if (p === (globalThis as any).__mockNodeExe) return { isFile: () => true } as import('fs').Stats
+      return (actual.statSync as (a: unknown, b?: unknown) => import('fs').Stats)(p, o)
+    }),
+  }
+})
+
 // Mock setup-handlers so getResourcesDirectory returns a per-test value via the
 // _mockResourcesDir state declared inside the useResumePicker describe below.
 // Hoisted vi.mock requires the factory to access state via a getter pattern --
@@ -51,9 +64,9 @@ import { resolveCodexBinary, resolveNodeExe, __resetNodeExeCache, codexCmdExeTar
 const launch = { executable: '/mock/path/codex', env: { PATH: '/usr/bin', CODEX_HOME: '/res/codex-realms/r1' }, sessionsDir: '/res/codex-realms/r1/sessions' }
 const winEnv = { SystemRoot: 'C:\\Windows', CODEX_HOME: 'C:\\res\\codex-realms\\r1' }
 
-function withWin32<T>(fn: () => T): T {
+function withPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
   const origPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
-  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true })
   try {
     return fn()
   } finally {
@@ -61,6 +74,7 @@ function withWin32<T>(fn: () => T): T {
     else delete (process as any).platform
   }
 }
+const withWin32 = <T>(fn: () => T): T => withPlatform('win32', fn)
 
 describe('CodexProvider', () => {
   let originalCodexHome: string | undefined
@@ -393,6 +407,7 @@ describe('CodexProvider', () => {
 
     afterEach(() => {
       delete (globalThis as any).__mockResourcesDir
+      delete (globalThis as any).__mockNodeExe
     })
 
     beforeEach(() => {
@@ -416,14 +431,15 @@ describe('CodexProvider', () => {
         throw new Error(`unexpected: ${s}`)
       })
 
-      const out = new CodexProvider().buildSpawnCommand({
+      // The launch is built for Linux (process.platform, which decides both
+      // its route and its picker's node lookup), so the full path comes from
+      // the login-shell `which node` probe (see resolveNodeExe).
+      const out = withPlatform('linux', () => new CodexProvider().buildSpawnCommand({
         sessionId: 'sid-resume', realmLaunch: launch,
         useResumePicker: true,
         codexOptions: { model: 'gpt-5.5', reasoningEffort: 'xhigh', permissionsPreset: 'standard' },
-      })
+      }))
 
-      // On win32 the full path comes from `where node`; on POSIX from the
-      // login-shell `which node` probe (see resolveNodeExe).
       expect(out.cmd).toBe('/usr/local/bin/node')
       expect(out.args[0]).toBe(join(dir, 'scripts', 'codex-resume-picker.js'))
       expect(out.args).toContain('-m')
@@ -474,9 +490,10 @@ describe('CodexProvider', () => {
     // Regression for #347: node-pty/ConPTY on Windows does NOT consult PATH
     // for bare names -- pty.spawn('node', ...) throws "File not found:"
     // synchronously before any onExit/onData fires, so the renderer attaches
-    // xterm to a dead PTY (blank-terminal symptom). Fix is to resolve node
-    // via `where node` and pass the full path. Non-win32 stays bare 'node'
-    // because execvp does PATH lookup.
+    // xterm to a dead PTY (blank-terminal symptom). Fix is to pass node's
+    // full path, found in the folders the session's PATH names, read in this
+    // process (resolveNodeExe). Non-win32 stays bare 'node' because execvp
+    // does PATH lookup.
     it('win32 picker spawn resolves node to a full .exe path (not bare "node"), and never looks codex up', () => {
       const { mkdtempSync, mkdirSync, writeFileSync } = require('fs') as typeof import('fs')
       const { tmpdir } = require('os') as typeof import('os')
@@ -487,20 +504,19 @@ describe('CodexProvider', () => {
       setMockResourcesDir(dir)
 
       vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
-      vi.mocked(execSync).mockImplementation((cmd: any) => {
-        const s = String(cmd)
-        if (s.includes('where node')) return 'C:\\Program Files\\nodejs\\node.exe\n' as any
-        throw new Error(`unexpected: ${s}`)
-      })
+      // No process is started to find node (and none to look codex up).
+      vi.mocked(execSync).mockImplementation((cmd: any) => { throw new Error(`unexpected: ${String(cmd)}`) })
+      ;(globalThis as any).__mockNodeExe = 'C:\\ccc-test-only\\nodejs\\node.exe'
 
       const out = withWin32(() => new CodexProvider().buildSpawnCommand({
-        sessionId: 'sid-win32-picker', realmLaunch: { ...launch, executable: 'C:\\npm\\codex.cmd', env: winEnv },
+        sessionId: 'sid-win32-picker', realmLaunch: { ...launch, executable: 'C:\\npm\\codex.cmd', env: { ...winEnv, Path: 'tools;C:\\ccc-test-only\\nodejs' } },
         useResumePicker: true,
         codexOptions: { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' },
       }))
 
-      expect(out.cmd).toBe('C:\\Program Files\\nodejs\\node.exe')
+      expect(out.cmd).toBe('C:\\ccc-test-only\\nodejs\\node.exe')
       expect(out.cmd).not.toBe('node')
+      expect(vi.mocked(execSync)).not.toHaveBeenCalled()
       expect(out.args[0]).toBe(join(dir, 'scripts', 'codex-resume-picker.js'))
       expect(out.env.CCC_CODEX_EXECUTABLE).toBe('C:\\npm\\codex.cmd')
     })
@@ -520,10 +536,11 @@ describe('CodexProvider', () => {
       }))).toThrow(/cmd.exe/)
     })
 
-    it('resolveNodeExe falls back to bare "node" on win32 if `where node` fails', () => {
+    it('resolveNodeExe falls back to bare "node" on win32 when no PATH folder holds node.exe, starting no process', () => {
       vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
       vi.mocked(execSync).mockImplementation(() => { throw new Error('not found') })
-      expect(resolveNodeExe()).toBe('node')
+      expect(resolveNodeExe({ env: { PATH: 'C:\\none;.' }, statFile: () => 'none' })).toBe('node')
+      expect(vi.mocked(execSync)).not.toHaveBeenCalled()
     })
 
     it('resolveNodeExe resolves node via a login shell on non-win32 (launchd minimal-PATH hazard)', () => {

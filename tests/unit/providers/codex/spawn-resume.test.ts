@@ -28,6 +28,9 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
 vi.mock('../../../../src/main/config-manager', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../src/main/config-manager')>()),
   readConfig: () => ({}),
+  // The built-in tools switches' checked read: a fresh install, so no
+  // settings file on disk decides it.
+  readConfigChecked: () => ({ outcome: 'absent', value: null }),
   getConfigDir: () => (globalThis as any).__p35ConfigDir ?? '/cfg',
 }))
 // The builder's own check of the id, independent of the lookup: a test may

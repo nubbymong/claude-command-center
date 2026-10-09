@@ -7,7 +7,8 @@ import { getResourcesDirectory, getDataDirectory } from '../../ipc/setup-handler
 import type { SpawnOptions, ProviderSpawnCommand, PickFolderIdentity } from '../types'
 import { getConductorMcpPort, issueMcpSessionToken } from '../../conductor-mcp-server'
 import { CODEX_CONDUCTOR_TOOLS, type ConductorToolSwitches } from './conductor-tools'
-import { readConfig, getConfigDir } from '../../config-manager'
+import { getConfigDir } from '../../config-manager'
+import { readConductorToolSwitches } from '../../conductor-tools-switch'
 import { colorFgBgValue } from '../host-color-scheme'
 import { windowsFolderAsRun, windowsPathFolderIsFullyQualified } from '../windows-path-names'
 import { codexShellEnv, CMD_UNSAFE_PATH_RE } from './cli-runner'
@@ -145,23 +146,38 @@ export function resolveCodexBinary(lookup: CodexBinaryLookup = {}): { cmd: strin
   return null
 }
 
+/** Where the resume picker's node is looked for (tests pass their own). */
+export interface NodeExeLookup {
+  /** Default: this machine's. */
+  platform?: NodeJS.Platform
+  /** Default: this process's environment (Windows: its PATH). */
+  env?: Readonly<Record<string, string | undefined>>
+  /** What one look at a candidate found (default: the disk). */
+  statFile?: (p: string) => CodexCandidateStat
+}
+
 /**
- * Resolve a full path to node.exe on Windows. Bare 'node' fails under
+ * The node the resume picker runs on, by full path. Bare 'node' fails under
  * node-pty / ConPTY because Windows PTY spawn does NOT consult PATH the
  * same way child_process.spawn does -- it throws synchronously with
  * "File not found:" before any onExit/onData handler can fire (verified
  * empirically against the pinned node-pty version).
  *
- * On non-Windows, bare 'node' works fine -- PTY uses execvp which does
- * PATH lookup.
+ * Windows: the first of PATH's fully qualified folders holding node.exe, in
+ * PATH's order (codexWindowsPathFolders: a relative entry, and so the
+ * current folder, is never searched), read in this process with no shell and
+ * no process started; a folder that does not answer is asked nothing more in
+ * that lookup (as resolveCodexBinary). Kept for later lookups under the same
+ * PATH. None found: bare 'node', so the launch fails visibly.
  *
- * Cached on first successful resolve. Returns bare 'node' as a fallback
- * if `where node` fails (rare; if node isn't on PATH the user has bigger
- * problems and our error message via the spawn failure is fine).
+ * macOS and Linux: bare 'node' works under a PTY (execvp looks PATH up), but
+ * an app started from Finder or the Dock has launchd's minimal PATH, so the
+ * absolute path comes from a login shell; cached on the first that answers.
  */
 let cachedNodeExe: string | null = null
-export function resolveNodeExe(): string {
-  if (os.platform() !== 'win32') {
+let cachedWindowsNodeExe: { pathVar: string; exe: string } | null = null
+export function resolveNodeExe(lookup: NodeExeLookup = {}): string {
+  if ((lookup.platform ?? os.platform()) !== 'win32') {
     // Same launchd-minimal-PATH hazard as resolveCodexBinary: resolve the
     // absolute node path via a login shell so PTY execvp doesn't depend on
     // the GUI app's inherited PATH. Falls back to bare 'node'.
@@ -181,24 +197,27 @@ export function resolveNodeExe(): string {
     } catch { /* fall through */ }
     return 'node'
   }
-  if (cachedNodeExe) return cachedNodeExe
-  try {
-    const resolved = execSync('where node', {
-      encoding: 'utf-8',
-      timeout: 5000,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim().split(/\r?\n/)[0].trim()
-    if (resolved) {
-      cachedNodeExe = resolved
-      return resolved
+  const pathVar = winEnvValue(lookup.env ?? process.env, 'PATH') ?? ''
+  if (cachedWindowsNodeExe && cachedWindowsNodeExe.pathVar === pathVar) return cachedWindowsNodeExe.exe
+  const stat = lookup.statFile ?? diskStat
+  const unreachable = new Set<string>()
+  for (const dir of codexWindowsPathFolders(pathVar)) {
+    if (unreachable.has(dir)) continue
+    const candidate = path.win32.join(dir, 'node.exe')
+    const found = stat(candidate)
+    if (found === 'file') {
+      cachedWindowsNodeExe = { pathVar, exe: candidate }
+      return candidate
     }
-  } catch { /* fall through */ }
+    if (found === 'unreachable') unreachable.add(dir)
+  }
   return 'node'
 }
 
 /** Test-only: reset the node.exe resolution cache. */
 export function __resetNodeExeCache(): void {
   cachedNodeExe = null
+  cachedWindowsNodeExe = null
 }
 
 /**
@@ -277,6 +296,19 @@ export function codexCmdExeTarget(shim: string, args: readonly string[], env: Re
   return { cmd, commandLine: `/d /v:off /s /c "${[`"${shim}"`, ...args].join(' ')}"` }
 }
 
+/** A folder cmd.exe cannot start in: a share or a device path (two leading
+ *  slashes of either kind). The npm launcher is never started there. */
+const CMD_EXE_NETWORK_FOLDER_RE = /^[\\/]{2}/
+/** Why a launch through the npm launcher in such a folder is refused (the
+ *  resume picker says the same, scripts/lib/codex-resume-picker-lib.js). */
+export const CODEX_NETWORK_FOLDER_REFUSAL = 'Cannot start Codex in a network folder through its npm launcher: open the folder from a mapped drive letter, or install the standalone Codex.'
+
+/** Refuses, with the reason, a launch that would start the npm launcher
+ *  through cmd.exe in a folder cmd.exe cannot start in. */
+function refuseCmdExeNetworkFolder(viaCmdExe: boolean, folder: string | undefined): void {
+  if (viaCmdExe && typeof folder === 'string' && CMD_EXE_NETWORK_FOLDER_RE.test(folder)) throw new Error(CODEX_NETWORK_FOLDER_REFUSAL)
+}
+
 /** cmd.exe takes a command line under this many characters (its documented
  *  limit is 8,191 including the terminator). */
 export const CMD_EXE_LINE_MAX = 8_191
@@ -327,9 +359,42 @@ function setOwned(env: Record<string, string>, name: string, value: string, win3
   env[name] = value
 }
 
+/** Remove a variable: every spelling of it on Windows (names are
+ *  case-insensitive there), the one exact name elsewhere. */
+function dropVariable(env: Record<string, string>, name: string, win32: boolean): void {
+  for (const k of Object.keys(env)) if (win32 ? k.toUpperCase() === name.toUpperCase() : k === name) delete env[k]
+}
+
+/** The variables that name a repository for git, whatever folder it starts
+ *  in. */
+const GIT_REPOSITORY_VARS: readonly string[] = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR']
+
 /** WP2 PR 4, P4.3: the most an Ask launch's `project_doc_max_bytes` may be
  *  (the help folder's AGENTS.md is the user guide and a preamble, far below). */
 export const ASK_PROJECT_DOC_MAX_BYTES_CEILING = 16 * 1024 * 1024
+
+/** Where git stops for an Ask launch: the help folder's parent, so git
+ *  looks for a repository in the help folder itself and in no folder above
+ *  it, wherever the resources folder sits. GIT_CEILING_DIRECTORIES is a list
+ *  (`;` on Windows, `:` elsewhere), so a parent whose path holds that
+ *  separator or a control character, or a help folder that is not an
+ *  absolute path, cannot be bounded and refuses the launch, saying what to
+ *  change. The parent is the resources folder (the help folder is its
+ *  `help`, help-workspace.ts). */
+export function askGitCeiling(helpFolder: string | undefined, win32: boolean): string {
+  if (typeof helpFolder !== 'string' || !(win32 ? windowsPathFolderIsFullyQualified(helpFolder) : helpFolder.startsWith('/'))) {
+    throw new Error('Cannot start Ask Conductor on Codex: its help folder is not an absolute path.')
+  }
+  const parent = (win32 ? path.win32 : path.posix).dirname(helpFolder)
+  const separator = win32 ? ';' : ':'
+  if (parent.includes(separator)) {
+    throw new Error(`Cannot start Ask Conductor on Codex: the resources folder's path holds a '${separator}', which git reads as a list of folders: choose a resources folder whose path has none.`)
+  }
+  if (hasControl(parent)) {
+    throw new Error('Cannot start Ask Conductor on Codex: the resources folder\'s path holds a control character: choose a resources folder whose path has none.')
+  }
+  return parent
+}
 
 /** The Ask question's bound (askConductor.ts MAX_QUESTION, the pty:spawn
  *  schema's askPrompt). */
@@ -521,9 +586,13 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
   // (no self-review).
   // Built-in tools master (onboarding p6 / Settings): off = no conductor MCP
   // flags at all, so Codex launches without the built-in tools. Read fresh
-  // per spawn; port 0 (server unbound) behaves identically.
-  const spawnSettings = readConfig<{ conductorToolsEnabled?: boolean } & ConductorToolSwitches>('settings')
-  const conductorOn = spawnSettings?.conductorToolsEnabled !== false
+  // per spawn, the one checked way every reader reads them
+  // (conductor-tools-switch.ts): settings that are there but cannot be read
+  // keep the built-in tools off until they can. Port 0 (server unbound)
+  // behaves identically.
+  const tools = readConductorToolSwitches()
+  const spawnSettings: ConductorToolSwitches = { conductorToolsEnabled: tools.master, conductorTools: tools.switches ?? {} }
+  const conductorOn = tools.master
   const mcpPort = conductorOn ? getConductorMcpPort() : 0
   const viaCmdExe = win32 && /\.(cmd|bat)$/i.test(executable)
   // WP2 PR 4, P4.1: where the per-preset approvals sit in `flags`, so a
@@ -556,7 +625,7 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
     // before nothing, every tool the connection is offered does too
     // (codexPresetApprovedTools). Per tool, never server-wide.
     for (const tool of CODEX_PREALLOWED_TOOLS) flags.push('-c', codexToolApprovalArg(tool))
-    presetKeyArgs = codexPresetApprovedTools(co.permissionsPreset, spawnSettings ?? {}).flatMap((tool) => ['-c', codexToolApprovalArg(tool)])
+    presetKeyArgs = codexPresetApprovedTools(co.permissionsPreset, spawnSettings).flatMap((tool) => ['-c', codexToolApprovalArg(tool)])
     presetKeysAt = flags.length
     flags.push(...presetKeyArgs)
     // The canvas and browser skills are not on this line: they are in the
@@ -663,6 +732,17 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
   // Claude's exact resume does. A miss falls back to the picker or a fresh
   // start, never to another account's conversation.
   const resumed = opts.resume ? resolveCodexResume(opts.resume, { sessionsDir: launch.sessionsDir, configuredCwd: opts.cwd ?? '' }) : null
+  // Ask's conversation list stays inside its help folder (every route: the
+  // CLI, and the picker with the git it runs, inherit this environment):
+  // git stops at the parent of the folder the launch starts in (askGitCeiling)
+  // -- the help folder, or on an exact resume the conversation's own folder,
+  // which an Ask launch holds to the help folder (pty-manager). Git finds a
+  // repository only from where it starts: an Ask launch carries none of the
+  // variables that name one, in any spelling.
+  if (opts.askProjectDocMaxBytes !== undefined) {
+    for (const name of GIT_REPOSITORY_VARS) dropVariable(env, name, win32)
+    setOwned(env, 'GIT_CEILING_DIRECTORIES', askGitCeiling((resumed?.cwd || undefined) ?? opts.cwd, win32), win32)
+  }
   if (resumed) {
     // The id goes into argv: only a conversation id ever does, whatever the
     // lookup answered (the spawn schema and the lookup check it first).
@@ -671,6 +751,8 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
     }
     const args = ['resume', resumed.resumeId, ...fitCmdLine(['resume', resumed.resumeId])]
     const cwd = resumed.cwd || undefined
+    // Where it starts: the conversation's folder, else the configured one.
+    refuseCmdExeNetworkFolder(viaCmdExe, cwd ?? opts.cwd)
     const resumeCwdMismatch = resumed.cwdMismatch
     // The rollout chosen here, so the status line claims it without a second walk.
     const resumePath = resumed.path
@@ -692,7 +774,9 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
     if (pickerScript) {
       // The picker starts the same proven executable (never its own lookup),
       // through cmd.exe under the same rules; refuse here what it would. Its
-      // line may resume a conversation (`resume <id>` before the flags).
+      // line may resume a conversation (`resume <id>` before the flags). The
+      // picker itself (node) starts in any folder; where it would start the
+      // npm launcher in a network folder, it refuses that with the reason.
       const pickerFlags = fitCmdLine(['resume', '00000000-0000-0000-0000-000000000000'])
       if (viaCmdExe) codexCmdExeTarget(executable, pickerFlags, env)
       const pickerEnv = { ...env }
@@ -730,9 +814,11 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
       // rather than that it is no longer available. Codex never gets it.
       const openElsewhere = (opts.codexOpenElsewhere ?? []).filter((id) => typeof id === 'string' && CODEX_CONVERSATION_ID_RE.test(id)).slice(0, CODEX_OPEN_ELSEWHERE_MAX)
       if (openElsewhere.length > 0) setOwned(pickerEnv, CODEX_OPEN_ELSEWHERE_ENV, openElsewhere.join(','), win32)
-      // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup).
-      // Resolve to the full node.exe path via `where node`. See resolveNodeExe.
-      return { cmd: resolveNodeExe(), args: [pickerScript, ...pickerFlags], env: pickerEnv, ...(pickFile && pickFolder ? { pickFile, pickFolder } : {}), hooksInstalled }
+      // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup):
+      // the full node.exe path, from the folders this session's own PATH
+      // names (resolveNodeExe), looked up for the platform this launch is
+      // built for.
+      return { cmd: resolveNodeExe({ env, platform: process.platform }), args: [pickerScript, ...pickerFlags], env: pickerEnv, ...(pickFile && pickFolder ? { pickFile, pickFolder } : {}), hooksInstalled }
     }
     // Fallthrough: picker missing, spawn codex directly.
   }
@@ -741,6 +827,8 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
     // node-pty / ConPTY cannot directly invoke .cmd shims; route through cmd.exe.
     // P4.3: an Ask question never rides this line (it refuses whitespace and
     // every character cmd.exe interprets); main types it through the pane.
+    // Never in a folder cmd.exe cannot start in (it would start elsewhere).
+    refuseCmdExeNetworkFolder(viaCmdExe, opts.cwd)
     const target = codexCmdExeTarget(executable, fitCmdLine([]), env)
     return { cmd: target.cmd, args: [], commandLine: target.commandLine, env, hooksInstalled }
   }
