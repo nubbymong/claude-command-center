@@ -888,6 +888,8 @@ describe('app knowledge for the 2.1.1-beta.2 hardening', () => {
       /and on macOS and Linux one you own whose permissions let only you write to it\./,
       /On macOS the app keeps your accounts' sign-in folders in your resources folder to you alone, and the Insights and Sentinel folders there writable only by you, through their owner and permissions\. That holds when the resources folder is on a volume that honours ownership/,
       /Workaround: keep the resources folder on your Mac's own disk, or on a drive whose Get Info has Ignore ownership on this volume turned off/,
+      /On Windows, an account cannot be used when a file, folder or link directly in its own folder, its Claude Code folder or its identity folder belongs to another Windows account and the app can neither make it yours nor copy that folder into a new one of yours/,
+      /but never a link, a sign-in file \(\.credentials\.json or \.claude\.json\) or a file with a second name \(a hard link\)\. Workaround: take ownership of it or remove it, then restart the app\./,
     ]) expect(k).toMatch(said)
     // Sessions start through node (the resume picker), so the native installer
     // alone does not help a user whose only node is an interactive-only one.
