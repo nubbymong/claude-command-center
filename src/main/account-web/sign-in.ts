@@ -36,6 +36,7 @@ import { logError, logInfo } from '../debug-logger'
 // vision stack — and `conductor-mcp-server` -> `update-watcher` -> `app.isPackaged`
 // — into this module's graph, which broke an unrelated test three hops away.
 import { getBrowserPaths } from '../browser-paths'
+import { systemTool } from '../windows-programs'
 import {
   AUTH_BROWSER_LABELS,
   DEFAULT_AUTH_BROWSER,
@@ -290,16 +291,28 @@ function killBrowserTree(proc: ChildProcess): void {
   if (proc.exitCode !== null || proc.signalCode !== null) return
   if (process.platform === 'win32') {
     // /T = tree, /F = force. Windows has no process-group kill for this.
+    // taskkill starts by its full path in the system folder (systemTool),
+    // never by a bare name a search could resolve elsewhere; with no plain
+    // system folder to name it from, none starts and the direct signal below
+    // ends the browser itself.
     // NOT silent on failure: a swallowed error here looks exactly like a kill
     // that worked, and the only visible symptom is an EPERM further down whose
     // cause is then unknowable. Measured working standalone on this box, so if
     // it fails from inside Electron the log needs to say so.
+    let taskkill: string | null = null
     try {
-      const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
-      if (r.error) logError(`[account-web] taskkill could not run (${r.error.message}); falling back to a direct signal`)
-      else if (r.status !== 0) logError(`[account-web] taskkill exited ${r.status} for pid ${pid}`)
+      taskkill = systemTool('taskkill.exe')
     } catch (err) {
-      logError(`[account-web] taskkill threw: ${(err as Error)?.message}`)
+      logError(`[account-web] no system folder to start taskkill from (${(err as Error)?.message}); falling back to a direct signal`)
+    }
+    if (taskkill) {
+      try {
+        const r = spawnSync(taskkill, ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
+        if (r.error) logError(`[account-web] taskkill could not run (${r.error.message}); falling back to a direct signal`)
+        else if (r.status !== 0) logError(`[account-web] taskkill exited ${r.status} for pid ${pid}`)
+      } catch (err) {
+        logError(`[account-web] taskkill threw: ${(err as Error)?.message}`)
+      }
     }
   }
   else {

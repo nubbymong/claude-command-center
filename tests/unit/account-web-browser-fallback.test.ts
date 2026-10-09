@@ -24,13 +24,32 @@ vi.mock('../../src/main/browser-paths', () => ({
 }))
 
 const spawned: any[] = []
+const procs: any[] = []
 const spawnSyncMock = vi.fn()
 vi.mock('node:child_process', () => ({
   // exitCode/signalCode null = still running. Teardown asks these rather than
   // `killed`, which only reports that a signal was sent.
-  spawn: (...a: any[]) => { spawned.push(a); return { exitCode: null, signalCode: null, killed: false, kill: vi.fn(), on: vi.fn(), pid: 4242, once: vi.fn((_e: string, cb: () => void) => cb()) } },
+  spawn: (...a: any[]) => {
+    spawned.push(a)
+    const proc = { exitCode: null, signalCode: null, killed: false, kill: vi.fn(), on: vi.fn(), pid: 4242, once: vi.fn((_e: string, cb: () => void) => cb()) }
+    procs.push(proc)
+    return proc
+  },
   spawnSync: (...a: any[]) => spawnSyncMock(...a),
 }))
+// The system folder taskkill is named from: the real rule, or (when a test
+// says so) no plain system folder at all.
+const systemFolder = vi.hoisted(() => ({ missing: false }))
+vi.mock('../../src/main/windows-programs', async (orig) => {
+  const real = await orig<typeof import('../../src/main/windows-programs')>()
+  return {
+    ...real,
+    systemTool: (relPath: string, env?: NodeJS.ProcessEnv) => {
+      if (systemFolder.missing) throw new Error('systemTool: SystemRoot is not a plain drive-absolute folder')
+      return real.systemTool(relPath, env)
+    },
+  }
+})
 vi.mock('node:fs', () => ({
   // Only the Chrome binary exists. Everything else (the profile dir the code
   // checks before cleaning up) is treated as present.
@@ -41,6 +60,7 @@ vi.mock('node:fs', () => ({
 }))
 
 const { runSignIn, resolveBrowserBinary } = await import('../../src/main/account-web/sign-in')
+const { systemTool } = await import('../../src/main/windows-programs')
 const { CLAUDE_SESSION_COOKIE } = await import('../../src/shared/account-web-session')
 
 const cookie = {
@@ -107,11 +127,29 @@ describe('runSignIn — a substitution is reported, never silent', () => {
     if (process.platform === 'win32') {
       expect(spawnSyncMock).toHaveBeenCalled()
       const [cmd, args] = spawnSyncMock.mock.calls[0]
-      expect(cmd).toBe('taskkill')
+      // By its full path in the system folder, never a bare name a search
+      // could resolve elsewhere.
+      expect(cmd).toBe(systemTool('taskkill.exe'))
+      expect(cmd).toMatch(/^[A-Za-z]:\\.+\\System32\\taskkill\.exe$/i)
       expect(args).toContain('/T')   // the tree
       expect(args).toContain('/F')
       expect(args).toContain('4242') // the pid we spawned
     }
+  })
+
+  // Windows only: the tree stop is taskkill's, and elsewhere the browser is
+  // ended by its signal alone, so there is nothing to check (reported skipped).
+  it.runIf(process.platform === 'win32')('with no plain system folder to name taskkill from, starts no taskkill and ends the browser itself', async () => {
+    spawnSyncMock.mockClear()
+    procs.length = 0
+    systemFolder.missing = true
+    try {
+      await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5, browser: 'chrome', method: 'sso' })
+    } finally {
+      systemFolder.missing = false
+    }
+    expect(spawnSyncMock).not.toHaveBeenCalled()
+    expect(procs[0].kill).toHaveBeenCalled()
   })
 
   it('says nothing when the browser that ran is the one that was asked for', async () => {
