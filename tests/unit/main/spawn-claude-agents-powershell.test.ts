@@ -187,7 +187,7 @@ describe.runIf(onWindows)('Windows: a Claude session hands Claude Code its agent
         expect(res.line).not.toContain('reviewer')
       }, 180_000)
     }
-    for (const launcher of ['claude.exe', 'claude.cmd'] as const) {
+    for (const launcher of ['claude.exe', 'claude.cmd', 'claude.bat'] as const) {
       it(`${name}, the resume picker starting ${launcher}: it passes the templates on unchanged`, async () => {
         const res = await run(shell, launcher, 'picker')
         expect(res.picker, `${res.line}\n${res.stderr}`).not.toBeNull()
