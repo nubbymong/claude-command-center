@@ -13,7 +13,7 @@
   "scripts/resume-picker.js :: spawn(first.file": {
    "count": 1,
    "how": "full-path",
-   "reason": "Claude Code: on Windows by the full path found in PATH's fully qualified folders (resolveClaudeCmd: claude.exe, then claude.cmd, then claude.bat, the app's order), a claude.cmd or claude.bat launcher through the system cmd.exe (buildSpawnTarget); elsewhere claude by name in the session's own login-shell PATH."
+   "reason": "Claude Code: on Windows by the full path found in PATH's fully qualified folders (resolveClaudeCmd: claude.exe, then claude.cmd, then claude.bat, the app's order), a claude.cmd or claude.bat launcher through the system cmd.exe (buildSpawnTarget) whose environment keeps PATH to its fully qualified folders with NoDefaultCurrentDirectoryInExePath (withFullyQualifiedProgramLookup, the app's rule); elsewhere claude by name in the session's own login-shell PATH."
   },
   "scripts/resume-picker.js :: spawn(fresh.file": {
    "count": 1,
@@ -23,7 +23,7 @@
   "scripts/resume-picker.js :: spawn(git": {
    "count": 1,
    "how": "full-path",
-   "reason": "git by the full path findOnPath finds in PATH's fully qualified folders (named as Windows names them); none found lists the folder alone."
+   "reason": "git by the full path findOnPath finds in PATH's fully qualified folders (named as Windows names them), its environment keeping PATH to those folders with NoDefaultCurrentDirectoryInExePath (withFullyQualifiedProgramLookup); none found lists the folder alone."
   },
   "src/main/account-profiles.ts :: execFileSync(ICACLS": {
    "count": 2,

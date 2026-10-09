@@ -6,16 +6,22 @@
 // for a program at the same files, in the same order, and for Claude Code by
 // the app's own names (claude-cli-probe.ts CLAUDE_WINDOWS_NAMES: claude.exe,
 // then claude.cmd, then claude.bat), so the one the app's check finds is the
-// one the picker starts. Pure: the file check records each file it is asked
-// about and answers from a list written here; nothing starts.
+// one the picker starts. The environment the picker hands what it starts (a
+// launcher's cmd.exe, git) is held to the app's own rule for the programs
+// those start by name (withFullyQualifiedProgramLookup). Pure: the file check
+// records each file it is asked about and answers from a list written here;
+// nothing starts.
 import { describe, it, expect, vi } from 'vitest'
-import { findOnWindowsPath, windowsPathFolders } from '../../../src/main/windows-programs'
+import { findOnWindowsPath, windowsPathFolders, withFullyQualifiedProgramLookup } from '../../../src/main/windows-programs'
+import { windowsPathFolderIsFullyQualified } from '../../../src/main/providers/windows-path-names'
 import { CLAUDE_WINDOWS_NAMES } from '../../../src/main/claude-cli-probe'
 
 type Env = Record<string, string | undefined>
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const picker = require('../../../scripts/resume-picker.js') as {
   CLAUDE_WINDOWS_NAMES: readonly string[]
+  withFullyQualifiedProgramLookup: (env: Env, platform: string) => Env
+  buildSpawnTarget: (cmd: string, args: string[], platform?: string, env?: Env, cwd?: string) => { file: string; argv: string[]; verbatim: boolean; env?: Env } | null
   resolveClaudeCmd: (platform?: string, env?: Env, isFile?: (p: string) => boolean) => string | null
   listWorktrees: (
     cwd: string,
@@ -185,5 +191,94 @@ describe('the picker finds the Claude Code the app finds', () => {
       expect(app, JSON.stringify(files)).toBe(expected)
       expect(picker.resolveClaudeCmd('win32', { PATH }, isFile), JSON.stringify(files)).toBe(app)
     }
+  })
+})
+
+// What the picker starts on Windows -- a claude.cmd or claude.bat launcher
+// through cmd.exe, and git -- gets the app's environment rule for the programs
+// it starts by a bare name (a launcher's `node`): PATH's fully qualified
+// folders only (windows-programs.ts withFullyQualifiedProgramLookup, as main's
+// own batch starts of Claude Code use it). An entry such as `.` or `rel` that
+// reached PATH after the app set it, from a shell profile, is dropped, so that
+// `node` never comes from the project folder or a folder named relative to it.
+describe('what the picker starts on Windows gets the app\'s PATH rule for the programs it starts by name', () => {
+  // Every entry above, and: the current folder and relative folders in every
+  // spelling, drive-relative and rooted-without-a-drive names, the device
+  // namespaces, unexpanded variables, and quoted, padded and empty forms.
+  const CORPUS = [
+    ...ENTRIES,
+    '.', '.\\', '..\\rel', 'rel', '.\\rel', 'C:rel', 'C:', 'C:.', '\\x\\rel', '/x/rel',
+    '\\\\?\\C:', '\\\\.\\C:', '//?/C:', '\\\\?\\UNC', '\\\\?\\UNC\\srv\\share', '%VAR%', '%VAR%\\bin',
+    '"."', ' . ', '" . "', '"rel"', '"..\\rel"', ' rel ', '"C:rel"', '" C:\\Quoted Padded "', '\t.\t', '',
+  ]
+  const app = (env: Env): Env => withFullyQualifiedProgramLookup(env)
+  const LAUNCHERS = ['C:\\npm\\claude.cmd', 'C:\\bat\\claude.bat']
+  const launcherEnv = (launcher: string, env: Env): Env | undefined =>
+    picker.buildSpawnTarget(launcher, ['--model', 'opus'], 'win32', env)!.env
+  const gitEnv = (env: Env): Env => {
+    const seen: Array<Record<string, unknown>> = []
+    picker.listWorktrees('C:\\proj', 'win32', {
+      env,
+      isFile: (p) => p === 'C:\\Git\\cmd\\git.exe',
+      spawn: (_file, _args, opts) => { seen.push(opts); return { status: 0, stdout: '' } },
+    })
+    expect(seen).toHaveLength(1)
+    return seen[0].env as Env
+  }
+
+  it('the picker\'s copy of the rule gives the app\'s answer, entry by entry and for a whole PATH', () => {
+    for (const entry of CORPUS) {
+      const env = { Path: entry, KEEP: 'kept' }
+      expect(picker.withFullyQualifiedProgramLookup(env, 'win32'), JSON.stringify(entry)).toEqual(app(env))
+    }
+    const whole = { Path: CORPUS.join(';'), KEEP: 'kept' }
+    expect(picker.withFullyQualifiedProgramLookup(whole, 'win32')).toEqual(app(whole))
+    expect(CORPUS.some((e) => (picker.withFullyQualifiedProgramLookup({ Path: e }, 'win32').Path ?? '') !== '')).toBe(true)
+  })
+
+  it('every spelling of PATH is kept to its fully qualified folders; one left with none is dropped; the setting is one spelling', () => {
+    const env = {
+      PATH: CORPUS.join(';'), Path: '.;C:\\x;rel', path: 'rel;.\\bin',
+      NODEFAULTCURRENTDIRECTORYINEXEPATH: '0', nodefaultcurrentdirectoryinexepath: '', KEEP: 'kept',
+    }
+    const before = { ...env }
+    const got = picker.withFullyQualifiedProgramLookup(env, 'win32')
+    expect(got).toEqual(app(env))
+    expect(got.Path).toBe('C:\\x')
+    expect('path' in got).toBe(false)
+    for (const key of ['PATH', 'Path']) {
+      for (const dir of got[key]!.split(';')) expect(windowsPathFolderIsFullyQualified(dir), `${key}: ${dir}`).toBe(true)
+    }
+    expect(Object.keys(got).filter((k) => k.toUpperCase() === 'NODEFAULTCURRENTDIRECTORYINEXEPATH')).toEqual(['NoDefaultCurrentDirectoryInExePath'])
+    expect(got.NoDefaultCurrentDirectoryInExePath).toBe('1')
+    expect(env).toEqual(before)
+  })
+
+  it('a claude.cmd and a claude.bat launcher start with the app\'s environment', () => {
+    for (const launcher of LAUNCHERS) {
+      for (const entry of CORPUS) {
+        const env = { SystemRoot: 'C:\\Windows', Path: `${entry};C:\\Program Files\\nodejs`, KEEP: 'kept' }
+        expect(launcherEnv(launcher, env), `${launcher} ${JSON.stringify(entry)}`).toEqual(app(env))
+      }
+      const whole = { SystemRoot: 'C:\\Windows', Path: CORPUS.join(';'), PATH: '.;C:\\y', KEEP: 'kept' }
+      expect(launcherEnv(launcher, whole), launcher).toEqual(app(whole))
+      // `.` before the launcher's folder and node's: only the two folders are left.
+      expect(launcherEnv(launcher, { SystemRoot: 'C:\\Windows', Path: `.;rel;C:\\shim;C:\\Program Files\\nodejs` })!.Path, launcher)
+        .toBe('C:\\shim;C:\\Program Files\\nodejs')
+    }
+  })
+
+  it('git starts with the app\'s environment', () => {
+    for (const entry of CORPUS) {
+      const env = { Path: `${entry};C:\\Git\\cmd`, KEEP: 'kept' }
+      expect(gitEnv(env), JSON.stringify(entry)).toEqual(app(env))
+    }
+    expect(gitEnv({ Path: '.;rel;C:\\Git\\cmd' }).Path).toBe('C:\\Git\\cmd')
+  })
+
+  it('elsewhere the environment is passed on as it is', () => {
+    const env = { PATH: 'bin:./tools::/usr/bin', HOME: '/home/jo' }
+    expect(picker.withFullyQualifiedProgramLookup(env, 'linux')).toEqual(env)
+    expect(picker.withFullyQualifiedProgramLookup(env, 'darwin')).toEqual(env)
   })
 })

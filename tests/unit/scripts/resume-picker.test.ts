@@ -615,6 +615,8 @@ describe('git and Claude Code are run only from the folders PATH names', () => {
     const env = calls[0].opts.env as Record<string, string>
     expect(Object.keys(env).filter((k) => k.toUpperCase() === 'NODEFAULTCURRENTDIRECTORYINEXEPATH')).toEqual(['NoDefaultCurrentDirectoryInExePath'])
     expect(env.NoDefaultCurrentDirectoryInExePath).toBe('1')
+    // What git starts by name comes from PATH's fully qualified folders only.
+    expect(env.Path).toBe('C:\\Git\\cmd;C:\\Other')
     expect(env.KEEP).toBe('kept')
     expect(out.map((w) => w.path)).toEqual(['C:\\proj', 'C:\\proj-wt\\feature'])
   })
@@ -690,9 +692,11 @@ describe('git and Claude Code are run only from the folders PATH names', () => {
   })
 
   it('an npm claude.cmd runs with the same rule, so the programs it starts by name come from PATH\'s folders', () => {
-    const t = picker.buildSpawnTarget('C:\\npm\\claude.cmd', ['--model', 'opus'], 'win32', { SystemRoot: 'C:\\Windows', NODEFAULTCURRENTDIRECTORYINEXEPATH: '0', KEEP: 'kept' })!
+    const t = picker.buildSpawnTarget('C:\\npm\\claude.cmd', ['--model', 'opus'], 'win32', { SystemRoot: 'C:\\Windows', Path: '.;rel;C:\\npm;C:\\Program Files\\nodejs', NODEFAULTCURRENTDIRECTORYINEXEPATH: '0', KEEP: 'kept' })!
     expect(Object.keys(t.env!).filter((k) => k.toUpperCase() === 'NODEFAULTCURRENTDIRECTORYINEXEPATH')).toEqual(['NoDefaultCurrentDirectoryInExePath'])
     expect(t.env!.NoDefaultCurrentDirectoryInExePath).toBe('1')
+    // Only PATH's fully qualified folders: never the project folder, nor one named relative to it.
+    expect(t.env!.Path).toBe('C:\\npm;C:\\Program Files\\nodejs')
     expect(t.env!.KEEP).toBe('kept')
     // The native binary starts as it is, with the environment it inherits.
     expect(picker.buildSpawnTarget('C:\\native\\claude.exe', ['--model', 'opus'], 'win32', { SystemRoot: 'C:\\Windows' })!.env).toBeUndefined()

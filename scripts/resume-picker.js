@@ -215,11 +215,16 @@ function folderAsRun(dir) {
   const root = /^[\\/]{2}/.test(dir) ? 7 : 1
   return parts.map((part, i) => (i < root || i % 2 === 1 ? part : part.replace(/([^.])\.$/, '$1'))).join('')
 }
+/** A fully qualified Windows folder: a drive (`C:\`) or a share
+ *  (`\\server\share`), never one named relative to the folder a program runs
+ *  in. The app's own test (src/main/providers/windows-path-names.ts
+ *  windowsPathFolderIsFullyQualified). */
+const FULLY_QUALIFIED_FOLDER_RE = /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/?.][^\\/]*[\\/][^\\/]+)/
 function pathFolders(env, platform) {
   if (platform === 'win32') {
     return pathVariable(env, platform).split(';')
       .map((d) => d.trim().replace(/^"(.*)"$/, '$1').trim())
-      .filter((d) => d !== '' && !d.includes('%') && /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/?.][^\\/]*[\\/][^\\/]+)/.test(d))
+      .filter((d) => d !== '' && !d.includes('%') && FULLY_QUALIFIED_FOLDER_RE.test(d))
       .map(folderAsRun)
   }
   return pathVariable(env, platform).split(':').filter((d) => d.startsWith('/'))
@@ -258,15 +263,44 @@ function withoutCurrentFolderLookup(env, platform) {
   if (platform === 'win32') out.NoDefaultCurrentDirectoryInExePath = '1'
   return out
 }
+/** The environment of a child the picker starts on Windows (a launcher's
+ *  cmd.exe, git): withoutCurrentFolderLookup, and every spelling of PATH kept
+ *  to its fully qualified folders (FULLY_QUALIFIED_FOLDER_RE), each read as a
+ *  PATH walk reads it (trimmed, and without the quotes around a quoted one),
+ *  a spelling left with none dropped. A program the child starts by a bare
+ *  name (a launcher's `node`) is then found only in a folder PATH names in
+ *  full: never in the project folder, nor in one named relative to it. The
+ *  app's own rule (src/main/windows-programs.ts
+ *  withFullyQualifiedProgramLookup, which this script cannot import; a parity
+ *  test holds the copy to it). Elsewhere as withoutCurrentFolderLookup gives
+ *  it. `env` is not changed. */
+function withFullyQualifiedProgramLookup(env, platform) {
+  const out = withoutCurrentFolderLookup(env, platform)
+  if (platform !== 'win32') return out
+  for (const key of Object.keys(out)) {
+    if (key.toUpperCase() !== 'PATH') continue
+    const value = out[key]
+    const kept = []
+    for (const raw of typeof value === 'string' ? value.split(';') : []) {
+      let dir = raw.trim()
+      if (dir.length >= 2 && dir.startsWith('"') && dir.endsWith('"')) dir = dir.slice(1, -1).trim()
+      if (FULLY_QUALIFIED_FOLDER_RE.test(dir)) kept.push(dir)
+    }
+    if (kept.length) out[key] = kept.join(';')
+    else delete out[key]
+  }
+  return out
+}
 
 // Enumerate the project's worktrees from `cwd`. The configured cwd may itself BE
 // a worktree — we include every worktree git reports regardless.
 //
 // git is started by its full path from PATH's folders (findOnPath), without a
-// shell, its environment carrying the Windows no-current-folder rule; its
-// command line keeps the repository's own settings from running anything (no
-// pager, no file-system monitor hook). The project folder is git's working
-// folder only.
+// shell, its environment carrying the Windows rule for what it starts by name
+// (withFullyQualifiedProgramLookup: PATH's fully qualified folders only, never
+// the current folder); its command line keeps the repository's own settings
+// from running anything (no pager, no file-system monitor hook). The project
+// folder is git's working folder only.
 //
 // FAIL-SAFE: if git is missing, errors, or cwd isn't a repo, returns a SINGLE
 // synthetic main-worktree record for `cwd` so callers degrade to exactly the
@@ -284,7 +318,7 @@ function listWorktrees(cwd, platform, deps) {
     if (!git) return fallback
     const res = spawn(git, [...GIT_WORKTREE_ARGS], {
       cwd,
-      env: withoutCurrentFolderLookup(env, plat),
+      env: withFullyQualifiedProgramLookup(env, plat),
       encoding: 'utf-8',
       timeout: 5000,
       windowsHide: true,
@@ -928,8 +962,9 @@ function buildSpawnTarget(cmd, args, platform = os.platform(), env = process.env
     if (shimArgRefused(args) !== -1) return null
     const line = [`"${cmd}"`, ...args.map(quoteArgForCmdShim)].join(' ')
     // The shim starts node by a bare name when no node.exe sits beside it:
-    // it looks in PATH's folders only, never in the project folder.
-    return { file: shell, argv: ['/d', '/v:off', '/s', '/c', `"${line}"`], verbatim: true, env: withoutCurrentFolderLookup(env, platform) }
+    // it looks in PATH's fully qualified folders only, never in the project
+    // folder nor in one named relative to it.
+    return { file: shell, argv: ['/d', '/v:off', '/s', '/c', `"${line}"`], verbatim: true, env: withFullyQualifiedProgramLookup(env, platform) }
   }
   return { file: cmd, argv: args, verbatim: false }
 }
@@ -1132,6 +1167,7 @@ module.exports = {
   launchClaude,
   resolveClaudeCmd,
   CLAUDE_WINDOWS_NAMES,
+  withFullyQualifiedProgramLookup,
   encodeProjectPath,
   resolveProjectDir,
   ensureCompanionDir,
