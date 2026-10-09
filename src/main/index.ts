@@ -265,7 +265,7 @@ function registerMainWindowIpc(): void {
   // SSH/sudo/argsecret/cmdsecret namespaces of a real config or command and
   // nothing else, so it cannot overwrite or delete an arbitrary key (private
   // advisory, 2026-08-22).
-  registerCredentialHandlers()
+  registerCredentialHandlers(() => mainWindow) // read per call: follows a re-created window, refused while there is none
 
   // No 'credentials:load' handler: a credential's value is injected into the
   // shell environment at spawn (pty-handlers) and never handed to the renderer.
@@ -658,7 +658,7 @@ if (!gotTheLock) {
     const getWindow = () => mainWindow
     registerPtyHandlers(getWindow)
     registerUsageHandlers()
-    registerAccountWebHandlers()
+    registerAccountWebHandlers(getWindow)
     // #439: when a partition is wiped (sign-out / delete / cancelled sign-in),
     // sign-in.ts emits a revocation through the decoupling seam; wire the owners
     // here so it never has to import their heavy graphs. Both run synchronously.

@@ -50,7 +50,10 @@ const { requestCanvasSnapshot, _resetSnapshotBrokerForTest } = await import('../
 
 const SID = 'a1b2c3d4e5f6a7b8c9d0e1f2'
 const CID = 'c1c2c3c4c5c6c7c8c9c0d1d2'
-const invoke = (ch: string, args: unknown) => handlers.get(ch)!({} as never, args)
+/** The app window's main frame, and its webContents (rebuilt per test below). */
+const APP_FRAME = {}
+let appContents: object = {}
+const invoke = (ch: string, args: unknown) => handlers.get(ch)!({ sender: appContents, senderFrame: APP_FRAME } as never, args)
 
 let sent: Array<{ channel: string; payload: unknown }>
 let destroyed: boolean
@@ -65,8 +68,9 @@ beforeEach(() => {
   destroyed = false
   const fakeWindow = {
     isDestroyed: () => destroyed,
-    webContents: { send: (channel: string, payload: unknown) => sent.push({ channel, payload }) },
+    webContents: { mainFrame: APP_FRAME, send: (channel: string, payload: unknown) => sent.push({ channel, payload }) },
   }
+  appContents = fakeWindow.webContents
   registerCanvasHandlers(() => fakeWindow as never)
 })
 

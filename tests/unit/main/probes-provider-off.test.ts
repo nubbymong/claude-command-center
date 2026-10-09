@@ -59,7 +59,11 @@ const { registerAccountWebHandlers } = await import('../../../src/main/ipc/accou
 const { registerCliHandlers } = await import('../../../src/main/ipc/cli-handlers')
 const { registerLegacyVersionHandlers } = await import('../../../src/main/ipc/legacy-version-handlers')
 const { IPC } = await import('../../../src/shared/ipc-channels')
-registerAccountWebHandlers()
+/** The app window and its main frame: the only sender these handlers answer. */
+const APP_FRAME = {}
+const APP_WIN = { isDestroyed: () => false, webContents: { mainFrame: APP_FRAME, send: () => {} } }
+const APP_EVENT = { sender: APP_WIN.webContents, senderFrame: APP_FRAME }
+registerAccountWebHandlers(() => APP_WIN as never)
 registerCliHandlers()
 registerLegacyVersionHandlers(() => null)
 
@@ -76,7 +80,7 @@ beforeEach(() => {
 describe('accountWeb:status while Claude Code is off', () => {
   it('runs no `claude auth status`; the CLI half says why, and the web half still answers', async () => {
     acct.claude = 'off'
-    const r = await handlers[IPC.ACCOUNT_WEB_STATUS]({}, PROFILE) as { ok: boolean; cli: Record<string, unknown>; web: Record<string, unknown> }
+    const r = await handlers[IPC.ACCOUNT_WEB_STATUS](APP_EVENT, PROFILE) as { ok: boolean; cli: Record<string, unknown>; web: Record<string, unknown> }
     expect(readClaudeCliAuth).not.toHaveBeenCalled()
     expect(r.ok).toBe(true)
     expect(r.cli).toEqual({ authenticated: false, notChecked: OFF })
@@ -85,13 +89,13 @@ describe('accountWeb:status while Claude Code is off', () => {
 
   it('a setting that cannot be read runs nothing either, and says so', async () => {
     acct.claude = 'unreadable'
-    const r = await handlers[IPC.ACCOUNT_WEB_STATUS]({}, PROFILE) as { cli: Record<string, unknown> }
+    const r = await handlers[IPC.ACCOUNT_WEB_STATUS](APP_EVENT, PROFILE) as { cli: Record<string, unknown> }
     expect(readClaudeCliAuth).not.toHaveBeenCalled()
     expect(r.cli.notChecked).toBe('This app could not read whether Claude Code is on. Check Settings, Accounts.')
   })
 
   it('with Claude Code on, the CLI is asked as before (the control)', async () => {
-    const r = await handlers[IPC.ACCOUNT_WEB_STATUS]({}, PROFILE) as { cli: Record<string, unknown> }
+    const r = await handlers[IPC.ACCOUNT_WEB_STATUS](APP_EVENT, PROFILE) as { cli: Record<string, unknown> }
     expect(readClaudeCliAuth).toHaveBeenCalledTimes(1)
     expect(r.cli).toMatchObject({ authenticated: true, email: 'someone@example.com' })
   })

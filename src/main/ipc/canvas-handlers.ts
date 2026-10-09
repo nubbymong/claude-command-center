@@ -64,7 +64,8 @@ import {
   upsertAnnotation,
 } from '../canvas/canvas-review-store'
 import { completeCanvasGuarded, describeForceClosures, reopenCanvasGuarded } from '../canvas/canvas-completion'
-import { logInfo } from '../debug-logger'
+import { logInfo, logWarn } from '../debug-logger'
+import { appWindowSender } from './trusted-sender'
 import {
   EVIDENCE_ID_RE,
   MAX_NOTE_CHARS,
@@ -1071,8 +1072,17 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
    * A refusal is REPORTED, not thrown: the renderer treats delivery as
    * best-effort and swallows rejections, so a thrown refusal would be invisible
    * on both sides.
+   *
+   * SENDER. It types a line into a live session, so it answers only the app's
+   * own window, its main frame (trusted-sender.ts), checked before the payload
+   * is read; that refusal is reported in the same shape.
    */
-  ipcMain.handle(IPC.CANVAS_AGENT_MARKER, async (_e, args: unknown) => {
+  const trustedMarkerSender = appWindowSender(getWindow)
+  ipcMain.handle(IPC.CANVAS_AGENT_MARKER, async (e, args: unknown) => {
+    if (!trustedMarkerSender(e)) {
+      logWarn('[canvas] agent marker refused: not the app window')
+      return { delivery: 'refused' as const, reason: 'not-app-window' }
+    }
     const { sessionId, canvasId, line } = agentMarkerSchema.parse(args)
     const allowed = canvasArtifactMutationAllowed(sessionId, canvasId)
     if (!allowed.ok) return { delivery: 'refused' as const, reason: allowed.reason }
