@@ -218,12 +218,21 @@ describe.runIf(IS_WIN)('secureFoldersWindows under Constrained Language Mode: th
     const broken = `${modules};${saved.modules ?? ''}`
     // What Windows PowerShell learns of the modules it looks at stays in this folder.
     const cache = path.join(top, 'module-analysis-cache')
-    // Control: a Windows PowerShell handed that module path itself cannot load Get-Acl.
+    // Control: a Windows PowerShell handed that module path itself cannot load
+    // Get-Acl. Every spelling of the two names is replaced: a test worker's
+    // environment can spell them otherwise (PSMODULEPATH), and a child handed
+    // two keeps the first in sort order, which would be the inherited one.
+    const controlEnv: Record<string, string | undefined> = {}
+    for (const [k, v] of Object.entries(process.env)) {
+      if (!['PSMODULEPATH', 'PSMODULEANALYSISCACHEPATH'].includes(k.toUpperCase())) controlEnv[k] = v
+    }
+    controlEnv.PSModulePath = broken
+    controlEnv.PSModuleAnalysisCachePath = cache
     let controlRefused = false
     try {
       execFileSync(path.join(SYSROOT, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
         ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', "$ErrorActionPreference = 'Stop'; $null = Get-Acl -LiteralPath $env:SystemRoot"],
-        { stdio: 'ignore', windowsHide: true, timeout: 60_000, env: { ...process.env, PSModulePath: broken, PSModuleAnalysisCachePath: cache } })
+        { stdio: 'ignore', windowsHide: true, timeout: 60_000, env: controlEnv })
     } catch { controlRefused = true }
     expect(controlRefused).toBe(true)
 

@@ -159,7 +159,8 @@ describe.runIf(process.platform === 'win32')('the app\'s owner-only rule answers
   it('started by PowerShell 7 (its own modules first in the module path this process has): a sign-in folder already there and one made inside it are owner-only, and every Windows PowerShell call gets its own modules folder', async () => {
     const ps7 = 'C:\\Program Files\\PowerShell\\7\\Modules'
     win.brokenModules.add(ps7.toLowerCase())
-    process.env.PSModulePath = ['C:\\Users\\person\\Documents\\PowerShell\\Modules', 'C:\\Program Files\\PowerShell\\Modules', ps7, 'C:\\Program Files\\WindowsPowerShell\\Modules', 'C:\\WINDOWS\\system32\\WindowsPowerShell\\v1.0\\Modules'].join(';')
+    // Spelled as a test worker has it (the name is case-insensitive here: this sets the one variable).
+    process.env.PSMODULEPATH = ['C:\\Users\\person\\Documents\\PowerShell\\Modules', 'C:\\Program Files\\PowerShell\\Modules', ps7, 'C:\\Program Files\\WindowsPowerShell\\Modules', 'C:\\WINDOWS\\system32\\WindowsPowerShell\\v1.0\\Modules'].join(';')
     const home = path.join(base, 'profile')
     fs.mkdirSync(home)
     const dirs = [home, path.join(home, '.claude')]
