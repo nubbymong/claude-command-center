@@ -296,6 +296,36 @@ export function isCodexModelId(v: unknown): v is string {
   return typeof v === 'string' && v.length > 0 && v.length <= CODEX_MODEL_ID_MAX && CODEX_MODEL_ID_RE.test(v)
 }
 
+/**
+ * The charset the PTY IPC boundary already enforces for a `--model` value
+ * (`src/main/ipc/pty-handlers.ts`), mirrored for values written into a LIVE PTY
+ * as a slash command (`/model <v>`, `/effort <v>`).
+ *
+ * That path has no schema in front of it. The pinned picker rows are derived
+ * from the registry, and `registry-overlay.json` is a hand-editable user file
+ * whose entries are validated on APPLY rather than on load — so an id carrying a
+ * newline would be written into the PTY as a second, attacker-chosen line.
+ * Defence in depth (the overlay is a local file, not remote input), and it costs
+ * a regex. Legit values: 'opus', 'opus[1m]', 'claude-opus-4-8', 'xhigh'.
+ * Here, beside the registry, so main holds a proposed entry to the same rule
+ * (sentinel-apply.ts); `src/renderer/lib/claude-cli-options.ts` re-exports it.
+ */
+export const PICKER_VALUE_RE = /^[a-zA-Z0-9._[\]-]+$/
+
+/** True when `v` is safe to write into a PTY as a slash-command argument. */
+export function isWritablePickerValue(v: unknown): v is string {
+  return typeof v === 'string' && v.length > 0 && v.length <= 64 && PICKER_VALUE_RE.test(v)
+}
+
+/** A model name (an entry's id or one of its aliases) as the model picker of
+ *  the family's provider takes it: Claude Code's picker writes the value into
+ *  a live session as `/model <v>` (isWritablePickerValue); Codex's offers only
+ *  ids its launch takes (isCodexModelId). The provider is the code's
+ *  (familyProvider), never the entry's. */
+export function followsModelPickerRule(family: string | null | undefined, v: unknown): v is string {
+  return familyProvider(family) === 'claude' ? isWritablePickerValue(v) : isCodexModelId(v)
+}
+
 /** A provider's effort levels, in display order: Claude Code's are the
  *  registry's `effortLevels`, another provider's its `providerEffortLevels`
  *  entry (none when the registry has none for it). */
