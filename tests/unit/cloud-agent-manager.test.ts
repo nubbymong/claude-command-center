@@ -1,4 +1,11 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
+// On Windows a start with a recent answer of the PATH walk (claude-cli-probe.ts) is synchronous, and the
+// cases here are about that path (the hold, the release, the waits), not about the lookup, which
+// windows-program-lookup.test.ts covers: the answer is always recent here.
+vi.mock('../../src/main/claude-cli-probe', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/claude-cli-probe')>()),
+  recentClaudeOnWindows: () => 'C:\\Tools\\claude.exe',
+}))
 // Every provider is on here: main's launch rule has its own suites
 // (tests/unit/main/provider-launch-gate.test.ts and the provider-off tests).
 vi.mock('../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal: () => null, providerProbeRefusal: () => null }))
@@ -20,6 +27,7 @@ vi.mock('child_process', () => ({
 vi.mock('../../src/main/windows-programs', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/windows-programs')>()),
   findOnWindowsPath: () => 'C:\\Tools\\claude.exe',
+  findOnWindowsPathAsync: async () => 'C:\\Tools\\claude.exe',
 }))
 /** taskkill by its full path in the system folder, as each kill ran it. */
 const taskkillCalls = (): string[] => mockSpawnSync.mock.calls
@@ -94,7 +102,7 @@ import {
 function createMockProcess(): any {
   const stdout = { on: vi.fn() }
   const stderr = { on: vi.fn() }
-  const stdin = { write: vi.fn(), end: vi.fn() }
+  const stdin = { write: vi.fn(), end: vi.fn(), on: vi.fn() }
   return {
     pid: 12345,
     stdout,
@@ -180,7 +188,7 @@ describe('cloud-agent-manager', () => {
   })
 
   describe('dispatchAgent', () => {
-    it('spawns claude piped from a temp file, WITHOUT --dangerously-skip-permissions by default (P1.3 safe default)', async () => {
+    it('starts claude -p by its full path with no shell, the prompt on stdin, WITHOUT --dangerously-skip-permissions by default (P1.3 safe default)', async () => {
       const mockProc = createMockProcess()
       mockSpawn.mockReturnValue(mockProc)
 
@@ -190,22 +198,18 @@ describe('cloud-agent-manager', () => {
         projectPath: 'C:\\dev\\project',
       })
 
-      // Prompt is written to a temp file and piped via shell command
-      const spawnCall = mockSpawn.mock.calls[0]
-      const shellCmd = spawnCall[0] as string
-      // Windows uses `type`, macOS/Linux uses `cat`
-      const pipeCmdPattern = process.platform === 'win32'
-        ? /type ".*ccc-agent-.*\.txt" \| claude\b/
-        : /cat ".*ccc-agent-.*\.txt" \| claude\b/
-      expect(shellCmd).toMatch(pipeCmdPattern)
-      expect(shellCmd).not.toContain('--dangerously-skip-permissions')
-      expect(spawnCall[1]).toEqual([])
-      expect(spawnCall[2]).toEqual(expect.objectContaining({
+      // An argument list, never a shell command line; on Windows the full path
+      // found in PATH's folders (stubbed above).
+      const [file, args, opts] = mockSpawn.mock.calls[0]
+      expect(file).toBe(process.platform === 'win32' ? 'C:\\Tools\\claude.exe' : 'claude')
+      expect(args).toEqual(['-p'])
+      expect(opts).not.toHaveProperty('shell')
+      expect(opts).toEqual(expect.objectContaining({
         cwd: 'C:\\dev\\project',
-        shell: true,
         windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
       }))
+      expect(String(mockProc.stdin.end.mock.calls[0][0])).toBe('Fix the bug')
       expect(agent.status).toBe('running')
       expect(agent.name).toBe('Test')
       expect(agent.id).toMatch(/^ca-/)
@@ -214,8 +218,7 @@ describe('cloud-agent-manager', () => {
     it('includes --dangerously-skip-permissions only when skipPermissions is true (FEAT-1 per-run opt-in)', async () => {
       mockSpawn.mockReturnValue(createMockProcess())
       await dispatchAgent({ name: 'T', description: 'd', projectPath: '/p', skipPermissions: true })
-      const shellCmd = mockSpawn.mock.calls[0][0] as string
-      expect(shellCmd).toContain('--dangerously-skip-permissions')
+      expect(mockSpawn.mock.calls[0][1]).toEqual(['-p', '--dangerously-skip-permissions'])
     })
 
     it('never skips by default, ignoring any persisted config (per-run opt-in only)', async () => {
@@ -225,8 +228,7 @@ describe('cloud-agent-manager', () => {
       mockReadConfig.mockImplementation((key: string) => key === 'settings' ? { skipPermissionsForAgents: true } : null)
       mockSpawn.mockReturnValue(createMockProcess())
       await dispatchAgent({ name: 'T', description: 'd', projectPath: '/p' })
-      const shellCmd = mockSpawn.mock.calls[0][0] as string
-      expect(shellCmd).not.toContain('--dangerously-skip-permissions')
+      expect(mockSpawn.mock.calls[0][1]).not.toContain('--dangerously-skip-permissions')
     })
 
     it('broadcasts status on dispatch', async () => {

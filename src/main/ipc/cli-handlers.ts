@@ -4,42 +4,48 @@
  * registerMainWindowIpc() block, never per window.
  */
 import { ipcMain, app } from 'electron'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import { resolveClaudeForPty } from '../pty-manager'
 import { spawnClaudeHeadless } from '../claude-headless'
 import { parseClaudeVersion } from '../sentinel/sentinel-version'
 import { ensureHelpWorkspace } from '../help-workspace'
 import { getResourcesDirectory } from './setup-handlers'
-import { defaultLoginShell } from '../login-shell'
+import { loginShellWithOwnPath, shFamilyLoginShell } from '../login-shell'
+import { claudeInLoginShellPathAsync, findClaudeOnWindowsAsync } from '../claude-cli-probe'
 import { IPC } from '../../shared/ipc-channels'
 import { providerProbeRefusal } from '../provider-launch-gate'
 
 export function registerCliHandlers(): void {
-  // Windows: tries native .exe then npm .cmd via 'where'
-  // macOS/Linux: uses 'which' to find 'claude' in PATH
+  // Off Windows, a login shell outside the sh family is asked once at start
+  // for the PATH it builds, off the event loop, so the first Claude session
+  // finds the answer ready (claudeInLoginShellPathForLaunch); the check below
+  // keeps it fresh. Nothing is asked on Windows or of a sh-family shell.
+  void claudeInLoginShellPathAsync(process.env, process.platform).catch(() => null)
+  // Windows: claude.exe, claude.cmd, claude.bat (claude-cli-probe.ts
+  // CLAUDE_WINDOWS_NAMES), found in-process in PATH's folders
+  // macOS/Linux: what a Claude session's launcher will run (claude-cli-probe.ts
+  // claudeInLoginShellPathAsync, else `which` in the launcher's login shell)
   ipcMain.handle(IPC.CLI_CHECK, async () => {
-    // Async execFile (not execSync): this runs every 30s for the app's lifetime
-    // from BottomBar, so a synchronous probe would stall PTY data delivery to
+    // Async (not sync): this runs every 30s for the app's lifetime from
+    // BottomBar, so a synchronous probe would stall PTY data delivery to
     // every terminal in lockstep. Same boolean result shape as before.
-    const { execFile } = require('child_process')
-    const { promisify } = require('util')
     const execFileAsync = promisify(execFile)
     try {
       if (process.platform === 'win32') {
-        // windowsHide + piped stderr suppresses the "INFO: Could not find
-        // files..." line `where` writes to stderr on a miss; execFile pipes
-        // by default so the noise never reaches the parent's terminal between
-        // the .exe and .cmd probes.
-        const opts = { encoding: 'utf-8' as const, timeout: 5000, windowsHide: true }
-        try {
-          await execFileAsync('where', ['claude.exe'], opts)
-          return true
-        } catch { /* try .cmd */ }
-        await execFileAsync('where', ['claude.cmd'], opts)
-        return true
+        // No process is started: the same PATH walk the launch uses
+        // (claude-cli-probe.ts CLAUDE_WINDOWS_NAMES, in that order), one stat
+        // at a time off the event loop. Its answer is what the next launch
+        // uses while it is recent (findClaudeOnWindows).
+        return (await findClaudeOnWindowsAsync(process.env)) !== null
       } else {
-        // Use login shell to pick up Homebrew/nvm PATH entries. The platform
-        // is passed explicitly and is the same source as the gate above.
-        const shell = defaultLoginShell(process.env, process.platform)
+        // A login shell outside the sh family: Claude Code in the PATH it
+        // builds, which the launcher carries and names. Otherwise, or when it
+        // is not there, the launcher's own sh-family login shell, to pick up
+        // Homebrew/nvm PATH entries. The platform is passed explicitly and is
+        // the same source as the gate above.
+        if (loginShellWithOwnPath(process.env, process.platform) && (await claudeInLoginShellPathAsync(process.env, process.platform))?.claude) return true
+        const shell = shFamilyLoginShell(process.env, process.platform)
         await execFileAsync(shell, ['-l', '-c', 'which claude'], { encoding: 'utf-8', timeout: 5000 })
         return true
       }

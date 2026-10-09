@@ -5,6 +5,14 @@
 // account's environment. Anything else is a programming error and throws.
 // The spawn is faked: no process starts.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+// On Windows, programs are found in PATH's folders (windows-programs.ts); stubbed here,
+// so no real PATH is read: the first name asked for, in one fully qualified folder
+// (the walk on the event loop and the one off it alike).
+vi.mock('../../src/main/windows-programs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/windows-programs')>()),
+  findOnWindowsPath: (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+  findOnWindowsPathAsync: async (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+}))
 import * as path from 'path'
 
 const spawnCalls: Array<{ executable: string; args: string[]; opts: any }> = []
@@ -42,7 +50,8 @@ describe('spawnClaudeHeadless: the run\'s own folder and switches (P3.9 round 2)
     const r = await spawnClaudeHeadless([...CLAUDE_ANALYSIS_ARGS], 1000, 'prompt', null, undefined, { cwd: FOLDER, env: CLAUDE_ANALYSIS_ENV })
     expect(r.code).toBe(0)
     const { executable, args, opts } = spawnCalls[0]
-    expect(executable).toBe('claude')
+    // Windows: Claude Code by its full path from PATH's folders (stubbed above), no shell.
+    expect(executable).toBe(process.platform === 'win32' ? 'C:\\Tools\\claude.exe' : 'claude')
     expect(args).toEqual([...CLAUDE_ANALYSIS_ARGS])
     expect(opts.cwd).toBe(FOLDER)
     expect(opts.env).toMatchObject({ FROM_PROFILE: '1', CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1' })

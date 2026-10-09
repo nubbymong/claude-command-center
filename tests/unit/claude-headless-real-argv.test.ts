@@ -1,6 +1,7 @@
 // P3.9 round 2: Sentinel's Claude Code analysis argv through the REAL
-// headless spawner (shell:true: cmd.exe on Windows, sh elsewhere) into a FAKE
-// `claude` on PATH (an npm-style .cmd shim on Windows). The empty tool list
+// headless spawner (on Windows Claude Code by the full path found in PATH's
+// folders, an npm-style .cmd shim through the system cmd.exe; sh elsewhere)
+// into a FAKE `claude` on PATH (an npm-style .cmd shim on Windows). The empty tool list
 // and the empty settings-source list are written `--tools=` and
 // `--setting-sources=`: each must arrive as ONE argument, and the run must
 // start in the folder given with Claude Code's switches set.
@@ -48,7 +49,11 @@ beforeAll(() => {
   if (IS_WIN) fs.writeFileSync(path.join(bin, 'claude.cmd'), `@"${process.execPath}" "%~dp0fake-claude.js" %*\r\n`)
   else fs.writeFileSync(path.join(bin, 'claude'), `#!${process.execPath}\nrequire(${JSON.stringify(path.join(bin, 'fake-claude.js'))})\n`, { mode: 0o755 })
   savedPath = process.env[PATH_KEY]
-  process.env[PATH_KEY] = bin + path.delimiter + (savedPath ?? '')
+  // The fake's folder ALONE: the run looks for claude.exe in every PATH folder
+  // before claude.cmd, so with the machine's own PATH after it a real Claude
+  // Code installed there would be the one started. The fakes name node by its
+  // full path, so they need nothing else on PATH.
+  process.env[PATH_KEY] = bin
 })
 afterAll(() => {
   process.env[PATH_KEY] = savedPath

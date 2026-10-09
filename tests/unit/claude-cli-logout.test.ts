@@ -10,6 +10,21 @@
 // APPDATA, LOCALAPPDATA and CLAUDE_CONFIG_DIR point inside the temp folder for
 // every case, so nothing handed to a runner names this computer's own folders.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
+// On Windows a start with a recent answer of the PATH walk (claude-cli-probe.ts) is synchronous, and the
+// cases here are about that path (the hold, the release, the waits), not about the lookup, which
+// windows-program-lookup.test.ts covers: the answer is always recent here.
+vi.mock('../../src/main/claude-cli-probe', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/claude-cli-probe')>()),
+  recentClaudeOnWindows: () => 'C:\\Tools\\claude.exe',
+}))
+// On Windows, programs are found in PATH's folders (windows-programs.ts); stubbed here,
+// so no real PATH is read: the first name asked for, in one fully qualified folder
+// (the walk on the event loop and the one off it alike).
+vi.mock('../../src/main/windows-programs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/windows-programs')>()),
+  findOnWindowsPath: (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+  findOnWindowsPathAsync: async (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+}))
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import { join } from 'node:path'
@@ -300,7 +315,8 @@ describe('logoutClaudeCli: the CLI\'s own sign-out in exactly this profile\'s ho
     finishLogout(ok())
     await run
     await probe
-    expect(authShellRuns()).toEqual([['claude', 'auth', 'status']])
+    // Windows: Claude Code by its full path from PATH's folders (stubbed above), no shell.
+    expect(authShellRuns()).toEqual([[process.platform === 'win32' ? 'C:\\Tools\\claude.exe' : 'claude', 'auth', 'status']])
   })
 
   it('a sign-out stopped at its time limit: no status read, its process tree ended before it answers, unconfirmed in the log, the identity copy kept', async () => {

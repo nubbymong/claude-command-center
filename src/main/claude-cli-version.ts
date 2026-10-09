@@ -86,20 +86,18 @@ function isWindowsAbsolute(p: string | undefined): p is string {
   return !!p && /^([A-Za-z]:[\\/]|\\\\)/.test(p) && !/^[\\/]{2}[?.]([\\/]|$)/.test(p)
 }
 
-/** Find the CLI on a Windows PATH IN-PROCESS, in the order the managed launch
- *  asks `where` for it (`resolveClaudeBinary`: `claude.exe` anywhere on the
- *  PATH first, then `claude.cmd`). `.bat` is looked for last, which the launch
- *  never asks for.
+/** Find the CLI on a Windows PATH IN-PROCESS, in the order every check and
+ *  start asks for it (claude-cli-probe.ts CLAUDE_WINDOWS_NAMES: `claude.exe`
+ *  anywhere on the PATH first, then `claude.cmd`, then `claude.bat`).
  *
  *  Not `where` itself: it writes its answer in the console's OEM code page,
  *  which the UTF-8 decode turns into U+FFFD (and CJK into `?`), so every
  *  install under a profile name like `José` resolved to a path that does not
  *  exist and the version stayed unknown -- the same permanent finding as the
  *  shim bug below. It reads only fully qualified PATH folders (a drive or a
- *  share, windowsPathFolderIsFullyQualified) with no unexpanded `%VAR%`, so
- *  the two can differ for other entries, for a `.bat`, and for a non-ASCII
- *  install path, which the launch's
- *  own `where` still mangles (a recorded follow-up). Each folder of an entry
+ *  share, windowsPathFolderIsFullyQualified) with no unexpanded `%VAR%`: the
+ *  same folder rule as the launch's own in-process walk (windows-programs.ts),
+ *  so the two agree, non-ASCII install paths included. Each folder of an entry
  *  is named as Windows names it when it starts the program (windowsFolderAsRun:
  *  a name ending in one dot loses it, anywhere in the entry), so the walk reads
  *  the folder a terminal runs from (WP2 PR 4 review, ADR-009 L3).

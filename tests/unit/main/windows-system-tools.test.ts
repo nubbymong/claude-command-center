@@ -40,6 +40,7 @@ vi.mock('../../../src/main/profile-id', () => ({ profileIdFromHome: () => null }
 vi.mock('../../../src/main/windows-programs', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/windows-programs')>()),
   findOnWindowsPath: () => 'C:\\Tools\\claude.exe',
+  findOnWindowsPathAsync: async () => 'C:\\Tools\\claude.exe',
 }))
 
 const { readRegistry, writeRegistry, migrateRegistryKeys } = await import('../../../src/main/registry')

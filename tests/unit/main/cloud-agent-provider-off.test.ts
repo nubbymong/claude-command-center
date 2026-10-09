@@ -16,6 +16,14 @@
  * provider-launch-gate.test.ts), and child_process is faked, so nothing runs.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
+// On Windows, programs are found in PATH's folders (windows-programs.ts); stubbed here,
+// so no real PATH is read: the first name asked for, in one fully qualified folder
+// (the walk on the event loop and the one off it alike).
+vi.mock('../../../src/main/windows-programs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/windows-programs')>()),
+  findOnWindowsPath: (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+  findOnWindowsPathAsync: async (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+}))
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -91,8 +99,8 @@ const { initCloudAgentManager, dispatchAgent, retryAgent, listAgents, countClaud
 const OFF_TEXT = 'Claude Code is off. Turn it on in Settings, Accounts.'
 const OFF = { refused: { code: 'provider-off', providerId: 'claude', message: OFF_TEXT } }
 const PARAMS = { name: 'Fix it', description: 'Fix the flaky test', projectPath: 'C:\\dev\\project', legacyVersion: { enabled: true, version: '2.0.1' } }
-type Proc = { pid: number; stdout: { on: ReturnType<typeof vi.fn> }; stderr: { on: ReturnType<typeof vi.fn> }; stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> }; on: ReturnType<typeof vi.fn>; kill: ReturnType<typeof vi.fn> }
-const proc = (): Proc => ({ pid: 1, stdout: { on: vi.fn() }, stderr: { on: vi.fn() }, stdin: { write: vi.fn(), end: vi.fn() }, on: vi.fn(), kill: vi.fn() })
+type Proc = { pid: number; stdout: { on: ReturnType<typeof vi.fn> }; stderr: { on: ReturnType<typeof vi.fn> }; stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn> }; on: ReturnType<typeof vi.fn>; kill: ReturnType<typeof vi.fn> }
+const proc = (): Proc => ({ pid: 1, stdout: { on: vi.fn() }, stderr: { on: vi.fn() }, stdin: { write: vi.fn(), end: vi.fn(), on: vi.fn() }, on: vi.fn(), kill: vi.fn() })
 /** Microtasks and a macrotask, so a held dispatch reaches its wait. */
 const tick = () => new Promise<void>((r) => setTimeout(r, 0))
 

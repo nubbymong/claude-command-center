@@ -9,6 +9,21 @@
 // resolvers and the CLI subprocess, so the path the code actually joins is under
 // test — revert the `.claude` fix and the credential-file case goes RED.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
+// On Windows a start with a recent answer of the PATH walk (claude-cli-probe.ts) is synchronous, and the
+// cases here are about that path (the hold, the release, the waits), not about the lookup, which
+// windows-program-lookup.test.ts covers: the answer is always recent here.
+vi.mock('../../src/main/claude-cli-probe', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/claude-cli-probe')>()),
+  recentClaudeOnWindows: () => 'C:\\Tools\\claude.exe',
+}))
+// On Windows, programs are found in PATH's folders (windows-programs.ts); stubbed here,
+// so no real PATH is read: the first name asked for, in one fully qualified folder
+// (the walk on the event loop and the one off it alike).
+vi.mock('../../src/main/windows-programs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/windows-programs')>()),
+  findOnWindowsPath: (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+  findOnWindowsPathAsync: async (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+}))
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import { join } from 'node:path'

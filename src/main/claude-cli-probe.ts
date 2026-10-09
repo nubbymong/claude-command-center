@@ -1,7 +1,8 @@
 import { execFile } from 'child_process'
 import * as os from 'os'
 import { logInfo } from './debug-logger'
-import { defaultLoginShell } from './login-shell'
+import { findOnPosixPath, findOnPosixPathAsync, loginShellPathAsync, loginShellPathSync, loginShellWithOwnPath, shFamilyLoginShell } from './login-shell'
+import { findOnWindowsPathAsync, windowsEnvValue } from './windows-programs'
 
 /**
  * Is the `claude` CLI actually INSTALLED on this machine?
@@ -15,17 +16,22 @@ import { defaultLoginShell } from './login-shell'
  * "'claude' is not recognized", and drop the user into an app in which nothing
  * can ever launch (#, phase 7 item B).
  *
- * `resolveClaudeBinary()` cannot answer it either: its Windows branch falls
- * back to the bare string `'claude'` when both `where` probes miss, and its
- * POSIX branch returns `'claude'` unconditionally. A fallback is the right
- * answer for a spawn (let the shell try) and the wrong one for a gate.
+ * `resolveClaudeBinary()` cannot answer it either: off Windows it returns a
+ * name or a path without asking whether the file exists, which is the right
+ * answer for a spawn and the wrong one for a gate.
  *
  * So probe for real, and probe the way the setup PTY will actually launch it:
- *   - Windows: `where` for claude.exe / claude.cmd / claude, no shell.
- *   - POSIX: the user's LOGIN shell (`$SHELL -lc 'command -v claude'`), because
- *     setup-handlers spawns a login shell precisely so PATH picks up Homebrew,
- *     nvm, asdf and friends. A plain `which` from Electron's own environment
- *     would report "missing" for a CLI the login shell can see perfectly well.
+ *   - Windows: claude.exe / claude.cmd / claude.bat found in-process in the
+ *     folders PATH names (windows-programs.ts), no process at all.
+ *   - POSIX: what a Claude session's launcher will run. A login shell outside
+ *     the sh family (written for fish and PowerShell 7.3 or later) is asked
+ *     for the PATH it builds, and Claude Code is looked for in that PATH's
+ *     absolute folders (claudeInLoginShellPathAsync), as the launch names it.
+ *     Otherwise, when it reports no PATH, or when Claude Code is not in it,
+ *     the launcher's own sh-family LOGIN shell answers
+ *     (`<shell> -lc 'command -v claude'`), so PATH picks up Homebrew, nvm, asdf
+ *     and friends. A plain `which` from Electron's own environment would
+ *     report "missing" for a CLI the login shell can see perfectly well.
  *     `which` is only the fallback if the login shell probe cannot run.
  *
  * ASYNC, and that is a security property rather than a style choice
@@ -78,23 +84,93 @@ function probeOnce(bin: string, args: string[]): Promise<string | null> {
   })
 }
 
+/** The names Claude Code goes by on Windows, in the order every check and
+ *  every start asks them: claude.exe in any folder PATH names, then
+ *  claude.cmd, then claude.bat (claude-cli-version.ts findClaudeOnWindowsPath's
+ *  order). One list, so a check never says installed for a program no start
+ *  would run. */
+export const CLAUDE_WINDOWS_NAMES: readonly string[] = Object.freeze(['claude.exe', 'claude.cmd', 'claude.bat'])
+
+/** What a check or a start says when Claude Code is in none of PATH's folders. */
+export const CLAUDE_NOT_ON_PATH = `Claude Code was not found in a folder PATH names (${CLAUDE_WINDOWS_NAMES.join(', ')})`
+
+/** How long an answer of findClaudeOnWindowsAsync is reused by
+ *  recentClaudeOnWindows. The CLI check asks every 30 s while the app runs. */
+export const CLAUDE_LOOKUP_REUSE_MS = 60_000
+
+/** Recent finds, by the PATH value each was found under (a profile run's PATH
+ *  differs from the app's: it adds the profile's own folder). A few only. */
+const recentLookups = new Map<string, { found: string; at: number }>()
+const RECENT_LOOKUPS_KEPT = 8
+
+/** Claude Code on Windows, found IN-PROCESS in the folders PATH names (`env`),
+ *  in CLAUDE_WINDOWS_NAMES order, one stat at a time off the event loop
+ *  (windows-programs.ts findOnWindowsPathAsync); null when none is there.
+ *  A found path is kept for recentClaudeOnWindows. */
+export async function findClaudeOnWindowsAsync(
+  env: NodeJS.ProcessEnv,
+  stat?: (p: string) => Promise<boolean>,
+  now: () => number = Date.now,
+): Promise<string | null> {
+  const pathValue = windowsEnvValue(env, 'PATH') ?? ''
+  const found = await findOnWindowsPathAsync(CLAUDE_WINDOWS_NAMES, env, stat, 'name')
+  recordClaudeOnWindows(pathValue, found, now())
+  return found
+}
+
+/** Keep an answer of a PATH walk for Claude Code under `pathValue`; a walk
+ *  that found nothing forgets what was kept for it. */
+export function recordClaudeOnWindows(pathValue: string, found: string | null, at: number): void {
+  recentLookups.delete(pathValue)
+  if (!found) return
+  recentLookups.set(pathValue, { found, at })
+  while (recentLookups.size > RECENT_LOOKUPS_KEPT) recentLookups.delete(recentLookups.keys().next().value as string)
+}
+
+/** The Claude Code a walk of the same PATH value found less than
+ *  CLAUDE_LOOKUP_REUSE_MS ago, or null. Synchronous and reads no file, so a
+ *  caller that cannot wait (the session launch) skips the walk while the
+ *  answer is recent. */
+export function recentClaudeOnWindows(env: NodeJS.ProcessEnv, now: () => number = Date.now): string | null {
+  const kept = recentLookups.get(windowsEnvValue(env, 'PATH') ?? '')
+  if (!kept) return null
+  const age = now() - kept.at
+  return age >= 0 && age < CLAUDE_LOOKUP_REUSE_MS ? kept.found : null
+}
+
+/** Test seam: forget every answer. */
+export function _resetClaudeWindowsLookupForTest(): void {
+  recentLookups.clear()
+}
+
+/** The Windows probe: an in-process walk of PATH's folders, no process. */
+const WINDOWS_PROBE = `PATH walk (${CLAUDE_WINDOWS_NAMES.join(', ')})`
+
 async function runProbe(): Promise<ClaudeCliProbe> {
   if (os.platform() === 'win32') {
-    for (const bin of ['claude.exe', 'claude.cmd', 'claude']) {
-      const found = await probeOnce('where', [bin])
-      if (found) {
-        logInfo(`[setup] Claude CLI found: ${found} (where ${bin})`)
-        return { installed: true, path: found, probe: `where ${bin}` }
-      }
+    // claude.exe in any folder PATH names, then claude.cmd, then claude.bat
+    // (claude-cli-version.ts findClaudeOnWindowsPath's order), each a full
+    // path in a fully qualified folder; one stat at a time off the event loop.
+    const found = await findClaudeOnWindowsAsync(process.env)
+    if (found) {
+      logInfo(`[setup] Claude CLI found: ${found} (${WINDOWS_PROBE})`)
+      return { installed: true, path: found, probe: WINDOWS_PROBE }
     }
-    logInfo('[setup] Claude CLI NOT found (where claude.exe / claude.cmd / claude all missed)')
-    return { installed: false, probe: 'where claude' }
+    logInfo(`[setup] Claude CLI NOT found (${WINDOWS_PROBE})`)
+    return { installed: false, probe: WINDOWS_PROBE }
   }
 
   // os.platform(), not the helper's process.platform default: this file gates
   // on os.platform() above, and the two must agree (they differ only under a
   // test's os mock, which is exactly when it matters).
-  const shell = defaultLoginShell(process.env, os.platform())
+  // Asked only of a login shell outside the sh family; a sh-family user's
+  // probe goes straight to its own login shell, as before.
+  const own = loginShellWithOwnPath(process.env, os.platform()) ? await claudeInLoginShellPathAsync(process.env, os.platform()) : null
+  if (own?.claude) {
+    logInfo(`[setup] Claude CLI found: ${own.claude} (the login shell's PATH)`)
+    return { installed: true, path: own.claude, probe: 'login shell PATH' }
+  }
+  const shell = shFamilyLoginShell(process.env, os.platform())
   const viaLoginShell = await probeOnce(shell, ['-lc', 'command -v claude'])
   if (viaLoginShell) {
     logInfo(`[setup] Claude CLI found: ${viaLoginShell} (${shell} -lc "command -v claude")`)
@@ -136,4 +212,79 @@ export function probeClaudeCli(): Promise<ClaudeCliProbe> {
 /** Test seam: drop a probe still in flight so cases cannot bleed into each other. */
 export function _resetClaudeCliProbeForTest(): void {
   inFlight = null
+}
+
+/** Off Windows, for a user whose login shell is not of the sh family (fish
+ *  and PowerShell 7.3 or later report it; another such shell may report
+ *  none): the PATH that shell builds, and the Claude Code found in it (null
+ *  when it is in none of its absolute folders). A Claude session's launcher
+ *  is a sh-family shell
+ *  (shFamilyLoginShell), so it carries this PATH and names this Claude Code
+ *  (providers/claude/spawn.ts), and the CLI checks ask the same question. */
+export interface ClaudeInLoginShellPath {
+  path: string
+  claude: string | null
+}
+
+/** The last answer, for the login shell and the PATH it was asked under;
+ *  `answer` null when that shell gave none. */
+let lastLoginShellAnswer: { key: string; answer: ClaudeInLoginShellPath | null; at: number } | null = null
+
+function loginShellAnswerKey(shell: string, env: NodeJS.ProcessEnv): string {
+  return `${shell}\0${env.PATH ?? ''}`
+}
+
+/** The user's login shell's PATH and the Claude Code in it, asked off the
+ *  event loop; null when the login shell is of the sh family (or on Windows)
+ *  or gave no answer. The answer is kept for recentClaudeInLoginShellPath. */
+export async function claudeInLoginShellPathAsync(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = os.platform(),
+  now: () => number = Date.now,
+): Promise<ClaudeInLoginShellPath | null> {
+  const shell = loginShellWithOwnPath(env, platform)
+  if (!shell) return null
+  const path = await loginShellPathAsync(shell, env)
+  const answer = path ? { path, claude: await findOnPosixPathAsync('claude', path) } : null
+  lastLoginShellAnswer = { key: loginShellAnswerKey(shell, env), answer, at: now() }
+  return answer
+}
+
+/** The answer claudeInLoginShellPathAsync (or a launch) got less than
+ *  CLAUDE_LOOKUP_REUSE_MS ago for the same login shell and PATH: the answer,
+ *  null when that shell gave none, undefined when there is no recent one (or
+ *  the login shell is of the sh family). Synchronous; starts no process. */
+export function recentClaudeInLoginShellPath(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = os.platform(),
+  now: () => number = Date.now,
+): ClaudeInLoginShellPath | null | undefined {
+  const shell = loginShellWithOwnPath(env, platform)
+  if (!shell || !lastLoginShellAnswer || lastLoginShellAnswer.key !== loginShellAnswerKey(shell, env)) return undefined
+  const age = now() - lastLoginShellAnswer.at
+  return age >= 0 && age < CLAUDE_LOOKUP_REUSE_MS ? lastLoginShellAnswer.answer : undefined
+}
+
+/** For the session launch, which cannot wait: the recent answer, else the
+ *  login shell asked on the event loop (bounded; its answer, or that it gave
+ *  none, is kept, so this runs at most once per answer's life). Null as
+ *  claudeInLoginShellPathAsync. */
+export function claudeInLoginShellPathForLaunch(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = os.platform(),
+  now: () => number = Date.now,
+): ClaudeInLoginShellPath | null {
+  const shell = loginShellWithOwnPath(env, platform)
+  if (!shell) return null
+  const recent = recentClaudeInLoginShellPath(env, platform, now)
+  if (recent !== undefined) return recent
+  const path = loginShellPathSync(shell, env)
+  const answer = path ? { path, claude: findOnPosixPath('claude', path) } : null
+  lastLoginShellAnswer = { key: loginShellAnswerKey(shell, env), answer, at: now() }
+  return answer
+}
+
+/** Test seam: forget the last login-shell answer. */
+export function _resetClaudeLoginShellLookupForTest(): void {
+  lastLoginShellAnswer = null
 }

@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { assertSafeArgv } from '../../src/main/claude-headless'
 import { buildKpiSpawnArgs } from '../../src/main/insights-runner'
 import { buildCrossAccountSpawnArgs } from '../../src/main/insights-cross-account'
+import { CLAUDE_ANALYSIS_ARGS } from '../../src/main/sentinel/sentinel-analysis'
+import { windowsBatchFileCommand } from '../../src/main/windows-programs'
 
 // Regression guard for the MAJOR finding from the adversarial pass on PR #206:
 // `spawnClaudeHeadless` uses `shell: true`, so argv is concatenated into a shell
@@ -19,6 +21,18 @@ describe('assertSafeArgv', () => {
     expect(() => assertSafeArgv(buildCrossAccountSpawnArgs())).not.toThrow()
     expect(() => assertSafeArgv(['--version'])).not.toThrow()
     expect(() => assertSafeArgv(['-p', '--model', 'sonnet', '--output-format', 'json'])).not.toThrow()
+  })
+
+  it('every argument a real call site passes reaches an npm claude.cmd on Windows unchanged', () => {
+    // An npm install runs through the system cmd.exe (windows-programs.ts
+    // windowsBatchFileCommand), whose argument rule is stricter than the one
+    // above: a new argument that passes this guard but not that rule would
+    // fail only for npm installs on Windows. The cloud agent\'s and the CLI
+    // auth check\'s arguments are listed too.
+    for (const args of [buildKpiSpawnArgs(), buildCrossAccountSpawnArgs(), [...CLAUDE_ANALYSIS_ARGS], ['--version'], ['-p'], ['-p', '--dangerously-skip-permissions'], ['auth', 'status']]) {
+      expect(() => assertSafeArgv(args), args.join(' ')).not.toThrow()
+      expect(windowsBatchFileCommand('C:\\npm\\claude.cmd', args, { SystemRoot: 'C:\\Windows' }), args.join(' ')).not.toHaveProperty('refused')
+    }
   })
 
   it('rejects the empty argument that silently shifts every later flag', () => {

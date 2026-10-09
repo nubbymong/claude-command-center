@@ -1,4 +1,12 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+// On Windows, programs are found in PATH's folders (windows-programs.ts); stubbed here,
+// so no real PATH is read: the first name asked for, in one fully qualified folder
+// (the walk on the event loop and the one off it alike).
+vi.mock('../../../src/main/windows-programs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/windows-programs')>()),
+  findOnWindowsPath: (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+  findOnWindowsPathAsync: async (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+}))
 import { buildClaudeLocalSpawn } from '../../../src/main/providers/claude/spawn'
 import { buildTerminalLaunchLine } from '../../../src/main/terminal-launch-line'
 
@@ -38,7 +46,8 @@ describe('terminal-only secret argument → spawn env', () => {
 
   it('still elevates when asked (gsudo/sudo wraps the shell)', () => {
     const { cmd, args } = buildClaudeLocalSpawn({ ...base, shellOnly: true, elevated: true })
-    expect(cmd).toMatch(/^(gsudo|sudo)$/)
+    // Windows: gsudo by its full path from PATH's folders (stubbed above).
+    expect(cmd).toMatch(/^(sudo|C:\\Tools\\gsudo\.exe)$/)
     expect(args.length).toBeGreaterThan(0)
   })
 })

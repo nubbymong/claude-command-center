@@ -36,6 +36,8 @@ import { getProfileConfigDir, getProfilesRoot, getPrimaryProfileId, withProfileH
 import { acquireProfileConsumer, holdProfileForRun, pendingProfileRefresh } from '../profile-consumers'
 import { isProfileInUseByLiveSession, sessionsOnProfile } from '../claude-account-identity'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
+import { windowsStartCommand } from '../windows-programs'
+import { CLAUDE_NOT_ON_PATH, findClaudeOnWindowsAsync, recentClaudeOnWindows } from '../claude-cli-probe'
 
 /** promisify(execFile), made when a CLI runs rather than when this module
  *  loads: the composition root imports it at start (WP2 PR 4, the Claude
@@ -43,6 +45,40 @@ import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMe
  *  to the spawn, as before. */
 type ExecFileAsync = (file: string, args: readonly string[], options: ExecFileOptions & { encoding: 'utf-8' }) => Promise<{ stdout: string; stderr: string }>
 const execFileAsync: ExecFileAsync = (file, args, options) => (promisify(execFile) as unknown as ExecFileAsync)(file, args, options)
+
+type AuthStatusStart = { file: string; args: string[]; options: ExecFileOptions & { encoding: 'utf-8' } }
+
+/** How `claude auth status` starts when no runner is given. Windows: Claude
+ *  Code by the full path found in PATH's folders (claude-cli-probe.ts
+ *  CLAUDE_WINDOWS_NAMES, in that order: a recent answer of that walk, else the
+ *  walk one stat at a time off the event loop), with no shell -- an npm
+ *  claude.cmd through the system cmd.exe -- and the child looks for programs
+ *  it starts by name only in PATH's folders; it REJECTS when Claude Code is in
+ *  none of them or cannot be started that way, which the caller reads as "CLI
+ *  absent" (it then reads the credential file). Elsewhere `claude` through
+ *  `sh`, as before. Exported for the test. */
+export async function claudeAuthStatusCommand(
+  env: Record<string, string>,
+  platform: NodeJS.Platform = process.platform,
+): Promise<AuthStatusStart> {
+  return authStatusStart(env, platform, platform === 'win32' ? recentClaudeOnWindows(env) ?? await findClaudeOnWindowsAsync(env) : null)
+}
+
+/** claudeAuthStatusCommand's start once Claude Code is known (`bin`, Windows
+ *  only), synchronously: the probe below takes this path while the PATH
+ *  walk's answer is recent, so it stays synchronous up to the spawn. */
+function authStatusStart(env: Record<string, string>, platform: NodeJS.Platform, bin: string | null): AuthStatusStart {
+  const base = { encoding: 'utf-8' as const, timeout: STATUS_TIMEOUT_MS, windowsHide: true }
+  if (platform !== 'win32') return { file: 'claude', args: ['auth', 'status'], options: { ...base, shell: true, env } }
+  if (!bin) throw new Error(CLAUDE_NOT_ON_PATH)
+  const how = windowsStartCommand(bin, ['auth', 'status'], env)
+  if ('refused' in how) throw new Error(`Claude Code could not be started: ${how.refused}`)
+  return {
+    file: how.file,
+    args: how.args,
+    options: { ...base, env: how.env, ...(how.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) },
+  }
+}
 
 export interface ClaudeCliAuthStatus {
   /** True when this account is signed in to the CLI. */
@@ -271,13 +307,11 @@ async function readClaudeCliAuthUncached(profileId: string, runner?: ClaudeCliAu
         const parsed = r.refused !== undefined || r.spawnError !== undefined || r.timedOut ? null : parseAuthStatus(r.stdout)
         if (parsed) return parsed
       } else {
-        const { stdout } = await execFileAsync('claude', ['auth', 'status'], {
-          encoding: 'utf-8',
-          timeout: STATUS_TIMEOUT_MS,
-          windowsHide: true,
-          shell: true,          // resolves claude.cmd on Windows, as elsewhere in the app
-          env,
-        })
+        // A recent answer of Windows' PATH walk keeps this synchronous up to
+        // the spawn (see above); without one the walk runs off the event loop.
+        const recent = process.platform === 'win32' ? recentClaudeOnWindows(env) : null
+        const run = process.platform === 'win32' && !recent ? await claudeAuthStatusCommand(env) : authStatusStart(env, process.platform, recent)
+        const { stdout } = await execFileAsync(run.file, run.args, run.options)
         const parsed = parseAuthStatus(stdout)
         if (parsed) return parsed
       }

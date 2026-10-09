@@ -10,6 +10,7 @@ import { getInstallPath } from '../update-watcher'
 import { resolveClaudeForPty } from '../pty-manager'
 import { probeClaudeCli } from '../claude-cli-probe'
 import { defaultLoginShell } from '../login-shell'
+import { withFullyQualifiedProgramLookup } from '../windows-programs'
 import {
   getDataDirectory,
   getResourcesDirectory,
@@ -19,6 +20,19 @@ import {
 } from '../data-paths'
 
 export { getDataDirectory, getResourcesDirectory } from '../data-paths'
+
+/**
+ * The environment the first-run Claude Code setup terminal runs under: `env`,
+ * and on Windows with the child's own program lookup kept to the folders PATH
+ * names in full (withFullyQualifiedProgramLookup: only fully qualified PATH
+ * folders, and the lookup setting in one spelling). There Claude Code is
+ * often an npm command shim, which starts `node` by a bare name; that name is
+ * looked for only in those folders, never in the terminal's working folder nor
+ * in one named relative to it. `env` itself is not changed.
+ */
+export function setupTerminalEnv(env: Record<string, string>, platform: NodeJS.Platform = process.platform): Record<string, string> {
+  return platform === 'win32' ? withFullyQualifiedProgramLookup(env) : env
+}
 
 // Check if setup is complete (uses cached registry/config check)
 export function isSetupComplete(): boolean {
@@ -162,21 +176,24 @@ export function registerSetupHandlers(): void {
     const cwd = installPath && fs.existsSync(installPath) ? installPath : homedir()
 
     const { cmd } = resolveClaudeForPty()
-    logInfo(`[setup] Spawning CLI setup PTY: ${cmd} in ${cwd}`)
 
+    // The log line names what this terminal runs on each platform.
     if (process.platform === 'win32') {
-      // Windows: spawn claude directly
+      // Windows: spawn claude directly; a program it starts by a bare name is
+      // found only in the folders PATH names (setupTerminalEnv).
+      logInfo(`[setup] Spawning CLI setup PTY: ${cmd} in ${cwd}`)
       cliSetupPty = pty.spawn(cmd, [], {
         name: 'xterm-256color',
         cols: cols || 100,
         rows: rows || 20,
         cwd,
-        env: process.env as Record<string, string>
+        env: setupTerminalEnv(process.env as Record<string, string>),
       })
     } else {
       // macOS/Linux: spawn interactive login shell so PATH includes Homebrew etc.
       // The platform is passed explicitly and is the same source as the gate above.
       const shell = defaultLoginShell(process.env, process.platform)
+      logInfo(`[setup] Spawning CLI setup PTY: ${shell} -l in ${cwd}, then claude by name`)
       cliSetupPty = pty.spawn(shell, ['-l'], {
         name: 'xterm-256color',
         cols: cols || 100,
@@ -184,9 +201,12 @@ export function registerSetupHandlers(): void {
         cwd,
         env: process.env as Record<string, string>,
       })
-      // Send the claude command after a brief delay for shell init
+      // Send the claude command after a brief delay for shell init. The
+      // user's own login shell runs this terminal and finds Claude Code by
+      // name; with fish or PowerShell 7.3 or later that is the Claude Code the
+      // CLI check found in the PATH it reports.
       setTimeout(() => {
-        if (cliSetupPty) cliSetupPty.write(`${cmd}\r`)
+        if (cliSetupPty) cliSetupPty.write('claude\r')
       }, 500)
     }
 

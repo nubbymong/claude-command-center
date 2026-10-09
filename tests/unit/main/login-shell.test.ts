@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { defaultLoginShell, localSessionShell, isShFamilyShell } from '../../../src/main/login-shell'
+import {
+  defaultLoginShell, localSessionShell, isShFamilyShell, shFamilyLoginShell,
+  LOGIN_SHELL_PATH_COMMAND, extractLoginShellPath, loginShellWithOwnPath, findOnPosixPath, findOnPosixPathAsync,
+} from '../../../src/main/login-shell'
 
 // The three CLI probes (cli:check, the setup probe, the setup PTY) used to fall
 // back to /bin/zsh on every non-Windows platform and the local session launch
@@ -65,5 +68,67 @@ describe('localSessionShell and isShFamilyShell', () => {
   it('the sh family by basename: sh, bash, zsh, dash, ksh, and no other', () => {
     for (const s of ['/bin/sh', '/bin/bash', '/usr/local/bin/zsh', '/bin/dash', '/bin/ksh', 'bash']) expect(isShFamilyShell(s), s).toBe(true)
     for (const s of ['/usr/bin/fish', '/usr/bin/nu', '/usr/bin/elvish', '/usr/bin/pwsh', '/usr/bin/tcsh', '/bin/csh', '/usr/bin/xonsh', '/bin/bash5', '/bin/mksh', 'powershell.exe', '', '/bin/']) expect(isShFamilyShell(s), s).toBe(false)
+  })
+})
+
+// A Claude session's launch line is written for the sh family, so the shell
+// its launcher runs is always one: the login shell when it is of the family,
+// else the same fallback with $SHELL set aside. A terminal tab is unaffected.
+describe('a launch line is typed only into a sh-family shell', () => {
+  it('keeps $SHELL when it is of the sh family', () => {
+    for (const s of ['/bin/bash', '/usr/local/bin/zsh', '/bin/sh', '/bin/dash', '/bin/ksh']) {
+      expect(shFamilyLoginShell({ SHELL: s }, 'linux', none), s).toBe(s)
+      expect(shFamilyLoginShell({ SHELL: s }, 'darwin', none), s).toBe(s)
+    }
+  })
+
+  it('sets aside a non-sh $SHELL (fish, pwsh, nu, tcsh, csh, elvish, xonsh) for the fallback', () => {
+    for (const s of ['/opt/homebrew/bin/fish', '/usr/local/bin/pwsh', '/usr/bin/nu', '/bin/tcsh', '/bin/csh', '/usr/bin/elvish', '/usr/bin/xonsh']) {
+      expect(shFamilyLoginShell({ SHELL: s }, 'darwin', none), s).toBe('/bin/zsh')
+      expect(shFamilyLoginShell({ SHELL: s }, 'linux', has('/bin/bash', '/bin/zsh')), s).toBe('/bin/bash')
+      expect(shFamilyLoginShell({ SHELL: s }, 'linux', has('/bin/zsh')), s).toBe('/bin/zsh')
+      expect(shFamilyLoginShell({ SHELL: s }, 'linux', none), s).toBe('/bin/sh')
+      expect(isShFamilyShell(shFamilyLoginShell({ SHELL: s }, 'freebsd', none)), s).toBe(true)
+    }
+  })
+
+  it('without $SHELL it is the login shell fallback; a terminal tab still gets the user\'s own shell', () => {
+    expect(shFamilyLoginShell({}, 'darwin', none)).toBe('/bin/zsh')
+    expect(shFamilyLoginShell({}, 'linux', has('/bin/bash'))).toBe('/bin/bash')
+    expect(localSessionShell({ SHELL: '/usr/bin/fish' }, 'linux', none)).toBe('/usr/bin/fish')
+  })
+})
+
+describe('the PATH a login shell outside the sh family builds', () => {
+  it('is asked through /bin/sh by its full path in one single-quoted word, which every shell family passes on as written', () => {
+    expect(LOGIN_SHELL_PATH_COMMAND).toBe(`/bin/sh -c 'printf "%s%s%s" __CCC_LOGIN_PATH_BEGIN__ "$PATH" __CCC_LOGIN_PATH_END__'`)
+  })
+
+  it('is read between the last opening marker and the next closing one, absolute entries only', () => {
+    expect(extractLoginShellPath('hello\n__CCC_LOGIN_PATH_BEGIN__/a:rel:/b__CCC_LOGIN_PATH_END__bye')).toBe('/a:/b')
+    expect(extractLoginShellPath('__CCC_LOGIN_PATH_BEGIN__/x__CCC_LOGIN_PATH_END__ __CCC_LOGIN_PATH_BEGIN__/y__CCC_LOGIN_PATH_END__')).toBe('/y')
+    expect(extractLoginShellPath('no markers')).toBeNull()
+    expect(extractLoginShellPath('__CCC_LOGIN_PATH_BEGIN__/a\n/b__CCC_LOGIN_PATH_END__')).toBeNull()
+    expect(extractLoginShellPath('__CCC_LOGIN_PATH_BEGIN__rel:.:__CCC_LOGIN_PATH_END__')).toBeNull()
+    expect(extractLoginShellPath('__CCC_LOGIN_PATH_BEGIN__/a')).toBeNull()
+  })
+
+  it('is asked only of a login shell outside the sh family, and never on Windows', () => {
+    expect(loginShellWithOwnPath({ SHELL: '/opt/homebrew/bin/fish' }, 'darwin')).toBe('/opt/homebrew/bin/fish')
+    expect(loginShellWithOwnPath({ SHELL: '/usr/bin/pwsh' }, 'linux')).toBe('/usr/bin/pwsh')
+    for (const s of ['/bin/bash', '/bin/zsh', '/bin/sh', '/usr/bin/dash', '/bin/ksh']) expect(loginShellWithOwnPath({ SHELL: s }, 'linux'), s).toBeNull()
+    expect(loginShellWithOwnPath({}, 'darwin', none)).toBeNull()
+    expect(loginShellWithOwnPath({ SHELL: '/opt/homebrew/bin/fish' }, 'win32')).toBeNull()
+  })
+})
+
+describe('a program found in a POSIX PATH without a shell', () => {
+  it('the first absolute folder holding it as a file someone may run, in PATH order; never a relative entry or a name with a separator', async () => {
+    const runnable = (p: string) => ['rel/claude', '/b/claude', '/c/claude'].includes(p)
+    expect(findOnPosixPath('claude', 'rel:/a:/b:/c', runnable)).toBe('/b/claude')
+    expect(await findOnPosixPathAsync('claude', 'rel:/a:/b:/c', async (p) => runnable(p))).toBe('/b/claude')
+    expect(findOnPosixPath('claude', 'rel:/a', runnable)).toBeNull()
+    expect(findOnPosixPath('../claude', '/b', () => true)).toBeNull()
+    expect(findOnPosixPath('', '/b', () => true)).toBeNull()
   })
 })

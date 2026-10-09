@@ -26,7 +26,8 @@ import type { AccountLease, PreparedLaunchResult } from './providers/core'
 import type { CloudAgentCodexOptions } from '../shared/types'
 import { stripSpoofableText } from '../shared/safe-text'
 import { randomId } from '../shared/id'
-import { systemTool } from './windows-programs'
+import { systemTool, windowsStartCommand } from './windows-programs'
+import { CLAUDE_NOT_ON_PATH, findClaudeOnWindowsAsync, recentClaudeOnWindows } from './claude-cli-probe'
 
 export interface CloudAgentData {
   id: string
@@ -348,8 +349,9 @@ export async function dispatchAgent(params: DispatchAgentParams): Promise<CloudA
     return agent
   }
 
-  // Resolve Claude binary (use legacy version if configured)
-  let claudeBin = 'claude'
+  // Resolve Claude binary (use legacy version if configured; null: the
+  // installed CLI, found below)
+  let claudeBin: string | null = null
   if (params.legacyVersion?.enabled && params.legacyVersion.version) {
     if (!isValidLegacyVersion(params.legacyVersion.version)) {
       // P0.3: never feed a non-semver version into install/spawn — fall back.
@@ -372,10 +374,9 @@ export async function dispatchAgent(params: DispatchAgentParams): Promise<CloudA
     }
   }
 
-  // Write prompt to a temp file, then pipe it to Claude via shell.
-  // This ensures Claude CLI reliably detects piped input (print mode).
-  // Previous approach (child.stdin.write) broke on Windows because cmd.exe's
-  // stdin passthrough doesn't always trigger Claude's pipe detection.
+  // The prompt is written to a temp file and, once the agent has started, read
+  // back in-process and written to its stdin; `-p` puts Claude Code in print
+  // mode explicitly, so it does not depend on detecting a pipe.
   const tmpFile = path.join(os.tmpdir(), `ccc-agent-${agent.id}.txt`)
 
   // P1.3 / FEAT-1: cloud-agent dispatch never reads a persisted skip-permissions
@@ -383,10 +384,29 @@ export async function dispatchAgent(params: DispatchAgentParams): Promise<CloudA
   // Insights no longer skips either). The dangerous skip is an explicit,
   // ephemeral PER-RUN opt-in from the New Agent dialog: default OFF.
   const skipPerms = params.skipPermissions === true
+  const claudeArgs = ['-p', ...(skipPerms ? ['--dangerously-skip-permissions'] : [])]
 
-  const pipeCmd = process.platform === 'win32' ? 'type' : 'cat'
-  const permFlag = skipPerms ? ' --dangerously-skip-permissions' : ''
-  const shellCmd = `${pipeCmd} "${tmpFile}" | ${claudeBin}${permFlag}`
+  // How the agent starts: Claude Code by its full path, never through a shell,
+  // whatever the project folder holds. Windows: a valid legacy pin's binary,
+  // else the installed CLI found in PATH's folders (claude-cli-probe.ts
+  // CLAUDE_WINDOWS_NAMES, in that order: a recent answer of that walk, else the
+  // walk one stat at a time off the event loop); an npm claude.cmd through the
+  // system cmd.exe; and the
+  // agent looks for the programs it starts by name (the npm shim's `node`)
+  // only in PATH's folders. Not found, or not startable that way: the agent
+  // fails before anything starts. macOS/Linux: an argument list, no `sh -c`.
+  let start: { file: string; args: string[]; windowsVerbatimArguments: boolean }
+  if (process.platform === 'win32') {
+    const bin = claudeBin ?? recentClaudeOnWindows(spawnEnvVars) ?? await findClaudeOnWindowsAsync(spawnEnvVars)
+    if (abandoned()) return abandon('the program lookup')
+    if (!bin) return failBeforeSpawn(CLAUDE_NOT_ON_PATH)
+    const how = windowsStartCommand(bin, claudeArgs, spawnEnvVars)
+    if ('refused' in how) return failBeforeSpawn(`Claude Code could not be started: ${how.refused}`)
+    start = how
+    spawnEnvVars = how.env
+  } else {
+    start = { file: claudeBin ?? 'claude', args: claudeArgs, windowsVerbatimArguments: false }
+  }
 
   let releaseProfile: () => void = () => { /* default home, or not held yet: nothing held */ }
   let child: ChildProcess
@@ -427,12 +447,12 @@ export async function dispatchAgent(params: DispatchAgentParams): Promise<CloudA
       cleanupTmpFileFor(tmpFile)
       return failBeforeSpawn(refusedNow.message)
     }
-    child = spawn(shellCmd, [], {
+    child = spawn(start.file, start.args, {
       cwd: params.projectPath,
-      shell: true,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: spawnEnvVars,
+      ...(start.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
     })
   } catch (e) {
     // spawn() itself throws only synchronously (bad argv); a hold with no child
@@ -446,7 +466,7 @@ export async function dispatchAgent(params: DispatchAgentParams): Promise<CloudA
 
   activeProcesses.set(agent.id, child)
   logInfo(`[cloud-agent] Dispatched agent ${agent.id} (${agent.name}) pid=${child.pid} profile=${resolvedProfileId ?? '(default/global)'} account=${accountEmail ?? '(none)'}`)
-  logInfo(`[cloud-agent] Shell cmd: ${shellCmd}`)
+  logInfo(`[cloud-agent] Started: ${start.file} ${start.args.join(' ')}`)
   logInfo(`[cloud-agent] CWD: ${params.projectPath}, prompt length: ${params.description.length}`)
 
   const cleanupTmpFile = (): void => cleanupTmpFileFor(tmpFile)
@@ -511,6 +531,20 @@ export async function dispatchAgent(params: DispatchAgentParams): Promise<CloudA
       logError(`[cloud-agent] Agent ${agentRef.id} error: ${err.message}`)
     }
   })
+
+  // The prompt, read in-process from its file, on the agent's stdin. An agent
+  // that ends before reading it closes the pipe: that is not an error of its
+  // own (the agent's exit says what happened), so it is logged, never thrown.
+  const stdin = child.stdin
+  if (stdin) {
+    stdin.on('error', (err) => logWarn(`[cloud-agent] ${agent.id} prompt not delivered: ${(err as NodeJS.ErrnoException)?.code ?? err?.message}`))
+    try {
+      stdin.end(fs.readFileSync(tmpFile))
+    } catch (e) {
+      logWarn(`[cloud-agent] ${agent.id} prompt file could not be read: ${(e as NodeJS.ErrnoException)?.code ?? (e as Error)?.message}`)
+      stdin.end()
+    }
+  }
 
   return agent
 }
@@ -879,18 +913,19 @@ export function clearCompletedAgents(): { ok: boolean; removed: number; error?: 
 }
 
 /** End a Windows process tree by pid with taskkill, started by its full path in
- *  the system folder. False when the system folder cannot be named (nothing
- *  was started; the caller signals the process itself). Never throws: a tree
- *  that already ended is not an error. */
+ *  the system folder. False when taskkill was not run to its end -- the system
+ *  folder cannot be named, or taskkill could not start or did not finish in
+ *  time -- so the caller signals the process itself. Never throws: a tree
+ *  that already ended is not an error (taskkill's own exit code is not read). */
 function taskkillTree(pid: number): boolean {
   let taskkill: string
   try { taskkill = systemTool('taskkill.exe') } catch { return false }
   try {
-    spawnSync(taskkill, ['/pid', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000, stdio: 'ignore' })
+    const r = spawnSync(taskkill, ['/pid', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000, stdio: 'ignore' })
+    return !r.error
   } catch {
-    // the process may have already exited
+    return false
   }
-  return true
 }
 
 export function killAllAgents(): void {
