@@ -13,6 +13,9 @@
  * Once the repo is public, step 1 succeeds and steps 2-3 are never called.
  *
  * Downloads use direct HTTPS (follows redirects) and `gh release download` as a fallback.
+ *
+ * Every gh start goes through runGh: on Windows gh.exe by the full path found
+ * in the folders PATH names in full, never by name (github/gh-program.ts).
  */
 import { app } from 'electron'
 import * as https from 'https'
@@ -26,9 +29,28 @@ import { logInfo, logError } from './debug-logger'
 import { readConfig } from './config-manager'
 import { readRegistry, writeRegistry } from './registry'
 import { getDataDirectory } from './data-paths'
+import { ghStartCommand } from './github/gh-program'
 import macosFloorsJson from '../../resources/macos-release-floors.json'
 
 const execFileAsync = promisify(execFile)
+
+/** Runs the GitHub CLI with `args`, started as ghStartCommand says: on
+ *  Windows gh.exe by the full path found in the folders PATH names in full,
+ *  with the child's own lookup kept to them; elsewhere gh by name. With no gh
+ *  to start it rejects, as a missing gh always has, so each fallback below
+ *  reports "no gh" the way it did; nothing is started by a bare name on
+ *  Windows. */
+async function runGh(args: string[], timeout: number): Promise<{ stdout: string }> {
+  const start = await ghStartCommand(args)
+  if ('refused' in start) throw new Error(start.refused)
+  return execFileAsync(start.file, start.args, {
+    encoding: 'utf-8',
+    timeout,
+    windowsHide: true,
+    ...(start.env ? { env: start.env } : {}),
+    ...(start.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+  })
+}
 
 /**
  * Installer asset extension per platform. Pure + exported for unit tests —
@@ -537,11 +559,7 @@ async function fetchReleasesPublic(limit = RELEASE_FETCH_LIMIT): Promise<PublicF
 /** Try to get a GitHub token from `gh auth token` */
 async function getGhToken(): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync('gh', ['auth', 'token'], {
-      encoding: 'utf-8',
-      timeout: 5000,
-      windowsHide: true,
-    })
+    const { stdout } = await runGh(['auth', 'token'], 5000)
     const token = stdout.trim()
     return token.length > 0 ? token : null
   } catch {
@@ -578,10 +596,9 @@ async function fetchReleasesAuthenticated(limit = RELEASE_FETCH_LIMIT): Promise<
 
 async function fetchReleasesGhCli(limit = RELEASE_FETCH_LIMIT): Promise<GitHubRelease[] | null> {
   try {
-    const { stdout } = await execFileAsync(
-      'gh',
+    const { stdout } = await runGh(
       ['release', 'list', '--repo', activeRepo(), '--limit', String(limit), '--json', 'tagName,isPrerelease,isDraft,assets'],
-      { encoding: 'utf-8', timeout: 15000, windowsHide: true }
+      15000,
     )
     const releases = JSON.parse(stdout) as Array<{
       tagName: string
@@ -1086,10 +1103,9 @@ async function fetchChecksumManifest(tagName: string, stageDir: string, directUr
     //    the post-hoc shape the direct leg no longer uses. Acceptable: it takes
     //    release-write access to publish an oversized CHECKSUMS.txt, which the
     //    threat model already concedes.
-    await execFileAsync(
-      'gh',
+    await runGh(
       ['release', 'download', tagName, '--repo', activeRepo(), '--pattern', 'CHECKSUMS.txt', '--dir', stageDir, '--clobber'],
-      { encoding: 'utf-8', timeout: 60000, windowsHide: true }
+      60000,
     )
     if (fs.existsSync(tmpPath)) return readManifest(tmpPath)
   } catch (err) {
@@ -1462,10 +1478,9 @@ export async function downloadInstallerFile(tagName: string, assetName: string, 
 
   // 2. Fall back to gh CLI (works for private repo)
   try {
-    await execFileAsync(
-      'gh',
+    await runGh(
       ['release', 'download', tagName, '--repo', activeRepo(), '--pattern', safeName, '--dir', stageDir, '--clobber'],
-      { encoding: 'utf-8', timeout: 300000, windowsHide: true }
+      300000,
     )
     if (fs.existsSync(destPath)) {
       logInfo(`[github-update] Downloaded via gh CLI: ${destPath}`)

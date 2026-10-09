@@ -88,17 +88,17 @@
   "src/main/github-update.ts :: execFile handed to promisify(": {
    "count": 1,
    "how": "not-a-process",
-   "reason": "promisify makes the copy execFileAsync from it; every call of that copy is a listed site of its own (execFileAsync('gh': by name)."
+   "reason": "promisify makes the copy execFileAsync from it; every call of that copy is a listed site of its own (execFileAsync(start.file: gh by the full path ghStartCommand found on Windows)."
   },
-  "src/main/github-update.ts :: execFileAsync('gh'": {
-   "count": 4,
-   "how": "by-name",
-   "reason": "The GitHub CLI by name (gh), as the user's own terminal runs it, for the update check's optional token and private-release fallback. Not one of the programs the full-path rule names (node, git, Claude Code and its helper tools)."
-  },
-  "src/main/github/auth/gh-cli-delegate.ts :: spawn(file": {
+  "src/main/github-update.ts :: execFileAsync(start.file": {
    "count": 1,
    "how": "full-path",
-   "reason": "On Windows gh.exe by the full path found in PATH's fully qualified folders (findOnWindowsPathAsync); none found starts nothing. Elsewhere gh by name."
+   "reason": "The GitHub CLI for the update check's optional token, its private-release list and its gh downloads (runGh), started as ghStartCommand says: on Windows gh.exe by the full path found in PATH's fully qualified folders, the child's own lookup kept to them (windowsStartCommand); none found starts nothing and the fallback reports no gh. Elsewhere gh by name, as before."
+  },
+  "src/main/github/auth/gh-cli-delegate.ts :: spawn(start.file": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "gh for the GitHub panel's sign-in, started as ghStartCommand says: on Windows gh.exe by the full path found in PATH's fully qualified folders, the child's own lookup kept to them; none found starts nothing. Elsewhere gh by name."
   },
   "src/main/github/session/repo-detector.ts :: spawn(git": {
    "count": 1,
@@ -118,7 +118,10 @@
   "src/main/host-ping.ts :: execFileImpl(pingBinary(platform)": {
    "count": 1,
    "how": "by-name",
-   "reason": "ping by name (ping.exe on Windows) for an SSH host's reachability check, argv only, no shell. A system program, not one of those the full-path rule names."
+   "programs": [
+    "ping"
+   ],
+   "reason": "ping by name (ping.exe on Windows) for an SSH host's reachability check, argv only, no shell. A system program, not one of those the Windows lookup promise names (the Feature Guide's, which the inventory test reads)."
   },
   "src/main/insights-runner.ts :: pty.spawn(cmd": {
    "count": 1,
@@ -258,6 +261,9 @@
   "src/main/pty-manager.ts :: execFile(bin": {
    "count": 2,
    "how": "by-name",
+   "programs": [
+    "ssh"
+   ],
    "reason": "ssh by name (ssh.exe on Windows) for an SSH session's separate end and liveness execs, argv only, as the user's own terminal starts it: ssh keeps its own lookup by an owner decision."
   },
   "src/main/pty-manager.ts :: execFile(git": {
@@ -268,6 +274,9 @@
   "src/main/pty-manager.ts :: pty.spawn(bin": {
    "count": 2,
    "how": "by-name",
+   "programs": [
+    "ssh"
+   ],
    "reason": "ssh by name (ssh.exe on Windows) for the password route of an SSH session's end and liveness execs, as the user's own terminal starts it: ssh keeps its own lookup by an owner decision."
   },
   "src/main/pty-manager.ts :: pty.spawn(spawnCmd": {
@@ -278,6 +287,9 @@
   "src/main/pty-manager.ts :: pty.spawn(sshBinary": {
    "count": 1,
    "how": "by-name",
+   "programs": [
+    "ssh"
+   ],
    "reason": "An SSH session's ssh by name (ssh.exe on Windows), as the user's own terminal starts it: ssh keeps its own lookup by an owner decision."
   },
   "src/main/registry.ts :: execFileSync(systemTool('reg.exe')": {
@@ -318,7 +330,11 @@
   "src/main/vision-manager.ts :: spawn(executable": {
    "count": 1,
    "how": "by-name",
-   "reason": "The vision browser at a known install path that exists; with none there, the browser by its name (chrome or msedge on Windows), as the system finds it. Not one of the programs the full-path rule names."
+   "programs": [
+    "chrome",
+    "msedge"
+   ],
+   "reason": "The vision browser at a known install path that exists; with none there, the browser by its name (chrome or msedge on Windows), as the system finds it. Not one of the programs the Windows lookup promise names (the Feature Guide's, which the inventory test reads)."
   }
  }
 }

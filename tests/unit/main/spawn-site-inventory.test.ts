@@ -11,6 +11,9 @@
 // each site with how its program is found on Windows and why that holds.
 // A site that is not in the list, one whose count changed, and an entry no
 // longer found all fail: a new process start is reviewed before it merges.
+// A program the Feature Guide promises to look for on Windows only in the
+// folders PATH names in full (read from that promise, app-knowledge.ts) is
+// never reviewed as started by a bare name there.
 // Reads files only; nothing is started.
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
@@ -24,7 +27,7 @@ const HOW = new Set([
   'full-path', // a full path the app found or was given: PATH's fully qualified folders, a validated install or browser path
   'system-folder', // a Windows tool from the system folder (systemTool, or the validated SystemRoot)
   'app-path', // the app's own executable or a file the app itself put in place (Node's own path, Electron's utility process, a downloaded installer)
-  'by-name', // a bare name the system looks up; the reason says why that is accepted
+  'by-name', // a bare name the system looks up; `programs` names what it starts (never one the Windows lookup promise names), and the reason says why that is accepted
   'not-windows', // runs only on macOS or Linux
   'not-a-process', // the scan's match is not a process start (a method of the app's own named spawn, or a function handed on whose calls are listed sites of their own)
 ])
@@ -166,9 +169,54 @@ function scan(): Map<string, number> {
   return counts
 }
 
-type Entry = { count: number; how: string; reason: string }
+/** `programs`: what a by-name site starts, as the review read it. */
+type Entry = { count: number; how: string; programs?: string[]; reason: string }
 const INVENTORY = (JSON.parse(readFileSync(join(__dirname, 'spawn-site-inventory.json'), 'utf8')) as { sites: Record<string, Entry> }).sites
 const FOUND = scan()
+
+/** The programs the app promises to look for on Windows only in the folders
+ *  PATH names in full, never in the current folder, read from that promise in
+ *  the Feature Guide (src/shared/app-knowledge.ts): a program added to it is
+ *  guarded here at once. Claude Code starts as `claude`. Empty when the
+ *  sentence is gone (a case below fails then). */
+const PROMISE_RE = /On Windows the app looks for (.+?) only in the folders that PATH names with a full path, never in the current folder\./
+function promisedPrograms(): string[] {
+  const m = PROMISE_RE.exec(readFileSync(join(ROOT, 'src', 'shared', 'app-knowledge.ts'), 'utf8'))
+  if (!m) return []
+  return m[1].split(/,\s*|\s+and\s+/).map((s) => s.trim()).filter(Boolean)
+    .map((s) => (s === 'Claude Code' ? 'claude' : s.toLowerCase()))
+}
+const PROMISED = promisedPrograms()
+/** A program's name without the extension Windows tries for it. */
+const programName = (s: string): string => s.toLowerCase().replace(/\.(exe|com|cmd|bat)$/, '')
+/** The program a site names by a bare string as its first argument, if any. */
+function bareProgram(site: string): string | null {
+  const m = /\(\s*['"`]([^'"`\\/]+)['"`]\s*$/.exec(site)
+  return m ? programName(m[1]) : null
+}
+/** Whether a reason names one of the promised programs. */
+function namesPromised(text: string): boolean {
+  return PROMISED.some((p) => new RegExp(`\\b(${p === 'claude' ? 'claude|Claude Code' : p})\\b`, 'i').test(text))
+}
+/** Why a reviewed list lets a promised program start by a bare name on
+ *  Windows: one line per problem, none when it does not. A site naming one by
+ *  a bare string runs off Windows only; a by-name site says which programs it
+ *  starts (`programs`, the bare string's among them), none promised, and its
+ *  reason names none. */
+function promiseViolations(sites: Record<string, Entry>): string[] {
+  const out: string[] = []
+  for (const [site, e] of Object.entries(sites)) {
+    const bare = bareProgram(site)
+    if (bare && PROMISED.includes(bare) && e.how !== 'not-windows') out.push(`${site}: ${bare} by a bare name is reviewed as ${e.how}`)
+    if (e.how !== 'by-name') continue
+    const programs = Array.isArray(e.programs) ? e.programs.map(programName) : []
+    if (programs.length === 0) out.push(`${site}: a by-name site names no programs`)
+    for (const p of programs) if (PROMISED.includes(p)) out.push(`${site}: ${p} is a promised program`)
+    if (bare && !programs.includes(bare)) out.push(`${site}: its programs leave out ${bare}`)
+    if (namesPromised(e.reason)) out.push(`${site}: a by-name reason names a promised program`)
+  }
+  return out
+}
 
 describe('every process the app starts is a reviewed site', () => {
   it('the scan reads the shipped scripts as well as the main process', () => {
@@ -199,6 +247,33 @@ describe('every process the app starts is a reviewed site', () => {
     for (const [site, e] of Object.entries(INVENTORY)) {
       if (/\(\s*['"`][^'"`\\/]+['"`]\s*$/.test(site)) expect(['not-windows', 'by-name'], site).toContain(e.how)
     }
+  })
+
+  it('the Feature Guide still makes the Windows lookup promise this list is checked against', () => {
+    expect(PROMISED).toEqual(expect.arrayContaining(['claude', 'node', 'git', 'gh', 'npm']))
+  })
+
+  it('a program the Windows lookup promise names is never started by a bare name on Windows', () => {
+    expect(promiseViolations(INVENTORY)).toEqual([])
+  })
+
+  it('the promise check refuses a bare-name start of a promised program, however it is reviewed', () => {
+    // The update check's gh entry as it was reviewed before it moved to the
+    // full-path start: a by-name site whose reason read the promise narrower
+    // than the Feature Guide does.
+    const old = "The GitHub CLI by name (gh), as the user's own terminal runs it, for the update check's optional token and private-release fallback. Not one of the programs the full-path rule names (node, git, Claude Code and its helper tools)."
+    expect(promiseViolations({ "src/main/github-update.ts :: execFileAsync('gh'": { count: 4, how: 'by-name', reason: old } })).toEqual([
+      "src/main/github-update.ts :: execFileAsync('gh': gh by a bare name is reviewed as by-name",
+      "src/main/github-update.ts :: execFileAsync('gh': a by-name site names no programs",
+      "src/main/github-update.ts :: execFileAsync('gh': its programs leave out gh",
+      "src/main/github-update.ts :: execFileAsync('gh': a by-name reason names a promised program",
+    ])
+    expect(promiseViolations({ "x.ts :: execFile('git.exe'": { count: 1, how: 'full-path', reason: 'r' } })).toEqual(["x.ts :: execFile('git.exe': git by a bare name is reviewed as full-path"])
+    expect(promiseViolations({ "x.ts :: spawn('npm'": { count: 1, how: 'not-windows', reason: 'r' } })).toEqual([])
+    // A start through a variable: what the review says it starts is checked.
+    expect(promiseViolations({ 'x.ts :: spawn(bin': { count: 1, how: 'by-name', programs: ['node.exe'], reason: 'a tool by its name' } })).toEqual(['x.ts :: spawn(bin: node is a promised program'])
+    expect(promiseViolations({ 'x.ts :: spawn(bin': { count: 1, how: 'by-name', programs: ['ssh'], reason: 'ssh, or else Claude Code' } })).toEqual(['x.ts :: spawn(bin: a by-name reason names a promised program'])
+    expect(promiseViolations({ 'x.ts :: spawn(bin': { count: 1, how: 'by-name', programs: ['ssh'], reason: 'ssh for the GitHub host' } })).toEqual([])
   })
 })
 

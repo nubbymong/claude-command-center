@@ -233,12 +233,14 @@ describe('programs are found only in PATH\'s absolute folders', () => {
     expect(await claudeAuthStatusCommand({}, 'linux')).toMatchObject({ file: 'claude', args: ['auth', 'status'], options: { shell: true } })
   })
 
-  it('gh starts by its full path with no shell; none -> it rejects and starts nothing', async () => {
+  it('gh starts by its full path with no shell, its own lookup kept to PATH\'s absolute folders; none -> it rejects and starts nothing', async () => {
     have('C:\\Tools\\gh.exe')
     await defaultGhRun(ENV)(['auth', 'status'])
     expect(h.spawn).toHaveLength(1)
     expect(h.spawn[0].file).toBe('C:\\Tools\\gh.exe')
+    expect(h.spawn[0].args).toEqual(['auth', 'status'])
     expect(h.spawn[0].opts).not.toHaveProperty('shell')
+    expect(h.spawn[0].opts.env).toEqual({ PATH: 'C:\\Npm;C:\\Tools', SystemRoot: 'C:\\Windows', NoDefaultCurrentDirectoryInExePath: '1' })
     onlyAbsoluteAsked()
     have()
     await expect(defaultGhRun(ENV)(['auth', 'status'])).rejects.toThrow(/gh was not found/)
