@@ -3,7 +3,9 @@
 // qualified folders, in PATH's order, read in this process with no shell and
 // no process started; a relative PATH entry, and so the current folder, is
 // never searched; a folder that does not answer is asked nothing more in that
-// lookup; nothing found leaves bare `node`, so the launch fails visibly.
+// lookup; nothing found gives no node, and the picker launch starts nothing
+// and says why: never the bare name, which would be looked up outside the
+// folders PATH names in full.
 // Synthetic environments only (never this process's own); the disk is
 // answered by an injected stat, or by a stubbed statSync on the picker route.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -50,7 +52,7 @@ vi.mock('../../../../src/main/config-manager', () => ({
 }))
 vi.mock('../../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
 
-const { resolveNodeExe, __resetNodeExeCache, buildCodexSpawn } = await import('../../../../src/main/providers/codex/spawn')
+const { resolveNodeExe, __resetNodeExeCache, buildCodexSpawn, PICKER_NODE_NOT_ON_PATH } = await import('../../../../src/main/providers/codex/spawn')
 type Stat = 'file' | 'none' | 'unreachable'
 
 /** A stat that records every path it is asked and answers from `files`
@@ -91,7 +93,7 @@ describe('node for the picker is found in PATH\'s absolute folders without start
     // Only the folders PATH names in full are asked.
     const d = disk(['C:\\project\\node.exe'])
     const env = { PATH: '.;node_modules\\.bin;C:\\tools' }
-    expect(resolveNodeExe({ platform: 'win32', env, statFile: d.statFile })).toBe('node')
+    expect(resolveNodeExe({ platform: 'win32', env, statFile: d.statFile })).toBeNull()
     expect(d.asked).toEqual(['C:\\tools\\node.exe'])
     expect(started).toEqual([])
   })
@@ -116,10 +118,10 @@ describe('node for the picker is found in PATH\'s absolute folders without start
     expect(resolveNodeExe({ platform: 'win32', env: { pAtH: 'C:\\n' }, statFile: d.statFile })).toBe('C:\\n\\node.exe')
   })
 
-  it('no PATH folder holds node.exe: bare node, and still no process started', () => {
+  it('no PATH folder holds node.exe: no node, never the bare name, and still no process started', () => {
     const d = disk([])
-    expect(resolveNodeExe({ platform: 'win32', env: { PATH: 'C:\\a;C:\\b' }, statFile: d.statFile })).toBe('node')
-    expect(resolveNodeExe({ platform: 'win32', env: {}, statFile: d.statFile })).toBe('node')
+    expect(resolveNodeExe({ platform: 'win32', env: { PATH: 'C:\\a;C:\\b' }, statFile: d.statFile })).toBeNull()
+    expect(resolveNodeExe({ platform: 'win32', env: {}, statFile: d.statFile })).toBeNull()
     expect(started).toEqual([])
   })
 
@@ -138,7 +140,7 @@ describe('node for the picker is found in PATH\'s absolute folders without start
 /** The picker launch through the npm launcher with the launch built for
  *  Windows (process.platform 'win32'), the picker deployed in a temp
  *  resources folder that is removed afterwards. */
-async function pickerLaunchOnWindows(): Promise<{ cmd: string; script: string; deployedScript: string }> {
+async function pickerLaunchOnWindows(nodeFile: string | null = 'C:\\ccc-test-only\\nodejs\\node.exe'): Promise<{ cmd: string; script: string; deployedScript: string }> {
   const fs = await vi.importActual<typeof import('fs')>('fs')
   const os = await vi.importActual<typeof import('os')>('os')
   const res = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-node-lookup-'))
@@ -146,7 +148,7 @@ async function pickerLaunchOnWindows(): Promise<{ cmd: string; script: string; d
     fs.mkdirSync(path.join(res, 'scripts'), { recursive: true })
     fs.writeFileSync(path.join(res, 'scripts', 'codex-resume-picker.js'), '// stub')
     ;(globalThis as any).__nodeLookupResDir = res
-    ;(globalThis as any).__nodeLookupFile = 'C:\\ccc-test-only\\nodejs\\node.exe'
+    if (nodeFile) (globalThis as any).__nodeLookupFile = nodeFile
     const orig = Object.getOwnPropertyDescriptor(process, 'platform')
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
     let out!: ReturnType<typeof buildCodexSpawn>
@@ -179,6 +181,19 @@ describe('the picker route on Windows starts the node its session\'s PATH names'
     ;(globalThis as any).__osPlatform = 'linux'
     const launch = await pickerLaunchOnWindows()
     expect(launch.cmd).toBe('C:\\ccc-test-only\\nodejs\\node.exe')
+    expect(started).toEqual([])
+  })
+
+  it('no node.exe in a folder the launch environment\'s PATH names in full: the launch refuses, says why, and makes no pick folder', async () => {
+    const fs = await vi.importActual<typeof import('fs')>('fs')
+    const os = await vi.importActual<typeof import('os')>('os')
+    const picks = (): string[] => fs.readdirSync(os.tmpdir()).filter((n) => /^ccc-codex-pick-/.test(n))
+    const before = picks()
+    // The relative entry holds node.exe; it is never asked, and never started by name.
+    ;(globalThis as any).__nodeLookupFile = 'relative\\node.exe'
+    await expect(pickerLaunchOnWindows(null)).rejects.toThrow(PICKER_NODE_NOT_ON_PATH)
+    expect(picks()).toEqual(before)
+    expect(PICKER_NODE_NOT_ON_PATH).toBe('The resume list needs node, which was not found in a folder PATH names (node.exe)')
     expect(started).toEqual([])
   })
 })

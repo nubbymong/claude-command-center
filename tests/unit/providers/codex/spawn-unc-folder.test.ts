@@ -15,6 +15,19 @@ vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>()
   return { ...actual, execSync: vi.fn(() => { throw new Error('nothing is started here') }) }
 })
+// The disk, for the picker route's node lookup on Windows: one fixed node.exe
+// (named in the picker launches' PATH below) answers as a file; every other
+// path as the real disk answers.
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return {
+    ...actual,
+    statSync: vi.fn((p: unknown, o?: unknown) => {
+      if (p === 'C:\\ccc-test-only\\nodejs\\node.exe') return { isFile: () => true } as import('fs').Stats
+      return (actual.statSync as (a: unknown, b?: unknown) => import('fs').Stats)(p, o)
+    }),
+  }
+})
 vi.mock('../../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => (globalThis as any).__uncResDir ?? '', getDataDirectory: () => '' }))
 vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 0,
@@ -105,7 +118,7 @@ describe('everything else starts as before', () => {
       fs.mkdirSync(path.join(res, 'scripts'), { recursive: true })
       fs.writeFileSync(path.join(res, 'scripts', 'codex-resume-picker.js'), '// stub')
       ;(globalThis as any).__uncResDir = res
-      const out = build(SHIM, { cwd: '\\\\srv\\share\\project', useResumePicker: true })
+      const out = win32(() => buildCodexSpawn({ sessionId: 'sid', realmLaunch: { executable: SHIM, env: { ...winEnv, PATH: 'C:\\ccc-test-only\\nodejs' }, sessionsDir: 'C:\\r\\sessions' }, codexOptions: STANDARD, cwd: '\\\\srv\\share\\project', useResumePicker: true }))
       const pickDir = out.pickFile ? path.dirname(out.pickFile) : null
       if (pickDir && path.dirname(pickDir) === os.tmpdir() && /^ccc-codex-pick-/.test(path.basename(pickDir))) fs.rmSync(pickDir, { recursive: true, force: true })
       expect(out.args[0]).toBe(path.join(res, 'scripts', 'codex-resume-picker.js'))

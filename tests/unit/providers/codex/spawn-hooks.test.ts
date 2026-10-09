@@ -20,6 +20,19 @@ vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>()
   return { ...actual, execSync: vi.fn(() => (process.platform === 'win32' ? 'C:\\node\\node.exe\n' : '/usr/local/bin/node\n')) }
 })
+// The disk, for the picker route's node lookup on Windows: one fixed node.exe
+// (named in the picker launches' PATH below) answers as a file; every other
+// path as the real disk answers.
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return {
+    ...actual,
+    statSync: vi.fn((p: unknown, o?: unknown) => {
+      if (p === 'C:\\ccc-test-only\\nodejs\\node.exe') return { isFile: () => true } as import('fs').Stats
+      return (actual.statSync as (a: unknown, b?: unknown) => import('fs').Stats)(p, o)
+    }),
+  }
+})
 vi.mock('../../../../src/main/ipc/setup-handlers', () => ({
   getResourcesDirectory: () => (globalThis as any).__mockResourcesDir ?? '',
   getDataDirectory: () => (globalThis as any).__mockResourcesDir ?? '',
@@ -82,7 +95,7 @@ afterEach(() => {
 })
 
 const exe = process.platform === 'win32' ? 'C:\\codex\\codex.exe' : '/opt/codex/bin/codex'
-const launch = { executable: exe, env: { PATH: process.platform === 'win32' ? 'C:\\Windows' : '/usr/bin', CODEX_HOME: '/res/r1', SystemRoot: 'C:\\Windows' }, sessionsDir: '/res/r1/sessions' }
+const launch = { executable: exe, env: { PATH: process.platform === 'win32' ? 'C:\\Windows;C:\\ccc-test-only\\nodejs' : '/usr/bin', CODEX_HOME: '/res/r1', SystemRoot: 'C:\\Windows' }, sessionsDir: '/res/r1/sessions' }
 const hookFile = join(tmpdir(), 'codex-hooks', 'ccc-codex-hook-abc', 'hook.json')
 const opts = { sessionId: 'sess-1', realmLaunch: launch, codexOptions: { permissionsPreset: 'standard' as const } }
 const ID = '019dd000-0001-7000-8000-0000000000c1'

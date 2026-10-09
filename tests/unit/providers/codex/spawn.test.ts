@@ -331,9 +331,10 @@ describe('CodexProvider', () => {
     __resetNodeExeCache()
     vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
     vi.mocked(execSync).mockImplementation(() => 'C:\\nodejs\\node.exe\n' as any)
+    ;(globalThis as any).__mockNodeExe = 'C:\\ccc-test-only\\nodejs\\node.exe'
     try {
       withWin32(() => {
-        const env = { ...winEnv, ccc_codex_executable: 'C:\\evil\\codex.exe', colorfgbg: '15;0' }
+        const env = { ...winEnv, Path: 'C:\\ccc-test-only\\nodejs', ccc_codex_executable: 'C:\\evil\\codex.exe', colorfgbg: '15;0' }
         const out = new CodexProvider().buildSpawnCommand({
           sessionId: 'sid', useResumePicker: true, hostColorScheme: 'light',
           realmLaunch: { ...launch, executable: 'C:\\npm\\codex.cmd', env },
@@ -347,6 +348,7 @@ describe('CodexProvider', () => {
       })
     } finally {
       delete (globalThis as any).__mockResourcesDir
+      delete (globalThis as any).__mockNodeExe
       __resetNodeExeCache()
     }
   })
@@ -536,10 +538,10 @@ describe('CodexProvider', () => {
       }))).toThrow(/cmd.exe/)
     })
 
-    it('resolveNodeExe falls back to bare "node" on win32 when no PATH folder holds node.exe, starting no process', () => {
+    it('resolveNodeExe answers no node on win32 when no PATH folder holds node.exe (never the bare name), starting no process', () => {
       vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
       vi.mocked(execSync).mockImplementation(() => { throw new Error('not found') })
-      expect(resolveNodeExe({ env: { PATH: 'C:\\none;.' }, statFile: () => 'none' })).toBe('node')
+      expect(resolveNodeExe({ env: { PATH: 'C:\\none;.' }, statFile: () => 'none' })).toBeNull()
       expect(vi.mocked(execSync)).not.toHaveBeenCalled()
     })
 

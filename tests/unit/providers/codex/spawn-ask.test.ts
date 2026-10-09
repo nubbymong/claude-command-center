@@ -29,6 +29,19 @@ vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>()
   return { ...actual, execSync: vi.fn(() => (process.platform === 'win32' ? 'C:\\node\\node.exe\r\n' : '/usr/local/bin/node\n')) }
 })
+// The disk, for the picker route's node lookup on Windows: one fixed node.exe
+// (named in the picker launches' PATH below) answers as a file; every other
+// path as the real disk answers.
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return {
+    ...actual,
+    statSync: vi.fn((p: unknown, o?: unknown) => {
+      if (p === 'C:\\ccc-test-only\\nodejs\\node.exe') return { isFile: () => true } as import('fs').Stats
+      return (actual.statSync as (a: unknown, b?: unknown) => import('fs').Stats)(p, o)
+    }),
+  }
+})
 vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => (globalThis as any).__mockMcpPort ?? 0,
   issueMcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
@@ -203,7 +216,8 @@ describe('where the question never rides argv', () => {
       fs.writeFileSync(script, '// staged for the test\n')
       ;(globalThis as any).__askResDir = res
       const q = 'how do I add an account?'
-      const out = buildCodexSpawn({ sessionId: 'sid', cwd: HELP, realmLaunch: linuxLaunch, codexOptions: STANDARD, useResumePicker: true, askPrompt: q, askProjectDocMaxBytes: askConductorProjectDocMaxBytes('linux') })
+      const pickerLaunch = { ...linuxLaunch, env: { ...linuxLaunch.env, PATH: process.platform === 'win32' ? 'C:\\ccc-test-only\\nodejs' : '/usr/bin' } }
+      const out = buildCodexSpawn({ sessionId: 'sid', cwd: HELP, realmLaunch: pickerLaunch, codexOptions: STANDARD, useResumePicker: true, askPrompt: q, askProjectDocMaxBytes: askConductorProjectDocMaxBytes('linux') })
       pickDir = out.pickFile ? path.dirname(out.pickFile) : null
       expect(out.args[0]).toBe(script)
       expect(out.args).not.toContain(q)

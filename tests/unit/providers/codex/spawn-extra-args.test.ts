@@ -14,6 +14,19 @@ vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>()
   return { ...actual, execSync: vi.fn(() => (process.platform === 'win32' ? 'C:\\node\\node.exe\n' : '/usr/local/bin/node\n')) }
 })
+// The disk, for the picker route's node lookup on Windows: one fixed node.exe
+// (named in the picker launches' PATH below) answers as a file; every other
+// path as the real disk answers.
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return {
+    ...actual,
+    statSync: vi.fn((p: unknown, o?: unknown) => {
+      if (p === 'C:\\ccc-test-only\\nodejs\\node.exe') return { isFile: () => true } as import('fs').Stats
+      return (actual.statSync as (a: unknown, b?: unknown) => import('fs').Stats)(p, o)
+    }),
+  }
+})
 vi.mock('../../../../src/main/ipc/setup-handlers', () => ({
   getResourcesDirectory: () => (globalThis as any).__mockResourcesDir ?? '',
   getDataDirectory: () => (globalThis as any).__mockResourcesDir ?? '',
@@ -151,7 +164,7 @@ describe('the npm .cmd shim through cmd.exe', () => {
   })
   it('the picker on that route carries them too', () => {
     resources(['codex-resume-picker.js'])
-    const out = withWin32(() => build({ realmLaunch: shim, useResumePicker: true, codexOptions: co('--search') }))
+    const out = withWin32(() => build({ realmLaunch: { ...shim, env: { ...winEnv, PATH: 'C:\\ccc-test-only\\nodejs' } }, useResumePicker: true, codexOptions: co('--search') }))
     expect(out.args[out.args.length - 1]).toBe('--search')
   })
   // Round 1 (A1): a resume by id on that route too.

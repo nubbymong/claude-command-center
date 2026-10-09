@@ -168,7 +168,9 @@ export interface NodeExeLookup {
  * current folder, is never searched), read in this process with no shell and
  * no process started; a folder that does not answer is asked nothing more in
  * that lookup (as resolveCodexBinary). Kept for later lookups under the same
- * PATH. None found: bare 'node', so the launch fails visibly.
+ * PATH. None found: null, never the bare name, which would be looked up
+ * outside the folders PATH names in full; the launch refuses with
+ * PICKER_NODE_NOT_ON_PATH.
  *
  * macOS and Linux: bare 'node' works under a PTY (execvp looks PATH up), but
  * an app started from Finder or the Dock has launchd's minimal PATH, so the
@@ -176,7 +178,7 @@ export interface NodeExeLookup {
  */
 let cachedNodeExe: string | null = null
 let cachedWindowsNodeExe: { pathVar: string; exe: string } | null = null
-export function resolveNodeExe(lookup: NodeExeLookup = {}): string {
+export function resolveNodeExe(lookup: NodeExeLookup = {}): string | null {
   if ((lookup.platform ?? os.platform()) !== 'win32') {
     // Same launchd-minimal-PATH hazard as resolveCodexBinary: resolve the
     // absolute node path via a login shell so PTY execvp doesn't depend on
@@ -211,8 +213,12 @@ export function resolveNodeExe(lookup: NodeExeLookup = {}): string {
     }
     if (found === 'unreachable') unreachable.add(dir)
   }
-  return 'node'
+  return null
 }
+
+/** What a launch through the resume list says on Windows when no node.exe is
+ *  in a folder PATH names in full: it starts nothing. */
+export const PICKER_NODE_NOT_ON_PATH = 'The resume list needs node, which was not found in a folder PATH names (node.exe)'
 
 /** Test-only: reset the node.exe resolution cache. */
 export function __resetNodeExeCache(): void {
@@ -779,6 +785,12 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
       // npm launcher in a network folder, it refuses that with the reason.
       const pickerFlags = fitCmdLine(['resume', '00000000-0000-0000-0000-000000000000'])
       if (viaCmdExe) codexCmdExeTarget(executable, pickerFlags, env)
+      // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup):
+      // the full node.exe path, from the folders this session's own PATH
+      // names (resolveNodeExe), looked up for the platform this launch is
+      // built for. None there: nothing starts, before anything is made for it.
+      const nodeExe = resolveNodeExe({ env, platform: process.platform })
+      if (!nodeExe) throw new Error(PICKER_NODE_NOT_ON_PATH)
       const pickerEnv = { ...env }
       setOwned(pickerEnv, 'CCC_CODEX_EXECUTABLE', executable, win32)
       // P3.5 (rows 32, 38): where the picker records each decision it makes,
@@ -814,11 +826,7 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
       // rather than that it is no longer available. Codex never gets it.
       const openElsewhere = (opts.codexOpenElsewhere ?? []).filter((id) => typeof id === 'string' && CODEX_CONVERSATION_ID_RE.test(id)).slice(0, CODEX_OPEN_ELSEWHERE_MAX)
       if (openElsewhere.length > 0) setOwned(pickerEnv, CODEX_OPEN_ELSEWHERE_ENV, openElsewhere.join(','), win32)
-      // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup):
-      // the full node.exe path, from the folders this session's own PATH
-      // names (resolveNodeExe), looked up for the platform this launch is
-      // built for.
-      return { cmd: resolveNodeExe({ env, platform: process.platform }), args: [pickerScript, ...pickerFlags], env: pickerEnv, ...(pickFile && pickFolder ? { pickFile, pickFolder } : {}), hooksInstalled }
+      return { cmd: nodeExe, args: [pickerScript, ...pickerFlags], env: pickerEnv, ...(pickFile && pickFolder ? { pickFile, pickFolder } : {}), hooksInstalled }
     }
     // Fallthrough: picker missing, spawn codex directly.
   }

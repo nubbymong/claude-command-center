@@ -19,6 +19,19 @@ vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>()
   return { ...actual, execSync: vi.fn(() => '/usr/local/bin/node\n') }
 })
+// The disk, for the picker's node lookup on a Windows runner (it follows
+// process.platform): one fixed node.exe, named in the launches' PATH below,
+// answers as a file; every other path as the real disk answers.
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return {
+    ...actual,
+    statSync: vi.fn((p: unknown, o?: unknown) => {
+      if (p === 'C:\\ccc-test-only\\nodejs\\node.exe') return { isFile: () => true } as import('fs').Stats
+      return (actual.statSync as (a: unknown, b?: unknown) => import('fs').Stats)(p, o)
+    }),
+  }
+})
 vi.mock('../../../../src/main/ipc/setup-handlers', () => ({
   getResourcesDirectory: () => (globalThis as any).__p35ResourcesDir ?? '',
 }))
@@ -74,7 +87,7 @@ function realmWith(id: string, cwd: string, daysAgo = 2): { sessionsDir: string;
   writeFileSync(file, JSON.stringify({ timestamp: at.toISOString(), type: 'session_meta', payload: { id, cwd, cli_version: '0.155.1' } }) + '\n')
   return { sessionsDir: join(home, 'sessions'), file }
 }
-const launchIn = (sessionsDir: string, executable = '/proven/codex') => ({ executable, env: { PATH: '/usr/bin', CODEX_HOME: dirname(sessionsDir) }, sessionsDir })
+const launchIn = (sessionsDir: string, executable = '/proven/codex') => ({ executable, env: { PATH: process.platform === 'win32' ? 'C:\\ccc-test-only\\nodejs' : '/usr/bin', CODEX_HOME: dirname(sessionsDir) }, sessionsDir })
 /** A resources folder with the picker deployed, so a bypass is visible. */
 function deployPicker(): string {
   const res = temp('res')
