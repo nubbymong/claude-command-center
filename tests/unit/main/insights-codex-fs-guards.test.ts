@@ -793,6 +793,9 @@ describe('Insights keeps its reports only in its own folder [host]', () => {
     expect(() => runner.cleanupStuckRuns()).not.toThrow()
     expect(R().readFileSync(join(outside, 'catalogue.json'), 'utf8')).toBe(stuck)
     expect(R().readdirSync(outside)).toEqual(['catalogue.json'])
+    // The refusal once, where it is raised; then that the catalogue was left.
+    expect(h.warns.filter((w) => w.includes(INSIGHTS_REFUSED))).toHaveLength(1)
+    expect(h.warns.filter((w) => w.includes('The catalogue was left as it is at start-up'))).toHaveLength(1)
   })
 
   it('control: a run with `insights` as it should be completes, its own folder owner-only where modes apply [host]', async () => {
@@ -910,6 +913,33 @@ describe("Claude Code's report is copied into a run's own folder only by the run
     expect(R().readdirSync(outside)).toEqual([])
   })
 
+  it("the run's own folder swapped for a link as the facets folder is made: the folder made through it is removed again, and the run fails [host]", async () => {
+    claudeAccount()
+    const outside = join(h.tmpRoot, 'outside-run-at-facets')
+    R().mkdirSync(outside, { recursive: true })
+    h.ptyRun = () => {
+      const run = nodePath.resolve(runDir())
+      h.beforeMkdir = (p) => { if (nodePath.resolve(p) === nodePath.resolve(join(run, 'facets'))) { h.beforeMkdir = null; h.links.set(run, outside) } }
+    }
+    const id = await runner.runInsights(win) as string
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: COPY_FAILED })
+    expect(R().readdirSync(outside)).toEqual([])
+    expect(runner.isRunning(PROFILE)).toBe(false)
+  })
+
+  it("Claude Code's report and its facets are copied byte for byte, bytes that are not UTF-8 included [host]", async () => {
+    claudeAccount()
+    h.claudeKpis = KPIS
+    const report = Buffer.from([0x3c, 0x70, 0x3e, 0xff, 0xfe, 0x63, 0x61, 0x66, 0xe9, 0x3c, 0x2f, 0x70, 0x3e])
+    const facet = Buffer.from([0x7b, 0x22, 0x73, 0x22, 0x3a, 0x22, 0xe9, 0x80, 0x22, 0x7d])
+    R().writeFileSync(join(usageDir(), 'report.html'), report)
+    R().writeFileSync(join(usageDir(), 'facets', 's1.json'), facet)
+    const id = await runner.runInsights(win) as string
+    expect(runOf(id).status).toBe('complete')
+    expect(R().readFileSync(join(insightsDir(), id, 'report.html')).equals(report)).toBe(true)
+    expect(R().readFileSync(join(insightsDir(), id, 'facets', 's1.json')).equals(facet)).toBe(true)
+  })
+
   it("a report.html in the account's usage data that is not a regular file (a FIFO) is not copied: the run fails, never waits [host]", async () => {
     claudeAccount()
     h.fifo.add(fkey(join(usageDir(), 'report.html')))
@@ -926,6 +956,7 @@ describe("Claude Code's report is copied into a run's own folder only by the run
     const id = await runner.runInsights(win) as string
     expect(runOf(id).status).toBe('complete')
     expect(R().readdirSync(join(insightsDir(), id, 'facets'))).toEqual(['s2.json'])
+    expect(h.warns.filter((w) => w.includes('s1.json'))).toHaveLength(1)
   })
 })
 
@@ -977,6 +1008,21 @@ describe('start-up never fails on the catalogue [host]', () => {
     expect(R().readFileSync(join(insightsDir(), 'catalogue.json'), 'utf8')).toBe(stuck)
     expect(h.warns.some((w) => w.includes('catalogue'))).toBe(true)
   })
+
+  it('a catalogue that is not a list of runs reads as no runs, an entry that is not a run is left out, and start-up goes on [host]', () => {
+    R().mkdirSync(insightsDir(), { recursive: true })
+    const file = join(insightsDir(), 'catalogue.json')
+    for (const text of ['{}', '{"runs":5}', '{"runs":{"0":{"id":"x"}}}', 'null', '[1,2]']) {
+      R().writeFileSync(file, text)
+      expect(() => runner.cleanupStuckRuns(), text).not.toThrow()
+      expect(runner.getCatalogue().runs, text).toEqual([])
+    }
+    const stuck = { id: '2026-10-01-120000-000003', timestamp: 1, status: 'running' }
+    R().writeFileSync(file, JSON.stringify({ runs: [null, 7, 'x', [stuck], stuck] }))
+    expect(() => runner.cleanupStuckRuns()).not.toThrow()
+    expect(runner.getCatalogue().runs).toEqual([{ ...stuck, status: 'failed', error: 'Interrupted by app restart' }])
+    expect(runner.getInsightsReport('2026-10-01-120000-000004')).toBeNull()
+  })
 })
 
 // [host] A refused run says why once in the log, though its own failure
@@ -988,6 +1034,16 @@ describe('a refusal is logged once [host]', () => {
     h.links.set(nodePath.resolve(insightsDir()), outside)
     await expect(runner.runInsights(win)).rejects.toThrow(INSIGHTS_REFUSED)
     expect(h.warns.filter((w) => w.includes(INSIGHTS_REFUSED))).toHaveLength(1)
+  })
+
+  it('the same refusal in a later run is logged again [host]', async () => {
+    const outside = join(h.tmpRoot, 'outside-again')
+    R().mkdirSync(outside, { recursive: true })
+    h.links.set(nodePath.resolve(insightsDir()), outside)
+    await expect(runner.runInsights(win)).rejects.toThrow(INSIGHTS_REFUSED)
+    await new Promise((r) => setTimeout(r, 0))
+    await expect(runner.runInsights(win)).rejects.toThrow(INSIGHTS_REFUSED)
+    expect(h.warns.filter((w) => w.includes(INSIGHTS_REFUSED))).toHaveLength(2)
   })
 })
 

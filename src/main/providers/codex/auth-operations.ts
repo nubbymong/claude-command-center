@@ -29,8 +29,9 @@
 //   CODEX_HOME/.env, which could carry OPENAI_API_KEY past the allowlist;
 // - one sign-in or sign-out at a time per realm, and one browser sign-in at a
 //   time overall (the CLI's local callback port is machine-wide); a hold, the
-//   browser one included, lasts until any kill its stopped runs left under
-//   way has finished (CodexRunResult.killSettled);
+//   browser one included, lasts until whatever its runs left still being
+//   ended -- a stopped run's kill, or what a run whose own process had exited
+//   left behind -- has ended (CodexRunResult.killSettled);
 // - sign-in and logout succeed only when a status run in the same realm
 //   agrees afterwards; after a failed or cancelled sign-in the realm's state
 //   is read again and reported, because the user may have finished in the
@@ -158,7 +159,8 @@ const refuse = (code: AuthFailureCode, message: string = MSG[code]): Refusal => 
 const isRefusal = (x: unknown): x is Refusal => !!x && typeof x === 'object' && (x as { ok?: unknown }).ok === false
 
 type Env = Readonly<Record<string, string | undefined>>
-/** `kills`: the kills this operation's stopped runs left under way
+/** `kills`: what this operation's runs left still being ended -- a stopped
+ *  run's kill, or what a run whose own process had exited left behind
  *  (CodexRunResult.killSettled); its realm hold outlasts them. */
 interface Ready { ok: true; home: string; canonical: string; ownership: RealmOwnership; lock: string; base: Env; kills: Promise<void>[] }
 type Observed = { state: 'signed-in'; via?: CodexLoginVia } | { state: 'signed-out' } | Refusal & { state: 'error' }

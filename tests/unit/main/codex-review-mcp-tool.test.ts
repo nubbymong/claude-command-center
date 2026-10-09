@@ -261,6 +261,17 @@ describe('WP2 5a, ADR-009 round 1: a review never outlives its request or its se
     expect(h.release).toHaveBeenCalledTimes(3)
   })
 
+  it('a review that completed while what it left is still being ended keeps its lease until that has ended; the agent has the review at once', async () => {
+    let finishKill!: () => void
+    const killSettled = new Promise<void>((res) => { finishKill = res })
+    h.run.mockImplementationOnce(async () => ({ ok: true, text: 'fine', killSettled }))
+    expect(await runCodexReview({ cccSessionId: 'sess-allowed', mode: 'working' }, sets, gitCwd, h.deps)).toMatchObject({ isError: false })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(h.release).not.toHaveBeenCalled()
+    finishKill()
+    await vi.waitFor(() => expect(h.release).toHaveBeenCalledTimes(1))
+  })
+
   // Round 3 (B6): a lease release that throws never replaces the agent's answer.
   it('a lease release that throws, at once or after the kill, never replaces the result', async () => {
     h.release.mockImplementation(() => { throw new Error('lease gone') })

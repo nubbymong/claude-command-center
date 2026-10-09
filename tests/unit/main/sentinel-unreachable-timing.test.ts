@@ -94,6 +94,11 @@ vi.mock('../../../src/main/config-manager', () => ({
 }))
 vi.mock('../../../src/main/account-profiles', () => ({
   resolveHeadlessProfileHome: () => ({ home: null, profileId: null }),
+  // No start steps pending and every sign-in folder checked (the waits a launch makes first).
+  startProfileStepsPending: () => false,
+  startProfileStepsSettled: async () => {},
+  profileCredentialFoldersChecked: () => true,
+  checkProfileCredentialFolders: async () => {},
   listProfiles: () => [],
   sharedRoot: () => path.join(os.tmpdir(), 'ccc-sentinel-timing-no-such-folder'),
 }))

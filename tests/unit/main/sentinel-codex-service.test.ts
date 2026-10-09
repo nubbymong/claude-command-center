@@ -120,6 +120,11 @@ vi.mock('../../../src/main/config-manager', () => ({
 }))
 vi.mock('../../../src/main/account-profiles', () => ({
   resolveHeadlessProfileHome: () => ({ home: null, profileId: null }),
+  // No start steps pending and every sign-in folder checked (the waits a launch makes first).
+  startProfileStepsPending: () => false,
+  startProfileStepsSettled: async () => {},
+  profileCredentialFoldersChecked: () => true,
+  checkProfileCredentialFolders: async () => {},
   listProfiles: () => [],
   // Round 3: the default account's Claude folder is this suite's own.
   sharedRoot: () => path.join(dir, 'shared-claude'),
@@ -636,6 +641,26 @@ describe("Sentinel's Codex runs are Codex in use while they run", () => {
     expect(fs.existsSync(review.runs[0].cwd)).toBe(false)
     expect(s.sentinelCodexRunsInFlight()).toBe(0)
     expect(s.getSentinelState()!.snapshot().lastAnalysisError).toMatch(/could not finish in time/)
+  })
+
+  it('an analysis that completed while what it left is still being ended keeps its folder and lease until that has ended', async () => {
+    svc.pref.claude = 'off'
+    let finishKill!: () => void
+    const killSettled = new Promise<void>((r) => { finishKill = r })
+    review.answer = () => ({ ok: true, text: JSON.stringify({ breakingChanges: [] }), killSettled })
+    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    expect(review.runs).toHaveLength(1)
+    expect(svc.released).toBe(0)
+    expect(fs.existsSync(review.runs[0].cwd)).toBe(true)
+    expect(s.sentinelCodexRunsInFlight()).toBe(1)
+    finishKill()
+    await killSettled
+    await new Promise<void>((r) => setTimeout(r, 0))
+    expect(svc.released).toBe(1)
+    expect(fs.existsSync(review.runs[0].cwd)).toBe(false)
+    expect(s.sentinelCodexRunsInFlight()).toBe(0)
+    expect(s.getSentinelState()!.snapshot().lastAnalysisError).toBeNull()
   })
 })
 

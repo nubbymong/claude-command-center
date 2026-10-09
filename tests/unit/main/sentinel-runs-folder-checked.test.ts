@@ -24,6 +24,12 @@ const h = vi.hoisted(() => ({
   fdPaths: new Map<number, string>(),
   /** Where each folder mkdtempSync made landed once links were followed. */
   made: [] as string[],
+  /** Told of each mkdirSync before it runs, with the path it names. */
+  beforeMkdir: null as null | ((p: string) => void),
+  /** An lstat of a path this answers true for finds nothing there (ENOENT). */
+  goneAtLstat: null as null | ((p: string) => boolean),
+  /** Where each folder mkdirSync made landed once links were followed. */
+  mkdirs: [] as string[],
   real: null as any,
 }))
 
@@ -85,6 +91,7 @@ async function wrapFs(real: any): Promise<any> {
     realpathSync,
     lstatSync: (p: any, o?: any) => {
       if (!isStr(p)) return real.lstatSync(p, o)
+      if (h.goneAtLstat?.(path.resolve(p))) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' })
       const q = follow(p, false)
       const res = own(p, linkAt(q) ? fakeLinkStats() : real.lstatSync(q, o))
       h.onLstat?.(path.resolve(p))
@@ -92,9 +99,12 @@ async function wrapFs(real: any): Promise<any> {
     },
     mkdirSync: (p: any, o?: any) => {
       if (!isStr(p)) return real.mkdirSync(p, o)
+      h.beforeMkdir?.(path.resolve(p))
       const q = follow(p, false)
       if (linkAt(q)) { if (o?.recursive) return undefined; throw Object.assign(new Error(`EEXIST: ${p}`), { code: 'EEXIST' }) }
-      return real.mkdirSync(q, o)
+      const out = real.mkdirSync(q, o)
+      h.mkdirs.push(path.resolve(q))
+      return out
     },
     mkdtempSync: (prefix: any, o?: any) => {
       const q = follow(String(prefix), false)
@@ -175,6 +185,11 @@ vi.mock('../../../src/main/config-manager', () => ({
 }))
 vi.mock('../../../src/main/account-profiles', () => ({
   resolveHeadlessProfileHome: () => ({ home: null, profileId: null }),
+  // No start steps pending and every sign-in folder checked (the waits a launch makes first).
+  startProfileStepsPending: () => false,
+  startProfileStepsSettled: async () => {},
+  profileCredentialFoldersChecked: () => true,
+  checkProfileCredentialFolders: async () => {},
   listProfiles: () => [],
   sharedRoot: () => '',
 }))
@@ -213,6 +228,7 @@ beforeEach(() => {
   h.links.clear()
   h.onReaddir = null; h.uidFor = null; h.modeFor = null; h.onLstat = null; h.onChmod = null
   h.fdPaths.clear(); h.made = []
+  h.beforeMkdir = null; h.goneAtLstat = null; h.mkdirs = []
   svc.pref = { claude: 'on', codex: 'on' }
   svc.released = 0
   runs.onAnalysis = null
@@ -224,6 +240,7 @@ afterEach(() => {
   else (process as any).getuid = realGetuid
   h.links.clear()
   h.onReaddir = null; h.uidFor = null; h.modeFor = null; h.onLstat = null; h.onChmod = null
+  h.beforeMkdir = null; h.goneAtLstat = null
   // TEST CLEANUP GUARD: only this suite's own state folder, by its prefix and parent.
   if (basename(dir).startsWith(PREFIX) && nodePath.resolve(dirname(dir)) === nodePath.resolve(os.tmpdir())) {
     try { R().rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ }
@@ -383,6 +400,57 @@ describe("Sentinel's own folder is checked before its runs folder is made in it 
     expect(R().existsSync(join(elsewhere, 'runs'))).toBe(false)
     expect(h.made.filter((m) => same(nodePath.dirname(nodePath.dirname(m)), elsewhere))).toEqual([])
     expect(runs.claudeCwds).toHaveLength(0)
+  })
+
+  it("Sentinel's own folder not there at its check, and a link put in its place before it is made: nothing is made through the link, and nothing runs [host]", async () => {
+    const elsewhere = join(dir, 'elsewhere-absent')
+    R().mkdirSync(elsewhere, { recursive: true })
+    const s = await sentinel()
+    let fired = false
+    h.goneAtLstat = (p) => {
+      if (fired || !same(p, sentinelDir())) return false
+      fired = true
+      h.links.set(nodePath.resolve(sentinelDir()), elsewhere)
+      return true
+    }
+    await s.sentinelStartupCheck()
+    expect(fired).toBe(true)
+    expect(R().existsSync(join(elsewhere, 'runs'))).toBe(false)
+    expect(h.mkdirs.filter((m) => same(m, elsewhere) || nodePath.resolve(m).toLowerCase().startsWith(nodePath.resolve(elsewhere).toLowerCase() + nodePath.sep))).toEqual([])
+    expect(runs.claudeCwds).toHaveLength(0)
+    expect(s.getSentinelState()!.snapshot().lastAnalysisError).toBe(NO_FOLDER)
+  })
+
+  it("Sentinel's own folder swapped for a link as its runs folder is made: the runs folder made through it is removed again, and nothing runs [host]", async () => {
+    const elsewhere = join(dir, 'elsewhere-at-make')
+    R().mkdirSync(elsewhere, { recursive: true })
+    const s = await sentinel()
+    h.beforeMkdir = (p) => { if (same(p, runsDir())) { h.beforeMkdir = null; h.links.set(nodePath.resolve(sentinelDir()), elsewhere) } }
+    await s.sentinelStartupCheck()
+    expect(R().existsSync(join(elsewhere, 'runs'))).toBe(false)
+    expect(runs.claudeCwds).toHaveLength(0)
+    expect(s.getSentinelState()!.snapshot().lastAnalysisError).toBe(NO_FOLDER)
+  })
+
+  it("on POSIX, Sentinel's own folder another user's: refused before its runs folder is made in it; nothing runs [host]", async () => {
+    ;(process as any).getuid = () => 4242
+    h.uidFor = (p) => (same(p, sentinelDir()) ? 7 : 4242)
+    h.modeFor = (p) => (same(p, sentinelDir()) ? 0o040700 : undefined)
+    const s = await sentinel()
+    await s.sentinelStartupCheck()
+    expect(R().existsSync(runsDir())).toBe(false)
+    expect(h.mkdirs.filter((m) => same(m, runsDir()))).toEqual([])
+    expect(runs.claudeCwds).toHaveLength(0)
+    expect(s.getSentinelState()!.snapshot().lastAnalysisError).toBe(NO_FOLDER)
+  })
+
+  it("control: Sentinel's own folder and its runs folder not there yet are each made, owner-only where modes apply, and the analysis runs [host]", async () => {
+    const s = await sentinel()
+    R().rmSync(runsDir(), { recursive: true, force: true })
+    await s.sentinelStartupCheck()
+    expect(runs.claudeCwds).toHaveLength(1)
+    expect(R().statSync(runsDir()).isDirectory()).toBe(true)
+    if (process.platform !== 'win32') expect(R().statSync(runsDir()).mode & 0o777).toBe(0o700)
   })
 })
 

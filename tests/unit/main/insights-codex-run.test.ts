@@ -336,6 +336,23 @@ describe('a Codex report that does not complete', () => {
     expect(runOf(id)).toMatchObject({ status: 'failed', error: 'This report could not be written: Codex did not finish the report within 600s.' })
   })
 
+  it('a model run that completed while what it left is still being ended keeps the lease and the folder until that has ended; the report is kept [host]', async () => {
+    let land!: () => void
+    const killSettled = new Promise<void>((r) => { land = r })
+    h.execAnswer = { ok: true, text: REPLY, killSettled }
+    const pending = runCodexInsights(win, { accountId: ACCT })
+    await vi.waitFor(() => expect(h.execCalls).toHaveLength(1))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(h.released).toBe(0)
+    expect(existsSync(h.execCalls[0].cwd)).toBe(true)
+    expect(isRunning(ACCT)).toBe(true)
+    land()
+    const id = await pending as string
+    expect(h.released).toBe(1)
+    expect(existsSync(h.execCalls[0].cwd)).toBe(false)
+    expect(runOf(id).status).toBe('complete')
+  })
+
   it('no sessions in the window: failed with a plain reason, and no model run [host]', async () => {
     rmSync(h.sessionsDir, { recursive: true, force: true })
     const id = await runCodexInsights(win, { accountId: ACCT }) as string

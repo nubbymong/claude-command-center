@@ -147,14 +147,25 @@ async function savedSettings(): Promise<Record<string, unknown> | null> {
  * installs). Never bare-global when profiles exist: the frozen global login
  * hangs at auth / carries stale rate-limit state (live repro: both analysis
  * attempts timed out at 180s on 2026-06-12).
+ *
+ * As a local launch does, it waits for the start's profile steps when they are
+ * still to run (they may be making the primary account from the user's own
+ * sign-in), and then for the chosen account's sign-in folders to have their
+ * owner-only verdict in this run, so the headless run reads a verdict instead
+ * of being refused for want of one. Each wait only when pending.
  */
 async function analysisHome(): Promise<{ home: string | null; accountLabel: string | null }> {
   try {
     const { readConfig } = await import('../config-manager')
-    const { resolveHeadlessProfileHome, listProfiles } = await import('../account-profiles')
+    const {
+      resolveHeadlessProfileHome, listProfiles,
+      startProfileStepsPending, startProfileStepsSettled, profileCredentialFoldersChecked, checkProfileCredentialFolders,
+    } = await import('../account-profiles')
+    if (startProfileStepsPending()) await startProfileStepsSettled()
     const settings = readConfig<{ sentinelAccountProfileId?: string | null }>('settings')
     const chosen = settings?.sentinelAccountProfileId ?? null
     const { home, profileId } = resolveHeadlessProfileHome(chosen)
+    if (profileId && !profileCredentialFoldersChecked(profileId)) await checkProfileCredentialFolders(profileId)
     // Name the account the analysis actually ran under, so a failure message can
     // say WHICH account to change (#430). When the chosen account no longer
     // resolves and we fell back to another, say so — otherwise the user sees a
@@ -387,31 +398,53 @@ export const STALE_ANALYSIS_FOLDER_MS = 60 * 60 * 1000
  *  there, each a real folder (never a link) and, on POSIX, this user's and
  *  writable by no one else, not a shared temp folder another user can write
  *  into (runsFolderHolds). Sentinel's folder is readied first
- *  (sentinelDirReady). Null when it cannot be. */
+ *  (sentinelDirReady), made alone when it is not there yet and readied
+ *  again; then `runs` is made alone, and one made that does not hold is
+ *  removed again (it is empty). Null when it cannot be. */
 function analysisParent(): string | null {
   if (!sentinelDir) return null
   const parent = path.join(sentinelDir, SENTINEL_RUNS_DIRNAME)
   try {
     if (!sentinelDirReady(sentinelDir)) return null
-    fs.mkdirSync(parent, { recursive: true, mode: 0o700 })
-    return runsFolderHolds(parent) ? parent : null
+    makeFolderAlone(sentinelDir)
+    if (!sentinelDirReady(sentinelDir)) return null
+    const made = makeFolderAlone(parent)
+    if (runsFolderHolds(parent)) return parent
+    if (made) { try { fs.rmdirSync(parent) } catch { /* not empty, or gone: leave it */ } }
+    return null
   } catch {
     return null
   }
 }
 
+/** Makes `dir` alone (never its parents, never through what is at its
+ *  name), owner-only (0700): true when it made it, false when something is
+ *  there already. Throws on any other failure. */
+function makeFolderAlone(dir: string): boolean {
+  try {
+    fs.mkdirSync(dir, { mode: 0o700 })
+    return true
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code === 'EEXIST') return false
+    throw e
+  }
+}
+
 /** Sentinel's own folder, readied for its runs folder: one not there yet is
  *  left to the make after this (owner-only, 0700); a link, or not a folder,
- *  is refused before anything is made through it; on POSIX one of this
- *  user's that others can write to (made under a group-writable umask) is
- *  first made owner-only through a handle on the folder its lstat saw
- *  (ownerOnlyThroughHandle). runsFolderHolds checks the result. Never
- *  throws. */
+ *  or on POSIX another user's, is refused before anything is made through
+ *  it; on POSIX one of this user's that others can write to (made under a
+ *  group-writable umask) is first made owner-only through a handle on the
+ *  folder its lstat saw (ownerOnlyThroughHandle). runsFolderHolds checks the
+ *  result. Never throws. */
 function sentinelDirReady(dir: string): boolean {
   let st: fs.BigIntStats
   try { st = fs.lstatSync(dir, { bigint: true }) } catch (e) { return (e as NodeJS.ErrnoException)?.code === 'ENOENT' }
   if (st.isSymbolicLink() || !st.isDirectory()) return false
-  if (typeof process.getuid === 'function' && Number(st.uid) === process.getuid() && (Number(st.mode) & 0o022) !== 0) return ownerOnlyThroughHandle(dir, st)
+  if (typeof process.getuid === 'function') {
+    if (Number(st.uid) !== process.getuid()) return false
+    if ((Number(st.mode) & 0o022) !== 0) return ownerOnlyThroughHandle(dir, st)
+  }
   return true
 }
 
@@ -537,7 +570,9 @@ async function codexAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner 
         // prompts, and takes no optional lock.
         const env = { ...launch.env, GIT_CEILING_DIRECTORIES: parent!, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }
         const out = await review.run({ executable: launch.executable, env, cwd, prompt: stdin ?? '', timeoutMs, signal, purpose: 'analysis' })
-        if (!out.ok && out.killSettled instanceof Promise) kills.push(out.killSettled)
+        // Whatever the outcome: the lease and the folder are held until what
+        // is left of the run has ended (within the runner's worst case).
+        if (out.killSettled instanceof Promise) kills.push(out.killSettled)
         if (out.ok) return { code: 0, stdout: out.text, stderr: '' }
         if (out.code === 'timed-out') return { code: 1, stdout: '', stderr: `Timed out after ${Math.round(timeoutMs / 1000)}s` }
         // The reviewer's own message (already redacted), read as Claude's

@@ -14,7 +14,7 @@ import { createReadFailureLatch, loadConfigLatched, saveConfigLatched, mergeById
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveVersionBinary, isVersionInstalled, installVersion, legacyCliPin } from './legacy-version-manager'
 import { isValidLegacyVersion } from '../shared/legacy-version'
-import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
+import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId, startProfileStepsPending, startProfileStepsSettled, profileCredentialFoldersChecked, checkProfileCredentialFolders } from './account-profiles'
 import { withProfileHome } from './pty-manager'
 import { gateManagedLaunch } from './managed-launch-diagnostics'
 import type { ProjectGateResult, ProviderLaunchRefused, ProviderId } from '../shared/providers'
@@ -69,17 +69,24 @@ export interface CloudAgentData {
  * Falls back to the captured primary profile so an agent never silently runs on
  * the bare global login when multi-account is active; returns the bare env
  * (behaviour unchanged) for single-account users with no profiles.
+ *
+ * As a local launch does, it first waits for the start's profile steps when
+ * they are still to run (they may be making the primary account from the
+ * user's own sign-in), and then for the chosen account's sign-in folders to
+ * have their owner-only verdict in this run, so withProfileHome reads a
+ * verdict instead of refusing for want of one. Each wait only when pending.
  */
-function resolveAgentEnv(profileId: string | undefined, projectPath: string, projectGate: ProjectGateResult, pinnedCli?: { version: string; installed: boolean }): {
+async function resolveAgentEnv(profileId: string | undefined, projectPath: string, projectGate: ProjectGateResult, pinnedCli?: { version: string; installed: boolean }): Promise<{
   env: Record<string, string>
   resolvedProfileId: string | null
   accountEmail?: string
-} {
+}> {
   const baseEnv: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) {
     if (v !== undefined) baseEnv[k] = v
   }
 
+  if (startProfileStepsPending()) await startProfileStepsSettled()
   let resolvedProfileId: string | null = null
   // Same guard as the insights/headless resolvers: validate before the join so a
   // crafted id can't resolve a home outside the profiles root (it becomes the
@@ -94,6 +101,7 @@ function resolveAgentEnv(profileId: string | undefined, projectPath: string, pro
 
   if (!resolvedProfileId) return { env: baseEnv, resolvedProfileId: null }
 
+  if (!profileCredentialFoldersChecked(resolvedProfileId)) await checkProfileCredentialFolders(resolvedProfileId)
   try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[cloud-agent] home refresh failed for ${resolvedProfileId}: ${e}`) }
   const home = getProfileConfigDir(resolvedProfileId)
   const accountEmail = listProfiles().find(p => p.id === resolvedProfileId)?.accountEmail || undefined
@@ -298,7 +306,7 @@ export async function dispatchAgent(params: DispatchAgentParams): Promise<CloudA
     // counts only when it is below the floor, so a failed install that falls
     // back to the installed CLI can only err loud, never a false "supported").
     const pinnedCli = params.legacyVersion?.enabled ? legacyCliPin(params.legacyVersion) : undefined
-    ;({ env: spawnEnvVars, resolvedProfileId, accountEmail } = resolveAgentEnv(params.profileId, params.projectPath, projectGate, pinnedCli))
+    ;({ env: spawnEnvVars, resolvedProfileId, accountEmail } = await resolveAgentEnv(params.profileId, params.projectPath, projectGate, pinnedCli))
 
     agent = {
       id: generateId(),
@@ -719,7 +727,7 @@ async function dispatchBackgroundAgent(providerId: ProviderId, params: DispatchA
         onText: (t) => take(t, 'reply'),
         onDiagnostic: (t) => take(t, 'diagnostic'),
       })
-      if (!r.ok && r.killSettled instanceof Promise) killSettled = r.killSettled
+      if (r.killSettled instanceof Promise) killSettled = r.killSettled
       const agentRef = agents.find((a) => a.id === agent.id)
       if (agentRef) {
         // A Stop that came after the CLI had exited on its own (the run's
@@ -749,8 +757,9 @@ async function dispatchBackgroundAgent(providerId: ProviderId, params: DispatchA
       }
     } finally {
       backgroundRuns.delete(agent.id)
-      // The account is let go only once the process, and any kill still
-      // under way, has ended.
+      // The account is let go only once the process, and what is left of
+      // it, has ended, whatever the outcome (a kill or a leftovers step still
+      // under way when the run settled, within the runner's worst case).
       if (killSettled) void killSettled.then(letGo, letGo)
       else letGo()
     }

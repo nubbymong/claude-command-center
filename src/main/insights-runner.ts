@@ -31,7 +31,7 @@ import { spawnClaudeHeadless } from './claude-headless'
 import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
 import { providerLaunchRefusal, providerProbeRefusal } from './provider-launch-gate'
 import type { ProviderLaunchRefused } from '../shared/providers'
-import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
+import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId, startProfileStepsPending, startProfileStepsSettled, profileCredentialFoldersChecked, checkProfileCredentialFolders } from './account-profiles'
 import { claudeSettingsTransportEnv } from './sentinel/sentinel-analysis'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
@@ -43,7 +43,7 @@ import { atomicWriteFileSync } from './atomic-write'
 import type { InsightsCatalogue, InsightsData, InsightsRun, InsightsRunMember } from '../shared/types'
 import { getAccountsService } from './provider-accounts'
 import { ownerOnlyThroughHandle, sweepStaleFolders } from './stale-folder-sweep'
-import { withoutCurrentFolderLookup } from './windows-programs'
+import { withFullyQualifiedProgramLookup } from './windows-programs'
 import { isOpaqueId } from '../shared/providers'
 import type { AccountsSnapshot, ProviderId } from '../shared/providers'
 import { tryGetProviderPackage } from './providers/core'
@@ -122,6 +122,26 @@ function resolveInsightsAccount(profileId?: string): { home: string | null; prof
   return { home: getProfileConfigDir(resolved), profileId: resolved, accountEmail }
 }
 
+type InsightsAccount = ReturnType<typeof resolveInsightsAccount>
+
+/**
+ * resolveInsightsAccount as a launch must use it, the way a local launch
+ * does: while the start's profile steps are still to run (they may be making
+ * the primary account from the user's own sign-in) it waits for them first,
+ * and then for the resolved account's sign-in folders to have their
+ * owner-only verdict in this run, so the run reads a verdict instead of being
+ * refused for want of one. Each wait only when pending: with nothing pending
+ * it answers at once, not as a promise, so a run that needs no wait still
+ * takes its lock in the same step it was asked for.
+ */
+function resolveInsightsAccountReady(profileId?: string): InsightsAccount | Promise<InsightsAccount> {
+  if (startProfileStepsPending()) return startProfileStepsSettled().then(() => resolveInsightsAccountReady(profileId))
+  const account = resolveInsightsAccount(profileId)
+  const id = account.profileId
+  if (id && !profileCredentialFoldersChecked(id)) return checkProfileCredentialFolders(id).then(() => account)
+  return account
+}
+
 // Per-account in-flight lock: keyed by resolved profileId so two DIFFERENT
 // accounts can run concurrently, while the same account can't double-run.
 // Catalogue integrity across concurrent runs is preserved by upsertRun's
@@ -152,6 +172,9 @@ let crossAccountProviders: ReadonlySet<ProviderId> = new Set()
 const INSIGHTS_FOLDER_REFUSED = "Nothing was written: the insights folder in the app's resources folder could not be checked as Insights' own folder. It must be a real folder, not a link or junction, and on macOS and Linux one only you can write to (a drive without file permissions cannot hold one)."
 /** Why nothing was written when a run's own folder could not be made new and checked. */
 const RUN_FOLDER_REFUSED = "Nothing was written: this run's own folder in the insights folder could not be made and checked."
+
+/** Every refusal insightsFolderRefused raises (and logs where it does). */
+const FOLDER_REFUSALS: ReadonlySet<string> = new Set([INSIGHTS_FOLDER_REFUSED, RUN_FOLDER_REFUSED])
 
 /** The refusal last logged, until the current turn ends. */
 let refusalLoggedThisTurn: string | null = null
@@ -266,12 +289,16 @@ function archiveSubDirHolds(archiveDir: string, sub: string): boolean {
 /** A folder made new in a run's own folder (Claude Code's facets): the run's
  *  folder checked first (archiveDirHolds), then the folder alone, owner-only
  *  (0700), so an entry already at its name (a folder or a link put there)
- *  refuses it, and then checked (archiveSubDirHolds). Throws, with the plain
- *  reason, when any of that fails. */
+ *  refuses it, and then checked (archiveSubDirHolds); one made that does not
+ *  hold is removed again (it is empty). Throws, with the plain reason, when
+ *  any of that fails. */
 function makeArchiveSubDir(archiveDir: string, sub: string): void {
   if (!archiveDirHolds(archiveDir)) throw insightsFolderRefused(RUN_FOLDER_REFUSED)
   try { mkdirSync(join(archiveDir, sub), { mode: 0o700 }) } catch { throw insightsFolderRefused(RUN_FOLDER_REFUSED) }
-  if (!archiveSubDirHolds(archiveDir, sub)) throw insightsFolderRefused(RUN_FOLDER_REFUSED)
+  if (!archiveSubDirHolds(archiveDir, sub)) {
+    try { rmdirSync(join(archiveDir, sub)) } catch { /* not empty, or gone: leave it */ }
+    throw insightsFolderRefused(RUN_FOLDER_REFUSED)
+  }
 }
 
 /** Writes `name` in a run's own folder (or in `sub`, a folder made in it by
@@ -279,7 +306,7 @@ function makeArchiveSubDir(archiveDir: string, sub: string): void {
  *  folder still holds (archiveDirHolds, then archiveSubDirHolds). The one
  *  writer of every file of a run. Throws, writing nothing, when it does not
  *  hold. */
-function writeArchiveFile(archiveDir: string, name: string, text: string, sub: string | null = null): void {
+function writeArchiveFile(archiveDir: string, name: string, text: string | Uint8Array, sub: string | null = null): void {
   if (!archiveDirHolds(archiveDir)) throw insightsFolderRefused(RUN_FOLDER_REFUSED)
   if (sub !== null && !archiveSubDirHolds(archiveDir, sub)) throw insightsFolderRefused(RUN_FOLDER_REFUSED)
   const dir = sub === null ? archiveDir : join(archiveDir, sub)
@@ -302,7 +329,16 @@ function loadCatalogue(): InsightsCatalogue {
     // Only as the regular file it is (readInsightsFile): one that is not
     // (a FIFO, a folder, a link) reads as no runs, never a wait.
     const text = readInsightsFile(getCatalogueFile(), INSIGHTS_CATALOGUE_MAX_BYTES)
-    if (text !== null) return JSON.parse(text)
+    if (text !== null) {
+      // One that is not a list of runs (a hand edit, a damaged disk) reads as
+      // no runs, and an entry that is not a run is left out: neither fails
+      // start-up or a read of the catalogue.
+      const parsed: unknown = JSON.parse(text)
+      const runs = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as { runs?: unknown }).runs : undefined
+      if (Array.isArray(runs)) {
+        return { ...(parsed as object), runs: runs.filter((r): r is InsightsRun => r !== null && typeof r === 'object' && !Array.isArray(r)) }
+      }
+    }
   } catch { /* ignore */ }
   return { runs: [] }
 }
@@ -344,9 +380,10 @@ const INSIGHTS_FACET_MAX_BYTES = 2 * 1024 * 1024
 /**
  * Copies Claude Code's report of this run (its report.html, and the facets
  * beside it when there are any) from the account's usage data into the
- * run's own folder. Each is read only as the regular file it is, within its
- * size limit (readInsightsFile), never waited on: a report that cannot be
- * read so is no copy, a facet that cannot is left out. Each is written by
+ * run's own folder, as the bytes it holds. Each is read only as the regular
+ * file it is, within its size limit (readInsightsBytes), never waited on: a
+ * report that cannot be read so is no copy, a facet that cannot is left out
+ * (and logged). Each is written by
  * the run's one writer (writeArchiveFile), the facets into a folder made new
  * in the run's folder (makeArchiveSubDir), each folder checked again before
  * each file. False, with the reason logged, when the report is not copied.
@@ -355,19 +392,20 @@ function copyReportToArchive(archiveDir: string, home: string | null): boolean {
   try {
     const report = claudeReportPath(home)
     const facets = claudeFacetsDir(home)
-    const text = readInsightsFile(report, INSIGHTS_REPORT_MAX_BYTES)
-    if (text === null) {
+    const bytes = readInsightsBytes(report, INSIGHTS_REPORT_MAX_BYTES)
+    if (bytes === null) {
       logError('[insights] report.html not found, or not a regular file within its size limit, at ' + report)
       return false
     }
-    writeArchiveFile(archiveDir, 'report.html', text)
+    writeArchiveFile(archiveDir, 'report.html', bytes)
 
     if (existsSync(facets)) {
       makeArchiveSubDir(archiveDir, FACETS_DIRNAME)
       for (const file of readdirSync(facets)) {
         if (!file.endsWith('.json')) continue
-        const facet = readInsightsFile(join(facets, file), INSIGHTS_FACET_MAX_BYTES)
+        const facet = readInsightsBytes(join(facets, file), INSIGHTS_FACET_MAX_BYTES)
         if (facet !== null) writeArchiveFile(archiveDir, file, facet, FACETS_DIRNAME)
+        else logWarn(`[insights] A facet was left out of the copy (not a regular file within its size limit): ${file}`)
       }
     }
     return true
@@ -429,14 +467,15 @@ function findTrustedCwd(): string {
 
 /**
  * The environment the /insights terminal runs under: `env`, and on Windows
- * with the child's own program lookup kept to the folders PATH names
- * (withoutCurrentFolderLookup, in one spelling). There Claude Code is often an
- * npm command shim, which starts `node` by a bare name; that name is looked
- * for only in the folders PATH names, never in the terminal's working folder.
- * `env` itself is not changed.
+ * with the child's own program lookup kept to the folders PATH names in full
+ * (withFullyQualifiedProgramLookup: only fully qualified PATH folders, and the
+ * lookup setting in one spelling). There Claude Code is often an npm command
+ * shim, which starts `node` by a bare name; that name is looked for only in
+ * those folders, never in the terminal's working folder nor in one named
+ * relative to it. `env` itself is not changed.
  */
 export function insightsTerminalEnv(env: Record<string, string>, platform: NodeJS.Platform = process.platform): Record<string, string> {
-  return platform === 'win32' ? withoutCurrentFolderLookup(env) : env
+  return platform === 'win32' ? withFullyQualifiedProgramLookup(env) : env
 }
 
 /**
@@ -732,10 +771,11 @@ export function loadPreviousKpis(currentRunId: string): string | null {
  * DEFINITIONS enter context, so both are needed and they do different jobs.
  *
  * Neither value contains a space or is empty, which is why they can be passed at
- * all: spawnClaudeHeadless runs with `shell: true`, which concatenates argv
- * without quoting, so an empty or spaced argument would vanish and let the
- * preceding flag swallow the next one. `--tools ""` for the no-tools case and
- * `--settings '{...}'` for the skills/CLAUDE.md overhead are blocked on that.
+ * all: spawnClaudeHeadless refuses an argument a shell or a batch file would
+ * re-read or drop (assertSafeArgv; on Windows an npm claude.cmd gets only plain
+ * arguments), so an empty or spaced argument is refused, not passed.
+ * `--tools ""` for the no-tools case and `--settings '{...}'` for the
+ * skills/CLAUDE.md overhead are blocked on that.
  */
 export function buildKpiSpawnArgs(): string[] {
   return ['-p', '--strict-mcp-config', '--tools', 'Read', '--allowedTools', 'Read', '--output-format', 'json']
@@ -1146,7 +1186,8 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
   // mid-run stops the run at its next step instead of starting it anyway).
   const refused = providerLaunchRefusal('claude')
   if (refused) return { refused }
-  const account = resolveInsightsAccount(opts?.profileId)
+  const ready = resolveInsightsAccountReady(opts?.profileId)
+  const account = ready instanceof Promise ? await ready : ready
   const key = accountKey(account.profileId)
   if (inFlight.has(key)) throw new Error('Insights already running for this account')
   inFlight.add(key)
@@ -1474,7 +1515,9 @@ async function codexModelRun(launch: { executable: string; env: Record<string, s
     // prompts, and takes no optional lock (Sentinel's analysis, round 2).
     const env = { ...launch.env, GIT_CEILING_DIRECTORIES: parent, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }
     const out = await port.run({ executable: launch.executable, env, cwd: folder, prompt })
-    if (!out.ok && out.killSettled instanceof Promise) await out.killSettled
+    // Whatever the outcome, the lease and the folder are held until what is
+    // left of the run has ended (within the runner's worst case).
+    if (out.killSettled instanceof Promise) await out.killSettled
     return out.ok ? { ok: true, text: out.text } : { ok: false, message: out.message }
   } finally {
     removeCodexRunFolder(folder, parent)
@@ -1931,9 +1974,13 @@ export async function runCrossAccountInsights(
       logInfo(`[insights] Cross-account run ${id} complete: ${members.length} accounts, ${data.comparison.length} shared metrics, synthesis=${data.synthesis} (Codex)`)
       return id
     }
-    const home = synthesisMember.profileId
-      ? getProfileConfigDir(synthesisMember.profileId)
-      : resolveInsightsAccount(undefined).home
+    // The account it runs on, its sign-in folders with their owner-only
+    // verdict in this run first (resolveInsightsAccountReady, as a launch).
+    const synthesisAccount = synthesisMember.profileId
+      ? { home: getProfileConfigDir(synthesisMember.profileId), profileId: synthesisMember.profileId }
+      : await resolveInsightsAccountReady(undefined)
+    if (synthesisAccount.profileId && !profileCredentialFoldersChecked(synthesisAccount.profileId)) await checkProfileCredentialFolders(synthesisAccount.profileId)
+    const home = synthesisAccount.home
     // The synthesis is another Claude Code run: not started once Claude Code
     // has been switched off since the roll-up began (numbers only, and why).
     // It holds no tools and loads no settings file, memory file or MCP
@@ -2046,9 +2093,15 @@ const INSIGHTS_CATALOGUE_MAX_BYTES = 64 * 1024 * 1024
  *  main reads it: a regular file (never a link or a folder; on POSIX opened
  *  without following one and without waiting on a FIFO's writer, and the
  *  open file the same one lstat saw, device and inode compared whole), at
- *  most `maxBytes`; anything else, a file that grew since lstat included,
- *  is null. Never throws. */
+ *  most `maxBytes`, as text; anything else, a file that grew since lstat
+ *  included, is null. Never throws. */
 function readInsightsFile(file: string, maxBytes: number): string | null {
+  const bytes = readInsightsBytes(file, maxBytes)
+  return bytes === null ? null : bytes.toString('utf-8')
+}
+
+/** readInsightsFile's read, as the bytes the file holds. Never throws. */
+function readInsightsBytes(file: string, maxBytes: number): Buffer | null {
   try {
     const st = lstatSync(file, { bigint: true })
     if (!st.isFile() || st.size > BigInt(maxBytes)) return null
@@ -2061,7 +2114,7 @@ function readInsightsFile(file: string, maxBytes: number): string | null {
       const buf = Buffer.alloc(size + 1)
       let got = 0
       for (let n = 1; n > 0 && got < buf.length; got += n) n = readSync(fd, buf, got, buf.length - got, got)
-      return got > size ? null : buf.subarray(0, got).toString('utf-8')
+      return got > size ? null : buf.subarray(0, got)
     } finally {
       closeSync(fd)
     }
@@ -2148,7 +2201,9 @@ export function cleanupStuckRuns(): void {
     try {
       saveCatalogue(catalogue)
     } catch (err) {
-      logWarn(`[insights] The catalogue was left as it is at start-up: ${err instanceof Error ? err.message : String(err)}`)
+      // A refusal was logged where it was raised: only that the catalogue was left.
+      const reason = err instanceof Error ? err.message : String(err)
+      logWarn(FOLDER_REFUSALS.has(reason) ? '[insights] The catalogue was left as it is at start-up.' : `[insights] The catalogue was left as it is at start-up: ${reason}`)
     }
   }
 }

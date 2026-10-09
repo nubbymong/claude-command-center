@@ -376,11 +376,13 @@ export interface ReviewUsage {
   outputTokens: number
 }
 
-/** `killSettled`: a stopped review whose kill was still under way when its
- *  run settled (a slow process table) says when that kill has finished; it
- *  never rejects. The caller holding the account's lease lets go only then. */
+/** `killSettled`: a run whose processes were still being ended when it
+ *  settled (a stop whose kill was still under way, or a run that had exited
+ *  while what it left was still being ended) says when that has finished,
+ *  whatever its outcome; it never rejects. The caller holding the account's
+ *  lease lets go only then. */
 export type ReviewRunResult =
-  | { ok: true; text: string; usage?: ReviewUsage }
+  | { ok: true; text: string; usage?: ReviewUsage; killSettled?: Promise<void> }
   | { ok: false; code: 'timed-out' | 'cancelled' | 'failed' | 'no-output' | 'not-started'; message: string; usage?: ReviewUsage; killSettled?: Promise<void> }
 
 export interface ProviderReviewOperations {
@@ -416,12 +418,11 @@ export interface BackgroundRunInput {
   onDiagnostic?: (text: string) => void
 }
 
-/** `killSettled`: a stopped run whose kill was still under way when it
- *  settled says when that kill has finished; it never rejects. The caller
+/** `killSettled`: as ReviewRunResult's, whatever the outcome; the caller
  *  holding the account's lease lets go only then. `costUsd`: only when the
  *  model run is known and priced. */
 export type BackgroundRunResult =
-  | { ok: true; usage?: ReviewUsage; costUsd?: number }
+  | { ok: true; usage?: ReviewUsage; costUsd?: number; killSettled?: Promise<void> }
   | { ok: false; code: 'cancelled' | 'failed' | 'not-started'; message: string; usage?: ReviewUsage; costUsd?: number; killSettled?: Promise<void> }
 
 export interface ProviderBackgroundOperations {
@@ -443,10 +444,10 @@ export interface InsightsRunInput {
   signal?: AbortSignal
 }
 
-/** `killSettled`: as BackgroundRunResult's; the caller holding the account's
- *  lease lets go only once it has settled. */
+/** `killSettled`: as ReviewRunResult's, whatever the outcome; the caller
+ *  holding the account's lease lets go only once it has settled. */
 export type InsightsRunResult =
-  | { ok: true; text: string; usage?: ReviewUsage }
+  | { ok: true; text: string; usage?: ReviewUsage; killSettled?: Promise<void> }
   | { ok: false; code: 'not-started' | 'failed' | 'timed-out' | 'cancelled' | 'no-output'; message: string; usage?: ReviewUsage; killSettled?: Promise<void> }
 
 /** The package's report run, under its own deadline. Never rejects. */

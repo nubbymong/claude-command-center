@@ -55,6 +55,14 @@ describe('the insights terminal finds programs only in the folders path names on
     expect(given).toEqual({ Path: 'C:\\Tools;C:\\Windows', USERPROFILE: 'C:\\Users\\someone', nodefaultcurrentdirectoryinexepath: '0' })
   })
 
+  it('on Windows PATH keeps only its fully qualified folders, in every spelling', () => {
+    const given = { Path: '.;tools;C:\\Tools;"D:\\Quoted"', PATH: 'relative', USERPROFILE: 'C:\\Users\\someone' }
+    const out = insightsTerminalEnv(given, 'win32')
+    expect(out.Path).toBe('C:\\Tools;D:\\Quoted')
+    expect('PATH' in out).toBe(false)
+    expect(given.Path).toBe('.;tools;C:\\Tools;"D:\\Quoted"')
+  })
+
   it('elsewhere the environment is as given', () => {
     for (const platform of ['linux', 'darwin'] as const) {
       const given = { PATH: '/usr/bin', HOME: '/home/someone' }
