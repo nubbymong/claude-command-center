@@ -13,7 +13,7 @@
   "scripts/resume-picker.js :: spawn(first.file": {
    "count": 1,
    "how": "full-path",
-   "reason": "Claude Code: on Windows by the full path found in PATH's fully qualified folders (resolveClaudeCmd), an npm launcher through the system cmd.exe (buildSpawnTarget); elsewhere claude by name in the session's own login-shell PATH."
+   "reason": "Claude Code: on Windows by the full path found in PATH's fully qualified folders (resolveClaudeCmd: claude.exe, then claude.cmd, then claude.bat, the app's order), a claude.cmd or claude.bat launcher through the system cmd.exe (buildSpawnTarget); elsewhere claude by name in the session's own login-shell PATH."
   },
   "scripts/resume-picker.js :: spawn(fresh.file": {
    "count": 1,

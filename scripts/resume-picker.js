@@ -175,9 +175,9 @@ function parseWorktrees(porcelainText) {
 // path found in a folder PATH names: never by a bare name (which Windows, or
 // a shell, also looks up in the current folder -- the project). It finds
 // them in-process, never through the where command or a shell; git starts
-// without a shell, and an npm claude.cmd only through the system cmd.exe, by
-// its full path (buildSpawnTarget). Elsewhere Claude Code is started by its
-// name, as before. The folder rule is the app's own
+// without a shell, and a claude.cmd or claude.bat launcher only through the
+// system cmd.exe, by its full path (buildSpawnTarget). Elsewhere Claude Code
+// is started by its name, as before. The folder rule is the app's own
 // (src/main/windows-programs.ts and src/main/providers/windows-path-names.ts,
 // which this script cannot import; a parity test holds the copy to the same
 // answer): on Windows only a fully qualified folder -- a drive, or a share --
@@ -224,6 +224,11 @@ function pathFolders(env, platform) {
   }
   return pathVariable(env, platform).split(':').filter((d) => d.startsWith('/'))
 }
+/** The names Claude Code goes by on Windows, in the order the app asks for
+ *  them (src/main/claude-cli-probe.ts CLAUDE_WINDOWS_NAMES, which this script
+ *  cannot import; a parity test holds the copy to the same list): the native
+ *  claude.exe in any folder PATH names, then claude.cmd, then claude.bat. */
+const CLAUDE_WINDOWS_NAMES = Object.freeze(['claude.exe', 'claude.cmd', 'claude.bat'])
 /** The full path of the first of `names` found in PATH's folders -- every
  *  folder for the first name, then every folder for the next -- or null. A
  *  folder whose check throws (one that does not answer) is not asked again
@@ -796,7 +801,8 @@ async function main() {
  *
  * `shell: false` fixes both: Node passes argv to CreateProcess directly and
  * quotes each element itself. The only thing shell:true was buying is the
- * ability to invoke a `.cmd` shim, so that runs through cmd.exe explicitly.
+ * ability to invoke a `.cmd` or `.bat` shim, so that runs through cmd.exe
+ * explicitly, the one route for both.
  *
  * cmd.exe reads what follows `/c` itself: without /s it keeps the quotes only
  * when the line holds exactly two of them around a program name, with none of
@@ -931,7 +937,7 @@ function buildSpawnTarget(cmd, args, platform = os.platform(), env = process.env
  *  found), or why buildSpawnTarget refused, checked in its order (`cwd`: the
  *  folder it would start in). A name shown in it is plain text. */
 function notStartedMessage(cmd, args, env = process.env, cwd) {
-  if (!cmd) return 'Not starting Claude Code: it was not found in a folder PATH names (claude.exe or claude.cmd). Install it, or add its folder to PATH, then start the session again.'
+  if (!cmd) return `Not starting Claude Code: it was not found in a folder PATH names (${CLAUDE_WINDOWS_NAMES.join(', ')}). Install it, or add its folder to PATH, then start the session again.`
   if (isShim(cmd) && inNetworkFolder(cwd)) return NETWORK_FOLDER_REFUSAL
   if (SHIM_PATH_UNSAFE_RE.test(cmd)) return `Not starting Claude Code from ${displayPath(cmd)}: cmd.exe would re-read a character in that path. Install it in a folder without " % & or ^.`
   const refused = shimArgRefused(args)
@@ -956,14 +962,16 @@ function getForwardedArgs() {
   return process.argv.slice(2)
 }
 
-// Resolve the claude command. On Windows: the native claude.exe in any folder
-// PATH names first, then npm's claude.cmd, found in-process (findOnPath) --
-// never through the where command or a shell, never in the project folder, never the
-// bare name; null when neither is there, and the launch says so. Elsewhere the
-// bare name, as before.
+// Resolve the claude command. On Windows: the first of CLAUDE_WINDOWS_NAMES in
+// the folders PATH names -- the native claude.exe in any of them, then
+// claude.cmd, then claude.bat, as the app's own lookup asks -- found in-process
+// (findOnPath), never through the where command or a shell, never in the
+// project folder, never the bare name; null when none is there, and the launch
+// says so. A claude.cmd and a claude.bat both start through the system cmd.exe
+// on the same line (buildSpawnTarget). Elsewhere the bare name, as before.
 function resolveClaudeCmd(platform = os.platform(), env = process.env, isFile = isFileOnDisk) {
   if (platform !== 'win32') return 'claude'
-  return findOnPath(['claude.exe', 'claude.cmd'], env, platform, isFile)
+  return findOnPath(CLAUDE_WINDOWS_NAMES, env, platform, isFile)
 }
 
 /** What one launch starts -- the program, its arguments and its spawn options
@@ -1123,6 +1131,7 @@ module.exports = {
   launchSpec,
   launchClaude,
   resolveClaudeCmd,
+  CLAUDE_WINDOWS_NAMES,
   encodeProjectPath,
   resolveProjectDir,
   ensureCompanionDir,

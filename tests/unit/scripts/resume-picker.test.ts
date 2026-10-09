@@ -666,11 +666,12 @@ describe('git and Claude Code are run only from the folders PATH names', () => {
     }
   })
 
-  it('finds Claude Code in PATH\'s folders: the native claude.exe in any of them first, then claude.cmd', () => {
-    const files = new Set(['C:\\npm\\claude.cmd', 'C:\\native\\claude.exe', 'C:\\proj\\claude.exe'])
+  it('finds Claude Code in PATH\'s folders: the native claude.exe in any of them first, then claude.cmd, then claude.bat', () => {
+    const files = new Set(['C:\\bat\\claude.bat', 'C:\\npm\\claude.cmd', 'C:\\native\\claude.exe', 'C:\\proj\\claude.exe', 'C:\\proj\\claude.bat'])
     const isFile = (p: string) => files.has(p)
-    expect(picker.resolveClaudeCmd('win32', { Path: '.;C:\\npm;C:\\native' }, isFile)).toBe('C:\\native\\claude.exe')
-    expect(picker.resolveClaudeCmd('win32', { Path: '.;C:\\npm' }, isFile)).toBe('C:\\npm\\claude.cmd')
+    expect(picker.resolveClaudeCmd('win32', { Path: '.;C:\\bat;C:\\npm;C:\\native' }, isFile)).toBe('C:\\native\\claude.exe')
+    expect(picker.resolveClaudeCmd('win32', { Path: '.;C:\\bat;C:\\npm' }, isFile)).toBe('C:\\npm\\claude.cmd')
+    expect(picker.resolveClaudeCmd('win32', { Path: '.;C:\\bat' }, isFile)).toBe('C:\\bat\\claude.bat')
     // None there: no bare name to fall back on; the launch refuses, visibly.
     expect(picker.resolveClaudeCmd('win32', { Path: '.;relative;%X%' }, isFile)).toBeNull()
     expect(picker.resolveClaudeCmd('win32', {}, () => true)).toBeNull()
@@ -756,6 +757,23 @@ describe('git and Claude Code are run only from the folders PATH names', () => {
     expect(exits).toEqual([0])
   })
 
+  it('a claude.bat alone in PATH\'s folders starts exactly as a claude.cmd does, on the first launch and on the fresh one after a resume fails', () => {
+    const BAT_ENV = { ...NPM_ENV, Path: '.;C:\\bat' }
+    const bat = launch({ resumeId: RESUME, statuses: [1, 0], env: BAT_ENV, isFile: (p) => p === 'C:\\bat\\claude.bat' })
+    const cmd = launch({ resumeId: RESUME, statuses: [1, 0], env: BAT_ENV, isFile: (p) => p === 'C:\\bat\\claude.cmd' })
+    expect(bat.calls).toHaveLength(2)
+    expect(bat.calls[0].args).toEqual(['/d', '/v:off', '/s', '/c', `""C:\\bat\\claude.bat" "--resume" "${RESUME}" "--model" "opus""`])
+    expect(bat.calls[1].args).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\bat\\claude.bat" "--model" "opus""'])
+    const swapped = cmd.calls.map((c) => ({ ...c, args: c.args.map((a) => a.split('claude.cmd').join('claude.bat')) }))
+    expect(bat.calls).toEqual(swapped)
+    for (const c of bat.calls) {
+      expect(c.file).toBe('C:\\Windows\\System32\\cmd.exe')
+      expect(c.opts).toMatchObject({ ...BASE, windowsVerbatimArguments: true })
+      expect((c.opts.env as Record<string, string>).NoDefaultCurrentDirectoryInExePath).toBe('1')
+    }
+    expect(bat.exits).toEqual([0])
+  })
+
   it('the native claude.exe starts as it is, with the environment it inherits', () => {
     const { calls, exits } = launch({ env: { SystemRoot: 'C:\\Windows', Path: 'C:\\npm;C:\\native' }, isFile: (p) => p === 'C:\\native\\claude.exe' || npmOnly(p) })
     expect(calls).toEqual([{ file: 'C:\\native\\claude.exe', args: ['--model', 'opus'], opts: { ...BASE, windowsVerbatimArguments: false } }])
@@ -766,7 +784,7 @@ describe('git and Claude Code are run only from the folders PATH names', () => {
     const { calls, exits, said } = launch({ env: { SystemRoot: 'C:\\Windows', Path: '.;relative;C:\\npm' }, isFile: () => false })
     expect(calls).toEqual([])
     expect(exits).toEqual([1])
-    expect(said).toContain('Not starting Claude Code: it was not found in a folder PATH names')
+    expect(said).toContain('Not starting Claude Code: it was not found in a folder PATH names (claude.exe, claude.cmd, claude.bat)')
   })
 
   it('an argument the npm route cannot pass stops the launch before anything starts, and says which', () => {

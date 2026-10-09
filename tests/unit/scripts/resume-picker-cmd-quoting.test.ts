@@ -7,8 +7,10 @@
 // has put the same arguments into it; and the program's argument parser (the
 // C runtime rule, which node and the native binary both follow). This file
 // models the three and checks that every argument arrives exactly as written,
-// with every character cmd.exe reads as syntax inside its quotes. Pure:
-// nothing here starts a process; every value is built in this file.
+// with every character cmd.exe reads as syntax inside its quotes. A claude.bat
+// launcher takes the same route on the same line (cmd.exe reads a .bat's `%*`
+// as it reads a .cmd's), so it is held to the same checks. Pure: nothing here
+// starts a process; every value is built in this file.
 import { describe, it, expect } from 'vitest'
 
 type Target = { file: string; argv: string[]; verbatim: boolean; env?: Record<string, string | undefined> }
@@ -19,6 +21,7 @@ const picker = require('../../../scripts/resume-picker.js') as {
 }
 
 const SHIM = 'C:\\Users\\Jo Smith\\AppData\\Roaming\\npm\\claude.cmd'
+const BAT = 'C:\\Users\\Jo Smith\\AppData\\Roaming\\npm\\claude.bat'
 const ENV = { SystemRoot: 'C:\\Windows' }
 const UUID = '0f8fad5b-d9cb-469f-a165-70867728950e'
 const ch = (n: number): string => String.fromCharCode(n)
@@ -89,8 +92,8 @@ function readByCmd(t: Target): { line: string; program: string; rest: string } {
   return { line, program: line.slice(1, end), rest: line.slice(end + 1).replace(/^[ \t]+/, '') }
 }
 
-function arrives(args: string[]): { program: string; onCLine: string[]; onShimLine: string[]; argv: string[] } {
-  const t = picker.buildSpawnTarget(SHIM, args, 'win32', ENV)
+function arrives(args: string[], shim: string = SHIM): { program: string; onCLine: string[]; onShimLine: string[]; argv: string[] } {
+  const t = picker.buildSpawnTarget(shim, args, 'win32', ENV)
   expect(t, JSON.stringify(args)).not.toBeNull()
   const { line, program, rest } = readByCmd(t!)
   // The shim's own line puts the same text after its program and script,
@@ -106,14 +109,16 @@ const template = [
 const agents = JSON.stringify(template)
 const settings = 'C:\\Users\\Jo Smith\\AppData\\Local\\AI Code Conductor\\CONFIG\\s.json'
 
+const ARG_LISTS: string[][] = [
+  ['--agents', agents],
+  ['--resume', UUID, '--settings', settings, '--mcp-config', settings, '--agents', agents],
+  ['--model', 'opus[1m]', '--permission-mode', 'acceptEdits', '--plugin-dir', 'C:\\Users\\Jo Smith\\plugins\\', '--append-system-prompt', 'say "hi" & bye', ''],
+  ['a"', '"b', '""', 'x\\"y', 'tail\\\\', 'wow!', '(a)', '^^', 'a b', '\\\\server\\share\\', '"&"'],
+  [],
+]
+
 describe('every forwarded argument stays one argument on the npm launcher route', () => {
-  const lists: string[][] = [
-    ['--agents', agents],
-    ['--resume', UUID, '--settings', settings, '--mcp-config', settings, '--agents', agents],
-    ['--model', 'opus[1m]', '--permission-mode', 'acceptEdits', '--plugin-dir', 'C:\\Users\\Jo Smith\\plugins\\', '--append-system-prompt', 'say "hi" & bye', ''],
-    ['a"', '"b', '""', 'x\\"y', 'tail\\\\', 'wow!', '(a)', '^^', 'a b', '\\\\server\\share\\', '"&"'],
-    [],
-  ]
+  const lists = ARG_LISTS
 
   it('reaches Claude Code as the same arguments, with every cmd.exe metacharacter inside its quotes', () => {
     for (const args of lists) {
@@ -197,5 +202,59 @@ describe('every forwarded argument stays one argument on the npm launcher route'
     expect(cmdSyntaxIn('"a\\"&b"')).toEqual(['& at 4'])
     expect(cmdSyntaxIn('"a""&b"')).toEqual([])
     expect(crtArgv('"a""b" "c\\\\" ""')).toEqual(['a"b', 'c\\', ''])
+  })
+})
+
+describe('a claude.bat launcher starts exactly as a claude.cmd does', () => {
+  /** The .cmd target with the launcher's path swapped for the .bat's. */
+  const asBat = (t: Target): Target => ({ ...t, argv: t.argv.map((a) => a.split(SHIM).join(BAT)) })
+
+  it('the same cmd.exe, the same verbatim line and the same environment rule, the path aside', () => {
+    for (const args of ARG_LISTS) {
+      const cmd = picker.buildSpawnTarget(SHIM, args, 'win32', ENV)!
+      const bat = picker.buildSpawnTarget(BAT, args, 'win32', ENV)!
+      expect(bat, JSON.stringify(args)).toEqual(asBat(cmd))
+      expect(bat.file).toBe('C:\\Windows\\System32\\cmd.exe')
+      expect(bat.verbatim).toBe(true)
+      expect(bat.env!.NoDefaultCurrentDirectoryInExePath).toBe('1')
+    }
+    const t = picker.buildSpawnTarget('C:\\npm\\claude.bat', ['--model', 'opus[1m]', 'say "hi"', 'dir\\'], 'win32', ENV)!
+    expect(t.argv).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\npm\\claude.bat" "--model" "opus[1m]" "say ""hi""" "dir\\\\""'])
+  })
+
+  it('every forwarded argument and agent template reaches Claude Code as written, every metacharacter inside its quotes', () => {
+    for (const args of ARG_LISTS) {
+      const got = arrives(args, BAT)
+      expect(got.program).toBe(BAT)
+      expect(got.onCLine, JSON.stringify(args)).toEqual([])
+      expect(got.onShimLine, JSON.stringify(args)).toEqual([])
+      expect(got.argv).toEqual(args)
+    }
+    expect(JSON.parse(arrives(['--agents', agents], BAT).argv[1])).toEqual(template)
+  })
+
+  it('refuses what the .cmd route refuses, with the same words', () => {
+    const two = JSON.stringify([{ name: 'reviewer', prompt: 'read it all' }, { name: 'coverage', prompt: 'cover 100%' }])
+    const refused: string[][] = [
+      ['--model', '100%'], ['--model', 'line' + ch(10) + 'break'], ['--agents', two], ['--agents=' + two], ['50%'], ['--effort=50%'],
+    ]
+    for (const args of refused) {
+      expect(picker.buildSpawnTarget(BAT, args, 'win32', ENV), JSON.stringify(args)).toBeNull()
+      expect(picker.notStartedMessage(BAT, args, ENV), JSON.stringify(args)).toBe(picker.notStartedMessage(SHIM, args, ENV))
+    }
+    expect(picker.notStartedMessage(BAT, ['--agents', two], ENV)).toContain('the agent template "coverage" holds a % sign or a control character')
+    for (const unsafe of ['C:\\a%PATH%\\claude.bat', 'C:\\a&b\\claude.bat', 'C:\\a^b\\claude.bat', 'C:\\a"b\\claude.bat']) {
+      expect(picker.buildSpawnTarget(unsafe, ['--model', 'opus'], 'win32', ENV), unsafe).toBeNull()
+      expect(picker.notStartedMessage(unsafe, [], ENV), unsafe).toContain('cmd.exe would re-read a character in that path')
+    }
+    expect(picker.buildSpawnTarget(BAT, ['--model', 'opus'], 'win32', { SystemRoot: 'relative' })).toBeNull()
+  })
+})
+
+describe('when no Claude Code is found, the launch says which names it looked for', () => {
+  it('names claude.exe, claude.cmd and claude.bat, the app\'s own list', () => {
+    expect(picker.notStartedMessage(null, [], ENV)).toBe(
+      'Not starting Claude Code: it was not found in a folder PATH names (claude.exe, claude.cmd, claude.bat). Install it, or add its folder to PATH, then start the session again.',
+    )
   })
 })
