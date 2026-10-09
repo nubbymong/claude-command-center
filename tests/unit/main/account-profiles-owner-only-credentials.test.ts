@@ -222,9 +222,14 @@ describe('a sign-in is written only into a folder read back as owner-only', () =
     copyCredentialFile(src, path.join(claudeDir, '.credentials.json'))
     await checkProfileCredentialFolders(ID)
     expect(calls).toEqual([[home, claudeDir, identityDir]])
-    // The folder removed and made again: another folder, with no verdict until it is checked again.
-    fs.rmSync(claudeDir, { recursive: true, force: true })
+    // Another folder made at its path, with no verdict until it is checked
+    // again. The old one is moved aside first and kept, so the two exist at
+    // once and cannot share an identity (a file system may give a folder made
+    // just after a removal the removed one's number, as ext4 does).
+    const before = idOf(claudeDir)
+    fs.renameSync(claudeDir, `${claudeDir}.aside`)
     fs.mkdirSync(claudeDir)
+    expect(idOf(claudeDir)).not.toBe(before)
     expect(() => copyCredentialFile(src, path.join(claudeDir, '.credentials.json'))).toThrow(CREDENTIAL_FOLDER_PENDING)
     await checkProfileCredentialFolders(ID)
     expect(calls).toEqual([[home, claudeDir, identityDir], [claudeDir]])
