@@ -12,7 +12,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, readdirSync, statSync, renameSync } from 'fs'
 import { codexFolderIdentity } from '../../../src/main/providers/codex/rollout-lookup'
-import { join, dirname, basename } from 'path'
+import { join, dirname, basename, win32 } from 'path'
 import { tmpdir } from 'os'
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -430,6 +430,39 @@ describe('listWorktrees (thesis 19)', () => {
     expect(inProject.calls).toEqual([])
   })
 
+  it('git is looked for only in the PATH folders every Windows PATH walk reads: a drive, or a share named in full by either slash', () => {
+    const asked: string[] = []
+    const { calls } = run(
+      { status: 0, stdout: 'worktree F:/repo/demo\n' },
+      { PATH: '\\\\server;\\\\?\\C:\\dev;\\\\.\\pipe\\x;" D:\\padded ";//srv/share/git' },
+      'win32',
+      (p) => { asked.push(p); return p === '\\\\srv\\share\\git\\git.exe' },
+    )
+    expect(asked).toEqual(['D:\\padded\\git.exe', '\\\\srv\\share\\git\\git.exe'])
+    expect(calls.map((c) => c.file)).toEqual(['\\\\srv\\share\\git\\git.exe'])
+  })
+
+  it('each PATH folder is named as Windows names it when it starts git from there: the git a lookup finds is the git that runs', () => {
+    const asked: string[] = []
+    const { calls } = run(
+      { status: 0, stdout: 'worktree F:/repo/demo\n' },
+      { PATH: 'C:\\tools.;D:\\a.\\b.;E:\\two..;F:\\space .;//srv./share./bin.' },
+      'win32',
+      (p) => { asked.push(p); return p === '\\\\srv.\\share.\\bin\\git.exe' },
+    )
+    expect(asked).toEqual(['C:\\tools\\git.exe', 'D:\\a\\b\\git.exe', 'E:\\two..\\git.exe', 'F:\\space \\git.exe', '\\\\srv.\\share.\\bin\\git.exe'])
+    expect(calls.map((c) => c.file)).toEqual(['\\\\srv.\\share.\\bin\\git.exe'])
+  })
+
+  it('the same folder naming as the app\'s own PATH walks, folder by folder', async () => {
+    const { windowsFolderAsRun } = await import('../../../src/main/providers/windows-path-names')
+    for (const dir of ['C:\\tools.', 'C:\\a.\\b.', 'C:\\two..', 'C:\\x.y.', 'C:\\ space.', '\\\\srv.\\share.', '\\\\srv\\share\\x.', '//srv./share./x.', 'C:/a./b.']) {
+      const asked: string[] = []
+      run({ status: 0, stdout: '' }, { PATH: dir }, 'win32', (p) => { asked.push(p); return false })
+      expect(asked, dir).toEqual([win32.join(windowsFolderAsRun(dir), 'git.exe')])
+    }
+  })
+
   it('fails safe: git missing, a non-zero exit, no output, garbage, a throw', () => {
     for (const answer of [{ error: new Error('ENOENT') }, { status: 128, stdout: 'worktree F:/repo/wt\n' }, { status: 0, stdout: '' }, { status: 0, stdout: 'not porcelain at all\n' + String.fromCharCode(0, 1) }, new Error('spawn failed')]) {
       expect(run(answer, { PATH: 'C:\\Git\\cmd' }).out, String(answer)).toEqual(OWN)
@@ -444,5 +477,42 @@ describe('listWorktrees (thesis 19)', () => {
     expect(posix.calls[0].file).toBe('/usr/bin/git')
     expect(posix.calls[0].opts.env?.NoDefaultCurrentDirectoryInExePath).toBeUndefined()
     expect(posix.out.map((w: { path: string }) => w.path)).toEqual(['/srv/demo'])
+  })
+})
+
+describe('shown text drops the remaining invisible characters', () => {
+  const hex = (n: number) => `U+${n.toString(16).toUpperCase().padStart(4, '0')}`
+
+  it('each invisible character becomes a space: fillers, variation selectors, Khmer and Mongolian invisibles, the braille blank', () => {
+    for (const n of [0x034f, 0x115f, 0x1160, 0x3164, 0xffa0, 0xfe00, 0xfe0f, 0xe0100, 0xe01ef, 0x17b4, 0x17b5, 0x180b, 0x180c, 0x180d, 0x180f, 0x2065, 0x206a, 0x206f, 0x2800, 0x1d173, 0x1d17a, 0x1bca0, 0x1bca3, 0xe0080, 0xe0fff, 0xfff0, 0xfff9, 0xfffa, 0xfffb]) {
+      expect(lib.displayText(`a${String.fromCodePoint(n)}b`), hex(n)).toBe('a b')
+    }
+  })
+
+  it('a lone surrogate half becomes a space; a whole pair is kept', () => {
+    expect(lib.displayText(`a${String.fromCharCode(0xd83d)}b`)).toBe('a b')
+    expect(lib.displayText(`a${String.fromCharCode(0xde00)}b`)).toBe('a b')
+    const emoji = String.fromCodePoint(0x1f600)
+    expect(lib.displayText(`a${emoji}b`)).toBe(`a${emoji}b`)
+  })
+})
+
+describe('the picker\'s folder line is shown as plain text', () => {
+  const script = readFileSync(join(__dirname, '../../../scripts/codex-resume-picker.js'), 'utf8')
+
+  it('the header\'s folder is built by displayText, and no shown line prints a folder another way', () => {
+    expect(script).toContain('const dirDisplay = truncate(lib.displayText(cwd), innerWidth)')
+    const shown = script.split('\n').filter((l) => /console\.(log|error)\(|process\.stdout\.write\(/.test(l))
+    expect(shown.some((l) => l.includes('${dirDisplay}'))).toBe(true)
+    for (const l of shown) expect(l, l).not.toMatch(/\$\{(cwd|process\.cwd\(\)|retarget\.cwd|sourceCwd|where)\}/)
+  })
+
+  it('a folder holding a terminal link and a right-to-left override is shown without either', () => {
+    const ESC = String.fromCharCode(0x1b)
+    const RLO = String.fromCharCode(0x202e)
+    const shown = lib.displayText(`C:\\work${ESC}]8;;https://example.com${ESC}\\link${ESC}]8;;${ESC}\\${RLO}dir`)
+    expect(shown.includes(ESC)).toBe(false)
+    expect(shown.includes(RLO)).toBe(false)
+    expect(shown.startsWith('C:\\work ')).toBe(true)
   })
 })

@@ -12,7 +12,7 @@ const lib = require('../../../scripts/lib/codex-resume-picker-lib.js') as {
   buildResumeArgs: (uuid: string | null, flags: string[]) => string[]
   shouldFallback: (resumeUuid: string | null, exitStatus: number | null | undefined) => boolean
   shouldUseShell: (cmd: string, platform: string) => boolean
-  launchTarget: (cmd: string, args: string[], platform: string, env: Record<string, string | undefined>) => null | { file: string; args: string[] }
+  launchTarget: (cmd: string, args: string[], platform: string, env: Record<string, string | undefined>, cwd?: string) => null | { file: string; args: string[] }
   isResumeId: (id: unknown) => boolean
 }
 
@@ -225,33 +225,36 @@ describe('codex-resume-picker shouldUseShell', () => {
 // shell option, and resumes only a conversation id that is a UUID.
 describe('codex-resume-picker launchTarget', () => {
   const env = { SystemRoot: 'C:\\Windows' }
+  // The folder the shim starts in (a drive folder; a network one is refused,
+  // codex-resume-picker-network-folder.test.ts).
+  const HERE = 'C:\\project'
   it('runs an executable directly, with its arguments untouched', () => {
     expect(lib.launchTarget('/usr/bin/codex', ['resume', 'x'], 'linux', env)).toEqual({ file: '/usr/bin/codex', args: ['resume', 'x'], verbatim: false })
     expect(lib.launchTarget('C:\\a\\codex.exe', ['-m', 'gpt-5.5'], 'win32', env)).toEqual({ file: 'C:\\a\\codex.exe', args: ['-m', 'gpt-5.5'], verbatim: false })
   })
 
   it('runs a .cmd shim through cmd.exe named by absolute path, in the /s form, as one verbatim line', () => {
-    expect(lib.launchTarget('C:\\npm\\codex.cmd', ['-m', 'gpt-5.5'], 'win32', env)).toEqual({
+    expect(lib.launchTarget('C:\\npm\\codex.cmd', ['-m', 'gpt-5.5'], 'win32', env, HERE)).toEqual({
       file: 'C:\\Windows\\System32\\cmd.exe',
       args: ['/d', '/v:off', '/s', '/c', '""C:\\npm\\codex.cmd" -m gpt-5.5"'],
       verbatim: true,
     })
     // Spaces and parentheses in the shim's folder survive the /s form.
-    expect(lib.launchTarget('C:\\Program Files (x86)\\nodejs\\codex.cmd', [], 'win32', env)?.args[4]).toBe('""C:\\Program Files (x86)\\nodejs\\codex.cmd""')
+    expect(lib.launchTarget('C:\\Program Files (x86)\\nodejs\\codex.cmd', [], 'win32', env, HERE)?.args[4]).toBe('""C:\\Program Files (x86)\\nodejs\\codex.cmd""')
     // The parent's own spelling (Git Bash exports SYSTEMROOT).
-    expect(lib.launchTarget('C:\\npm\\codex.cmd', [], 'win32', { SYSTEMROOT: 'C:\\WINDOWS' })?.file).toBe('C:\\WINDOWS\\System32\\cmd.exe')
+    expect(lib.launchTarget('C:\\npm\\codex.cmd', [], 'win32', { SYSTEMROOT: 'C:\\WINDOWS' }, HERE)?.file).toBe('C:\\WINDOWS\\System32\\cmd.exe')
   })
 
   it('refuses what cmd.exe or the shim would reinterpret, and a cmd.exe it cannot name absolutely', () => {
     for (const bad of ['"', '%', '&', '^', '|', '<', '>', '!', '(', ')', ' ', '\n']) {
-      expect(lib.launchTarget('C:\\npm\\codex.cmd', ['resume', `x${bad}y`], 'win32', env), JSON.stringify(bad)).toBeNull()
+      expect(lib.launchTarget('C:\\npm\\codex.cmd', ['resume', `x${bad}y`], 'win32', env, HERE), JSON.stringify(bad)).toBeNull()
     }
     for (const bad of ['"', '%', '&', '^']) {
-      expect(lib.launchTarget(`C:\\a${bad}b\\codex.cmd`, [], 'win32', env), JSON.stringify(bad)).toBeNull()
+      expect(lib.launchTarget(`C:\\a${bad}b\\codex.cmd`, [], 'win32', env, HERE), JSON.stringify(bad)).toBeNull()
     }
-    expect(lib.launchTarget('codex.cmd', [], 'win32', env)).toBeNull()
+    expect(lib.launchTarget('codex.cmd', [], 'win32', env, HERE)).toBeNull()
     for (const root of [undefined, '', 'Windows', 'C:Windows']) {
-      expect(lib.launchTarget('C:\\npm\\codex.cmd', [], 'win32', { SystemRoot: root }), String(root)).toBeNull()
+      expect(lib.launchTarget('C:\\npm\\codex.cmd', [], 'win32', { SystemRoot: root }, HERE), String(root)).toBeNull()
     }
   })
 })

@@ -157,10 +157,12 @@ function launchCodex(resumeUuid, sourceCwd) {
   const retarget = lib.resolveRetargetCwd(resumeUuid, sourceCwd, process.cwd(), lib.isDirectory)
   // Codex itself never gets the pick file's name.
   const env = lib.childEnv(process.env)
+  // The folder Codex starts in: the pick's own worktree, else this one.
+  const where = retarget.cwd || process.cwd()
   const run = (args) => {
-    const target = lib.launchTarget(cmd, args, os.platform(), process.env)
+    const target = lib.launchTarget(cmd, args, os.platform(), process.env, where)
     if (!target) {
-      console.error('\n  Failed to launch codex: its path or arguments cannot be passed to cmd.exe safely.\n')
+      console.error(`\n  ${lib.launchRefusal(cmd, os.platform(), where)}\n`)
       process.exit(1)
     }
     return spawnSync(target.file, target.args, { stdio: 'inherit', windowsHide: false, windowsVerbatimArguments: target.verbatim, env, ...(retarget.cwd ? { cwd: retarget.cwd } : {}) })
