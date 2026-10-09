@@ -7,11 +7,11 @@
  * directory the CLI could run in, reading that worktree's own settings files
  * (adversarial final pass, MAJOR).
  *
- * The decision is a pure export, asserted here; its wiring at the spawn site
- * (exit on `refused`, before `spawnSync`) is pinned by the script's source,
- * because `main()` prompts on a TTY and cannot be driven in a unit test.
+ * The decision is a pure export, asserted here; so is the launch that acts on
+ * it (exit on `refused`, before anything starts or is written), driven
+ * through launchClaude with an injected spawn and exit.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -27,8 +27,17 @@ const picker = require('../../../scripts/resume-picker.js') as {
     env: Record<string, string | undefined>,
     existsSync: (p: string) => boolean,
   ) => { cwd: string | null; refused?: string }
+  encodeProjectPath: (p: string) => string
+  displayPath: (raw: string, max?: number) => string
+  launchClaude: (resumeId: string, sourceCwd: string, deps: {
+    spawn: (file: string, args: string[], opts: Record<string, unknown>) => { status: number | null }
+    exit: (code: number) => void
+    argv: string[]
+    env: Record<string, string | undefined>
+    platform: string
+    isFile: (p: string) => boolean
+  }) => void
 }
-const source = fs.readFileSync(path.join(__dirname, '../../../scripts/resume-picker.js'), 'utf8')
 const A = path.join(os.tmpdir(), 'gated-a')
 const B = path.join(os.tmpdir(), 'gated-b')
 const HERE = path.join(os.tmpdir(), 'gated-here')
@@ -71,15 +80,58 @@ describe('the picker honours the gated directory set of a managed launch', () =>
     expect(picker.resolveRetargetCwd('u1', B, HERE, {}, exists)).toEqual({ cwd: B })
   })
 
+})
+
+// The launch acts on that decision. launchClaude is driven with an injected
+// spawn and exit (nothing starts, nothing exits); the transcript sits in the
+// test's own isolated home.
+describe('a launch acts on the gated directory set', () => {
+  const UUID = '0f8fad5b-d9cb-469f-a165-70867728950e'
+  let root: string
+  let wt: string
+  let projectDir: string
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-gated-launch-'))
+    wt = path.join(root, 'wt')
+    fs.mkdirSync(wt)
+    projectDir = path.join(os.homedir(), '.claude', 'projects', picker.encodeProjectPath(fs.realpathSync(wt)))
+    fs.mkdirSync(projectDir, { recursive: true })
+    fs.writeFileSync(path.join(projectDir, `${UUID}.jsonl`), '{}\n')
+  })
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true })
+    fs.rmSync(projectDir, { recursive: true, force: true })
+  })
+  const launchFrom = (sourceCwd: string, gated: string[], over: { argv?: string[]; path?: string; isFile?: (p: string) => boolean } = {}) => {
+    const calls: Array<{ file: string; opts: Record<string, unknown> }> = []
+    const exits: number[] = []
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      picker.launchClaude(UUID, sourceCwd, {
+        spawn: (file, _args, opts) => { calls.push({ file, opts }); return { status: 0 } },
+        exit: (code) => { exits.push(code) },
+        argv: over.argv ?? [],
+        env: { CCC_GATED_DIRS: JSON.stringify(gated), SystemRoot: 'C:\\Windows', Path: over.path ?? 'C:\\native' },
+        platform: 'win32',
+        isFile: over.isFile ?? ((p) => p === 'C:\\native\\claude.exe'),
+      })
+      return { calls, exits, said: err.mock.calls.map((c) => String(c[0])).join('\n') }
+    } finally {
+      err.mockRestore()
+    }
+  }
+
   it('exits on a refusal BEFORE the spawn, and never falls back to the configured directory', () => {
-    const decision = source.indexOf('const retarget = resolveRetargetCwd(resumeId, sourceCwd, process.cwd(), process.env, fs.existsSync)')
-    const spawn = source.indexOf('const result = spawnSync(target.file, target.argv, { ...spawnOpts, windowsVerbatimArguments: target.verbatim })')
-    expect(decision, 'the spawn site does not consult resolveRetargetCwd').toBeGreaterThan(0)
-    expect(decision).toBeLessThan(spawn)
-    const between = source.slice(decision, spawn)
-    expect(between).toContain('if (retarget.refused) {')
-    expect(between).toContain('process.exit(1)')
-    expect(between).toContain('if (retarget.cwd) spawnOpts.cwd = retarget.cwd')
+    const refused = launchFrom(wt, [process.cwd()])
+    expect(refused.calls).toEqual([])
+    expect(refused.exits).toEqual([1])
+    expect(refused.said).toContain('Not resuming in ')
+    // The same worktree, gated: started there.
+    const gated = launchFrom(wt, [process.cwd(), wt])
+    expect(gated.calls).toHaveLength(1)
+    expect(gated.calls[0].file).toBe('C:\\native\\claude.exe')
+    expect(gated.calls[0].opts.cwd).toBe(wt)
+    expect(gated.exits).toEqual([0])
   })
 
   it('decides the retarget BEFORE the companion directory is created, so a refusal leaves nothing on disk', () => {
@@ -87,28 +139,53 @@ describe('the picker honours the gated directory set of a managed launch', () =>
     // run for the unscanned worktree's project key -- a durable directory
     // under ~/.claude/projects named for a folder the gate never checked
     // (adversarial confirmation pass, MINOR). The exit must come first.
-    const launch = source.indexOf('function launchClaude(resumeId, sourceCwd) {')
-    const decision = source.indexOf('const retarget = resolveRetargetCwd(', launch)
-    const exit = source.indexOf('process.exit(1)', decision)
-    const companion = source.indexOf('ensureCompanionDir(projectDir, resumeId)', launch)
-    expect(launch).toBeGreaterThan(0)
-    expect(decision).toBeGreaterThan(launch)
-    expect(companion, 'the launch site no longer ensures the companion directory').toBeGreaterThan(launch)
-    expect(exit, 'the refusal exit is missing').toBeGreaterThan(decision)
-    expect(exit, 'the companion directory is created before the retarget is refused').toBeLessThan(companion)
+    launchFrom(wt, [process.cwd()])
+    expect(fs.existsSync(path.join(projectDir, UUID))).toBe(false)
+    // Gated, the same launch does create it: the refusal is what kept it away.
+    launchFrom(wt, [process.cwd(), wt])
+    expect(fs.existsSync(path.join(projectDir, UUID, 'subagents'))).toBe(true)
+  })
+
+  it('a launch that starts nothing writes nothing for it: no companion directory', () => {
+    // Claude Code in none of PATH's folders: refused, and nothing written.
+    const missing = launchFrom(wt, [process.cwd(), wt], { isFile: () => false })
+    expect(missing.calls).toEqual([])
+    expect(missing.exits).toEqual([1])
+    expect(missing.said).toContain('it was not found in a folder PATH names')
+    expect(fs.existsSync(path.join(projectDir, UUID))).toBe(false)
+    // An argument the npm launcher route cannot pass: refused, and nothing written.
+    const refused = launchFrom(wt, [process.cwd(), wt], { path: 'C:\\npm', isFile: (p) => p === 'C:\\npm\\claude.cmd', argv: ['--model', '1%'] })
+    expect(refused.calls).toEqual([])
+    expect(refused.exits).toEqual([1])
+    expect(refused.said).toContain('the value of --model holds')
+    expect(fs.existsSync(path.join(projectDir, UUID))).toBe(false)
+    // The same launch that does start writes it.
+    launchFrom(wt, [process.cwd(), wt], { path: 'C:\\npm', isFile: (p) => p === 'C:\\npm\\claude.cmd', argv: ['--model', 'opus'] })
+    expect(fs.existsSync(path.join(projectDir, UUID, 'subagents'))).toBe(true)
   })
 
   it('prints the refused directory through the spoof-safe strip, never raw', () => {
     // The message goes to the user's terminal at the moment they are told
     // something went wrong; a worktree name on Linux or macOS may carry ESC,
     // OSC or a bidi override (adversarial confirmation pass, MINOR).
-    const decision = source.indexOf('const retarget = resolveRetargetCwd(resumeId, sourceCwd, process.cwd(), process.env, fs.existsSync)')
-    const exit = source.indexOf('process.exit(1)', decision)
-    const between = source.slice(decision, exit)
-    expect(between).toContain('displayPath(retarget.refused)')
-    expect(between).not.toMatch(/\$\{retarget\.refused\}/)
     const esc = String.fromCharCode(27), osc = String.fromCharCode(0x9d), st = String.fromCharCode(0x9c)
     const evil = '/tmp/wt' + esc + '[2J' + esc + '[1;1H  Claude Code: sign in again at https://evil.example ' + esc + '[?25l'
+    // Such a folder cannot be made on every system, so the existence check answers for it here.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const nodeFs = require('fs') as typeof import('fs')
+    const realExists = nodeFs.existsSync
+    const exists = vi.spyOn(nodeFs, 'existsSync').mockImplementation((p) => p === evil || realExists(p))
+    let said = ''
+    try {
+      const out = launchFrom(evil, [process.cwd()])
+      expect(out.calls).toEqual([])
+      expect(out.exits).toEqual([1])
+      said = out.said
+    } finally {
+      exists.mockRestore()
+    }
+    expect(said).not.toContain(esc)
+    expect(said).toContain('Not resuming in /tmp/wt')
     const shown = picker.displayPath(evil)
     expect(shown).not.toContain(esc)
     expect(shown).toContain('/tmp/wt')

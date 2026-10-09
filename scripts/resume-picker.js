@@ -170,22 +170,122 @@ function parseWorktrees(porcelainText) {
   return worktrees
 }
 
+// ── Programs from PATH's folders ────────────────────────────────────
+// The picker starts git -- and, on Windows, Claude Code -- only by a full
+// path found in a folder PATH names: never by a bare name (which Windows, or
+// a shell, also looks up in the current folder -- the project). It finds
+// them in-process, never through the where command or a shell; git starts
+// without a shell, and an npm claude.cmd only through the system cmd.exe, by
+// its full path (buildSpawnTarget). Elsewhere Claude Code is started by its
+// name, as before. The folder rule is the app's own
+// (src/main/windows-programs.ts and src/main/providers/windows-path-names.ts,
+// which this script cannot import; a parity test holds the copy to the same
+// answer): on Windows only a fully qualified folder -- a drive, or a share --
+// with one pair of surrounding quotes dropped, never one holding an
+// unexpanded `%`, each named as Windows names it when it starts a program from
+// it (a folder name's one trailing dot dropped); elsewhere only an absolute
+// folder, and only a file the user may run. `env`, `platform` and `isFile`
+// are for tests.
+function isFileOnDisk(p) {
+  try {
+    return fs.statSync(p).isFile()
+  } catch (e) {
+    // Not there; any other failure (a folder that does not answer) is thrown.
+    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return false
+    throw e
+  }
+}
+// Elsewhere a program is also one the user may run, as the system's own
+// lookup requires: a file without that permission is passed over.
+function isRunnableOnDisk(p) {
+  if (!fs.statSync(p).isFile()) return false
+  fs.accessSync(p, fs.constants.X_OK)
+  return true
+}
+function pathVariable(env, platform) {
+  const source = env || {}
+  if (typeof source.PATH === 'string') return source.PATH
+  if (platform !== 'win32') return ''
+  const key = Object.keys(source).find((k) => k.toUpperCase() === 'PATH')
+  return key !== undefined && typeof source[key] === 'string' ? source[key] : ''
+}
+function folderAsRun(dir) {
+  const parts = dir.split(/([\\/])/)
+  // A share keeps `\\server\share` as it is: parts '', sep, '', sep, server, sep, share.
+  const root = /^[\\/]{2}/.test(dir) ? 7 : 1
+  return parts.map((part, i) => (i < root || i % 2 === 1 ? part : part.replace(/([^.])\.$/, '$1'))).join('')
+}
+function pathFolders(env, platform) {
+  if (platform === 'win32') {
+    return pathVariable(env, platform).split(';')
+      .map((d) => d.trim().replace(/^"(.*)"$/, '$1').trim())
+      .filter((d) => d !== '' && !d.includes('%') && /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/?.][^\\/]*[\\/][^\\/]+)/.test(d))
+      .map(folderAsRun)
+  }
+  return pathVariable(env, platform).split(':').filter((d) => d.startsWith('/'))
+}
+/** The full path of the first of `names` found in PATH's folders -- every
+ *  folder for the first name, then every folder for the next -- or null. A
+ *  folder whose check throws (one that does not answer) is not asked again
+ *  for another name, as the app's walk does. */
+function findOnPath(names, env, platform, isFile) {
+  const api = platform === 'win32' ? path.win32 : path.posix
+  const dirs = pathFolders(env, platform)
+  const unreachable = new Set()
+  for (const name of names) {
+    for (const dir of dirs) {
+      if (unreachable.has(dir)) continue
+      const candidate = api.join(dir, name)
+      try { if (isFile(candidate)) return candidate } catch { unreachable.add(dir) }
+    }
+  }
+  return null
+}
+/** A child's environment: on Windows NoDefaultCurrentDirectoryInExePath=1, in
+ *  one spelling, so a program the child starts by a bare name is looked up in
+ *  PATH's folders only, never in the folder it runs in. `env` is not changed. */
+function withoutCurrentFolderLookup(env, platform) {
+  const out = {}
+  for (const k of Object.keys(env || {})) {
+    if (platform === 'win32' && k.toUpperCase() === 'NODEFAULTCURRENTDIRECTORYINEXEPATH') continue
+    out[k] = env[k]
+  }
+  if (platform === 'win32') out.NoDefaultCurrentDirectoryInExePath = '1'
+  return out
+}
+
 // Enumerate the project's worktrees from `cwd`. The configured cwd may itself BE
 // a worktree — we include every worktree git reports regardless.
 //
+// git is started by its full path from PATH's folders (findOnPath), without a
+// shell, its environment carrying the Windows no-current-folder rule; its
+// command line keeps the repository's own settings from running anything (no
+// pager, no file-system monitor hook). The project folder is git's working
+// folder only.
+//
 // FAIL-SAFE: if git is missing, errors, or cwd isn't a repo, returns a SINGLE
 // synthetic main-worktree record for `cwd` so callers degrade to exactly the
-// old single-source behaviour (no labels).
-function listWorktrees(cwd) {
+// old single-source behaviour (no labels). `platform` and `deps` (spawn, env,
+// isFile) are for tests.
+const GIT_WORKTREE_ARGS = Object.freeze(['--no-pager', '-c', 'core.fsmonitor=false', 'worktree', 'list', '--porcelain'])
+function listWorktrees(cwd, platform, deps) {
   const fallback = [{ path: cwd, branch: null, isMain: true }]
+  const plat = platform || process.platform
+  const env = (deps && deps.env) || process.env
+  const spawn = (deps && deps.spawn) || spawnSync
+  const isFile = (deps && deps.isFile) || (plat === 'win32' ? isFileOnDisk : isRunnableOnDisk)
   try {
-    const res = spawnSync('git', ['worktree', 'list', '--porcelain'], {
+    const git = findOnPath([plat === 'win32' ? 'git.exe' : 'git'], env, plat, isFile)
+    if (!git) return fallback
+    const res = spawn(git, [...GIT_WORKTREE_ARGS], {
       cwd,
+      env: withoutCurrentFolderLookup(env, plat),
       encoding: 'utf-8',
       timeout: 5000,
       windowsHide: true,
+      shell: false,
     })
-    if (res.error || res.status !== 0 || !res.stdout) return fallback
+    if (!res || res.error || res.status !== 0 || !res.stdout) return fallback
     const parsed = parseWorktrees(res.stdout)
     return parsed.length > 0 ? parsed : fallback
   } catch {
@@ -547,17 +647,21 @@ function pickerLines(cwd, conversations, names, width, opts) {
   }
   lines.push(`  ${C.surface}│${C.reset}`)
 
+  // A field counts as text to show only when something in it is left to see
+  // once it is cleaned (displayText); otherwise the next field is tried.
+  const visible = (x) => (x !== undefined && x !== null && displayText(x).trim() !== '' ? x : null)
+
   for (let i = 0; i < list.length; i++) {
     const conv = list[i]
     const num = String(i + 1).padStart(2)
-    const workName = nameOf(conv)
+    const workName = visible(nameOf(conv))
     const lastMessages = Array.isArray(conv.lastMessages) ? conv.lastMessages : []
     // Best available label, most→least useful: the user's own work name, then
     // Claude's AI title, then the first real user message, then the last prompt,
     // then the most recent user message. "(continued session)" only when the
     // conversation truly yielded no readable text (#130).
     const recent = lastMessages.length ? lastMessages[lastMessages.length - 1] : null
-    const primary = workName || conv.aiTitle || conv.firstMessage || conv.lastPrompt || recent || '(continued session)'
+    const primary = workName || visible(conv.aiTitle) || visible(conv.firstMessage) || visible(conv.lastPrompt) || visible(recent) || '(continued session)'
     const shownPrimary = truncate(displayText(primary), innerWidth - 6)
     const primaryColored = workName
       ? `${C.bold}${C.peach}${shownPrimary}${C.reset}`
@@ -580,7 +684,7 @@ function pickerLines(cwd, conversations, names, width, opts) {
     lines.push(`  ${C.surface}│${C.reset}      ${C.overlay}${meta}${C.reset}`)
     // When we led with the work name, show the AI title / first message beneath
     // so the row still says what the conversation was about.
-    const sub = workName ? (conv.aiTitle || conv.firstMessage || conv.lastPrompt) : null
+    const sub = workName ? (visible(conv.aiTitle) || visible(conv.firstMessage) || visible(conv.lastPrompt)) : null
     if (sub) {
       lines.push(`  ${C.surface}│${C.reset}      ${C.dim}${C.subtext}${truncate(displayText(sub), innerWidth - 10)}${C.reset}`)
     }
@@ -599,7 +703,7 @@ function pickerLines(cwd, conversations, names, width, opts) {
   lines.push(`  ${C.surface}│${C.reset}`)
   lines.push(`  ${C.surface}│${C.reset}  ${C.yellow} n${C.reset}  ${C.text}New conversation${C.reset}`)
   lines.push(`  ${C.surface}│${C.reset}`)
-  lines.push(`  ${C.surface}╰${'─'.repeat(maxWidth - 4)}╯${C.reset}`)
+  lines.push(`  ${C.surface}╰${'─'.repeat(Math.max(0, maxWidth - 4))}╯${C.reset}`)
   lines.push('')
   return lines
 }
@@ -705,11 +809,27 @@ async function main() {
  * version probe and the Codex picker run one: `/d /v:off /s /c "<line>"`,
  * passed VERBATIM (AutoRun skipped, delayed expansion off). With /s cmd.exe
  * drops exactly that outer pair; inside it the shim path is quoted and each
- * argument is written exactly as Node writes an argv element
- * (quoteArgLikeNode), so the arguments reach cmd.exe as they did before and
- * only the shim path changes. A shim path carrying one of `" % & ^` or a
- * control character is refused (null), as the version probe refuses it:
- * cmd.exe or the shim itself would re-read it.
+ * argument is written so it stays one argument, exactly as written
+ * (quoteArgForCmdShim): wrapped in double quotes, every double quote inside
+ * it doubled, and the backslashes before a double quote doubled as the C
+ * runtime reads them. cmd.exe's quote state turns at every double quote, so
+ * every other character of every argument stays inside quotes, where
+ * `& | < > ^ ( )` are text -- on the /c line and again on the shim's own `%*`
+ * line -- and the program's argument parser (the C runtime rule, which node
+ * and the native binary follow) reads a doubled quote inside quotes as one
+ * quote. cmd.exe reads `%` inside quotes as well, and a /c line has no way
+ * to keep it as text, so an argument holding `%` or a control character is
+ * refused (null) and the launch says which one (notStartedMessage). `!` is
+ * text: the line runs with delayed expansion off, and npm's shims do not
+ * turn it on. A shim path carrying one of `" % & ^` or a control character
+ * is refused (null), as the version probe refuses it: cmd.exe or the shim
+ * itself would re-read it.
+ *
+ * `cwd`: the folder the shim starts in. cmd.exe cannot start in a share or a
+ * device path (two leading slashes of either kind), so the shim is never
+ * started there (null), and the launch says why and names the two ways out
+ * (notStartedMessage), as the app's own launch does. The native claude.exe
+ * starts in any folder.
  *
  * P3.10 round 3b: the picker resolves its helpers from fixed locations: the
  * cmd.exe that runs a shim is the system's own, by its full path
@@ -750,30 +870,85 @@ function systemCmdExe(env) {
   const comSpec = envOne(env, 'ComSpec')
   return typeof comSpec === 'string' && comSpec.toLowerCase() === system.toLowerCase() ? comSpec : system
 }
-function quoteArgLikeNode(arg) {
-  // libuv's quote_cmd_arg, the rule Node applies to each argv element.
-  if (arg === '') return '""'
-  if (!/[ \t"]/.test(arg)) return arg
-  if (!/["\\]/.test(arg)) return `"${arg}"`
-  let out = ''
+/** One argument on the shim's line: in double quotes, each double quote in
+ *  it doubled, the backslashes before a double quote (or before the closing
+ *  one) doubled. cmd.exe and the C runtime then both read it as one argument,
+ *  exactly as written. */
+function quoteArgForCmdShim(arg) {
+  let out = '"'
   let slashes = 0
   for (const ch of arg) {
     if (ch === '\\') { slashes++; continue }
-    if (ch === '"') { out += '\\'.repeat(slashes * 2 + 1) + '"'; slashes = 0; continue }
+    if (ch === '"') { out += '\\'.repeat(slashes * 2) + '""'; slashes = 0; continue }
     out += '\\'.repeat(slashes) + ch
     slashes = 0
   }
-  return `"${out}${'\\'.repeat(slashes * 2)}"`
+  return out + '\\'.repeat(slashes * 2) + '"'
 }
-function buildSpawnTarget(cmd, args, platform = os.platform(), env = process.env) {
-  if (platform === 'win32' && /\.(cmd|bat)$/i.test(cmd)) {
+/** What no quoting keeps as text on a /c line: `%`, and any control character. */
+const SHIM_ARG_REFUSED_RE = /[%\p{Cc}]/u
+/** The index of the first argument the shim route refuses, or -1. */
+function shimArgRefused(args) {
+  return args.findIndex((a) => typeof a !== 'string' || SHIM_ARG_REFUSED_RE.test(a))
+}
+/** The name of the first agent template in an `--agents` value that holds
+ *  what the shim route refuses -- a list of templates each with a `name` (as
+ *  the app writes it), or an object keyed by name -- or null when the value
+ *  names none. A name counts only when something in it is left to see once
+ *  it is shown (displayText), as for the picker's rows. */
+function refusedTemplateName(value) {
+  let parsed
+  try { parsed = JSON.parse(value) } catch { return null }
+  if (!parsed || typeof parsed !== 'object') return null
+  const entries = Array.isArray(parsed)
+    ? parsed.map((t) => [t && typeof t === 'object' ? t.name : undefined, t])
+    : Object.entries(parsed)
+  for (const [name, template] of entries) {
+    if (typeof name === 'string' && displayText(name).trim() !== '' && SHIM_ARG_REFUSED_RE.test(JSON.stringify([name, template]))) return name
+  }
+  return null
+}
+/** A folder cmd.exe cannot start in: a share or a device path. */
+const CMD_EXE_NETWORK_FOLDER_RE = /^[\\/]{2}/
+const NETWORK_FOLDER_REFUSAL = 'Cannot start Claude Code in a network folder through its npm launcher: open the folder from a mapped drive letter, or install the native Claude Code.'
+const isShim = (cmd) => /\.(cmd|bat)$/i.test(cmd)
+const inNetworkFolder = (cwd) => typeof cwd === 'string' && CMD_EXE_NETWORK_FOLDER_RE.test(cwd)
+function buildSpawnTarget(cmd, args, platform = os.platform(), env = process.env, cwd) {
+  if (platform === 'win32' && isShim(cmd)) {
+    if (inNetworkFolder(cwd)) return null
     if (SHIM_PATH_UNSAFE_RE.test(cmd)) return null
     const shell = systemCmdExe(env)
     if (!shell) return null
-    const line = [`"${cmd}"`, ...args.map(quoteArgLikeNode)].join(' ')
-    return { file: shell, argv: ['/d', '/v:off', '/s', '/c', `"${line}"`], verbatim: true }
+    if (shimArgRefused(args) !== -1) return null
+    const line = [`"${cmd}"`, ...args.map(quoteArgForCmdShim)].join(' ')
+    // The shim starts node by a bare name when no node.exe sits beside it:
+    // it looks in PATH's folders only, never in the project folder.
+    return { file: shell, argv: ['/d', '/v:off', '/s', '/c', `"${line}"`], verbatim: true, env: withoutCurrentFolderLookup(env, platform) }
   }
   return { file: cmd, argv: args, verbatim: false }
+}
+/** What the launch says when it starts nothing: `cmd` null (Claude Code not
+ *  found), or why buildSpawnTarget refused, checked in its order (`cwd`: the
+ *  folder it would start in). A name shown in it is plain text. */
+function notStartedMessage(cmd, args, env = process.env, cwd) {
+  if (!cmd) return 'Not starting Claude Code: it was not found in a folder PATH names (claude.exe or claude.cmd). Install it, or add its folder to PATH, then start the session again.'
+  if (isShim(cmd) && inNetworkFolder(cwd)) return NETWORK_FOLDER_REFUSAL
+  if (SHIM_PATH_UNSAFE_RE.test(cmd)) return `Not starting Claude Code from ${displayPath(cmd)}: cmd.exe would re-read a character in that path. Install it in a folder without " % & or ^.`
+  const refused = shimArgRefused(args)
+  if (systemCmdExe(env) && refused !== -1) {
+    const flagOf = (a) => (typeof a === 'string' && a.startsWith('--') ? a.split('=')[0] : null)
+    const inline = flagOf(args[refused])
+    const flag = inline || flagOf(args[refused - 1])
+    if (flag === '--agents') {
+      const value = inline ? args[refused].slice(inline.length + 1) : args[refused]
+      const name = typeof value === 'string' ? refusedTemplateName(value) : null
+      const which = name ? `the agent template "${displayText(name, 64)}"` : 'an agent template'
+      return `Not starting Claude Code: ${which} holds a % sign or a control character, which an npm-installed Claude Code on Windows cannot be given exactly as written. Remove it from the template, or install the native Claude Code.`
+    }
+    const what = flag ? `the value of ${displayText(flag, 64)}` : 'an argument'
+    return `Not starting Claude Code: ${what} holds a % sign or a control character, which an npm-installed Claude Code on Windows cannot be given exactly as written. Remove it, or install the native Claude Code.`
+  }
+  return 'Not starting Claude Code: the Windows folder (SystemRoot) is not a plain absolute folder, so the system cmd.exe cannot be named.'
 }
 
 function getForwardedArgs() {
@@ -781,32 +956,46 @@ function getForwardedArgs() {
   return process.argv.slice(2)
 }
 
-// Resolve claude command — try native .exe first, then npm .cmd.
-function resolveClaudeCmd() {
-  let cmd = 'claude'
-  if (os.platform() === 'win32') {
-    const { execSync } = require('child_process')
-    for (const bin of ['claude.exe', 'claude.cmd']) {
-      try {
-        // stdio: ignore stderr so Windows `where`'s "INFO: Could not find files
-        // for the given pattern(s)." (printed when claude.exe isn't found before
-        // claude.cmd) doesn't leak into the session terminal.
-        cmd = execSync(`where ${bin}`, { encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
-          .trim().split('\n')[0].trim()
-        break
-      } catch { /* try next */ }
-    }
-  }
-  return cmd
+// Resolve the claude command. On Windows: the native claude.exe in any folder
+// PATH names first, then npm's claude.cmd, found in-process (findOnPath) --
+// never through the where command or a shell, never in the project folder, never the
+// bare name; null when neither is there, and the launch says so. Elsewhere the
+// bare name, as before.
+function resolveClaudeCmd(platform = os.platform(), env = process.env, isFile = isFileOnDisk) {
+  if (platform !== 'win32') return 'claude'
+  return findOnPath(['claude.exe', 'claude.cmd'], env, platform, isFile)
+}
+
+/** What one launch starts -- the program, its arguments and its spawn options
+ *  (`base`, plus the npm route's environment and verbatim line) -- or, when
+ *  it starts nothing, the message it shows (notStartedMessage). `inherited`:
+ *  the folder it starts in when `base` names none (the picker's own). Pure:
+ *  both of launchClaude's launches run exactly what this returns. */
+function launchSpec(cmd, args, base, platform = os.platform(), env = process.env, inherited) {
+  const folder = base && typeof base.cwd === 'string' && base.cwd !== '' ? base.cwd : inherited
+  const target = cmd ? buildSpawnTarget(cmd, args, platform, env, folder) : null
+  if (!target) return { message: notStartedMessage(cmd, args, env, folder) }
+  const opts = { ...base, windowsVerbatimArguments: target.verbatim }
+  if (target.env) opts.env = target.env
+  return { file: target.file, argv: target.argv, opts }
 }
 
 // Launch Claude. When `sourceCwd` is provided and differs from the current cwd
 // (a worktree conversation), spawn from that directory so the cwd-scoped
 // `--resume` resolves it. New/fresh launches always use process.cwd().
-function launchClaude(resumeId, sourceCwd) {
-  const forwarded = getForwardedArgs()
+// `deps` (spawn, exit, argv, env, platform, isFile, cwd) are for tests; the
+// picker itself passes none.
+function launchClaude(resumeId, sourceCwd, deps) {
+  const d = deps || {}
+  const spawn = d.spawn || spawnSync
+  const exit = d.exit || ((code) => process.exit(code))
+  const env = d.env || process.env
+  const platform = d.platform || os.platform()
+  const forwarded = d.argv || getForwardedArgs()
   const args = resumeId ? ['--resume', resumeId, ...forwarded] : [...forwarded]
-  const cmd = resolveClaudeCmd()
+  const cmd = resolveClaudeCmd(platform, env, d.isFile || isFileOnDisk)
+  // The folder the picker runs in: a launch that names no other starts there.
+  const here = d.cwd || process.cwd()
 
   // The retarget decision comes FIRST, before anything touches the disk for
   // the chosen directory: a refusal used to be reached only after the
@@ -815,26 +1004,13 @@ function launchClaude(resumeId, sourceCwd) {
   // gate never checked (adversarial confirmation pass, MINOR).
   // Only override cwd for an actual resume into a different directory. Be
   // FAIL-SAFE: an unresolvable/missing sourceCwd silently falls back to inherit.
-  const retarget = resolveRetargetCwd(resumeId, sourceCwd, process.cwd(), process.env, fs.existsSync)
+  const retarget = resolveRetargetCwd(resumeId, sourceCwd, here, env, fs.existsSync)
   if (retarget.refused) {
     // Refused, visibly, and NOT started in the configured directory instead:
     // a `--resume` there would fall through to a fresh session in silence.
     // The directory is untrusted text on its way to the terminal: stripped.
     console.error(`\n  Not resuming in ${displayPath(retarget.refused)}: AI Code Conductor did not check that folder's project settings for this account before the session started. Start the session again and pick it then.\n`)
-    process.exit(1)
-  }
-
-  // Ensure the chosen conversation's companion dir exists so a direct-work
-  // conversation (no subagent/workflow → no companion dir from the CLI) can be
-  // resumed. Best-effort: any failure must NOT block the launch.
-  if (resumeId) {
-    try {
-      const projectDir = resolveProjectDir(
-        path.join(os.homedir(), '.claude', 'projects'),
-        sourceCwd || process.cwd(),
-      )
-      if (projectDir) ensureCompanionDir(projectDir, resumeId)
-    } catch { /* best-effort */ }
+    return exit(1)
   }
 
   const spawnOpts = {
@@ -845,32 +1021,46 @@ function launchClaude(resumeId, sourceCwd) {
   }
   if (retarget.cwd) spawnOpts.cwd = retarget.cwd
 
-  const target = buildSpawnTarget(cmd, args)
-  if (!target) {
-    console.error(SHIM_PATH_UNSAFE_RE.test(cmd)
-      ? `\n  Not starting Claude Code from ${displayPath(cmd)}: cmd.exe would re-read a character in that path. Install it in a folder without " % & or ^.\n`
-      : '\n  Not starting Claude Code: the Windows folder (SystemRoot) is not a plain absolute folder, so the system cmd.exe cannot be named.\n')
-    process.exit(1)
+  // Whether the launch can start at all is settled before anything is
+  // written for it: a launch that starts nothing leaves nothing behind.
+  const first = launchSpec(cmd, args, spawnOpts, platform, env, here)
+  if (first.message) {
+    console.error(`\n  ${first.message}\n`)
+    return exit(1)
   }
-  const result = spawnSync(target.file, target.argv, { ...spawnOpts, windowsVerbatimArguments: target.verbatim })
+
+  // Ensure the chosen conversation's companion dir exists so a direct-work
+  // conversation (no subagent/workflow → no companion dir from the CLI) can be
+  // resumed. Best-effort: any failure must NOT block the launch.
+  if (resumeId) {
+    try {
+      const projectDir = resolveProjectDir(
+        path.join(os.homedir(), '.claude', 'projects'),
+        sourceCwd || here,
+      )
+      if (projectDir) ensureCompanionDir(projectDir, resumeId)
+    } catch { /* best-effort */ }
+  }
+
+  const result = spawn(first.file, first.argv, first.opts)
 
   // If resume failed (conversation no longer exists), fall back to fresh session.
   // The fresh fallback runs in the SAME (worktree) cwd so it lands where the
   // user expected, not back in the configured project root.
   if (resumeId && result.status !== 0) {
     console.log('\n  Conversation no longer available - starting fresh session...\n')
-    const freshOpts = {
-      stdio: 'inherit',
-      shell: false,
-      windowsHide: false,
+    // Its arguments are a part of the first launch's, so it is refused only if
+    // that one was; checked all the same.
+    const fresh = launchSpec(cmd, forwarded, spawnOpts, platform, env, here)
+    if (fresh.message) {
+      console.error(`\n  ${fresh.message}\n`)
+      return exit(1)
     }
-    if (spawnOpts.cwd) freshOpts.cwd = spawnOpts.cwd
-    const freshTarget = buildSpawnTarget(cmd, forwarded)
-    const fresh = spawnSync(freshTarget.file, freshTarget.argv, { ...freshOpts, windowsVerbatimArguments: freshTarget.verbatim })
-    process.exit(fresh.status || 0)
+    const again = spawn(fresh.file, fresh.argv, fresh.opts)
+    return exit(again.status || 0)
   }
 
-  process.exit(result.status || 0)
+  return exit(result.status || 0)
 }
 
 // The gated directory set a MANAGED launch hands the picker (see pty-manager's
@@ -929,6 +1119,10 @@ module.exports = {
   displayPath,
   displayText,
   buildSpawnTarget,
+  notStartedMessage,
+  launchSpec,
+  launchClaude,
+  resolveClaudeCmd,
   encodeProjectPath,
   resolveProjectDir,
   ensureCompanionDir,

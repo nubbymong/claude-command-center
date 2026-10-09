@@ -52,6 +52,8 @@ describe('shown text drops every character a reader cannot see', () => {
       0x17b4, 0x17b5, // invisible vowels
       0x180b, 0x180c, 0x180d, 0x180f, // free variation selectors
       0x2065, // reserved in the bidi block, ignorable
+      0x206a, 0x206f, // deprecated format characters
+      0xfff0, // reserved among the specials, ignorable
       0xfe00, 0xfe0f, 0xe0100, 0xe01ef, // variation selectors, both blocks
       0x1bca0, 0x1bca3, // format controls
       0x1d173, 0x1d17a, // musical format controls
@@ -115,6 +117,29 @@ describe('the picker draws its lines in one place', () => {
     expect(lines.some((l) => l.includes(`${k.text}(continued session)${k.reset}`))).toBe(true)
     expect(lines.some((l) => l.includes('includes git worktrees'))).toBe(false)
   })
+
+  it('a field with nothing a reader can see gives way to the next one', () => {
+    const blank = cp(0x200b) + cp(0x2060) + ' ' + cp(0x202e)
+    const lines = picker.pickerLines('/x', [
+      conv({ sessionId: 'n', aiTitle: 'The real title', firstMessage: 'first words' }),
+      conv({ sessionId: 'b', aiTitle: blank, firstMessage: 'First words' }),
+      conv({ sessionId: 's', aiTitle: blank, firstMessage: blank, lastPrompt: 'Last prompt' }),
+    ], new Map([['n', blank], ['s', 'Named']]), 80, { now: NOW })
+    // A work name with nothing to see is no work name: the title leads, in plain colour, with nothing beneath.
+    expect(lines).toContain(`${bar}  ${k.green} 1${k.reset}  ${k.text}The real title${k.reset}`)
+    expect(lines.some((l) => l.includes('first words'))).toBe(false)
+    // A title with nothing to see gives way to the first message.
+    expect(lines).toContain(`${bar}  ${k.green} 2${k.reset}  ${k.text}First words${k.reset}`)
+    // Beneath a work name, a title and a first message with nothing to see give way to the last prompt.
+    expect(lines).toContain(`${bar}  ${k.green} 3${k.reset}  ${k.bold}${k.peach}Named${k.reset}`)
+    expect(lines).toContain(`${bar}      ${k.dim}${k.subtext}Last prompt${k.reset}`)
+  })
+
+  it('draws at any width without failing', () => {
+    for (const width of [0, 1, 3, 4, 5]) {
+      expect(() => picker.pickerLines('/x', [conv({ aiTitle: 't', lastMessages: ['m'] })], new Map(), width, { hasWorktrees: true, now: NOW }), String(width)).not.toThrow()
+    }
+  })
 })
 
 describe('everything the picker shows is plain text', () => {
@@ -177,9 +202,19 @@ describe('everything the picker shows is plain text', () => {
   it('a cut never splits a character in two', () => {
     const face = cp(0x1f600)
     const title = 'a'.repeat(66) + face + 'tail'
-    const lines = picker.pickerLines('/x' + 'b'.repeat(73) + face + 'c', [conv({ aiTitle: title, lastMessages: ['m'.repeat(62) + face + 'tail'] })], new Map(), 80, { now: NOW })
+    // At width 80 the folder is cut to 73 code points and an ellipsis: the face is the 73rd.
+    const dir = '/x' + 'b'.repeat(70) + face + 'cc'
+    const lines = picker.pickerLines(dir, [conv({ aiTitle: title, lastMessages: ['m'.repeat(62) + face + 'tail'] })], new Map(), 80, { now: NOW })
     expect(notPlain(lines)).toEqual([])
+    expect(withoutOwnColours(lines[1])).toContain('/x' + 'b'.repeat(70) + face + '… ')
     expect(lines.some((l) => l.includes('a'.repeat(66) + face + '…'))).toBe(true)
     expect(lines.some((l) => l.includes('> ' + 'm'.repeat(62) + face + '…'))).toBe(true)
+  })
+
+  it('the folder line\'s border counts a character outside the basic plane once', () => {
+    const dashes = (cwd: string): number => (withoutOwnColours(picker.pickerLines(cwd, [conv({})], new Map(), 80, { now: NOW })[1]).match(/─/g) ?? []).length
+    const face = cp(0x1f600)
+    expect(dashes('/' + 'd'.repeat(8) + face)).toBe(dashes('/' + 'd'.repeat(9)))
+    expect(dashes('/' + 'd'.repeat(9))).toBe(80 - 26 - 10 + 2)
   })
 })
