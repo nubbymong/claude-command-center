@@ -1,4 +1,5 @@
 import { existsSync } from 'fs'
+import { systemTool } from './windows-programs'
 
 /**
  * The login shell the CLI probes AND the local Claude session launch run
@@ -30,15 +31,17 @@ export function defaultLoginShell(
   return '/bin/sh'
 }
 
-/** The shell a local session's PTY runs: PowerShell on Windows, the login
- *  shell above elsewhere (defaultLoginShell, with the same environment and
- *  file test). */
+/** The shell a local session's PTY runs: Windows PowerShell on Windows, by its
+ *  full path in the system folder (systemTool: it THROWS when SystemRoot is
+ *  not a plain drive-absolute folder, so no session starts a shell by name);
+ *  the login shell above elsewhere (defaultLoginShell, with the same
+ *  environment and file test). */
 export function localSessionShell(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
   exists: (path: string) => boolean = existsSync,
 ): string {
-  return platform === 'win32' ? 'powershell.exe' : defaultLoginShell(env, platform, exists)
+  return platform === 'win32' ? systemTool('WindowsPowerShell\\v1.0\\powershell.exe', env) : defaultLoginShell(env, platform, exists)
 }
 
 /** The sh family, by name: the shells Alt+V types an image path into off

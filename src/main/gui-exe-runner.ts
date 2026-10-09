@@ -62,6 +62,7 @@ import { randomId } from '../shared/id'
 import { resolveCwd } from './path-utils'
 import { firstToken, resolveExecutable } from './resolve-executable'
 import { sniffExecutableSubsystem } from './pe-subsystem'
+import { systemTool } from './windows-programs'
 import {
   CAPTURED_RUN_MAX_BYTES,
   CAPTURED_RUN_MAX_CONCURRENT,
@@ -146,11 +147,16 @@ export function splitArgs(rest: string): string[] {
   return out
 }
 
-function defaultKillTree(pid: number): void {
+/** Exported for the test. */
+export function defaultKillTree(pid: number): void {
   if (process.platform !== 'win32') return
   // Same recipe the vision and cloud-agent managers use. `pid` is a number taken
-  // off the ChildProcess, never a string from anywhere else.
-  execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 }, () => { /* best effort */ })
+  // off the ChildProcess, never a string from anywhere else. taskkill starts
+  // from the system folder by its full path; with no plain system folder to
+  // name it from, nothing is started.
+  let taskkill: string
+  try { taskkill = systemTool('taskkill.exe') } catch { return }
+  execFile(taskkill, ['/pid', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 }, () => { /* best effort */ })
 }
 
 export interface CapturedRunner {

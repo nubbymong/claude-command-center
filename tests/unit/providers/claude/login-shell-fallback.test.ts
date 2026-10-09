@@ -65,11 +65,18 @@ describe('buildClaudeLocalSpawn -- the launch shell', () => {
     expect(buildClaudeLocalSpawn({ ...BASE_OPTS, shellOnly: true, elevated: true })).toMatchObject({ cmd: 'sudo', args: ['/bin/zsh', '-l'] })
   })
 
-  it('Windows never consults the login shell', () => {
+  it('Windows never consults the login shell: PowerShell by its full path in the system folder', () => {
     host.platform = 'win32'
     process.env.SHELL = '/should/be/ignored'
-    const { cmd, args } = buildClaudeLocalSpawn({ ...BASE_OPTS })
-    expect(cmd).toBe('powershell.exe')
-    expect(args).toEqual([])
+    const savedRoot = process.env.SystemRoot
+    process.env.SystemRoot = 'C:\\Windows'
+    try {
+      const { cmd, args } = buildClaudeLocalSpawn({ ...BASE_OPTS })
+      expect(cmd).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+      expect(args).toEqual([])
+    } finally {
+      if (savedRoot === undefined) delete process.env.SystemRoot
+      else process.env.SystemRoot = savedRoot
+    }
   })
 })

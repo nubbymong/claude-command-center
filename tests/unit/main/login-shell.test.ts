@@ -54,7 +54,9 @@ describe('defaultLoginShell', () => {
 // whether it is of the sh family (Alt+V types a path only into one off Windows).
 describe('localSessionShell and isShFamilyShell', () => {
   it('a local session runs PowerShell on Windows and the login shell elsewhere', () => {
-    expect(localSessionShell({ SHELL: '/usr/bin/fish' }, 'win32', none)).toBe('powershell.exe')
+    // On Windows by its full path in the system folder (windows-programs.ts systemTool).
+    expect(localSessionShell({ SHELL: '/usr/bin/fish', SystemRoot: 'C:\\Windows' }, 'win32', none)).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+    expect(isShFamilyShell(localSessionShell({ SystemRoot: 'C:\\Windows' }, 'win32', none))).toBe(false)
     expect(localSessionShell({ SHELL: '/usr/bin/fish' }, 'linux', none)).toBe('/usr/bin/fish')
     expect(localSessionShell({}, 'darwin', none)).toBe('/bin/zsh')
     expect(localSessionShell({}, 'linux', has('/bin/bash'))).toBe('/bin/bash')

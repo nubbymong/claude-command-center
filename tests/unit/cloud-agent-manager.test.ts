@@ -10,11 +10,21 @@ import * as path from 'path'
 // Mock child_process
 const mockSpawn = vi.fn()
 const mockExecSync = vi.fn()
+const mockSpawnSync = vi.fn()
 vi.mock('child_process', () => ({
   spawn: (...args: any[]) => mockSpawn(...args),
   execSync: (...args: any[]) => mockExecSync(...args),
-  spawnSync: vi.fn(),
+  spawnSync: (...args: any[]) => mockSpawnSync(...args),
 }))
+// Claude Code is found in PATH's folders on Windows (stubbed: no real PATH is read).
+vi.mock('../../src/main/windows-programs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/windows-programs')>()),
+  findOnWindowsPath: () => 'C:\\Tools\\claude.exe',
+}))
+/** taskkill by its full path in the system folder, as each kill ran it. */
+const taskkillCalls = (): string[] => mockSpawnSync.mock.calls
+  .filter((c) => /[\\/]System32[\\/]taskkill\.exe$/i.test(String(c[0])))
+  .map((c) => `taskkill ${(c[1] as string[]).join(' ')}`)
 
 // Mock config-manager
 const mockReadConfig = vi.fn()
@@ -343,9 +353,10 @@ describe('cloud-agent-manager', () => {
       const agent = await dispatchAgent({ name: 'Test', description: 'desc', projectPath: '/p' })
       const result = cancelAgent(agent.id)
       expect(result).toBe(true)
-      // On Windows, uses taskkill via execSync; on other platforms, uses proc.kill('SIGTERM')
+      // On Windows, taskkill from the system folder ends the tree; on other platforms, proc.kill('SIGTERM')
       if (process.platform === 'win32') {
-        expect(mockExecSync).toHaveBeenCalled()
+        expect(taskkillCalls()).toEqual(['taskkill /pid 12345 /T /F'])
+        expect(mockExecSync).not.toHaveBeenCalled()
       } else {
         expect(mockProc.kill).toHaveBeenCalledWith('SIGTERM')
       }
@@ -443,22 +454,23 @@ describe('cloud-agent-manager', () => {
       await dispatchAgent({ name: 'A', description: 'd', projectPath: '/p' })
       await dispatchAgent({ name: 'B', description: 'd', projectPath: '/p' })
       expect(mockSpawn, 'both agents must be running before they are killed').toHaveBeenCalledTimes(2)
-      mockExecSync.mockClear()
+      mockSpawnSync.mockClear()
       killAllAgents()
       if (process.platform === 'win32') {
-        const commands = mockExecSync.mock.calls.map((c) => String(c[0]))
+        const commands = taskkillCalls()
         expect(commands).toContain('taskkill /pid 12345 /T /F')
         expect(commands).toContain('taskkill /pid 12346 /T /F')
+        expect(mockExecSync).not.toHaveBeenCalled()
       } else {
         expect(proc1.kill).toHaveBeenCalledWith('SIGTERM')
         expect(proc2.kill).toHaveBeenCalledWith('SIGTERM')
       }
       // ...and nothing is left registered: a second sweep kills nothing.
-      mockExecSync.mockClear()
+      mockSpawnSync.mockClear()
       proc1.kill.mockClear()
       proc2.kill.mockClear()
       killAllAgents()
-      expect(mockExecSync).not.toHaveBeenCalled()
+      expect(mockSpawnSync).not.toHaveBeenCalled()
       expect(proc1.kill).not.toHaveBeenCalled()
       expect(proc2.kill).not.toHaveBeenCalled()
     })

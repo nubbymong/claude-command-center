@@ -5,7 +5,7 @@
  * accounts service prepared (kind `background`).
  */
 
-import { spawn, execSync, ChildProcess } from 'child_process'
+import { spawn, spawnSync, ChildProcess } from 'child_process'
 import { BrowserWindow } from 'electron'
 import * as os from 'os'
 import * as fs from 'fs'
@@ -26,6 +26,7 @@ import type { AccountLease, PreparedLaunchResult } from './providers/core'
 import type { CloudAgentCodexOptions } from '../shared/types'
 import { stripSpoofableText } from '../shared/safe-text'
 import { randomId } from '../shared/id'
+import { systemTool } from './windows-programs'
 
 export interface CloudAgentData {
   id: string
@@ -762,15 +763,11 @@ export function cancelAgent(id: string): boolean {
     agent.updatedAt = Date.now()
     agent.duration = agent.updatedAt - agent.createdAt
 
-    // On Windows, shell:true processes need taskkill /T to kill the entire process tree
-    // SIGTERM only kills the shell wrapper, not the child claude process
-    if (process.platform === 'win32' && proc.pid) {
-      try {
-        execSync(`taskkill /pid ${proc.pid} /T /F`, { windowsHide: true, timeout: 5000 })
-      } catch {
-        // Process may have already exited
-      }
-    } else {
+    // On Windows taskkill /T ends the whole tree (a batch install's cmd.exe and
+    // the CLI below it, and the CLI's own children); SIGTERM would end only the
+    // first process.
+    const treeEnded = process.platform === 'win32' && !!proc.pid && taskkillTree(proc.pid)
+    if (!treeEnded) {
       proc.kill('SIGTERM')
       // Force kill after 5s if still alive
       setTimeout(() => {
@@ -881,14 +878,26 @@ export function clearCompletedAgents(): { ok: boolean; removed: number; error?: 
   return { ok: true, removed: clearedIds.length }
 }
 
+/** End a Windows process tree by pid with taskkill, started by its full path in
+ *  the system folder. False when the system folder cannot be named (nothing
+ *  was started; the caller signals the process itself). Never throws: a tree
+ *  that already ended is not an error. */
+function taskkillTree(pid: number): boolean {
+  let taskkill: string
+  try { taskkill = systemTool('taskkill.exe') } catch { return false }
+  try {
+    spawnSync(taskkill, ['/pid', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000, stdio: 'ignore' })
+  } catch {
+    // the process may have already exited
+  }
+  return true
+}
+
 export function killAllAgents(): void {
   for (const [id, proc] of activeProcesses) {
     try {
-      if (process.platform === 'win32' && proc.pid) {
-        execSync(`taskkill /pid ${proc.pid} /T /F`, { windowsHide: true, timeout: 5000 })
-      } else {
-        proc.kill('SIGTERM')
-      }
+      const treeEnded = process.platform === 'win32' && !!proc.pid && taskkillTree(proc.pid)
+      if (!treeEnded) proc.kill('SIGTERM')
     } catch {
       // ignore — process may have already exited
     }

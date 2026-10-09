@@ -14,11 +14,12 @@
  * old key to the new key (if the old key still exists) and then deletes it.
  * On non-Windows platforms it is a no-op.
  */
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import { homedir } from 'os'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { logInfo } from './debug-logger'
+import { systemTool } from './windows-programs'
 
 // Read order: current brand first, then each legacy key in reverse age. Writes
 // always go to BRAND_KEY, so a FRESH install only ever creates the new-brand key
@@ -147,7 +148,7 @@ export function migrateRegistryKeys(): void {
   // data-directory pointer. Fresh installs never create it in the first place.
   if (readAllRegValues(OLD_KEY) !== null) {
     try {
-      execSync(`reg delete "HKCU\\${OLD_KEY}" /f 2>nul`, { encoding: 'utf-8' })
+      runReg(['delete', `HKCU\\${OLD_KEY}`, '/f'])
       logInfo('[registry] Deleted the original (pre-rename) registry key')
     } catch {
       // May fail if key is already gone
@@ -157,11 +158,22 @@ export function migrateRegistryKeys(): void {
 
 // --- Internal helpers ---
 
-/** Sanitize a string for safe use in a cmd.exe double-quoted argument. */
+/** Run reg.exe by its full path in the system folder, with its arguments as
+ *  an argument list (no shell), and answer what it printed. Its error output
+ *  is captured and dropped. Throws when reg.exe fails or the system folder
+ *  cannot be named (systemTool), which every caller reads as "not there". */
+function runReg(args: string[]): string {
+  return execFileSync(systemTool('reg.exe'), args, {
+    encoding: 'utf-8',
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+}
+
+/** Drop the characters earlier builds dropped before a key, name or value
+ *  reached reg.exe, so a value is written and read back exactly as before
+ *  (reg.exe now receives an argument list, with no shell in between). */
 function sanitizeShellArg(s: string): string {
-  // In cmd.exe double-quoted strings: " breaks out of quotes, % expands env vars,
-  // ! expands with delayed expansion, \r\n can inject new commands.
-  // Backslashes are NOT special in cmd.exe (needed for paths and registry keys).
   return s.replace(/["`%!\r\n]/g, '')
 }
 
@@ -169,10 +181,7 @@ function readRegValue(key: string, valueName: string): string | null {
   try {
     const safeKey = sanitizeShellArg(key)
     const safeName = sanitizeShellArg(valueName)
-    const result = execSync(
-      `reg query "HKCU\\${safeKey}" /v "${safeName}" 2>nul`,
-      { encoding: 'utf-8' }
-    )
+    const result = runReg(['query', `HKCU\\${safeKey}`, '/v', safeName])
     const match = result.match(new RegExp(`${safeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+REG_SZ\\s+(.+)`))
     if (match && match[1].trim()) {
       return match[1].trim()
@@ -186,10 +195,7 @@ function writeRegValue(key: string, valueName: string, value: string): boolean {
     const safeKey = sanitizeShellArg(key)
     const safeName = sanitizeShellArg(valueName)
     const safeValue = sanitizeShellArg(value)
-    execSync(
-      `reg add "HKCU\\${safeKey}" /v "${safeName}" /t REG_SZ /d "${safeValue}" /f`,
-      { encoding: 'utf-8' }
-    )
+    runReg(['add', `HKCU\\${safeKey}`, '/v', safeName, '/t', 'REG_SZ', '/d', safeValue, '/f'])
     return true
   } catch {
     return false
@@ -199,10 +205,7 @@ function writeRegValue(key: string, valueName: string, value: string): boolean {
 function readAllRegValues(key: string): Record<string, string> | null {
   try {
     const safeKey = sanitizeShellArg(key)
-    const result = execSync(
-      `reg query "HKCU\\${safeKey}" 2>nul`,
-      { encoding: 'utf-8' }
-    )
+    const result = runReg(['query', `HKCU\\${safeKey}`])
     const values: Record<string, string> = {}
     const lines = result.split('\n')
     for (const line of lines) {

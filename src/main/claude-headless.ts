@@ -1,7 +1,8 @@
 // claude-headless.ts — Reusable headless `claude` process spawner.
 // Used by insights-runner and the Sentinel AI analysis runner.
-import { spawn, execSync } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
 import * as path from 'path'
+import { systemTool } from './windows-programs'
 import { StringDecoder } from 'string_decoder'
 import { logInfo, logError } from './debug-logger'
 import { withProfileHome } from './pty-manager'
@@ -15,18 +16,24 @@ import { profileIdFromHome } from './profile-id'
  *  this could only be one whose release never ran. */
 export const HEADLESS_CONSUMER_GRACE_MS = 60_000
 
-// shell:true means the spawn is `cmd.exe -> claude` on Windows, so proc.kill()
-// kills only the shell and orphans the real claude process (it keeps running and
-// a retry / next launch spawns yet another). taskkill /T /F tears down the whole
-// tree by pid -- same pattern as vision-manager / cloud-agent teardown. POSIX
-// keeps proc.kill() (no shell-orphan problem for our spawns).
+// On Windows a run can be `cmd.exe -> claude.cmd -> node` (an npm install) or a
+// claude.exe with children of its own, so proc.kill() could end only the first
+// process and orphan the rest (it keeps running and a retry / next launch
+// spawns yet another). taskkill /T /F, by its full path in the system folder,
+// tears down the whole tree by pid -- same pattern as vision-manager /
+// cloud-agent teardown; with no plain system folder to name it from, the
+// process itself is ended. POSIX keeps proc.kill().
 function killHeadlessTree(proc: ReturnType<typeof spawn>): void {
   try {
     if (process.platform === 'win32' && proc.pid) {
-      execSync(`taskkill /pid ${proc.pid} /T /F`, { windowsHide: true, timeout: 5000 })
-    } else {
-      proc.kill()
+      let taskkill: string | null = null
+      try { taskkill = systemTool('taskkill.exe') } catch { /* no plain system folder */ }
+      if (taskkill) {
+        spawnSync(taskkill, ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true, timeout: 5000, stdio: 'ignore' })
+        return
+      }
     }
+    proc.kill()
   } catch {
     // process may have already exited
   }
