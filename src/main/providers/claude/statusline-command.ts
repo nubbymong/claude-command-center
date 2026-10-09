@@ -25,21 +25,40 @@ import os from 'node:os'
  * delivering until it is rewritten. The path is double-quoted because it can
  * contain spaces. With no sessionId (legacy caller) or no URL file (MCP server
  * not bound) the script falls back to env/stdin identity and file delivery.
+ *
+ * The command carries a path only when the shell reads it as nothing but a
+ * path (statuslinePathIsPlain); any other path gives NO command (null), and
+ * the caller sets up no status line of the app's and says why. Every other
+ * path keeps the exact command it always had.
  */
 export function buildStatuslineSetting(
   resourcesDir: string,
   sessionId?: string,
   statusUrlFile?: string,
-): { type: 'command'; command: string } {
-  const script = path.join(resourcesDir, 'scripts', 'claude-multi-statusline.js')
-  const esc = (p: string): string => (os.platform() === 'win32' ? p.replace(/\\/g, '\\\\') : p)
+): { type: 'command'; command: string } | null {
+  const win32 = os.platform() === 'win32'
+  const script = (win32 ? path.win32 : path.posix).join(resourcesDir, 'scripts', 'claude-multi-statusline.js')
+  if (!statuslinePathIsPlain(script, win32)) return null
+  const esc = (p: string): string => (win32 ? p.replace(/\\/g, '\\\\') : p)
   let command = `node "${esc(script)}"`
   if (sessionId) {
     // Same sanitisation as every other sid embedding (filenames, remote
     // commands): belt-and-braces for a value that is hex in practice.
     const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
     command += ` ${safeSid}`
-    if (statusUrlFile) command += ` "${esc(statusUrlFile)}"`
+    if (statusUrlFile) {
+      if (!statuslinePathIsPlain(statusUrlFile, win32)) return null
+      command += ` "${esc(statusUrlFile)}"`
+    }
   }
   return { type: 'command', command }
+}
+
+/** Whether a path can go inside the status line command's double quotes and
+ *  be read there as nothing but a path: no `$`, backtick or `"`, no control
+ *  character, and on Windows no `%` or `!`, elsewhere no backslash. */
+export function statuslinePathIsPlain(p: string, win32: boolean): boolean {
+  // eslint-disable-next-line no-control-regex
+  if (/[$`"\x00-\x1f\x7f]/.test(p)) return false
+  return win32 ? !/[%!]/.test(p) : !p.includes('\\')
 }

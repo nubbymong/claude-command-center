@@ -137,7 +137,7 @@ export class ClaudeProvider implements SshCapableProvider {
   deliverStatusline(data: StatuslineData): void {
     notifyClaudeTelemetry(data)
   }
-  statuslineSetting(resourcesDir: string, sessionId?: string, statusUrlFile?: string): { type: 'command'; command: string } {
+  statuslineSetting(resourcesDir: string, sessionId?: string, statusUrlFile?: string): { type: 'command'; command: string } | null {
     return buildStatuslineSetting(resourcesDir, sessionId, statusUrlFile)
   }
   statusPostUrl(sessionId: string, remoteMcpPort: number | undefined, mcpPort: number, includeConductorMcp: boolean): string {

@@ -26,6 +26,13 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
   issueMcpSessionToken: (sessionId: string, provider: string) => ({ claude: `tok${sessionId.replace(/[^a-zA-Z0-9]/g, '')}` } as Record<string, string>)[provider] ?? 'tok-wrong-provider',
 }))
 
+// The writer's one log line, kept so a case can read what it said.
+const logged = vi.hoisted(() => ({ warn: [] as string[] }))
+vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/debug-logger')>()),
+  logWarn: (...a: unknown[]) => { logged.warn.push(a.map(String).join(' ')) },
+}))
+
 import { writeLocalSessionSettings } from '../../../src/main/hooks/per-session-settings'
 import { registerProvider } from '../../../src/main/providers'
 import { ClaudeProvider } from '../../../src/main/providers/claude'
@@ -123,5 +130,33 @@ describe('writeLocalSessionSettings -- per-session statusLine', () => {
     const p = writeLocalSessionSettings('sid-3', {})
     const cfg = JSON.parse(fs.readFileSync(p, 'utf-8'))
     expect(cfg.statusLine).toBeUndefined()
+  })
+
+  // Mutation to prove this can fail: drop the path check in buildStatuslineSetting.
+  it('sets up no status line of the app\'s from a resources folder path the shell would read as more than a path, and says why', () => {
+    logged.warn.length = 0
+    const p = writeLocalSessionSettings('sid-4', { resourcesDir: path.join(fakeHome, 'res$x') })
+    const cfg = JSON.parse(fs.readFileSync(p, 'utf-8'))
+    expect(cfg.statusLine).toBeUndefined()
+    expect(logged.warn.some((l) => l.includes('the app\'s status line is not set up') && l.includes('a control character') && l.includes('your own'))).toBe(true)
+    // The log line names the rule, never the path.
+    expect(logged.warn.join(' ')).not.toContain('res$x')
+  })
+
+  // Mutation to prove this can fail: drop the shared statusLine when the path is refused.
+  it('a refused resources folder path keeps the user\'s own status line, as with the app\'s status line switched off', () => {
+    const own = { type: 'command', command: 'OWN_STATUS_LINE' }
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({ statusLine: own, outputStyle: 'concise' }))
+    const refused = JSON.parse(fs.readFileSync(writeLocalSessionSettings('sid-6', { resourcesDir: path.join(fakeHome, 'res$x') }), 'utf-8'))
+    const off = JSON.parse(fs.readFileSync(writeLocalSessionSettings('sid-7', {}), 'utf-8'))
+    expect(refused.statusLine).toEqual(own)
+    expect(off.statusLine).toEqual(own)
+    expect(refused.outputStyle).toBe('concise')
+  })
+
+  it('an ordinary resources folder path with spaces still gets the status line', () => {
+    const p = writeLocalSessionSettings('sid-5', { resourcesDir: path.join(fakeHome, 'My Resources') })
+    const cfg = JSON.parse(fs.readFileSync(p, 'utf-8'))
+    expect(String(cfg.statusLine?.command)).toContain('My Resources')
   })
 })

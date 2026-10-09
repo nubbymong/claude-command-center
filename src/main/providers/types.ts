@@ -225,8 +225,9 @@ export interface SessionProvider {
   deliverStatusline?(data: StatuslineData): void
   /** Optional -- Claude only: the `statusLine` value of a local session's
    *  settings file, running the bundled bridge script with the session id and
-   *  the path of its status-URL file. */
-  statuslineSetting?(resourcesDir: string, sessionId?: string, statusUrlFile?: string): { type: 'command'; command: string }
+   *  the path of its status-URL file; null when a path the command would
+   *  carry is one the shell would read as more than a path (no status line). */
+  statuslineSetting?(resourcesDir: string, sessionId?: string, statusUrlFile?: string): { type: 'command'; command: string } | null
   /** Optional -- Claude only: the session's statusline POST URL on the
    *  conductor MCP server ('' while the server is not bound or the MCP is off;
    *  throws rather than build a URL that fails its charset guard). */
