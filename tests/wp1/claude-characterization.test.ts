@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening); starts real processes (read-only git). [CI] [VM] only -- never run on the owner's machine.
 // WP1.54 Gate 0 characterization of CURRENT Claude account/setup behaviour
 // that WP1 touches and that had no behavioural test on the base (gaps C1, C5,
 // C6, C7, C8 in docs/wp1/baseline-2026-09-19.md). Observable inputs, outputs,

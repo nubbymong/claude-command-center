@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions, symbolic links and hard links; changes ACLs on temp folders; starts real processes. [CI] [VM] only -- never run on the owner's machine.
 // WP1.38 (slice 2): the managed-launch hardening.
 //
 // WP1.38 is "the selected binding is converted to the exact realm env on every

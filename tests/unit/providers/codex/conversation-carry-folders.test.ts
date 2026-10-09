@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions, symbolic links and hard links. [CI] [VM] only -- never run on the owner's machine.
 // P3.6 (row 22; ADR-009 round 1, lens A T4 and T1): the carry makes and
 // renames only where it means to. A folder it makes on the way to the copy's
 // place, through a folder above it swapped for a junction just before, is not

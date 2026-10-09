@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 /**
  * P3.12 (row 65): the GitHub Session Context of a Codex session reads the
  * rollout its own watcher holds, in its own realm, as Claude's reads the newest

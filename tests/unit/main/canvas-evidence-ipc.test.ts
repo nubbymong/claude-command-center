@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // Testing-mode evidence at the IPC SEAM (M3): who may capture, what is refused,
 // what the read channel will answer, and the navigation push that feeds the
 // action trail.

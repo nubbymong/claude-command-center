@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions; writes a probe registry key; starts real processes. [CI] [VM] only -- never run on the owner's machine.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

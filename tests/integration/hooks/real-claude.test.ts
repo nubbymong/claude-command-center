@@ -1,3 +1,4 @@
+// HOST QUARANTINE: starts real processes (the claude CLI on PATH, when RUN_REAL_CLAUDE_HOOKS_TEST=1). [CI] [VM] only -- never run on the owner's machine.
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'

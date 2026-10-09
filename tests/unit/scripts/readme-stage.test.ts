@@ -1,3 +1,4 @@
+// HOST QUARANTINE: starts real processes. [CI] [VM] only -- never run on the owner's machine.
 /**
  * [host] P4.11 review C-1, C-2, C-5, C-6: the README staging scripts work
  * only in one throwaway staging root of their own, and the seed's project

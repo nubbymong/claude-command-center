@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 // P3.5 (row 38): a Codex session's status line finds its rollout wherever it
 // is. Codex appends a resumed conversation to its ORIGINAL file, in its
 // original date folder (P3.1 evidence, answer 2), and names a new file in

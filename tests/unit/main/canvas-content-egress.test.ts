@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // Canvas content egress + frame confinement (adversarial review, 2026-08-15).
 //
 // `connect-src 'self'` governs FETCHES. These pin the three channels that are

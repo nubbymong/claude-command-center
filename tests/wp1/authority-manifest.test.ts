@@ -1,3 +1,4 @@
+// HOST QUARANTINE: starts real processes. [CI] [VM] only -- never run on the owner's machine.
 // WP1.38 (slice 2): the GENERATED Claude authority manifest (D16).
 //
 // WP1.38 is "ambient poisoning cannot override the bound realm". What counts as

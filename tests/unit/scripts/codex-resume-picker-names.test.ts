@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants symbolic links and hard links. [CI] [VM] only -- never run on the owner's machine.
 // P3.12 (row 32): Codex's resume picker names a conversation by the name file
 // next to its rollout (`rollout-....ccc-name.json`, written by the app on a
 // rename and at an exact claim), in preference to the session-state names, as

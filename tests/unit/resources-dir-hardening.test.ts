@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links; changes ACLs on temp folders. [CI] [VM] only -- never run on the owner's machine.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, existsSync } from 'fs'
 import { tmpdir } from 'os'

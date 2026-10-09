@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // AUDIT STAMPS (M4) — who made a write, and what happens when the record says
 // something this build does not understand.
 //

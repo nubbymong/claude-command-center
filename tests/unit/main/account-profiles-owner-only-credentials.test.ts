@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 // An account's sign-in is written only into a folder made readable by the
 // user alone and checked: a profile's three sign-in folders (its home, where
 // the CLI keeps .claude.json; the CLI's config folder; the identity copy) are

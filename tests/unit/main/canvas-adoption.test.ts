@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // Canvas continuity across CCC session identities (2026-08-14, the VM "repush"
 // bug): a canvas is keyed to the session id, but that id changes on a fresh
 // tile / non-restored relaunch while the WORK (project dir, conversation)

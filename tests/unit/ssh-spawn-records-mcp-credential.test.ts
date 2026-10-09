@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 /**
  * The SSH spawn path records the session's MCP credential as a Claude one
  * BEFORE ssh starts. The reverse tunnel is live as soon as ssh logs in, and a

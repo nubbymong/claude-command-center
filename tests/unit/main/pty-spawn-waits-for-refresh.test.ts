@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening); starts real processes (asks an installed Claude Code CLI for its version). [CI] [VM] only -- never run on the owner's machine.
 // rc.15 review R3 (Codex, 2026-09-06; aicc_planning#49): the reviewer's
 // characterization (evidence/accounts-refresh-pty.review.test.ts) flipped into
 // the desired behaviour, credit Codex rc.15 stability review; RED against

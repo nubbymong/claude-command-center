@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // Bug 2: verify the spawn-time home-selection logic. EVERY session of an account --
 // shell-only AND interactive Claude -- now runs in the account's shared PROFILE home
 // (account-profiles/<id>/), so concurrent sessions share ONE rotating-OAuth

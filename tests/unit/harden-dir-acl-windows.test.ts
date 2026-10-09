@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders; starts real processes. [CI] [VM] only -- never run on the owner's machine.
 // `hardenCredentialDir` was `if (!IS_POSIX) return` — a no-op on this app's
 // PRIMARY platform. Every directory it "hardened" on Windows simply kept
 // whatever its parent's ACL granted, and the resources dir is user-chosen, so

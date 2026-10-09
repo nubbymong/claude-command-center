@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // rc.15 review R2 (Codex, 2026-09-06; aicc_planning#50): the reviewer's own
 // characterization (evidence/accounts-rotation.review.test.ts, second case)
 // flipped into the desired behaviour, credit Codex rc.15 stability review; RED

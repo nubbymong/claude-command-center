@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening); starts real processes (asks an installed Claude Code CLI for its version). [CI] [VM] only -- never run on the owner's machine.
 // ADR-009 round 3 (Codex PR600 finding 3): a FRESH deferred spawn (no
 // predecessor to tear down) that fails after the refresh wait settled must
 // notify the renderer, not leave a blank terminal treated as spawned. Desired-

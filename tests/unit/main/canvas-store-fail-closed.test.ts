@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // Regression for the adversarial-review finding (2026-08-12): a render whose
 // durable write (persist) throws must leave NOTHING behind — no active version,
 // nothing servable, no counter skew. The old order mutated the in-memory maps

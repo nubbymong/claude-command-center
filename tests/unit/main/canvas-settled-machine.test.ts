@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // The SETTLED canvas state machine (owner-agreed 2026-08-29) — the rework that
 // replaces C1's per-note bookkeeping with VERSION-level decisions.
 //

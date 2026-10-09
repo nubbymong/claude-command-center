@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants hard links. [CI] [VM] only -- never run on the owner's machine.
 // P3.5 (rows 34, 35): the Codex launch resumes a conversation by its id, as
 // Claude's does (`claude --resume <uuid>`, spawn-claude-command's
 // resolveResumeLaunch): only a conversation id, only when its rollout is in the

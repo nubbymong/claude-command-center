@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants symbolic links. [CI] [VM] only -- never run on the owner's machine.
 // Pasted images on review notes (item B, Ctrl+V) — the store's half. W15 turned
 // the ONE image slot into an ordered LIST, which is the bug this file now pins:
 // a second Ctrl+V used to overwrite the first, so a user who pasted three

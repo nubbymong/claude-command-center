@@ -1,3 +1,4 @@
+// HOST QUARANTINE: starts real processes. [CI] [VM] only -- never run on the owner's machine.
 // WP1.38: the cached `claude --version` probe behind the managed-launch
 // preflight's CLI floor.
 //

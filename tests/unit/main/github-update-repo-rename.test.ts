@@ -1,3 +1,4 @@
+// HOST QUARANTINE: starts real processes (reg.exe reads the app's registry key). [CI] [VM] only -- never run on the owner's machine.
 // Pre-emptive repo-rename soft-switch (adoptRenamedRepoIfLive):
 //   - a valid existing override wins (manual choice / prior adopt)
 //   - no override + renamed repo LIVE  -> adopt + persist + use it this session

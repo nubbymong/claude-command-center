@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 /**
  * #151 / CodeQL js/polynomial-redos -- regression guard for the Bearer parser.
  *

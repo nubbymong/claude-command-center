@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // The deferred managed spawn (2026-09-22) and what it must CARRY across its
 // own re-entry. Two defects the re-attack found, both on the common path:
 //

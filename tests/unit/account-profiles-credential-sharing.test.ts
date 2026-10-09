@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links; changes ACLs on temp folders. [CI] [VM] only -- never run on the owner's machine.
 // Bug 2 fix: same-account sessions share ONE credential store (the profile home),
 // instead of each getting a private per-session copy. Rotating OAuth refresh tokens
 // can't survive being copied across N homes, so the per-session-home model forced a

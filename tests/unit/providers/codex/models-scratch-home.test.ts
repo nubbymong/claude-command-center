@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 // P3.9 round 1: the Codex model list read runs in a fresh empty home, made
 // under the temp folder and removed after. A home an earlier read left
 // behind (a crash or a quit mid-read) is swept by the next read: own prefix,

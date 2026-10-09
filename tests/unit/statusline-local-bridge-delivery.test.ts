@@ -1,3 +1,4 @@
+// HOST QUARANTINE: starts real processes. [CI] [VM] only -- never run on the owner's machine.
 // tests/unit/statusline-local-bridge-delivery.test.ts
 // FUNCTIONAL proof of the local-unification slice: run the DEPLOYED bridge
 // script under a real `node`, feed it claude-shaped stdin, and assert the

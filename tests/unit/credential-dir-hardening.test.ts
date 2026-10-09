@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions, symbolic links and hard links; changes ACLs on temp folders. [CI] [VM] only -- never run on the owner's machine.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 // This suite exercises the REAL filesystem (no fs mock): the whole point is that
 // a symlink/junction planted on a credential directory, or a link planted at a

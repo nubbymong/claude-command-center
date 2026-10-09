@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 /**
  * P3.12 (row 32): the name file next to a Codex rollout. Claude's picker reads
  * `<transcript>.ccc-name.json`; the app writes the same file next to a Codex

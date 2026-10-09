@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants symbolic links. [CI] [VM] only -- never run on the owner's machine.
 // P3.10 round 4 (P1, P2): folders made this user's and owner-only off the main
 // thread, and read back before use. On Windows one Windows PowerShell call
 // (started asynchronously from the system folder by its full path) makes each

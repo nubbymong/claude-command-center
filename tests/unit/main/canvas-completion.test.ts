@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // Canvas completion (#476): the subject-level terminal state, driven through
 // the REAL stores (temp resources dir), like canvas-closeout-store.test.ts.
 //

@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // rc.14 review F8 (aicc_planning): a stale exit from a REPLACED PTY must not
 // reach the renderer.
 //

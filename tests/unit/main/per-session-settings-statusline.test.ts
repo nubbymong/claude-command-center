@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // U2 (2a): CCC must deliver its statusLine PER-SESSION (in ~/.claude/settings-<sid>.json)
 // rather than via a global ~/.claude/settings.json write. writeLocalSessionSettings
 // injects the statusLine command (pointing at the bundled resources script) and

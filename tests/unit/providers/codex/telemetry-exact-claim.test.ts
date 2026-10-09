@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 // P3.10 (with P3.5 and P3.6's limits): the exact claim of a Codex conversation
 // from the session's own hook, as Claude's SessionStart bind (#480). Every Codex
 // hook event carries `transcript_path`, the exact rollout (P3.1 evidence, answer

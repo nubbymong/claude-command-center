@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // THE PROJECT LIBRARY, one row per ARTEFACT RUN (M4) — and the privacy rule
 // that decides which rows exist at all.
 //

@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // The P3 review/annotation store: draft lifecycle, submit freeze, resolution
 // state machine, restart round-trip (the acceptance-gate requirement), and the
 // two fail-closed properties (persist-before-commit; a corrupt reviews.json

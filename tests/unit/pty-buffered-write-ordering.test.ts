@@ -1,3 +1,4 @@
+// HOST QUARANTINE: runs the real session start-up path, which writes session files. [CI] [VM] only -- never run on the owner's machine.
 // A PTY exists ~300ms before its launch line is written, so for that window the
 // terminal is a bare interactive shell that has not yet become Claude. A write
 // landing there went straight to that shell, and its trailing `\r` submitted it

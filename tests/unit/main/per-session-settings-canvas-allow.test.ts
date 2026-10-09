@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // SEC-BATCH FLAG (2026-08-14): the per-session settings clone unions CCC's
 // own Agent Canvas tools into permissions.allow so the render->review loop
 // doesn't stall in approval prompts (the VM transcript lost 11 minutes to

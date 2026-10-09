@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 /**
  * A config READ that fails must say so. Two failures used to RESOLVE as if
  * nothing were wrong (ADR-009 pass, beta.16; pre-existing in every shipped

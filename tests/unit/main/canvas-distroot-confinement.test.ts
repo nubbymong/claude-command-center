@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // Regression suite for the adversarial-review findings (2026-08-11): UAT
 // distRoot must be confined to a registered base (default-deny), the entry
 // must be re-validated on the disk-reload path, and the Win32 device/trailing

@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 /**
  * syncPrimaryCredentialsWithGlobal keeps the user's REAL global Claude login
  * (~/.claude/.credentials.json) in lockstep with the PRIMARY account's profile

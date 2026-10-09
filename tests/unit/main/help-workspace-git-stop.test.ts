@@ -1,3 +1,4 @@
+// HOST QUARANTINE: starts real processes (git init and git rev-parse in temp folders). [CI] [VM] only -- never run on the owner's machine.
 // Ask Conductor's help folder is where git's search for a repository ends.
 //
 // The folder holds an empty `.git` file among the app's own files, as the

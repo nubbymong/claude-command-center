@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links; starts real processes. [CI] [VM] only -- never run on the owner's machine.
 // #48: claude-headless recovers the profile a run belongs to from its HOME path,
 // so it can register as a consumer without importing the account-profiles graph.
 // The inverse is structural (`<...>/account-profiles/<id>`), never a guess: the

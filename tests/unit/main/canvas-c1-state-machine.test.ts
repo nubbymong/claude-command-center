@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // The C1 version state machine (owner-approved on the canvas, 2026-08-26):
 // per artifact at most ONE ready version is ever OPEN. Renders supersede,
 // submits carry verdicts, chat verdicts are provenance-stamped, reopen
