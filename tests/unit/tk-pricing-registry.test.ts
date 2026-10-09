@@ -17,4 +17,8 @@ describe('registryFallbackPricing', () => {
     expect(fallback['claude-opus-5-5']).toEqual({ input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 })
     expect(fallback['claude-sonnet-5-5']).toEqual({ input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 })
   })
+
+  it('[host] Haiku 5.5 carries its published rates', () => {
+    expect(registryFallbackPricing()['claude-haiku-5-5']).toEqual({ input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 })
+  })
 })

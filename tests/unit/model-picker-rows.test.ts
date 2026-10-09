@@ -117,7 +117,8 @@ describe('buildEffortRows (#385)', () => {
   })
 
   it('trusts an alias match (aliases name an exact entry)', () => {
-    expect(buildEffortRows(reg, 'haiku').filter((r) => r.supported)).toHaveLength(3)
+    // `haiku` names Haiku 5.5, which carries low through max (no ultracode).
+    expect(buildEffortRows(reg, 'haiku').filter((r) => r.supported).map((r) => r.value)).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   })
 
   it('does NOT trust a fuzzy pattern match — it would claim another version\'s efforts', () => {

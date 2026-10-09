@@ -674,7 +674,7 @@ describe('What\'s New after PR 4 (P4.11)', () => {
       /Codex is no longer marked Beta/,
       /The Feature Guide and its tour show the cards for the assistants you use/,
       /with Claude Code alone, Code review is not shown, since it needs both/,
-      /Claude Opus 5\.5 and Claude Sonnet 5\.5 are in the model picker/,
+      /Claude Opus 5\.5, Claude Sonnet 5\.5 and Claude Haiku 5\.5 are in the model picker/,
       /The Usage page's Updated line now ages while the page stays open/,
       /now says 1 note, not 1 notes/,
     ]) expect(all).toMatch(said)
