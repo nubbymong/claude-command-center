@@ -806,16 +806,20 @@ function writeProfileHomeIdentity(home: string, data: string | Uint8Array): void
 // the Administrators group accepted beside them) in this run:
 //
 //   1. In place: the folder is given the rule and read back, and so is
-//      everything already inside it (the sign-in files among it): each entry
-//      this user, the Administrators group or SYSTEM owns takes the folder's
-//      rights (never a link or a file with more than one name), and the
-//      folder passes only when every entry read back is this user's, the
-//      Administrators group's or SYSTEM's and lets no other account in (the
-//      home's links to the user's own dot-files are left out while each has
-//      more than one name). An entry another account owns, one that cannot
-//      be read or put right, a file with more than one name that is not
-//      owner-only, a link to a file, or a folder that is neither plain nor a
-//      link refuses it.
+//      every entry directly inside it (the sign-in files among them): one
+//      another account owns is made this user's first (never a sign-in file
+//      or a file with more than one name), then each one this user, the
+//      Administrators group or SYSTEM owns takes the folder's rights (never a
+//      link or a file with more than one name), and the folder passes only
+//      when every such entry read back lets no other account in (the home's
+//      links to the user's own dot-files are left out while each has more
+//      than one name); how many were made this user's is logged. What is
+//      deeper is not read: it keeps the rights Windows gives it when the
+//      folder's rights are written. A sign-in file that is a link or that
+//      another account owns, any other entry (a link among them) still
+//      another account's, an entry that cannot be read or put right, or a
+//      file with more than one name that is not owner-only refuses it; a
+//      link's own rights are not judged, and it is never followed.
 //   2. Where that is refused (its owner cannot be made this user, say), a new
 //      folder is made beside it by the rule and read back, everything plain in
 //      the old one is copied in as new files (each takes the new folder's
@@ -1106,6 +1110,17 @@ function recordVerdict(dir: string, ok: boolean): void {
   credentialFolderVerdicts.set(folderKey(dir), { id: realFolderId(dir) ?? '', ok })
 }
 
+/** A folder read back owner-only: its verdict recorded, and the entries
+ *  directly inside it that another account owned, which the rule made this
+ *  user's (OwnerOnlyFolderResult.takenOver), logged in fixed words. */
+function recordPass(dir: string, answers: RuleAnswers): void {
+  recordVerdict(dir, true)
+  const n = answers.get(dir)?.answer?.takenOver
+  if (typeof n === 'number' && Number.isInteger(n) && n > 0) {
+    logWarn(`[profiles] ${profileOfFolder(dir)}: ${n} ${n === 1 ? 'entry' : 'entries'} directly inside the ${folderLabel(dir)} folder ${n === 1 ? 'was' : 'were'} another account's and ${n === 1 ? 'is' : 'are'} now this Windows user's, owner-only (none of them a sign-in file)`)
+  }
+}
+
 function hasVerdict(dir: string): boolean {
   const id = realFolderId(dir)
   return id !== null && credentialFolderVerdicts.get(folderKey(dir))?.id === id
@@ -1278,7 +1293,7 @@ async function checkFolders(homes: readonly string[], rule: CredentialFolderRule
     await askAgainWhereInsideFailed(rule, set, answers)
     for (const dir of set) {
       if (!isProfileHome(dir)) { await settleOne(dir, answers, rule, refused, unanswered); continue }
-      if (passed(dir, answers)) { recordVerdict(dir, true); clearAside(dir); continue }
+      if (passed(dir, answers)) { recordPass(dir, answers); clearAside(dir); continue }
       if (unread(dir, answers)) { markUnanswered(unanswered, home); continue }
       const was = realFolderId(dir)
       const made = await remakeOwnerOnly(dir, rule)
@@ -1312,7 +1327,7 @@ async function checkFolders(homes: readonly string[], rule: CredentialFolderRule
 /** One folder's verdict from its answer: passed in place, else remade, else
  *  refused; no read (of it, or of the folder made for it) is no verdict. */
 async function settleOne(dir: string, answers: RuleAnswers, rule: CredentialFolderRule, refused: Array<[string, string]>, unanswered: Unanswered): Promise<void> {
-  if (passed(dir, answers)) { recordVerdict(dir, true); clearAside(dir); return }
+  if (passed(dir, answers)) { recordPass(dir, answers); clearAside(dir); return }
   if (unread(dir, answers)) { markUnanswered(unanswered, homeOfFolder(dir)); return }
   const made = await remakeOwnerOnly(dir, rule)
   if (made === UNREAD) { markUnanswered(unanswered, homeOfFolder(dir)); return }
@@ -1500,7 +1515,7 @@ async function remakeOwnerOnly(dir: string, rule: CredentialFolderRule): Promise
   const answers = await askRule(rule, [dir])
   await askAgainWhereInsideFailed(rule, [dir], answers)
   const ok = passed(dir, answers) && realFolderId(dir) === stagedId
-  if (ok) recordVerdict(dir, true)
+  if (ok) recordPass(dir, answers)
   else if (!unread(dir, answers)) recordVerdict(dir, false)
   clearAside(dir)
   if (ok) return null

@@ -15,33 +15,45 @@
 //
 // For the account sign-in folders (secureSignInFoldersWindows; every other
 // caller gets the folders' own rights only), what is already inside a folder
-// made owner-only in place gets the same rights and is read back with it. The
-// owner and the rights are written to the folder separately, the owner first,
-// so that the write of the rights alone is what Windows passes on to
-// everything inside it, whoever owns each entry. Then everything inside, at
-// every depth (named in the form that has no 260-character limit, where
-// Windows takes it), is read, and no link is ever followed, gone into or
-// changed by this read: a link to a file refuses the folder (a sign-in file
-// read through one has the rights of what it points to); a link to a folder
-// (a junction or a symbolic link) is judged by its own owner and rights, as
-// any entry is; a folder with any other reparse point refuses the folder (what
-// it holds is not read). A folder of the same call is left to its own turn,
-// and so is an entry the caller names as shared while it is a file with more
-// than one name (the home mirror's links to the user's own files, whose
-// rights are those of the user's real files; never a sign-in file). Every
-// other entry must be owned by this user, the Administrators group or SYSTEM
-// -- an entry another account owns refuses the folder, and is not reset (only
-// what the folder's own rights pass on reaches it) -- and must give rights to
-// nobody but the user, SYSTEM and the Administrators group; one that does not
-// loses every entry of its own and takes the folder's rights (inheritance
-// on), and is read again -- unless it is a file with more than one name (it
-// is never reset: another of its names can be outside the folder), which
-// then refuses the folder. An entry gone since it was listed is
-// passed over. The folder passes only when every entry read then holds that:
-// every entry directly inside it, and any entry deeper that does not, comes
-// back with the answer and is judged by the same verdict
-// (ownerOnlyInsideVerdict). An entry that cannot be read or made so refuses
-// the folder.
+// made owner-only in place is put right too, one level deep. The owner and
+// the rights are written to the folder separately, the owner first, so that
+// the write of the rights alone is what Windows passes on to what is inside
+// it, whoever owns each entry. Below the entries directly inside, nothing is
+// read or reset: an entry deeper down keeps the rights Windows gives it with
+// that write (Windows rewrites the inherited part only where this user may
+// change that entry's rights), and one with entries of its own, or with
+// inheritance off, keeps them.
+//
+// Each entry directly inside the folder is then read (named in the form that
+// has no 260-character limit, where Windows takes it), and no link is ever
+// followed, gone into or changed by this read. The sign-in files the app
+// writes (.credentials.json, .claude.json, by name in any letter case) are
+// held to all of what follows: one that is a link or any other reparse point
+// refuses the folder (a sign-in file read through one has the rights of what
+// it points to), and so does one another account owns (it is never made this
+// user's). Any other entry that is a link or any other reparse point (a cloud
+// file's placeholder among them) has only its own owner read (a read of a
+// link's owner by its name gives the link's own, never what it points to):
+// never read through, gone into or changed, its own rights neither judged
+// nor reset; one another account owns refuses the folder. Any other entry
+// another account owns is made this user's first (the owner alone written,
+// never a file with more than one name) and then put right as below; one
+// that cannot be made so stays that account's and refuses the folder. A
+// folder of the same call is left to its own turn (where a link, or a folder
+// another account owns, is refused), and so is an entry the caller names as
+// shared while it is a file with more than one name (the home mirror's links
+// to the user's own files, whose rights are those of the user's real files;
+// never a sign-in file). Every other entry is owned by this user, the
+// Administrators group or SYSTEM, and must give rights to nobody but the
+// user, SYSTEM and the Administrators group; one that does not loses every
+// entry of its own and takes the folder's rights (inheritance on), and is
+// read again -- unless it is a file with more than one name (it is never
+// reset: another of its names can be outside the folder), which then refuses
+// the folder. An entry gone since it was listed is passed over. Every entry
+// read comes back with the answer and is judged by the same verdict
+// (ownerOnlyInsideVerdict); the folder passes only when every one of them
+// holds that, and the answer counts the entries made this user's
+// (takenOver). An entry that cannot be read or made so refuses the folder.
 //
 // Before a folder's owner or rights are changed, its owner is read: anyone
 // but this user or the Administrators group refuses it, and nothing is
@@ -68,15 +80,18 @@
 // scripts that use only what that mode allows (Get-Item, Get-ChildItem,
 // Get-Acl and its SDDL, which names every account by SID or by a fixed
 // abbreviation, in any language), and judged by the same verdicts. What is
-// inside is read the same way, an entry to put right is reset with
-// icacls.exe /reset on that entry itself (/L; never /T, which goes through a
-// junction; never a file with more than one name, by its link count), and it
-// is read again. Same order, same refusals; the owner a folder had before is
-// read from the first read's SDDL, and the folder must still be that same
-// folder when it is written. A script call that ran past its time limit is
-// no read at all and is not followed by this route (a refusal of the script
-// comes at once), and this route has one time limit of its own: a folder it
-// has not reached by then is not read (unread).
+// directly inside is read the same way and judged by the same rules, another
+// account's entry to make this user's is given to the user with icacls.exe
+// /setowner on that entry itself, an entry to put right is reset with
+// icacls.exe /reset on that entry itself (/L each; never /T, which goes
+// through a junction; never a file with more than one name, by its link
+// count), and it is read again. Same order, same
+// refusals; the owner a folder had before is read from the first read's
+// SDDL, and the folder must still be that same folder when it is written. A
+// script call that ran past its time limit is no read at all and is not
+// followed by this route (a refusal of the script comes at once), and this
+// route has one time limit of its own: a folder it has not reached by then
+// is not read (unread).
 //
 // Every Windows PowerShell call gets Windows PowerShell's own modules folder
 // as its module path (windowsPowerShellEnv), never the one this process
@@ -96,6 +111,10 @@ export interface OwnerOnlyFolderResult {
    *  or its answer could not be read or does not match what was asked), as
    *  against a folder read and refused. Never set on a pass. */
   unread?: true
+  /** On a pass of a folder whose inside was read: how many entries directly
+   *  inside it, none of them a sign-in file, another account owned that were
+   *  made this user's and put right; absent when none. */
+  takenOver?: number
 }
 
 /** SYSTEM, and the Administrators group, by SID (names are localized). */
@@ -103,35 +122,45 @@ export const OWNER_ONLY_SYSTEM_SID = 'S-1-5-18'
 export const OWNER_ONLY_ADMINISTRATORS_SID = 'S-1-5-32-544'
 /** The variable that carries the folders, one a line, to the script. */
 export const OWNER_ONLY_DIRS_ENV = 'CCC_OWNER_ONLY_DIRS'
-/** The variables that carry, to the read of what is inside a folder, the
- *  folders of the whole call (one a line: each is left to its own turn) and
- *  the user's SID. */
+/** The variable that carries, to the read of what is inside a folder, the
+ *  folders of the whole call (one a line: each is left to its own turn). */
 export const OWNER_ONLY_SKIP_ENV = 'CCC_OWNER_ONLY_SKIP'
-export const OWNER_ONLY_USER_ENV = 'CCC_OWNER_ONLY_USER'
 /** The variable that asks the script to read what is inside each folder too
  *  ('1'; anything else: the folders' own rights only), and the one that
  *  carries the entries left out of that read (OwnerOnlyOptions.shared), one a
  *  line. */
 export const OWNER_ONLY_INSIDE_ENV = 'CCC_OWNER_ONLY_INSIDE'
 export const OWNER_ONLY_SHARED_ENV = 'CCC_OWNER_ONLY_SHARED'
-/** The sign-in files the app writes: always read, never left out as shared. */
+/** The sign-in files the app writes: always read, never left out as shared,
+ *  never passed over as a link, never made this user's when another account
+ *  owns one. */
 const SIGN_IN_FILE_NAMES: readonly string[] = ['.claude.json', '.credentials.json']
+/** Whether a name is one of the sign-in files', in any letter case (compared
+ *  upper-cased, as NTFS compares names, so no language's casing rule can
+ *  tell them apart). */
+function isSignInFileName(name: string): boolean {
+  const up = name.toUpperCase()
+  return SIGN_IN_FILE_NAMES.some((n) => n.toUpperCase() === up)
+}
+/** The scripts' table of the sign-in files' names, upper-cased (each entry's
+ *  name is looked up upper-cased, the invariant way). */
+const SIGN_IN_TABLE = '$signIn = @{ ' + SIGN_IN_FILE_NAMES.map((n) => "'" + n.toUpperCase() + "' = $true").join('; ') + ' }'
 /** A PowerShell start is slow on a cold machine; still bounded. */
 const POWERSHELL_TIMEOUT_MS = 30_000
 /** The answer lists every entry directly inside a folder: room for it. */
 const POWERSHELL_MAX_BUFFER = 32 * 1024 * 1024
-/** Entries inside one folder that may come back not owner-only before the
- *  read stops (the folder is refused either way). */
+/** Entries directly inside one folder that may come back not owner-only
+ *  before the read stops (the folder is refused either way). */
 const INSIDE_MAX_REFUSED = 50
 /** Why what is inside a folder refuses it, in fixed words (never a path). */
 const INSIDE_NOT_READ = 'what is inside it was not read'
 const INSIDE_NOT_MADE = 'what is inside it could not be made owner-only'
-const INSIDE_FILE_LINK = 'a link to a file is inside it'
-const INSIDE_OTHER_OWNER = "an entry inside it is another account's"
+const INSIDE_SIGN_IN_LINK = 'a sign-in file inside it is a link'
+const INSIDE_OTHER_OWNER = "a sign-in file inside it is another account's"
+const INSIDE_ENTRY_OTHER_OWNER = "an entry inside it is another account's"
 const INSIDE_NOT_OWNER_ONLY = 'an entry inside it is not owner-only'
-const INSIDE_ODD_FOLDER = 'a folder inside it is neither a plain folder nor a link'
 /** Every reason ownerOnlyInsideVerdict and the native rule give for what is inside. */
-export const OWNER_ONLY_INSIDE_REASONS: readonly string[] = [INSIDE_NOT_READ, INSIDE_NOT_MADE, INSIDE_FILE_LINK, INSIDE_OTHER_OWNER, INSIDE_NOT_OWNER_ONLY, INSIDE_ODD_FOLDER]
+export const OWNER_ONLY_INSIDE_REASONS: readonly string[] = [INSIDE_NOT_READ, INSIDE_NOT_MADE, INSIDE_SIGN_IN_LINK, INSIDE_OTHER_OWNER, INSIDE_ENTRY_OTHER_OWNER, INSIDE_NOT_OWNER_ONLY]
 /** The reasons that say the read of what is inside failed (an entry gone
  *  while it was read can do that), as against an entry read and judged: a
  *  caller may ask once more before it acts on one. */
@@ -142,10 +171,10 @@ const CONTAINER_AND_OBJECT_INHERIT = 3
 
 /** What the rule does beyond each folder's own rights. */
 export interface OwnerOnlyOptions {
-  /** Read what is inside each folder too, put right what may be, and pass a
-   *  folder only when that holds (see the file's header). Only the account
-   *  sign-in folders ask for it (secureSignInFoldersWindows); off, the rule
-   *  writes and reads the folders' own rights alone. */
+  /** Read what is directly inside each folder too, put right what may be,
+   *  and pass a folder only when that holds (see the file's header). Only
+   *  the account sign-in folders ask for it (secureSignInFoldersWindows);
+   *  off, the rule writes and reads the folders' own rights alone. */
   inside?: boolean
   /** Entries inside a folder (full paths) that the read of what is inside
    *  leaves out while each is a file with more than one name: the home
@@ -217,6 +246,7 @@ export const OWNER_ONLY_SCRIPT = [
   '$sidType = [Security.Principal.SecurityIdentifier]',
   "$both = [Security.AccessControl.AccessControlSections]'Owner, Access'",
   "$rightsOnly = [Security.AccessControl.AccessControlSections]'Access'",
+  "$ownerOnly = [Security.AccessControl.AccessControlSections]'Owner'",
   // Whether what is inside each folder is read too (see the file's header).
   "$walk = $env:" + OWNER_ONLY_INSIDE_ENV + " -eq '1'",
   // Who may own an entry inside, and who may have rights to it (by SID).
@@ -244,7 +274,7 @@ export const OWNER_ONLY_SCRIPT = [
   // The entries left out while each is a file with more than one name (never a sign-in file).
   '$shared = @{}',
   'foreach ($x in ($env:' + OWNER_ONLY_SHARED_ENV + " -split \"`n\")) { if ($x) { $shared[$x] = $true; $shared[(Long $x)] = $true } }",
-  "$signIn = @{ " + SIGN_IN_FILE_NAMES.map((n) => "'" + n + "' = $true").join('; ') + " }",
+  SIGN_IN_TABLE,
   '$done = @{}',
   '$failed = @{}',
   '$out = @()',
@@ -284,69 +314,79 @@ export const OWNER_ONLY_SCRIPT = [
   '    $r.protected = $a.AreAccessRulesProtected',
   '    $r.rules = @(foreach ($x in $a.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) { [ordered]@{ sid = $x.IdentityReference.Value; rights = [int]$x.FileSystemRights; allow = ($x.AccessControlType -eq $allow); inherited = $x.IsInherited; flags = [int]$x.InheritanceFlags } })',
   '    $done[$d] = $true',
-  // What is inside (see the file's header), when asked: every entry at every
-  // depth, never through a link; a folder of this call is left to its own
-  // turn, and so is a shared entry while it is a file with more than one
-  // name. Every entry directly inside comes back, and any entry deeper that
-  // is not owner-only (or is a folder of another kind); a failure here
-  // refuses this folder, not the folders below it.
+  // What is inside (see the file's header), when asked: the entries
+  // directly inside the folder only, never deeper and never through a link.
+  // A folder of this call is left to its own turn, and so is a shared entry
+  // while it is a file with more than one name. A sign-in file is held to
+  // all of it; any other link (any reparse point) has only its own owner
+  // read, and any other entry another account owns is made this user's
+  // where it may be. Every entry read comes back; a failure here refuses
+  // this folder, not the folders below it.
   '    if ($walk) {',
   '    $inside = New-Object Collections.Generic.List[object]',
   '    $r.inside = $inside',
   '    try {',
   '      $refused = 0',
-  // Walked in the long form where this Windows takes it, else as named.
+  // Listed in the long form where this Windows takes it, else as named.
   '      $root = ([IO.DirectoryInfo]$d).FullName.TrimEnd([char]92)',
   '      try { $long = Long $root; $null = ([IO.DirectoryInfo]$long).Attributes; $root = $long } catch { }',
-  '      $todo = New-Object Collections.Generic.Stack[string]',
-  '      $todo.Push($root)',
-  '      while ($todo.Count -gt 0) {',
-  '        $at = $todo.Pop()',
-  '        $direct = $at -eq $root',
-  // A folder below that is gone since it was listed is passed over.
-  '        try { $list = @(([IO.DirectoryInfo]$at).EnumerateFileSystemInfos()) } catch { if ($direct -or (There $at)) { throw }; continue }',
-  '        foreach ($e in $list) {',
-  '          $p = $e.FullName',
-  '          if ($asked.ContainsKey($p)) { continue }',
-  '          $isDir = ($e.Attributes -band $folderAttr) -ne 0',
-  '          $isLink = ($e.Attributes -band $reparse) -ne 0',
-  "          if (-not $isDir -and -not $isLink -and $shared.ContainsKey($p) -and -not $signIn.ContainsKey($e.Name) -and [string]$e.LinkType -eq 'HardLink') { continue }",
-  '          $name = $p.Substring($root.Length + 1)',
-  "          $kind = if ($isLink) { [string]$e.LinkType } else { '' }",
-  // A link to a file is never read through: it refuses the folder.
-  '          if ($isLink -and -not $isDir) { $inside.Add([ordered]@{ name = $name; link = $true; folder = $false; linkType = $kind }); continue }',
-  // A link to a folder is read (its own rights: a read by name does not
-  // follow it), never changed or gone into; any other folder with a reparse
-  // point refuses the folder.
-  "          $odd = $isLink -and $kind -ne 'Junction' -and $kind -ne 'SymbolicLink'",
-  '          try { $a = if ($isDir) { [IO.Directory]::GetAccessControl($p, $both) } else { [IO.File]::GetAccessControl($p, $both) } }',
+  '      foreach ($e in @(([IO.DirectoryInfo]$root).EnumerateFileSystemInfos())) {',
+  '        $p = $e.FullName',
+  '        if ($asked.ContainsKey($p)) { continue }',
+  '        $isDir = ($e.Attributes -band $folderAttr) -ne 0',
+  '        $isLink = ($e.Attributes -band $reparse) -ne 0',
+  '        $cred = $signIn.ContainsKey($e.Name.ToUpperInvariant())',
+  "        if (-not $isDir -and -not $isLink -and -not $cred -and $shared.ContainsKey($p) -and [string]$e.LinkType -eq 'HardLink') { continue }",
+  // A sign-in file that is a link is never read through: it refuses the folder.
+  '        if ($isLink -and $cred) { $inside.Add([ordered]@{ name = $e.Name; link = $true; folder = $isDir; linkType = [string]$e.LinkType }); $refused++; continue }',
+  // Any other link or reparse point (a cloud file's placeholder too): its
+  // own owner only (a read of a link's owner by its name gives the link's
+  // own), never read through, gone into or changed; the verdict refuses one
+  // another account owns.
+  '        if ($isLink) {',
+  '          try { $lk = if ($isDir) { [IO.Directory]::GetAccessControl($p, $ownerOnly) } else { [IO.File]::GetAccessControl($p, $ownerOnly) }; $lo = $lk.GetOwner($sidType).Value }',
   '          catch { if (There $p) { throw }; continue }',
-  '          $ok = Clean $a',
-  '          $own = $a.GetOwner($sidType).Value',
-  // One this user, the Administrators group or SYSTEM owns that lets anyone
-  // else in: its own entries go and it takes the folder's rights
-  // (inheritance on, the rights alone written), and it is read again -- never
-  // a link, and never a file with more than one name. One another account
-  // owns is not reset, and what is inside it is not read: it refuses the folder.
-  '          if (-not $ok -and -not $isLink -and $okOwner.ContainsKey($own) -and ($isDir -or (OneName $p))) {',
-  '            try {',
-  '              $t = if ($isDir) { [IO.Directory]::GetAccessControl($p, $rightsOnly) } else { [IO.File]::GetAccessControl($p, $rightsOnly) }',
-  '              foreach ($x in @($t.GetAccessRules($true, $false, $sidType))) { [void]$t.RemoveAccessRuleSpecific($x) }',
-  '              $t.SetAccessRuleProtection($false, $false)',
-  '              if ($isDir) { [IO.Directory]::SetAccessControl($p, $t) } else { [IO.File]::SetAccessControl($p, $t) }',
-  '              $a = if ($isDir) { [IO.Directory]::GetAccessControl($p, $both) } else { [IO.File]::GetAccessControl($p, $both) }',
-  '            } catch { if (There $p) { throw }; continue }',
+  '          $inside.Add([ordered]@{ name = $e.Name; link = $true; folder = $isDir; linkType = [string]$e.LinkType; owner = $lo })',
+  "          if (-not $okOwner.ContainsKey($lo)) { $refused++; if ($refused -ge " + INSIDE_MAX_REFUSED + ") { throw 'too many' } }",
+  '          continue',
+  '        }',
+  '        try { $a = if ($isDir) { [IO.Directory]::GetAccessControl($p, $both) } else { [IO.File]::GetAccessControl($p, $both) } }',
+  '        catch { if (There $p) { throw }; continue }',
+  '        $ok = Clean $a',
+  '        $own = $a.GetOwner($sidType).Value',
+  // Another account's entry, never a sign-in file and never a file with
+  // more than one name: made this user's first, the owner alone written,
+  // and read again (then put right below). One that cannot be made so stays
+  // that account's, and the verdict refuses it.
+  '        $taken = $false',
+  '        if (-not $okOwner.ContainsKey($own) -and -not $cred -and ($isDir -or (OneName $p))) {',
+  '          try {',
+  '            $w = if ($isDir) { New-Object Security.AccessControl.DirectorySecurity } else { New-Object Security.AccessControl.FileSecurity }',
+  '            $w.SetOwner($user)',
+  '            if ($isDir) { [IO.Directory]::SetAccessControl($p, $w) } else { [IO.File]::SetAccessControl($p, $w) }',
+  '            $a = if ($isDir) { [IO.Directory]::GetAccessControl($p, $both) } else { [IO.File]::GetAccessControl($p, $both) }',
   '            $ok = Clean $a',
   '            $own = $a.GetOwner($sidType).Value',
-  '          }',
-  '          if ($direct -or -not $ok -or $odd) {',
-  '            $x = [ordered]@{ name = $name; link = $isLink; folder = $isDir; owner = $own; rules = (Rules $a) }',
-  '            if ($isLink) { $x.linkType = $kind }',
-  '            $inside.Add($x)',
-  '          }',
-  "          if (-not $ok -or $odd) { $refused++; if ($refused -ge " + INSIDE_MAX_REFUSED + ") { throw 'too many' } }",
-  '          if ($isDir -and -not $isLink -and $okOwner.ContainsKey($own)) { $todo.Push($p) }',
+  '            $taken = $own -eq $user.Value',
+  '          } catch { if (-not (There $p)) { continue } }',
   '        }',
+  // One this user, the Administrators group or SYSTEM owns (one just made
+  // this user's among them) that lets anyone else in: its own entries go and
+  // it takes the folder's rights (inheritance on, the rights alone
+  // written), and it is read again -- never a file with more than one name.
+  '        if (-not $ok -and $okOwner.ContainsKey($own) -and ($isDir -or $taken -or (OneName $p))) {',
+  '          try {',
+  '            $t = if ($isDir) { [IO.Directory]::GetAccessControl($p, $rightsOnly) } else { [IO.File]::GetAccessControl($p, $rightsOnly) }',
+  '            foreach ($x in @($t.GetAccessRules($true, $false, $sidType))) { [void]$t.RemoveAccessRuleSpecific($x) }',
+  '            $t.SetAccessRuleProtection($false, $false)',
+  '            if ($isDir) { [IO.Directory]::SetAccessControl($p, $t) } else { [IO.File]::SetAccessControl($p, $t) }',
+  '            $a = if ($isDir) { [IO.Directory]::GetAccessControl($p, $both) } else { [IO.File]::GetAccessControl($p, $both) }',
+  '          } catch { if (There $p) { throw }; continue }',
+  '          $ok = Clean $a',
+  '          $own = $a.GetOwner($sidType).Value',
+  '        }',
+  '        $inside.Add([ordered]@{ name = $e.Name; link = $false; folder = $isDir; owner = $own; rules = (Rules $a); takenOver = $taken })',
+  "        if (-not $ok) { $refused++; if ($refused -ge " + INSIDE_MAX_REFUSED + ") { throw 'too many' } }",
   '      }',
   '    } catch {',
   "      $r.insideError = '" + INSIDE_NOT_MADE + "'",
@@ -379,12 +419,14 @@ export interface FolderAclRead {
   insideError?: unknown
 }
 
-/** One entry inside a folder, as a read gives it: its path inside the
- *  folder; whether it is a link (any reparse point, never followed) and
- *  whether it is a folder; for a link its kind as Windows PowerShell names it
- *  (Junction, SymbolicLink; anything else for any other reparse point); for
- *  any entry but a link to a file its own owner and rights by SID (as a
- *  folder's), or `error` when they could not be read. */
+/** One entry directly inside a folder, as a read gives it: its name;
+ *  whether it is a link (any reparse point, never followed) and whether it
+ *  is a folder; for a link its kind as Windows PowerShell names it (only
+ *  noted: a sign-in file that is a link is refused whatever its kind) and,
+ *  unless it is a sign-in file, the link's own owner by SID (its rights are
+ *  not read); for any entry but a link its own owner and rights by SID (as
+ *  a folder's), or `error` when they could not be read; `takenOver` when
+ *  the read made another account's entry this user's before reading it. */
 export interface InsideEntryRead {
   name?: unknown
   link?: unknown
@@ -393,6 +435,7 @@ export interface InsideEntryRead {
   owner?: unknown
   rules?: unknown
   error?: unknown
+  takenOver?: unknown
 }
 
 interface AclRule { sid: string; rights: number; allow: boolean; inherited: boolean; flags: number }
@@ -432,42 +475,64 @@ export function ownerOnlyVerdict(read: FolderAclRead | undefined, userSid: strin
   return { ok: true, detail: 'owner-only' }
 }
 
-/** Whether what is inside a folder, as its read gives it, holds the folder's
- *  owner-only rights (see the file's header): the read is there and gave no
- *  error; no entry is a link to a file, and no folder has a reparse point
- *  other than a junction's or a symbolic link's (a link to a folder is not
- *  followed: its own owner and rights are judged); every entry is owned by
- *  this user, the Administrators group or SYSTEM and gives rights only to the
- *  user, SYSTEM and the Administrators group (allow entries, its own or
- *  inherited). Anything else, or anything that cannot be read, refuses the
- *  folder. */
-export function ownerOnlyInsideVerdict(read: Pick<FolderAclRead, 'inside' | 'insideError'> | undefined, userSid: string): { ok: boolean; detail: string } {
+/** A verdict on a folder: whether it passes and why not; on a pass of one
+ *  whose inside was read, how many entries directly inside it another
+ *  account owned were made this user's (none of them a sign-in file). */
+export interface OwnerOnlyVerdict { ok: boolean; detail: string; takenOver?: number }
+
+/** Whether an entry is held to the whole rule as a sign-in file: one of
+ *  their names, in any letter case, or a name that cannot be read or is not
+ *  a plain name (a read gives only the entries directly inside a folder). */
+function heldAsSignInFile(name: unknown): boolean {
+  return typeof name !== 'string' || name === '' || /[\\/]/.test(name) || isSignInFileName(name)
+}
+
+/** Whether what is directly inside a folder, as its read gives it, holds
+ *  the folder's owner-only rights (see the file's header): the read is there
+ *  and gave no error; a sign-in file (heldAsSignInFile) is no link (any
+ *  reparse point); every entry, a link among them, is owned by this user,
+ *  the Administrators group or SYSTEM (a sign-in file another account owns
+ *  and any other such entry each refuse it in their own words); a link's
+ *  own rights are not judged (it is never read through); every other entry
+ *  gives rights only to the user, SYSTEM and the Administrators group (allow
+ *  entries, its own or inherited). Anything else, or anything that cannot
+ *  be read, refuses the folder. A pass counts the entries the read made
+ *  this user's (takenOver). */
+export function ownerOnlyInsideVerdict(read: Pick<FolderAclRead, 'inside' | 'insideError'> | undefined, userSid: string): OwnerOnlyVerdict {
   if (!read || typeof read !== 'object') return { ok: false, detail: INSIDE_NOT_READ }
   if (read.insideError) return { ok: false, detail: INSIDE_NOT_MADE }
   if (read.inside == null) return { ok: false, detail: INSIDE_NOT_READ }
   if (typeof userSid !== 'string' || !userSid.startsWith('S-1-')) return { ok: false, detail: 'the user could not be named' }
   const entries = Array.isArray(read.inside) ? read.inside : [read.inside]
+  let takenOver = 0
   for (const x of entries) {
     if (!x || typeof x !== 'object') return { ok: false, detail: INSIDE_NOT_READ }
     const e = x as InsideEntryRead
     if (e.error) return { ok: false, detail: INSIDE_NOT_READ }
-    if (e.link === true && e.folder !== true) return { ok: false, detail: INSIDE_FILE_LINK }
     if (e.link !== true && e.link !== false) return { ok: false, detail: INSIDE_NOT_READ }
-    if (e.link === true && e.linkType !== 'Junction' && e.linkType !== 'SymbolicLink') return { ok: false, detail: INSIDE_ODD_FOLDER }
-    if (e.owner !== userSid && e.owner !== OWNER_ONLY_ADMINISTRATORS_SID && e.owner !== OWNER_ONLY_SYSTEM_SID) return { ok: false, detail: typeof e.owner === 'string' && e.owner ? INSIDE_OTHER_OWNER : INSIDE_NOT_READ }
+    const signIn = heldAsSignInFile(e.name)
+    // A sign-in file that is a link (any reparse point) is never read through.
+    if (e.link === true && signIn) return { ok: false, detail: INSIDE_SIGN_IN_LINK }
+    if (e.owner !== userSid && e.owner !== OWNER_ONLY_ADMINISTRATORS_SID && e.owner !== OWNER_ONLY_SYSTEM_SID) {
+      if (typeof e.owner !== 'string' || !e.owner) return { ok: false, detail: INSIDE_NOT_READ }
+      return { ok: false, detail: signIn ? INSIDE_OTHER_OWNER : INSIDE_ENTRY_OTHER_OWNER }
+    }
+    // Any other link: its own owner is all that is read.
+    if (e.link === true) continue
     const raw = e.rules == null ? [] : Array.isArray(e.rules) ? e.rules : [e.rules]
     for (const y of raw) {
       const r = asRule(y)
       if (!r) return { ok: false, detail: INSIDE_NOT_READ }
       if (!r.allow || (r.sid !== userSid && r.sid !== OWNER_ONLY_SYSTEM_SID && r.sid !== OWNER_ONLY_ADMINISTRATORS_SID)) return { ok: false, detail: INSIDE_NOT_OWNER_ONLY }
     }
+    if (e.takenOver === true) takenOver++
   }
-  return { ok: true, detail: 'owner-only' }
+  return takenOver > 0 ? { ok: true, detail: 'owner-only', takenOver } : { ok: true, detail: 'owner-only' }
 }
 
 /** A folder's whole verdict: its own read (ownerOnlyVerdict), then what is
  *  inside it (ownerOnlyInsideVerdict). */
-export function ownerOnlyFolderVerdict(read: FolderAclRead | undefined, userSid: string): { ok: boolean; detail: string } {
+export function ownerOnlyFolderVerdict(read: FolderAclRead | undefined, userSid: string): OwnerOnlyVerdict {
   const own = ownerOnlyVerdict(read, userSid)
   return own.ok ? ownerOnlyInsideVerdict(read, userSid) : own
 }
@@ -491,7 +556,7 @@ export type PowerShellRunner = (script: string, extraEnv: Record<string, string>
 /** The shared entries a call may leave out (OwnerOnlyOptions.shared): each
  *  one that can be named, never a sign-in file. */
 function sharedEntries(shared: readonly string[] | undefined): string[] {
-  return (shared ?? []).filter((p) => typeof p === 'string' && unnameable(p) === null && !SIGN_IN_FILE_NAMES.includes(path.win32.basename(p).toLowerCase()))
+  return (shared ?? []).filter((p) => typeof p === 'string' && unnameable(p) === null && !isSignInFileName(path.win32.basename(p)))
 }
 
 /** Windows: the folders made this user's and owner-only in ONE PowerShell
@@ -500,11 +565,11 @@ function sharedEntries(shared: readonly string[] | undefined): string[] {
  *  folder that cannot be named, an answer that does not match what was asked,
  *  or any failure of the call, is refused; the last two say `unread`.
  *
- *  With `opts.inside` (the account sign-in folders only), what is inside each
- *  folder is read and put right too, and a folder passes only when that
- *  holds (see the file's header); without it, the rule writes and judges the
- *  folders' own rights alone, and the call says so (OWNER_ONLY_INSIDE_ENV
- *  '0'), whatever this process's environment holds.
+ *  With `opts.inside` (the account sign-in folders only), what is directly
+ *  inside each folder is read and put right too, and a folder passes only
+ *  when that holds (see the file's header); without it, the rule writes and
+ *  judges the folders' own rights alone, and the call says so
+ *  (OWNER_ONLY_INSIDE_ENV '0'), whatever this process's environment holds.
  *
  *  When the call gives no read at all, the same rule is applied with Windows'
  *  own programs (secureFoldersNative, `native`), and its answer is used when
@@ -560,7 +625,7 @@ export async function secureFoldersWindows(
 }
 
 /** The account sign-in folders' rule (Windows): secureFoldersWindows with
- *  what is inside each folder read and put right too, `shared` (the home
+ *  what is directly inside each folder read and put right too, `shared` (the home
  *  mirror's links to the user's own files) left out of that read while each
  *  is a file with more than one name. Every other caller of the rule gets
  *  the folders' own rights only (secureOwnerOnlyFolders). */
@@ -648,33 +713,23 @@ export const OWNER_ONLY_READ_SCRIPT = [
   'ConvertTo-Json -Compress -Depth 3 -InputObject @($out)',
 ].join('\n')
 
-/** The native rule's read of what is inside each folder it is handed (see
- *  the file's header), with what Constrained Language Mode allows: every
- *  entry at every depth (Get-ChildItem, then Get-Acl's SDDL), never through a
- *  link (an entry with the reparse attribute is not gone into, and a link to
- *  a file is not read; a link to a folder is read by its own rights, which a
- *  read by name gives), the folders of the whole call left to their own
- *  turn, and so are the shared entries while each is a file with more than
- *  one name (never a sign-in file). Per folder: every entry directly inside
- *  it, and any entry deeper that is a link to a file, a folder with a reparse
- *  point, or does not plainly hold the folder's owner-only rights (owner this
- *  user -- by SID, or LA when this user is the computer's built-in
- *  Administrator, as SDDL names that account -- the Administrators group or
- *  SYSTEM, allow entries for the user, SYSTEM or the Administrators group
- *  only; the verdict decides anything else); each with its path inside the
- *  folder as numbers (its characters' codes, so a name in any language comes
- *  back as ASCII), its attributes, its SDDL and, for a link, its kind. An
- *  entry gone since it was listed (a folder below included) is passed over;
- *  any other failure, or more than INSIDE_MAX_REFUSED entries that are not
- *  owner-only, is that folder's error. The modules are loaded first, as the
- *  read above. */
+/** The native rule's read of what is directly inside each folder it is
+ *  handed (see the file's header), with what Constrained Language Mode
+ *  allows (Get-ChildItem, then Get-Acl's SDDL): never deeper and never
+ *  through a link; the folders of the whole call left to their own turn,
+ *  and so are the shared entries while each is a file with more than one
+ *  name (never a sign-in file). A sign-in file that is a link (any reparse
+ *  point) comes back unread; any other link comes back with its own SDDL
+ *  (Get-Acl by the link's name gives the link's own, never what it points
+ *  to), of which only the owner is read. Every entry comes back with its
+ *  name as numbers (its characters' codes, so a name in any language comes
+ *  back as ASCII), its attributes and its SDDL, and the verdict judges it
+ *  (this read decides nothing else). An entry gone since it was listed is
+ *  passed over; any other failure is that folder's error. The modules are
+ *  loaded first, as the read above. */
 export const OWNER_ONLY_INSIDE_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   'Import-Module -Name Microsoft.PowerShell.Management, Microsoft.PowerShell.Security, Microsoft.PowerShell.Utility',
-  '$u = [string]$env:' + OWNER_ONLY_USER_ENV,
-  // This user as SDDL may name it: its SID, and LA for the built-in Administrator (relative id 500).
-  '$uIds = @($u)',
-  "if ($u -match '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-500$') { $uIds += 'LA' }",
   // The form with no length limit, as the script above names it (the
   // backslashes are characters, 92, so the text names no path).
   '$bs = [string][char]92',
@@ -683,52 +738,29 @@ export const OWNER_ONLY_INSIDE_SCRIPT = [
   'foreach ($x in ($env:' + OWNER_ONLY_SKIP_ENV + " -split \"`n\")) { if ($x) { $asked[$x] = $true; $asked[(Long $x)] = $true } }",
   '$shared = @{}',
   'foreach ($x in ($env:' + OWNER_ONLY_SHARED_ENV + " -split \"`n\")) { if ($x) { $shared[$x] = $true; $shared[(Long $x)] = $true } }",
-  "$signIn = @{ " + SIGN_IN_FILE_NAMES.map((n) => "'" + n + "' = $true").join('; ') + " }",
-  "$clean = '\\(A;[A-Z]*;[0-9A-Za-z]*;;;(?:SY|BA|' + ($uIds -join '|') + ')\\)'",
+  SIGN_IN_TABLE,
   '$out = @()',
   'foreach ($d in ($env:' + OWNER_ONLY_DIRS_ENV + " -split \"`n\")) {",
   '  if (-not $d) { continue }',
   '  $r = @{ inside = @(); error = $false }',
   '  try {',
-  '    $refused = 0',
-  // Walked in the long form where this Windows takes it, else as named.
+  // Listed in the long form where this Windows takes it, else as named.
   '    $root = $d',
   '    try { $null = Get-Item -LiteralPath (Long $d) -Force; $root = Long $d } catch { }',
-  "    $todo = @(@{ path = $root; rel = '' })",
-  '    $i = 0',
-  '    while ($i -lt $todo.Count) {',
-  '      $at = $todo[$i]',
-  '      $i++',
-  '      $items = $null',
-  '      try { $items = @(Get-ChildItem -LiteralPath $at.path -Force) } catch { if ($at.rel -and -not (Test-Path -LiteralPath $at.path)) { continue }; throw }',
-  '      foreach ($e in $items) {',
-  '        $p = $e.FullName',
-  '        if ($asked[$p]) { continue }',
-  '        $attributes = [int]$e.Attributes',
-  '        $isLink = ($attributes -band 0x400) -ne 0',
-  '        $isDir = ($attributes -band 0x10) -ne 0',
-  "        if (-not $isDir -and -not $isLink -and $shared[$p] -and -not $signIn[$e.Name] -and [string]$e.LinkType -eq 'HardLink') { continue }",
-  '        $rel = if ($at.rel) { $at.rel + $bs + $e.Name } else { $e.Name }',
-  '        $direct = -not $at.rel',
-  "        $kind = if ($isLink) { [string]$e.LinkType } else { '' }",
-  '        if ($isLink -and -not $isDir) { $r.inside += @{ name = [int[]][char[]]$rel; attributes = $attributes; sddl = $null; linkType = $kind }; continue }',
-  "        $odd = $isLink -and $kind -ne 'Junction' -and $kind -ne 'SymbolicLink'",
-  '        $sddl = $null',
-  '        try { $sddl = [string](Get-Acl -LiteralPath $p).Sddl } catch { if (Test-Path -LiteralPath $p) { throw } else { continue } }',
-  '        $ownerOk = $false',
-  '        $ok = $false',
-  "        if ($sddl -match '^O:(S-1-[0-9-]+|[A-Z]{2})(?:G:(?:S-1-[0-9-]+|[A-Z]{2}))?D:[A-Z]*((?:\\([^()]*\\))*)$') {",
-  "          $ownerOk = ($uIds -contains $Matches[1]) -or $Matches[1] -eq 'BA' -or $Matches[1] -eq 'SY'",
-  "          $ok = $ownerOk -and (($Matches[2] -replace $clean, '') -eq '')",
-  '        }',
-  '        if ($direct -or -not $ok -or $odd) {',
-  '          $x = @{ name = [int[]][char[]]$rel; attributes = $attributes; sddl = $sddl }',
-  '          if ($isLink) { $x.linkType = $kind }',
-  '          $r.inside += $x',
-  '        }',
-  "        if (-not $ok -or $odd) { $refused++; if ($refused -ge " + INSIDE_MAX_REFUSED + ") { throw 'too many' } }",
-  '        if ($isDir -and -not $isLink -and $ownerOk) { $todo += @{ path = $p; rel = $rel } }',
-  '      }',
+  '    foreach ($e in @(Get-ChildItem -LiteralPath $root -Force)) {',
+  '      $p = $e.FullName',
+  '      if ($asked[$p]) { continue }',
+  '      $attributes = [int]$e.Attributes',
+  '      $isLink = ($attributes -band 0x400) -ne 0',
+  '      $isDir = ($attributes -band 0x10) -ne 0',
+  '      $cred = [bool]$signIn[$e.Name.ToUpperInvariant()]',
+  "      if (-not $isDir -and -not $isLink -and -not $cred -and $shared[$p] -and [string]$e.LinkType -eq 'HardLink') { continue }",
+  '      if ($isLink -and $cred) { $r.inside += @{ name = [int[]][char[]]$e.Name; attributes = $attributes; sddl = $null; linkType = [string]$e.LinkType }; continue }',
+  '      $sddl = $null',
+  '      try { $sddl = [string](Get-Acl -LiteralPath $p).Sddl } catch { if (Test-Path -LiteralPath $p) { throw } else { continue } }',
+  '      $x = @{ name = [int[]][char[]]$e.Name; attributes = $attributes; sddl = $sddl }',
+  '      if ($isLink) { $x.linkType = [string]$e.LinkType }',
+  '      $r.inside += $x',
   '    }',
   '  } catch { $r.error = $true }',
   '  $out += $r',
@@ -761,14 +793,15 @@ async function readNative(dirs: readonly string[], read: PowerShellRunner): Prom
   })
 }
 
-/** One read of what is inside `dir` (OWNER_ONLY_INSIDE_SCRIPT), each entry
- *  as the verdict reads it (with its path inside `dir`); `error` when the
- *  read of what is inside failed there; null when the call gave no answer
- *  that matches what was asked. */
+/** One read of what is directly inside `dir` (OWNER_ONLY_INSIDE_SCRIPT),
+ *  each entry as the verdict reads it (with its name); `error` when the read
+ *  of what is inside failed there, or when its answer says anything but a
+ *  plain "no error"; null when the call gave no answer that matches what was
+ *  asked. */
 async function readInsideNative(dir: string, user: string, skip: readonly string[], shared: readonly string[], read: PowerShellRunner): Promise<{ error: boolean; inside: Array<InsideEntryRead & { name: string }> } | null> {
   let v: unknown
   try {
-    v = JSON.parse(String(await read(OWNER_ONLY_INSIDE_SCRIPT, { [OWNER_ONLY_DIRS_ENV]: dir, [OWNER_ONLY_SKIP_ENV]: skip.join('\n'), [OWNER_ONLY_SHARED_ENV]: shared.join('\n'), [OWNER_ONLY_USER_ENV]: user })).trim())
+    v = JSON.parse(String(await read(OWNER_ONLY_INSIDE_SCRIPT, { [OWNER_ONLY_DIRS_ENV]: dir, [OWNER_ONLY_SKIP_ENV]: skip.join('\n'), [OWNER_ONLY_SHARED_ENV]: shared.join('\n') })).trim())
   } catch { return null }
   const list = Array.isArray(v) ? v : v && typeof v === 'object' ? [v] : null
   if (!list || list.length !== 1 || !list[0] || typeof list[0] !== 'object') return null
@@ -785,50 +818,77 @@ async function readInsideNative(dir: string, user: string, skip: readonly string
     const folder = (attributes & FILE_ATTRIBUTE_DIRECTORY) !== 0
     const link = (attributes & FILE_ATTRIBUTE_REPARSE_POINT) !== 0
     const linkType = link ? (typeof e.linkType === 'string' ? e.linkType : '') : undefined
-    // A link to a file is not read (the verdict refuses it as it is).
-    if (link && !folder) return { name, link, folder, linkType }
+    // A link: its own owner only (the verdict refuses a sign-in file that is
+    // one, and one whose owner was not read).
+    if (link) {
+      const owner = typeof e.sddl === 'string' ? ownerFromSddl(e.sddl, user) : ''
+      return owner ? { name, link, folder, linkType, owner } : { name, link, folder, linkType }
+    }
     if (typeof e.sddl !== 'string') return { name, error: 'it could not be read' }
     const f = folderReadFromSddl(e.sddl, user)
-    if (f.error) return { name, error: f.error }
-    return { name, link, folder, ...(link ? { linkType } : {}), owner: f.owner, rules: f.rules }
+    if (f.error) {
+      // Refused as unread (the verdict); its owner goes with it, so that
+      // another account's entry may still be made this user's and reset.
+      const owner = ownerFromSddl(e.sddl, user)
+      return owner ? { name, link, folder, owner, error: f.error } : { name, error: f.error }
+    }
+    return { name, link, folder, owner: f.owner, rules: f.rules }
   })
   return { error: false, inside }
 }
 
-/** What is inside `dir` read, an entry this user, the Administrators group
- *  or SYSTEM owns that lets anyone else in reset (icacls /reset on the entry
- *  itself, /L: its own entries go and it takes the folder's rights) -- never a
- *  link, and never a file with more than one name (by its link count, which
- *  the file system gives without opening it; one it gives none for is not
- *  reset either) -- then read again when any was. Answers what is inside as
- *  the verdict reads it. Throws NoNativeAnswer when a read or a program gave
- *  no answer; an Error (the folder refused) when what is inside could not be
- *  read or reset, or when more entries need a reset than a read may refuse. */
+/** What is directly inside `dir` read; another account's entry, never a
+ *  sign-in file, made this user's (icacls /setowner on the entry itself, /L;
+ *  one that cannot be is left that account's, and the verdict refuses it);
+ *  then that entry, and any entry this user, the Administrators group or
+ *  SYSTEM owns that lets anyone else in, reset (icacls /reset on the entry
+ *  itself, /L: its own entries go and it takes the folder's rights) --
+ *  never a link, and never a file with more than one name (by its link
+ *  count, which the file system gives without opening it; one it gives none
+ *  for is not changed either) -- then read again when any was. Answers what
+ *  is inside as the verdict reads it, an entry made this user's marked
+ *  `takenOver`. Throws NoNativeAnswer when a read or a program gave no
+ *  answer; an Error (the folder refused) when what is inside could not be
+ *  read or reset, or when more entries need a change than a read may
+ *  refuse. */
 async function settleInsideNative(dir: string, user: string, skip: readonly string[], shared: readonly string[], tools: NativeOwnerOnlyTools, read: PowerShellRunner): Promise<InsideEntryRead[]> {
   const first = await readInsideNative(dir, user, skip, shared, read)
   if (!first) throw new NoNativeAnswer('what is inside it could not be read')
   if (first.error) throw new Error(INSIDE_NOT_READ)
+  const ours = (owner: unknown): boolean => owner === user || owner === OWNER_ONLY_ADMINISTRATORS_SID || owner === OWNER_ONLY_SYSTEM_SID
   const oneName = (at: string): boolean => { try { return tools.lstat(at)?.names === 1 } catch { return false } }
+  // A path past Windows' 260-character limit is handed over in the form that
+  // has none (\\?\, or \\?\UNC\ for a share).
+  const named = (e: { name: string }): string => {
+    const at = path.win32.join(dir, e.name)
+    return at.length < 260 ? at : at.startsWith('\\\\') ? `\\\\?\\UNC\\${at.slice(2)}` : `\\\\?\\${at}`
+  }
+  const take = first.inside.filter((e) => e.link === false && typeof e.owner === 'string' && e.owner !== '' && !ours(e.owner) && !heldAsSignInFile(e.name) && (e.folder === true || oneName(path.win32.join(dir, e.name))))
   const reset = first.inside.filter((e) => {
-    if (e.link !== false || e.error || (e.owner !== user && e.owner !== OWNER_ONLY_ADMINISTRATORS_SID && e.owner !== OWNER_ONLY_SYSTEM_SID)) return false
+    if (e.link !== false || e.error || !ours(e.owner)) return false
     if (ownerOnlyInsideVerdict({ inside: [e] }, user).ok) return false
     return e.folder === true || oneName(path.win32.join(dir, e.name))
   })
+  if (take.length === 0 && reset.length === 0) return first.inside
+  if (take.length + reset.length >= INSIDE_MAX_REFUSED) throw new Error(INSIDE_NOT_MADE)
+  const taken = new Set<string>()
+  for (const e of take) {
+    const done = await tools.run('icacls', [named(e), '/setowner', `*${user}`, '/L', '/Q'])
+    if (done.code === null) throw new NoNativeAnswer('an entry inside it could not be made this user\'s: the program did not start or finish')
+    if (done.code !== 0) continue
+    taken.add(e.name)
+    reset.push(e)
+  }
   if (reset.length === 0) return first.inside
-  if (reset.length >= INSIDE_MAX_REFUSED) throw new Error(INSIDE_NOT_MADE)
   for (const e of reset) {
-    // A path past Windows' 260-character limit is handed over in the form
-    // that has none (\\?\, or \\?\UNC\ for a share).
-    const at = path.win32.join(dir, e.name)
-    const named = at.length < 260 ? at : at.startsWith('\\\\') ? `\\\\?\\UNC\\${at.slice(2)}` : `\\\\?\\${at}`
-    const done = await tools.run('icacls', [named, '/reset', '/L', '/Q'])
+    const done = await tools.run('icacls', [named(e), '/reset', '/L', '/Q'])
     if (done.code === null) throw new NoNativeAnswer('an entry inside it could not be reset: the program did not start or finish')
     if (done.code !== 0) throw new Error(INSIDE_NOT_MADE)
   }
   const again = await readInsideNative(dir, user, skip, shared, read)
   if (!again) throw new NoNativeAnswer('what is inside it could not be read back')
   if (again.error) throw new Error(INSIDE_NOT_READ)
-  return again.inside
+  return again.inside.map((e) => (taken.has(e.name) ? { ...e, takenOver: true } : e))
 }
 
 /** The user's SID from `whoami /user /fo csv /nh` (one line: the name, then
@@ -970,10 +1030,10 @@ export function nativeRightsArgs(d: string, userSid: string, sddl: string | null
  *     on the folder itself, never a link's target (/L). A program that
  *     answers with a failure refuses the folder; one that did not start or
  *     finish is no answer: the folder, and what is below it, says `unread`.
- *  3. With `opts.inside` only: what is inside each folder set, read and put
- *     right where it may be (settleInsideNative): a read or a program that
- *     gave no answer leaves that folder `unread`; what could not be read or
- *     put right refuses it.
+ *  3. With `opts.inside` only: what is directly inside each folder set,
+ *     read and put right where it may be (settleInsideNative): a read or a
+ *     program that gave no answer leaves that folder `unread`; what could
+ *     not be read or put right refuses it.
  *  4. One read of the folders set, matched by place, judged by the same
  *     verdicts as the script's read (ownerOnlyVerdict, then, with
  *     `opts.inside`, what is inside by ownerOnlyInsideVerdict), the
@@ -1078,7 +1138,7 @@ export async function secureFoldersNative(dirs: readonly string[], given: Native
     const d = dirs[i]
     if (!after) { results[i] = { dir: d, ok: false, detail: 'its rights could not be read back', unread: true }; return }
     const r = after[w]
-    let verdict: { ok: boolean; detail: string }
+    let verdict: OwnerOnlyVerdict
     if (refusedAfter.has(key(path.win32.dirname(d)))) verdict = { ok: false, detail: 'its parent was refused' }
     else if (r.error || r.missing || r.attributes === null || r.sddl === null) verdict = { ok: false, detail: 'its rights could not be read back' }
     else if ((r.attributes & FILE_ATTRIBUTE_REPARSE_POINT) !== 0) verdict = { ok: false, detail: 'a link' }

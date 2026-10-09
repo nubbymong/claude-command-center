@@ -1,30 +1,39 @@
-// What is already inside a folder the owner-only rule makes owner-only in
-// place gets the folder's rights, and the folder passes only when the read of
-// what is inside holds them -- for the account sign-in folders only, which
-// ask for it (secureSignInFoldersWindows, or the `inside` option); every
-// other caller gets the folders' own rights alone, and its call says so.
-// Read: every entry directly inside (the sign-in files among them) and any
-// entry deeper that does not hold them, each owned by this user, the
-// Administrators group or SYSTEM and giving rights to nobody but the user,
-// SYSTEM and the Administrators group. A folder whose own rights read back
-// owner-only is still refused when an entry inside keeps another account's
-// entry -- an entry the Administrators group owns with another group's
-// inherited read among them -- when an entry is another account's, when a
-// link to a file is inside, when a link to a folder has rights of its own for
-// another account, when a folder inside has a reparse point that is no link,
-// when what is inside could not be read or put right, and when the answer
-// does not say what is inside at all. A clean tree passes.
+// What is already directly inside a folder the owner-only rule makes
+// owner-only in place gets the folder's rights, and the folder passes only
+// when the read of those entries holds them -- for the account sign-in
+// folders only, which ask for it (secureSignInFoldersWindows, or the `inside`
+// option); every other caller gets the folders' own rights alone, and its
+// call says so. Read: every entry directly inside, never deeper. Each one
+// this user, the Administrators group or SYSTEM owns must give rights to
+// nobody but the user, SYSTEM and the Administrators group. The sign-in
+// files the app writes (.credentials.json, .claude.json, in any letter case)
+// are held to the whole rule: one that is a link, or that another account
+// owns, refuses the folder. Any other link (any reparse point, a cloud file's
+// placeholder among them) is judged by its own owner only: one this user,
+// the Administrators group or SYSTEM owns is passed over whatever its own
+// rights, and one another account owns refuses the folder. Any other entry
+// another account still owns refuses it too; one the read made this user's
+// is judged as any other and counted (takenOver). A folder
+// whose own rights read back owner-only is still refused when an entry
+// inside keeps another account's entry -- an entry the Administrators group
+// owns with another group's inherited read among them -- when what is inside
+// could not be read or put right, and when the answer does not say what is
+// inside at all. A clean folder passes.
 //
 // The script writes the folder's owner and its rights separately (owner
 // first), so that the rights alone are what Windows passes on to what is
-// inside; it never goes through a link, writes only an entry this user, the
-// Administrators group or SYSTEM owns, never resets a file with more than one
-// name, and leaves out the shared entries (the home mirror's links to the
-// user's own files) while each is such a file. The rule with Windows' own
-// programs (where Constrained Language Mode refuses the script) never uses
-// /restore, which needs a privilege only an elevated process has, and removes
-// every other account's own entry by SID. A script call that ran past its
-// time limit is no read, and that route is not tried after it.
+// inside; it lists only the entries directly inside the folder, never goes
+// through a link (a link's own owner is all it reads of one), makes another
+// account's entry this user's (the owner alone written; never a sign-in file
+// or a file with more than one name) before it puts it right, writes only an
+// entry this user, the Administrators group or SYSTEM owns, never resets a
+// file with more than one name, and leaves
+// out the shared entries (the home mirror's links to the user's own files)
+// while each is such a file. The rule with Windows' own programs (where
+// Constrained Language Mode refuses the script) never uses /restore, which
+// needs a privilege only an elevated process has, and removes every other
+// account's own entry by SID. A script call that ran past its time limit is
+// no read, and that route is not tried after it.
 //
 // Host-safe: no process starts and no file or folder is touched. The script's
 // answers are fakes in the shape it prints; the real round trip is
@@ -59,9 +68,8 @@ const entry = (name: string, owner: string, rules: unknown[], folderToo = false)
 const takenRights = () => [rule1(OWNER_ONLY_SYSTEM_SID, { inherited: true, flags: 0 }), rule1(USER, { inherited: true, flags: 0 })]
 /** What a file inside an owner-only folder reads once it takes the folder's rights. */
 const inherits = (name: string, owner = USER) => entry(name, owner, takenRights())
-/** A link to a folder, read by its own rights (taken from the folder above, as Windows passes them on). */
-const junction = (name: string, linkType: unknown = 'Junction', owner = USER, rules: unknown[] = [rule1(OWNER_ONLY_SYSTEM_SID, { inherited: true }), rule1(USER, { inherited: true })]) =>
-  ({ name, link: true, folder: true, linkType, owner, rules })
+/** A link (any reparse point), as the script prints one: a sign-in file's unread, any other's with its own owner. */
+const link = (name: string, folderToo = true, linkType: unknown = 'Junction', owner?: unknown) => (owner === undefined ? { name, link: true, folder: folderToo, linkType } : { name, link: true, folder: folderToo, linkType, owner })
 /** A file the Administrators group owns with another group's inherited read. */
 const keptGroupRead = (name: string) => entry(name, OWNER_ONLY_ADMINISTRATORS_SID, [
   rule1(OTHER_GROUP, { rights: READ_EXECUTE, inherited: true, flags: 0 }),
@@ -73,14 +81,14 @@ const DIRS = [HOME, `${HOME}\\.claude`, `${HOME}\\identity`]
 /** The account sign-in folders' call: what is inside read too. */
 const INSIDE: OwnerOnlyOptions = { inside: true }
 
-describe('a folder made owner-only in place passes only when what is inside it reads back owner-only too', () => {
-  it('a clean tree passes: every entry this user\'s, the Administrators group\'s or SYSTEM\'s, rights for the user, SYSTEM and the Administrators group only; a link to a folder judged by its own rights', async () => {
+describe('a folder made owner-only in place passes only when what is directly inside it reads back owner-only too', () => {
+  it('a clean folder passes: every entry this user\'s, the Administrators group\'s or SYSTEM\'s, rights for the user, SYSTEM and the Administrators group only', async () => {
     const out = await secureFoldersWindows(DIRS, answer([
-      folder(DIRS[0], [inherits('.claude.json'), junction('.ssh'), inherits('.gitconfig', OWNER_ONLY_ADMINISTRATORS_SID)]),
-      folder(DIRS[1], [inherits('.credentials.json'), entry('todos', OWNER_ONLY_ADMINISTRATORS_SID, [rule1(OWNER_ONLY_SYSTEM_SID, { inherited: true }), rule1(USER, { inherited: true }), rule1(OWNER_ONLY_ADMINISTRATORS_SID)], true), junction('projects', 'SymbolicLink'), inherits('cache.json', OWNER_ONLY_SYSTEM_SID)]),
+      folder(DIRS[0], [inherits('.claude.json'), inherits('.gitconfig', OWNER_ONLY_ADMINISTRATORS_SID)]),
+      folder(DIRS[1], [inherits('.credentials.json'), entry('todos', OWNER_ONLY_ADMINISTRATORS_SID, [rule1(OWNER_ONLY_SYSTEM_SID, { inherited: true }), rule1(USER, { inherited: true }), rule1(OWNER_ONLY_ADMINISTRATORS_SID)], true), inherits('cache.json', OWNER_ONLY_SYSTEM_SID)]),
       folder(DIRS[2], []),
     ]), undefined, INSIDE)
-    expect(out.map((r) => [r.dir, r.ok, r.detail])).toEqual(DIRS.map((d) => [d, true, 'owner-only']))
+    expect(out.map((r) => [r.dir, r.ok, r.detail, r.takenOver])).toEqual(DIRS.map((d) => [d, true, 'owner-only', undefined]))
   })
 
   it('an entry the Administrators group owns with another group\'s inherited read refuses its folder: never passed', async () => {
@@ -92,29 +100,88 @@ describe('a folder made owner-only in place passes only when what is inside it r
     expect(out.map((r) => [r.ok, r.detail])).toEqual(DIRS.map(() => [false, 'an entry inside it is not owner-only']))
   })
 
-  it('any one entry, at any depth, that is not owner-only refuses the folder; the folders beside it keep their own verdict', async () => {
+  it('any one entry this user, the Administrators group or SYSTEM owns that is not owner-only refuses the folder, a sign-in file or not; the folders beside it keep their own verdict', async () => {
     const cases: Array<[string, unknown, string]> = [
       ['another account\'s own entry', entry('a.json', USER, [rule1(USER, { inherited: true }), rule1(OTHER, { rights: READ_EXECUTE })]), 'an entry inside it is not owner-only'],
       ['everyone, inherited', entry('a.json', USER, [rule1(USER, { inherited: true }), rule1('S-1-1-0', { inherited: true })]), 'an entry inside it is not owner-only'],
       ['a deny entry', entry('a.json', USER, [rule1(USER, { inherited: true }), rule1(OTHER, { allow: false })]), 'an entry inside it is not owner-only'],
-      ['deeper, the Administrators group\'s with another group\'s inherited read', keptGroupRead('todos\\deep\\t1.json'), 'an entry inside it is not owner-only'],
+      ['a folder, the Administrators group\'s with another group\'s inherited read', { ...keptGroupRead('todos'), folder: true }, 'an entry inside it is not owner-only'],
       ['SYSTEM the owner, another group\'s read kept', entry('a.json', OWNER_ONLY_SYSTEM_SID, [rule1(USER, { inherited: true }), rule1(OTHER_GROUP, { rights: READ_EXECUTE })]), 'an entry inside it is not owner-only'],
-      ['another account the owner', entry('a.json', OTHER, [rule1(USER, { inherited: true })]), "an entry inside it is another account's"],
-      ['LOCAL SERVICE the owner', entry('a.json', 'S-1-5-19', [rule1(USER, { inherited: true })]), "an entry inside it is another account's"],
-      ['a link to a file', { name: '.credentials.json', link: true, folder: false, linkType: 'SymbolicLink' }, 'a link to a file is inside it'],
-      ['a junction with a read of its own for another group', junction('projects', 'Junction', USER, [rule1(USER, { inherited: true }), rule1(OTHER_GROUP, { rights: READ_EXECUTE })]), 'an entry inside it is not owner-only'],
-      ['a junction another account owns', junction('projects', 'Junction', OTHER), "an entry inside it is another account's"],
-      ['a folder with another kind of reparse point', junction('cloud', ''), 'a folder inside it is neither a plain folder nor a link'],
-      ['a link to a folder that does not say its kind', { name: 'projects', link: true, folder: true, owner: USER, rules: [] }, 'a folder inside it is neither a plain folder nor a link'],
-      ['a link to a folder whose own rights were not read', { name: 'projects', link: true, folder: true, linkType: 'Junction' }, 'what is inside it was not read'],
+      ['a sign-in file with another account\'s own entry', entry('.credentials.json', USER, [rule1(USER, { inherited: true }), rule1(OTHER, { rights: READ_EXECUTE })]), 'an entry inside it is not owner-only'],
       ['an entry that could not be read', { name: 'a.json', error: 'denied' }, 'what is inside it was not read'],
       ['an entry with no owner', entry('a.json', '', []), 'what is inside it was not read'],
+      ['an entry whose owner is not a word', entry('a.json', 42 as unknown as string, []), 'what is inside it was not read'],
       ['an entry whose rights could not be read', entry('a.json', USER, [{ sid: USER }]), 'what is inside it was not read'],
       ['an entry that does not say whether it is a link', { name: 'a.json', owner: USER, rules: [] }, 'what is inside it was not read'],
+      ['a link that does not say so plainly', { name: 'a.json', link: 'yes', folder: true, linkType: 'Junction' }, 'what is inside it was not read'],
     ]
     for (const [name, bad, detail] of cases) {
       const out = await secureFoldersWindows(DIRS, answer([folder(DIRS[0], [inherits('.claude.json')]), folder(DIRS[1], [inherits('.credentials.json'), bad]), folder(DIRS[2], [])]), undefined, INSIDE)
       expect(out.map((r) => [r.ok, r.detail]), name).toEqual([[true, 'owner-only'], [false, detail], [true, 'owner-only']])
+    }
+  })
+
+  it('a sign-in file, in any letter case, that is a link (any kind) or that another account owns refuses its folder', async () => {
+    const cases: Array<[string, unknown, string]> = [
+      ['a link to a file', link('.credentials.json', false, 'SymbolicLink'), 'a sign-in file inside it is a link'],
+      ['a link to a file, upper case', link('.CREDENTIALS.JSON', false, 'SymbolicLink'), 'a sign-in file inside it is a link'],
+      ['a junction by that name', link('.claude.json', true, 'Junction'), 'a sign-in file inside it is a link'],
+      ['another kind of reparse point (a cloud placeholder)', link('.Claude.Json', false, ''), 'a sign-in file inside it is a link'],
+      ['a link whose name the read could not give', { link: true, folder: false, linkType: 'SymbolicLink' }, 'a sign-in file inside it is a link'],
+      ['a link named as a path (never what the read gives)', link('sub\\.credentials.json', false, 'SymbolicLink'), 'a sign-in file inside it is a link'],
+      ['another account the owner', entry('.credentials.json', OTHER, [rule1(USER, { inherited: true })]), "a sign-in file inside it is another account's"],
+      ['LOCAL SERVICE the owner, mixed case', entry('.Claude.json', 'S-1-5-19', [rule1(USER, { inherited: true })]), "a sign-in file inside it is another account's"],
+      ['another account the owner, a name the read could not give', { link: false, folder: false, owner: OTHER, rules: [] }, "a sign-in file inside it is another account's"],
+    ]
+    for (const [name, bad, detail] of cases) {
+      const out = await secureFoldersWindows(DIRS, answer([folder(DIRS[0], [inherits('.claude.json')]), folder(DIRS[1], [inherits('.credentials.json'), bad]), folder(DIRS[2], [])]), undefined, INSIDE)
+      expect(out.map((r) => [r.ok, r.detail, r.takenOver]), name).toEqual([[true, 'owner-only', undefined], [false, detail, undefined], [true, 'owner-only', undefined]])
+    }
+  })
+
+  it('any other link this user, the Administrators group or SYSTEM owns is passed over whatever its own rights; one another account owns, or whose owner was not read, refuses the folder', async () => {
+    const out = await secureFoldersWindows(DIRS, answer([
+      // The shared folders' junctions, a symbolic link to a file, another kind of reparse point (a cloud placeholder).
+      folder(DIRS[0], [inherits('.claude.json'), link('.ssh', true, 'Junction', USER), link('tool.exe', false, 'SymbolicLink', OWNER_ONLY_ADMINISTRATORS_SID), link('cloud', true, '', USER), link('notes.txt', false, '', OWNER_ONLY_SYSTEM_SID)]),
+      // A link's own rights are not judged (it is never read through).
+      folder(DIRS[1], [inherits('.credentials.json'), { ...link('projects', true, 'Junction', USER), rules: [rule1('S-1-1-0')] }]),
+      folder(DIRS[2], []),
+    ]), undefined, INSIDE)
+    expect(out.map((r) => [r.ok, r.detail, r.takenOver])).toEqual(DIRS.map(() => [true, 'owner-only', undefined]))
+    const cases: Array<[string, unknown, string]> = [
+      ['a junction another account owns', link('todos', true, 'Junction', OTHER), "an entry inside it is another account's"],
+      ['a symbolic link to a file LOCAL SERVICE owns', link('tool.exe', false, 'SymbolicLink', 'S-1-5-19'), "an entry inside it is another account's"],
+      ['a cloud placeholder another account owns', link('cloud', false, '', OTHER), "an entry inside it is another account's"],
+      ['a link whose owner was not read', link('todos'), 'what is inside it was not read'],
+      ['a link whose owner is empty', link('todos', true, 'Junction', ''), 'what is inside it was not read'],
+      ['a link whose owner is not a word', link('todos', true, 'Junction', 42), 'what is inside it was not read'],
+    ]
+    for (const [name, bad, detail] of cases) {
+      const res = await secureFoldersWindows(DIRS, answer([folder(DIRS[0], [inherits('.claude.json')]), folder(DIRS[1], [inherits('.credentials.json'), bad]), folder(DIRS[2], [])]), undefined, INSIDE)
+      expect(res.map((r) => [r.ok, r.detail]), name).toEqual([[true, 'owner-only'], [false, detail], [true, 'owner-only']])
+    }
+  })
+
+  it('any other entry another account still owns refuses the folder, whatever its rights; one the read made this user\'s is judged as any other and counted', async () => {
+    for (const bad of [entry('theirs.json', OTHER, [rule1(USER, { inherited: true })]), entry('svc', 'S-1-5-19', [rule1('S-1-5-19')], true), entry('notes.json', OTHER, [])]) {
+      const res = await secureFoldersWindows(DIRS, answer([folder(DIRS[0], [inherits('.claude.json')]), folder(DIRS[1], [inherits('.credentials.json'), bad]), folder(DIRS[2], [])]), undefined, INSIDE)
+      expect(res.map((r) => [r.ok, r.detail, r.takenOver]), bad.name).toEqual([[true, 'owner-only', undefined], [false, "an entry inside it is another account's", undefined], [true, 'owner-only', undefined]])
+    }
+    const made = (name: string, folderToo = false) => ({ ...entry(name, USER, takenRights(), folderToo), takenOver: true })
+    const out = await secureFoldersWindows(DIRS, answer([
+      folder(DIRS[0], [inherits('.claude.json')]),
+      folder(DIRS[1], [inherits('.credentials.json'), made('theirs.json'), made('svc', true)]),
+      folder(DIRS[2], [made('notes.json')]),
+    ]), undefined, INSIDE)
+    expect(out.map((r) => [r.ok, r.detail, r.takenOver])).toEqual([[true, 'owner-only', undefined], [true, 'owner-only', 2], [true, 'owner-only', 1]])
+    // One made this user's that still lets another account in refuses the folder; nothing is counted.
+    const leaky = { ...entry('theirs.json', USER, [rule1(USER, { inherited: true }), rule1(OTHER, { rights: READ_EXECUTE })]), takenOver: true }
+    const refused = await secureFoldersWindows([DIRS[1]], answer([folder(DIRS[1], [made('a.json'), leaky])]), undefined, INSIDE)
+    expect(refused.map((r) => [r.ok, r.detail, r.takenOver])).toEqual([[false, 'an entry inside it is not owner-only', undefined]])
+    // Only a plain "made this user's" is counted.
+    for (const odd of ['true', 1, {}]) {
+      const res = await secureFoldersWindows([DIRS[1]], answer([folder(DIRS[1], [{ ...made('a.json'), takenOver: odd }])]), undefined, INSIDE)
+      expect(res.map((r) => [r.ok, r.takenOver]), JSON.stringify(odd)).toEqual([[true, undefined]])
     }
   })
 
@@ -160,9 +227,9 @@ describe('only the account sign-in folders ask for what is inside to be read', (
     }
   })
 
-  it('the sign-in folders\' call asks for it, names the shared entries (never a sign-in file, never one that cannot be named), and refuses that same answer', async () => {
+  it('the sign-in folders\' call asks for it, names the shared entries (never a sign-in file in any letter case, never one that cannot be named), and refuses that same answer', async () => {
     const envs: Array<Record<string, string>> = []
-    const shared = [`${HOME}\\.gitconfig`, `${HOME}\\.claude.json`, `${HOME}\\.CREDENTIALS.JSON`, 'relative\\.npmrc', `${HOME}\\.npmrc`]
+    const shared = [`${HOME}\\.gitconfig`, `${HOME}\\.claude.json`, `${HOME}\\.CREDENTIALS.JSON`, `${HOME}\\.Claude.Json`, 'relative\\.npmrc', `${HOME}\\.npmrc`]
     const out = await secureFoldersWindows([DIRS[0]], async (_s, env) => { envs.push(env); return JSON.stringify({ user: USER, folders: [OWN_ONLY] }) }, undefined, { inside: true, shared })
     expect(out.map((r) => [r.ok, r.detail])).toEqual([[false, 'what is inside it was not read']])
     expect(envs[0][OWNER_ONLY_INSIDE_ENV]).toBe('1')
@@ -195,6 +262,8 @@ describe('the verdict on what is inside (ownerOnlyInsideVerdict)', () => {
     expect(verdict({ inside: [] }, USER)).toEqual({ ok: true, detail: 'owner-only' })
     expect(verdict({ inside: [inherits('a', OWNER_ONLY_SYSTEM_SID)] }, USER)).toEqual({ ok: true, detail: 'owner-only' })
     expect(verdict({ inside: [keptGroupRead('a')] }, USER)).toEqual({ ok: false, detail: 'an entry inside it is not owner-only' })
+    expect(verdict({ inside: [entry('a', OTHER, [])] }, USER)).toEqual({ ok: false, detail: "an entry inside it is another account's" })
+    expect(verdict({ inside: [{ ...inherits('a'), takenOver: true }, { ...inherits('b'), takenOver: true }, link('c', true, 'Junction', USER)] }, USER)).toEqual({ ok: true, detail: 'owner-only', takenOver: 2 })
     expect(verdict({ inside: [inherits('a')] }, '')).toMatchObject({ ok: false })
     expect(verdict(undefined, USER)).toMatchObject({ ok: false })
     expect(verdict({}, USER)).toEqual({ ok: false, detail: 'what is inside it was not read' })
@@ -206,7 +275,7 @@ describe('the verdict on what is inside (ownerOnlyInsideVerdict)', () => {
   })
 })
 
-describe('the script: the owner and the rights written separately, then what is inside read and put right', () => {
+describe('the script: the owner and the rights written separately, then what is directly inside read and put right', () => {
   const lines = OWNER_ONLY_SCRIPT.split('\n')
   const at = (needle: string) => { const i = lines.findIndex((l) => l.includes(needle)); expect(i, needle).toBeGreaterThan(-1); return i }
 
@@ -226,22 +295,59 @@ describe('the script: the owner and the rights written separately, then what is 
     expect(gate).toBeLessThan(at('EnumerateFileSystemInfos()'))
   })
 
-  it('never goes through a link: a link to a file is noted and passed over unread; a link to a folder is read by its own rights, never put right or gone into', () => {
-    const walk = at('EnumerateFileSystemInfos()')
-    const fileLink = at('if ($isLink -and -not $isDir) {')
-    const firstRead = lines.findIndex((l, i) => i > walk && l.includes('GetAccessControl($p'))
-    expect(fileLink).toBeGreaterThan(walk)
-    expect(fileLink).toBeLessThan(firstRead)
-    expect(lines[fileLink]).toMatch(/continue \}$/)
-    expect(at('if ($asked.ContainsKey($p)) { continue }')).toBeLessThan(fileLink)
-    expect(OWNER_ONLY_SCRIPT).toContain("$odd = $isLink -and $kind -ne 'Junction' -and $kind -ne 'SymbolicLink'")
-    // Only a real folder this user, the Administrators group or SYSTEM owns is gone into.
-    expect(OWNER_ONLY_SCRIPT).toContain('if ($isDir -and -not $isLink -and $okOwner.ContainsKey($own)) { $todo.Push($p) }')
+  it('lists only the entries directly inside the folder, once: never a folder below it', () => {
+    expect(OWNER_ONLY_SCRIPT.split('EnumerateFileSystemInfos()').length - 1).toBe(1)
+    expect(OWNER_ONLY_SCRIPT).toContain('foreach ($e in @(([IO.DirectoryInfo]$root).EnumerateFileSystemInfos())) {')
+    expect(OWNER_ONLY_SCRIPT).not.toMatch(/\$todo|Stack\[|\.Push\(|-Recurse|AllDirectories/)
+  })
+
+  it('never goes through a link: a sign-in file that is one is noted unread; of any other only its own owner is read, and it is never changed', () => {
+    const list = at('EnumerateFileSystemInfos()')
+    const signInLink = at('if ($isLink -and $cred) { $inside.Add(')
+    const otherLink = at('        if ($isLink) {')
+    const firstRead = lines.findIndex((l, i) => i > list && l.includes('GetAccessControl($p'))
+    expect(at('if ($asked.ContainsKey($p)) { continue }')).toBeLessThan(signInLink)
+    expect(signInLink).toBeGreaterThan(list)
+    expect(signInLink).toBeLessThan(otherLink)
+    expect(lines[signInLink]).toMatch(/continue \}$/)
+    expect(lines[signInLink]).toContain('link = $true')
+    expect(lines[signInLink]).not.toMatch(/GetAccessControl/)
+    // The other link's block: the owner section alone, read by the link's name, the entry noted with that owner, then on.
+    const end = lines.findIndex((l, i) => i > otherLink && l === '        }')
+    const block = lines.slice(otherLink, end + 1).join('\n')
+    // Opened as a block of its own, never passed over before its owner is read.
+    expect(lines[otherLink]).toBe("        if ($isLink) {")
+    expect(firstRead).toBe(otherLink + 1)
+    expect(block).toContain('[IO.Directory]::GetAccessControl($p, $ownerOnly)')
+    expect(block).toContain('[IO.File]::GetAccessControl($p, $ownerOnly)')
+    expect(block).toContain('owner = $lo')
+    expect(block).toMatch(/\n {10}continue\n {8}\}$/)
+    expect(block).not.toMatch(/SetAccessControl|SetOwner|\$both|Rules|EnumerateFileSystemInfos/)
+    expect(OWNER_ONLY_SCRIPT).toContain("$ownerOnly = [Security.AccessControl.AccessControlSections]'Owner'")
+    // A sign-in file by its name in any letter case: looked up upper-cased, the invariant way, in a table of upper-cased names.
+    expect(OWNER_ONLY_SCRIPT).toContain('$cred = $signIn.ContainsKey($e.Name.ToUpperInvariant())')
+    expect(OWNER_ONLY_SCRIPT).toContain("$signIn = @{ '.CLAUDE.JSON' = $true; '.CREDENTIALS.JSON' = $true }")
     expect(OWNER_ONLY_SCRIPT).toContain(`$okOwner = @{ ($user.Value) = $true; '${OWNER_ONLY_SYSTEM_SID}' = $true; '${OWNER_ONLY_ADMINISTRATORS_SID}' = $true }`)
   })
 
-  it('puts right only an entry this user, the Administrators group or SYSTEM owns, never a link, never a file with more than one name: its own entries removed, inheritance on, the rights alone written, then read again', () => {
-    const fix = at('if (-not $ok -and -not $isLink -and $okOwner.ContainsKey($own) -and ($isDir -or (OneName $p))) {')
+  it('makes another account\'s entry this user\'s first, never a sign-in file or a file with more than one name: the owner alone written, then read again', () => {
+    const take = at('if (-not $okOwner.ContainsKey($own) -and -not $cred -and ($isDir -or (OneName $p))) {')
+    const fix = at('if (-not $ok -and $okOwner.ContainsKey($own) -and ($isDir -or $taken -or (OneName $p))) {')
+    expect(at('$own = $a.GetOwner($sidType).Value')).toBeLessThan(take)
+    expect(take).toBeLessThan(fix)
+    const body = lines.slice(take, fix).join('\n')
+    expect(body).toContain('$w.SetOwner($user)')
+    expect(body).toMatch(/\[IO\.Directory\]::SetAccessControl\(\$p, \$w\)/)
+    expect(body).toMatch(/\[IO\.File\]::SetAccessControl\(\$p, \$w\)/)
+    expect(body).not.toMatch(/AddAccessRule|RemoveAccessRule|SetAccessRuleProtection|\$rightsOnly/)
+    expect(body).toContain('$taken = $own -eq $user.Value')
+    // One that cannot be made this user's: passed on to the verdict (refused), never a failure of the whole read; one gone meanwhile is passed over.
+    expect(body).toContain('} catch { if (-not (There $p)) { continue } }')
+  })
+
+  it('puts right only an entry this user, the Administrators group or SYSTEM owns, never a file with more than one name: its own entries removed, inheritance on, the rights alone written, then read again', () => {
+    const fix = at('if (-not $ok -and $okOwner.ContainsKey($own) -and ($isDir -or $taken -or (OneName $p))) {')
+    expect(fix).toBeGreaterThan(at('        if ($isLink) {'))
     const body = lines.slice(fix, fix + 11).join('\n')
     expect(body).toMatch(/GetAccessControl\(\$p, \$rightsOnly\)/)
     expect(body).toMatch(/RemoveAccessRuleSpecific/)
@@ -256,18 +362,22 @@ describe('the script: the owner and the rights written separately, then what is 
     expect(OWNER_ONLY_SCRIPT).not.toMatch(/[A-Za-z]:\\|System32/)
   })
 
+  it('every entry read comes back with its owner and rights and whether it was made this user\'s; every one not owner-only counts towards the read\'s limit', () => {
+    expect(OWNER_ONLY_SCRIPT).toContain('$inside.Add([ordered]@{ name = $e.Name; link = $false; folder = $isDir; owner = $own; rules = (Rules $a); takenOver = $taken })')
+    expect(OWNER_ONLY_SCRIPT).toContain("if (-not $ok) { $refused++; if ($refused -ge 50) { throw 'too many' } }")
+    expect(OWNER_ONLY_SCRIPT).toContain("if (-not $okOwner.ContainsKey($lo)) { $refused++; if ($refused -ge 50) { throw 'too many' } }")
+  })
+
   it('leaves out a shared entry only while it is a file with more than one name, never a sign-in file', () => {
     const skip = at('$shared.ContainsKey($p)')
-    expect(lines[skip]).toContain("-not $signIn.ContainsKey($e.Name) -and [string]$e.LinkType -eq 'HardLink') { continue }")
+    expect(lines[skip]).toContain("-not $cred -and $shared.ContainsKey($p) -and [string]$e.LinkType -eq 'HardLink') { continue }")
     expect(lines[skip]).toContain('-not $isDir -and -not $isLink')
-    expect(OWNER_ONLY_SCRIPT).toContain("$signIn = @{ '.claude.json' = $true; '.credentials.json' = $true }")
     expect(OWNER_ONLY_SCRIPT).toContain(`foreach ($x in ($env:${OWNER_ONLY_SHARED_ENV} -split`)
   })
 
-  it('passes over an entry gone since it was listed (a folder below included); any other failure refuses the folder', () => {
+  it('passes over an entry gone since it was listed; any other failure refuses the folder', () => {
     expect(OWNER_ONLY_SCRIPT).toContain('function There([string]$x) { [IO.File]::Exists($x) -or [IO.Directory]::Exists($x) }')
-    expect(OWNER_ONLY_SCRIPT).toContain('try { $list = @(([IO.DirectoryInfo]$at).EnumerateFileSystemInfos()) } catch { if ($direct -or (There $at)) { throw }; continue }')
-    expect(OWNER_ONLY_SCRIPT.split('catch { if (There $p) { throw }; continue }').length - 1).toBe(2)
+    expect(OWNER_ONLY_SCRIPT.split('catch { if (There $p) { throw }; continue }').length - 1).toBe(3)
   })
 
   it('a failure inside is that folder\'s alone, in fixed words', () => {
@@ -285,29 +395,35 @@ describe('the rule with Windows\' own programs sets the rights without the resto
     expect(rule.nativeRightsArgs('C:\\p\\a', USER, null)).toEqual(['C:\\p\\a', '/inheritance:r', '/grant:r', `*${USER}:(OI)(CI)F`, '*S-1-5-18:(OI)(CI)F', '/L'])
   })
 
-  it('the read of what is inside uses only what Constrained Language Mode allows, never recursing on its own or going through a link', () => {
+  it('the read of what is inside uses only what Constrained Language Mode allows, lists only the entries directly inside, and never goes through a link (of one only its own SDDL is read)', () => {
     const s = rule.OWNER_ONLY_INSIDE_SCRIPT
-    expect(s).toMatch(/Get-ChildItem -LiteralPath \$at\.path -Force/)
+    expect(s.split('Get-ChildItem').length - 1).toBe(1)
+    expect(s).toContain('foreach ($e in @(Get-ChildItem -LiteralPath $root -Force)) {')
     expect(s).toMatch(/\(Get-Acl -LiteralPath \$p\)\.Sddl/)
     expect(s).toMatch(/\$attributes -band 0x400/)
-    expect(s).not.toMatch(/-Recurse|New-Object|\.GetAccessControl|::|pscustomobject|\[ordered\]|\/T\b/)
+    expect(s).not.toMatch(/-Recurse|New-Object|\.GetAccessControl|::|pscustomobject|\[ordered\]|\/T\b|\$todo/)
     // Names come back as numbers (ASCII whatever the language).
-    expect(s).toMatch(/name = \[int\[\]\]\[char\[\]\]\$rel/)
-    // Never into a link; a link to a file not read.
-    expect(s).toContain('if ($isDir -and -not $isLink -and $ownerOk) { $todo += @{ path = $p; rel = $rel } }')
-    expect(s).toContain('if ($isLink -and -not $isDir) { $r.inside += @{ name = [int[]][char[]]$rel; attributes = $attributes; sddl = $null; linkType = $kind }; continue }')
+    expect(s).toMatch(/name = \[int\[\]\]\[char\[\]\]\$e\.Name/)
+    // A sign-in file that is a link comes back unread, before anything is read; any other link with its own SDDL and its kind.
+    expect(s).toContain('$cred = [bool]$signIn[$e.Name.ToUpperInvariant()]')
+    expect(s).toContain("$signIn = @{ '.CLAUDE.JSON' = $true; '.CREDENTIALS.JSON' = $true }")
+    const signInLink = 'if ($isLink -and $cred) { $r.inside += @{ name = [int[]][char[]]$e.Name; attributes = $attributes; sddl = $null; linkType = [string]$e.LinkType }; continue }'
+    expect(s.indexOf(signInLink)).toBeGreaterThan(-1)
+    expect(s.indexOf(signInLink)).toBeLessThan(s.indexOf('Get-Acl -LiteralPath $p'))
+    expect(s).toContain('if ($isLink) { $x.linkType = [string]$e.LinkType }')
+    expect(s).not.toMatch(/if \(\$isLink -and -not \$cred\)/)
   })
 
-  it('that read takes this user as SDDL names it -- LA for the computer\'s built-in Administrator -- and SYSTEM and the Administrators group as owners, so it goes into their folders', () => {
+  it('that read decides nothing itself: every entry it reads comes back, and the verdict judges it', () => {
     const s = rule.OWNER_ONLY_INSIDE_SCRIPT
-    expect(s).toContain("if ($u -match '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-500$') { $uIds += 'LA' }")
-    expect(s).toContain("$ownerOk = ($uIds -contains $Matches[1]) -or $Matches[1] -eq 'BA' -or $Matches[1] -eq 'SY'")
-    expect(s).toContain("$clean = '\\(A;[A-Z]*;[0-9A-Za-z]*;;;(?:SY|BA|' + ($uIds -join '|') + ')\\)'")
+    expect(s).toContain('$x = @{ name = [int[]][char[]]$e.Name; attributes = $attributes; sddl = $sddl }')
+    expect(s).toContain('$r.inside += $x')
+    expect(s).not.toMatch(/\$clean|\$ownerOk|\$uIds|\$refused|too many/)
   })
 
-  it('that read passes over a folder below gone since it was listed, and leaves out a shared entry only while it is a file with more than one name', () => {
+  it('that read passes over an entry gone since it was listed, and leaves out a shared entry only while it is a file with more than one name', () => {
     const s = rule.OWNER_ONLY_INSIDE_SCRIPT
-    expect(s).toContain('try { $items = @(Get-ChildItem -LiteralPath $at.path -Force) } catch { if ($at.rel -and -not (Test-Path -LiteralPath $at.path)) { continue }; throw }')
-    expect(s).toContain("if (-not $isDir -and -not $isLink -and $shared[$p] -and -not $signIn[$e.Name] -and [string]$e.LinkType -eq 'HardLink') { continue }")
+    expect(s).toContain('try { $sddl = [string](Get-Acl -LiteralPath $p).Sddl } catch { if (Test-Path -LiteralPath $p) { throw } else { continue } }')
+    expect(s).toContain("if (-not $isDir -and -not $isLink -and -not $cred -and $shared[$p] -and [string]$e.LinkType -eq 'HardLink') { continue }")
   })
 })

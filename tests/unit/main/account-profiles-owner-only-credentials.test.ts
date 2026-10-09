@@ -547,6 +547,33 @@ describe('a sign-in is written only into a folder read back as owner-only', () =
     expect(fs.readFileSync(path.join(claudeDir, '.credentials.json'), 'utf8')).toBe(NEW_CREDENTIAL)
   })
 
+  it('a folder that passes once entries directly inside it that another account owned were made this user\'s is used, and one line says how many, in fixed words', async () => {
+    const calls: string[][] = []
+    _setCredentialFolderRuleForTest(async (dirs) => {
+      calls.push([...dirs])
+      return madeAndPassed(dirs).map((r) => (r.dir === claudeDir ? { ...r, takenOver: 2 } : r.dir === identityDir ? { ...r, takenOver: 1 } : r))
+    })
+    await checkProfileCredentialFolders(ID)
+    expect(calls).toEqual([[home, claudeDir, identityDir]])
+    expect(refusals()).toEqual([])
+    expect(credentialFoldersVerdict([home, claudeDir, identityDir])).toEqual({ ok: true })
+    const made = warned.filter((w) => /another account's and/.test(w))
+    expect(made).toEqual([
+      `[profiles] ${ID}: 2 entries directly inside the .claude folder were another account's and are now this Windows user's, owner-only (none of them a sign-in file)`,
+      `[profiles] ${ID}: 1 entry directly inside the identity folder was another account's and is now this Windows user's, owner-only (none of them a sign-in file)`,
+    ])
+    for (const w of made) expect(w).not.toContain(base)
+    copyCredentialFile(src, path.join(claudeDir, '.credentials.json'))
+    expect(fs.readFileSync(path.join(claudeDir, '.credentials.json'), 'utf8')).toBe(NEW_CREDENTIAL)
+    // A count that is not a whole number above none says nothing.
+    warned.length = 0
+    _setCredentialFolderRuleForTest(async (dirs) => madeAndPassed(dirs).map((r) => ({ ...r, takenOver: r.dir === home ? 0 : r.dir === claudeDir ? 1.5 : '3' as unknown as number })))
+    fs.renameSync(claudeDir, `${claudeDir}.aside2`)
+    fs.mkdirSync(claudeDir)
+    await checkProfileCredentialFolders(ID)
+    expect(warned.filter((w) => /another account's and/.test(w))).toEqual([])
+  })
+
   it('a refusal is logged in fixed words: a reason that names a path or a user is not repeated', async () => {
     useRule((dir) => dir !== claudeDir && !dir.startsWith(`${claudeDir}${STAGED}`), null, "Access to the path 'C:\\Users\\someone\\x' is denied.")
     await checkProfileCredentialFolders(ID)
