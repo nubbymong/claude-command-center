@@ -4,6 +4,7 @@ import {
   CROSS_ACCOUNT_SYNTHESIS_ENV,
   buildCrossAccountPrompt,
   buildCrossAccountSpawnArgs,
+  parseCrossAccountNarrative,
   plainCrossAccountNarrative,
   promptDataMark,
   promptDataText,
@@ -274,6 +275,86 @@ describe('a written analysis as plain text', () => {
     expect(n.accounts[0].key).toBe('A1')
     const all = [...n.summary!.improvements!, ...n.accounts[0].highlights!, ...n.crossAccount!.observations!].join(' ')
     expect(all).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2028\u2029]/)
+  })
+})
+
+describe("the written analysis is kept as plain text, whoever writes it", () => {
+  /** Every character a written analysis may not keep: C0/C1 controls (ESC, BEL), bidi, line separators. */
+  const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069\u2028\u2029]/
+  const OSC8 = '\u001b]8;;https://example.invalid\u0007click\u001b]8;;\u0007'
+  /** A reply in the shape the headless CLI writes: the narrative as the envelope's `result`. */
+  const envelope = (narrative: unknown) => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(narrative) })
+  const allText = (n: ReturnType<typeof parseCrossAccountNarrative>) => [
+    ...(n!.summary?.improvements ?? []), ...(n!.summary?.regressions ?? []), ...(n!.summary?.suggestions ?? []),
+    ...(n!.crossAccount?.observations ?? []), ...(n!.crossAccount?.recommendations ?? []),
+    ...n!.accounts.flatMap((a) => [a.key, ...(a.highlights ?? [])]),
+  ]
+
+  it('bullets and keys holding RLO, ESC, BEL, a terminal link and a line separator come back with each one replaced', () => {
+    const n = parseCrossAccountNarrative(envelope({
+      summary: { improvements: ['gain \u202eevil\u202c here'], regressions: ['\u001b[31mred\u001b[0m text'], suggestions: ['ring \u0007 bell'] },
+      accounts: [{ key: 'A1\u202e', highlights: [`see ${OSC8} now`] }, { key: '\u2066A2\u2069', highlights: ['line\u2028break'] }],
+      crossAccount: { observations: ['one\u2029two'], recommendations: ['\u009b31m c1 csi'] },
+    }))
+    expect(n).not.toBeNull()
+    for (const t of allText(n)) expect(t, JSON.stringify(t)).not.toMatch(UNSAFE)
+    expect(n!.accounts.map((a) => a.key)).toEqual(['A1', 'A2'])
+    expect(n!.summary!.improvements![0]).toContain('evil')
+    expect(n!.accounts[0].highlights![0]).toContain('click')
+  })
+
+  it('stays within the caps after the characters are replaced: at most six bullets, each at most 400 characters, a cut one ending in an ellipsis', () => {
+    const long = '\u001b[1m' + 'w'.repeat(600)
+    const n = parseCrossAccountNarrative(envelope({
+      accounts: [{ key: 'K'.repeat(60) + '\u202e', highlights: Array.from({ length: 9 }, () => long) }],
+    }))
+    const hl = n!.accounts[0].highlights!
+    expect(hl).toHaveLength(6)
+    for (const b of hl) {
+      expect(b.length).toBeLessThanOrEqual(400)
+      expect(b.endsWith('…')).toBe(true)
+      expect(b).not.toMatch(UNSAFE)
+    }
+    expect(n!.accounts[0].key.length).toBeLessThanOrEqual(40)
+    expect(n!.accounts[0].key).not.toMatch(UNSAFE)
+  })
+
+  it('a cut never leaves half of a character behind', () => {
+    const n = parseCrossAccountNarrative(envelope({ accounts: [{ key: 'A1', highlights: ['a'.repeat(398) + '\ud83d\ude00' + 'b'.repeat(20)] }] }))
+    const b = n!.accounts[0].highlights![0]
+    expect(b).toBe('a'.repeat(398) + '…')
+    expect(b).not.toMatch(/[\ud800-\udfff]/)
+  })
+
+  it('an account key is cut on whole characters too, and the plain form of the result is itself', () => {
+    const n = parseCrossAccountNarrative(envelope({ accounts: [{ key: 'K'.repeat(39) + '😀' + 'tail', highlights: ['kept'] }] }))
+    expect(n!.accounts[0].key).toBe('K'.repeat(39) + '😀')
+    expect(plainCrossAccountNarrative(n!)).toEqual(n)
+  })
+
+  it('a bullet or a key that is nothing but such characters is left out', () => {
+    const n = parseCrossAccountNarrative(envelope({
+      accounts: [{ key: '\u202e\u200b', highlights: ['ghost'] }, { key: 'A2', highlights: ['\u001b\u0007\u202e', 'kept'] }],
+    }))
+    expect(n!.accounts).toEqual([{ key: 'A2', highlights: ['kept'] }])
+  })
+
+  it('a plain narrative comes back exactly as written', () => {
+    const plain = {
+      summary: { improvements: ['A1 shipped 3x the sessions'], suggestions: ['Move CI work to A2 — it idles'] },
+      accounts: [{ key: 'A1', highlights: ['Carries the volume'] }, { key: 'A2', highlights: ['Cleaner outcomes \ud83d\ude00'] }],
+      crossAccount: { observations: ['A1 is 3x A2 by volume'], recommendations: ['Consolidate on A1'] },
+    }
+    const n = parseCrossAccountNarrative(envelope(plain))
+    expect(n).toEqual(plain)
+  })
+
+  it('the plain-text rule for a narrative is the parse rule: applying it again changes nothing', () => {
+    const n = parseCrossAccountNarrative(envelope({
+      summary: { improvements: ['x \u202eevil', 'y'.repeat(700)] },
+      accounts: [{ key: 'A1\u0007', highlights: ['ok'] }],
+    }))
+    expect(plainCrossAccountNarrative(n!)).toEqual(n)
   })
 })
 

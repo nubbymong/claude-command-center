@@ -626,17 +626,36 @@ export interface CrossAccountNarrative {
   crossAccount?: { observations?: string[]; recommendations?: string[] }
 }
 
+/** The longest account key a narrative keeps (the keys sent are A1, A2, ...). */
+const MAX_KEY_CHARS = 40
+
+/** One bullet as plain prose (shared/safe-text: controls, bidi and other
+ *  spoofing characters replaced), then cut to MAX_BULLET_CHARS. The cut is
+ *  made on the cleaned text and never splits a character in two. */
+function plainBullet(v: string): string {
+  const t = stripSpoofableText(v, v.length).trim()
+  if (t.length <= MAX_BULLET_CHARS) return t
+  // Truncation gets an ellipsis: without one, a cut bullet renders as a
+  // sentence fragment presented to the user as a finding.
+  let cut = t.slice(0, MAX_BULLET_CHARS - 1)
+  if (/[\ud800-\udbff]$/.test(cut)) cut = cut.slice(0, -1)
+  return cut + '…'
+}
+
+/** An account key as plain text, at most MAX_KEY_CHARS, cut on whole
+ *  characters (stripSpoofableText's cut) so it never splits one in two. */
+function plainKey(v: string): string {
+  const t = stripSpoofableText(v, v.length).trim()
+  return stripSpoofableText(t, MAX_KEY_CHARS).trim()
+}
+
 function bullets(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined
   const out = value
-    .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+    .filter((v): v is string => typeof v === 'string')
+    .map(plainBullet)
+    .filter((t) => t.length > 0)
     .slice(0, MAX_BULLETS)
-    // Truncation gets an ellipsis: without one, a cut bullet renders as a
-    // sentence fragment presented to the user as a finding.
-    .map((v) => {
-      const t = v.trim()
-      return t.length > MAX_BULLET_CHARS ? t.slice(0, MAX_BULLET_CHARS - 1) + '…' : t
-    })
   return out.length > 0 ? out : undefined
 }
 
@@ -657,6 +676,8 @@ function objectFromText(text: string): Record<string, unknown> | null {
  * direct object, the `{result:"<json>"}` envelope, and prose wrapped around the
  * JSON. Returns null when nothing usable comes back — the caller then falls back
  * to a deterministic roll-up rather than surfacing a half-parsed narrative.
+ * Every bullet and key comes back as plain text (plainBullet, plainKey),
+ * whichever assistant wrote it.
  */
 export function parseCrossAccountNarrative(stdout: string): CrossAccountNarrative | null {
   const trimmed = stdout.trim()
@@ -676,8 +697,9 @@ export function parseCrossAccountNarrative(stdout: string): CrossAccountNarrativ
   const accountsRaw = Array.isArray(raw.accounts) ? raw.accounts : null
   const accounts = (accountsRaw ?? [])
     .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object')
-    .filter((a) => typeof a.key === 'string' && (a.key as string).trim().length > 0)
-    .map((a) => ({ key: (a.key as string).trim(), highlights: bullets(a.highlights) }))
+    .filter((a) => typeof a.key === 'string')
+    .map((a) => ({ key: plainKey(a.key as string), highlights: bullets(a.highlights) }))
+    .filter((a) => a.key.length > 0)
 
   const summaryRaw = (raw.summary ?? {}) as Record<string, unknown>
   const summary = {
@@ -706,12 +728,12 @@ export function parseCrossAccountNarrative(stdout: string): CrossAccountNarrativ
 }
 
 /** A narrative with every bullet as plain prose: controls, bidi and other
- *  spoofing characters replaced (shared/safe-text). The written analysis a
- *  Codex account writes is kept this way. */
+ *  spoofing characters replaced (shared/safe-text), by the one rule the
+ *  parse already keeps (plainBullet, plainKey). */
 export function plainCrossAccountNarrative(n: CrossAccountNarrative): CrossAccountNarrative {
-  const plain = (list?: string[]): string[] | undefined => list?.map((b) => stripSpoofableText(b, MAX_BULLET_CHARS))
+  const plain = (list?: string[]): string[] | undefined => list?.map(plainBullet)
   return {
-    accounts: n.accounts.map((a) => ({ key: stripSpoofableText(a.key, 40), highlights: plain(a.highlights) })),
+    accounts: n.accounts.map((a) => ({ key: plainKey(a.key), highlights: plain(a.highlights) })),
     ...(n.summary ? { summary: { improvements: plain(n.summary.improvements), regressions: plain(n.summary.regressions), suggestions: plain(n.summary.suggestions) } } : {}),
     ...(n.crossAccount ? { crossAccount: { observations: plain(n.crossAccount.observations), recommendations: plain(n.crossAccount.recommendations) } } : {})
   }

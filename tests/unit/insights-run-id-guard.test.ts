@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 
 const h = vi.hoisted(() => ({ resourcesDir: '' }))
 vi.mock('../../src/main/ipc/setup-handlers', () => ({
@@ -9,7 +9,7 @@ vi.mock('../../src/main/ipc/setup-handlers', () => ({
   registerSetupHandlers: () => {}
 }))
 
-import { getInsightsKpis, getInsightsReport, isValidRunId } from '../../src/main/insights-runner'
+import { INSIGHTS_KPIS_MAX_BYTES, getInsightsKpis, getInsightsReport, isValidRunId, loadPreviousKpis } from '../../src/main/insights-runner'
 
 // Run ids are renderer-supplied and used as a PATH COMPONENT under the insights
 // directory. A charset allowlist is used rather than a shape-specific regex
@@ -81,5 +81,59 @@ describe('the readers refuse a traversing id', () => {
       expect(getInsightsReport(bad), bad).toBeNull()
       expect(getInsightsKpis(bad), bad).toBeNull()
     }
+  })
+})
+
+// The previous-run comparison reads only a run inside the insights folder:
+// a catalogue entry whose id is not a run's own name is never the previous
+// run, and it never hides a good older one.
+describe('the previous-run comparison reads only a run inside the insights folder', () => {
+  let root = ''
+  let insights = ''
+  const GOOD = '2026-08-03-123814-975001'
+  const CURRENT = '2026-08-10-090000-000001'
+  const GOOD_KPIS = '{"from":"the good older run"}'
+  /** The catalogue: the good older run, `entries` after it, then the run in flight. */
+  function catalogue(...entries: Array<{ id: unknown; status?: string }>): void {
+    const runs = [
+      { id: GOOD, timestamp: 1, status: 'complete' },
+      ...entries.map((e, i) => ({ timestamp: 2 + i, status: 'complete', ...e })),
+      { id: CURRENT, timestamp: 99, status: 'running' }
+    ]
+    writeFileSync(join(insights, 'catalogue.json'), JSON.stringify({ runs }))
+  }
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'runid-prev-'))
+    h.resourcesDir = join(root, 'resources')
+    insights = join(h.resourcesDir, 'insights')
+    mkdirSync(join(insights, GOOD), { recursive: true })
+    writeFileSync(join(insights, GOOD, 'kpis.json'), GOOD_KPIS)
+  })
+  afterEach(() => {
+    try { rmSync(root, { recursive: true, force: true }) } catch { /* ignore */ }
+  })
+
+  it('a valid id: its own kpis.json', () => {
+    catalogue()
+    expect(loadPreviousKpis(CURRENT)).toBe(GOOD_KPIS)
+  })
+
+  it('a newer entry whose id is not a run name is skipped, and the good older run is still found', () => {
+    const bad = ['../outside', '..\\outside', 'a/b', '.', join(root, 'abs-outside'), 'x'.repeat(129), '', 42, null]
+    for (const id of bad) {
+      // A kpis.json where joining the entry's id under insights would land (where a folder can be made there).
+      if (typeof id === 'string' && id !== '') {
+        const at = join(insights, id, 'kpis.json')
+        try { mkdirSync(dirname(at), { recursive: true }); writeFileSync(at, `{"from":${JSON.stringify(String(id))}}`) } catch { /* not a path this platform can make */ }
+      }
+      catalogue({ id })
+      expect(loadPreviousKpis(CURRENT), String(id)).toBe(GOOD_KPIS)
+    }
+  })
+
+  it("a previous run's kpis.json past its size limit is not read into the comparison", () => {
+    catalogue()
+    writeFileSync(join(insights, GOOD, 'kpis.json'), JSON.stringify({ pad: 'y'.repeat(INSIGHTS_KPIS_MAX_BYTES) }))
+    expect(loadPreviousKpis(CURRENT)).toBeNull()
   })
 })
