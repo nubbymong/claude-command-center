@@ -697,7 +697,8 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
       const cmd = { file: 'C:\\x\\codex.exe', args: ['login'], verbatim: false, cwd: 'C:\\x' }
       const { deps } = fakeDeps()
       const phases = CODEX_PROCESS_TABLE_TIMEOUT_MS + CODEX_PRIME_TABLE_TIMEOUT_MS + CODEX_TASKKILL_TIMEOUT_MS
-      const late: CodexRunDeps = { ...deps, killTree: () => new Promise<void>((res) => { setTimeout(res, phases + 500) }) }
+      // The kill lands (the root exits) as it reports.
+      const late: CodexRunDeps = { ...deps, killTree: (c) => new Promise<void>((res) => { setTimeout(() => { c.emit('exit', null, 'SIGKILL'); res() }, phases + 500) }) }
       const ac = new AbortController()
       const p = runCodexCli(cmd, { env: {}, timeoutMs: 60_000, signal: ac.signal }, late)
       ac.abort()
@@ -715,7 +716,7 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
     vi.useFakeTimers()
     try {
       const cmd = { file: 'C:/x/codex.cmd', args: ['login'], verbatim: false, cwd: 'C:/x' }
-      const { deps } = fakeDeps()
+      const { deps, spawned } = fakeDeps()
       // A root that keeps running until killed (the fake taskkill ends nothing).
       const spawnRunning: CodexRunDeps['spawn'] = (f, a, o) => Object.assign(deps.spawn(f, a, o), { exitCode: null, signalCode: null })
       const { calls, spawn } = taskkills()
@@ -745,13 +746,17 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
       expect(calls).toHaveLength(1)
       // The table answered long after its read began: the wrapper line only.
       expect(named(calls[0])).toEqual(new Set([4242, 4243, 4244]))
+      // The kill has finished; the run is held until its root has exited too.
+      expect(killDone).toBe(false)
+      spawned[0].child.emit('exit', 1, null)
+      await vi.advanceTimersByTimeAsync(0)
       expect(killDone).toBe(true)
     } finally { vi.useRealTimers() }
   })
 
   // Round 2 (A3): a caller holding a realm or a lease for the run lets go only
   // once the kill has finished, not when the run settles at its bound.
-  it('a run that settles at its bound with its kill still under way carries killSettled, which resolves once the kill finishes, or after CODEX_KILL_WORST_MS; a kill finished in time, or a run not stopped, carries none', async () => {
+  it('a run that settles at its bound with its stop still under way carries killSettled, which resolves once the kill has finished and the root has exited, or after CODEX_KILL_WORST_MS; a stop ended in time, or a run not stopped, carries none', async () => {
     vi.useFakeTimers()
     try {
       const cmd = { file: 'C:\\x\\codex.exe', args: ['login'], verbatim: false, cwd: 'C:\\x' }
@@ -771,6 +776,10 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
       expect(done).toBe(false)
       finishKill()
       await vi.advanceTimersByTimeAsync(0)
+      // The kill has finished; the root still runs, so the run is still held.
+      expect(done).toBe(false)
+      spawned[0].child.emit('exit', null, 'SIGKILL')
+      await vi.advanceTimersByTimeAsync(0)
       expect(done).toBe(true)
       // A kill that never finishes: bounded by its own worst case, from the stop.
       const stuck: CodexRunDeps = { ...deps, killTree: () => new Promise<void>(() => {}) }
@@ -784,13 +793,20 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
       expect(done2).toBe(false)
       await vi.advanceTimersByTimeAsync(20)
       expect(done2).toBe(true)
-      // A kill that rejects has finished too; with the root still running, the run settles at the bound.
+      // A kill that rejects has finished too; with the root still running, the
+      // run settles at the bound, held until the root exits.
       const rejecting: CodexRunDeps = { ...deps, killTree: () => Promise.reject(new Error('taskkill missing')) }
       const ac3 = new AbortController()
       const t = runCodexCli(cmd, { env: {}, timeoutMs: 60_000, signal: ac3.signal }, rejecting)
       ac3.abort()
       await vi.advanceTimersByTimeAsync(CODEX_KILL_SETTLE_MS + 10)
-      expect('killSettled' in (await t)).toBe(false)
+      let done3 = false
+      void (await t).killSettled!.then(() => { done3 = true })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(done3).toBe(false)
+      spawned[2].child.emit('exit', 1, null)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(done3).toBe(true)
       // The kill landed in time (the fake root exits): nothing is still under way.
       const fast = runCodexCli(cmd, { env: {}, timeoutMs: 50 }, deps)
       await vi.advanceTimersByTimeAsync(60)
@@ -1280,7 +1296,7 @@ describe('the Codex reviewer (WP2 5a)', () => {
     const p = createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run(input())
     const s = spawned[0]
     expect(s.file).toBe('C:\\Tools\\codex.exe')
-    expect(s.args).toEqual(['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', 'gpt-5.5', '-'])
+    expect(s.args).toEqual(['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only', '-m', 'gpt-5.5', '-'])
     expect(s.opts).toMatchObject({ cwd: 'D:\\proj', shell: false, windowsVerbatimArguments: false })
     expect(s.child.stdin!.end).toHaveBeenCalledWith(input().prompt)
     expect(s.args.join(' ')).not.toContain('OPENAI_API_KEY')
@@ -1308,9 +1324,30 @@ describe('the Codex reviewer (WP2 5a)', () => {
     void createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run(input({ executable: 'C:\\npm\\codex.cmd' }))
     const s = spawned[0]
     expect(s.file).toBe('C:\\Windows\\System32\\cmd.exe')
-    expect(s.args).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\npm\\codex.cmd" exec --json --ephemeral --skip-git-repo-check --sandbox read-only -m gpt-5.5 -"'])
+    expect(s.args).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\npm\\codex.cmd" exec --json --ephemeral --skip-git-repo-check --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.5 -"'])
     expect(s.opts).toMatchObject({ cwd: 'D:\\proj', windowsVerbatimArguments: true })
     expect(s.child.stdin!.end).toHaveBeenCalledWith(input().prompt)
+  })
+
+  it('the review runs with no user config and no rules files', () => {
+    // As for the analysis run, the account's settings file and rules files
+    // are left out: on the direct route, through a Windows shim and on POSIX
+    // alike, both flags are on the command line, before the prompt marker.
+    const { deps, spawned } = fakeDeps()
+    void createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run(input())
+    void createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run(input({ executable: 'C:\\npm\\codex.cmd', purpose: 'review' }))
+    void createCodexReviewOperations({ platform: 'linux', runDeps: () => deps }).run(input({ executable: '/usr/bin/codex', cwd: '/proj', env: { CODEX_HOME: '/h' } }))
+    expect(spawned).toHaveLength(3)
+    for (const s of [spawned[0], spawned[2]]) {
+      for (const flag of ['--ignore-user-config', '--ignore-rules']) {
+        expect(s.args, flag).toContain(flag)
+        expect(s.args.indexOf(flag), flag).toBeLessThan(s.args.indexOf('-'))
+      }
+    }
+    expect(spawned[1].args[4]).toContain(' --ignore-user-config --ignore-rules ')
+    // The same two flags the analysis run passes.
+    const analysis = codexCommandLine('/usr/bin/codex', 'analysis', 'linux', {})
+    expect('refused' in analysis ? [] : analysis.args).toEqual(expect.arrayContaining(['--ignore-user-config', '--ignore-rules']))
   })
 
   it('says why a review did not come back: not started, cancelled, timed out, failed (redacted), no reply; a long reply keeps its tail', async () => {
@@ -1357,14 +1394,20 @@ describe('the Codex reviewer (WP2 5a)', () => {
     expect(r5.ok && r5.text.length).toBeLessThan(REVIEW_MAX_TEXT + 100)
   })
 
-  it('at its deadline the review is killed and says it timed out', async () => {
+  it('at its deadline the review is killed with its whole process tree and says it timed out', async () => {
     vi.useFakeTimers()
     try {
-      const { deps, killed } = fakeDeps()
-      const p = createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run(input({ timeoutMs: 50 }))
-      await vi.advanceTimersByTimeAsync(60)
-      expect(killed).toHaveLength(1)
-      expect(await p).toMatchObject({ ok: false, code: 'timed-out' })
+      for (const purpose of [undefined, 'review'] as const) {
+        const { deps, killed } = fakeDeps()
+        // The kill is asked to end everything below the review's root, not its chain alone.
+        const scopes: unknown[] = []
+        const recording: CodexRunDeps = { ...deps, killTree: (c, o) => { scopes.push(o?.scope); return deps.killTree(c, o) } }
+        const p = createCodexReviewOperations({ platform: 'win32', runDeps: () => recording }).run(input({ timeoutMs: 50, ...(purpose ? { purpose } : {}) }))
+        await vi.advanceTimersByTimeAsync(60)
+        expect(killed, String(purpose)).toHaveLength(1)
+        expect(scopes, String(purpose)).toEqual(['tree'])
+        expect(await p, String(purpose)).toMatchObject({ ok: false, code: 'timed-out' })
+      }
     } finally { vi.useRealTimers() }
   })
 
@@ -1374,7 +1417,8 @@ describe('the Codex reviewer (WP2 5a)', () => {
       const { deps } = fakeDeps()
       for (const how of ['cancel', 'deadline'] as const) {
         let finishKill!: () => void
-        const slow: CodexRunDeps = { ...deps, killTree: () => new Promise<void>((res) => { finishKill = res }) }
+        // The kill lands (the root exits) when it finishes.
+        const slow: CodexRunDeps = { ...deps, killTree: (c) => new Promise<void>((res) => { finishKill = () => { c.emit('exit', null, 'SIGKILL'); res() } }) }
         const ac = new AbortController()
         const p = createCodexReviewOperations({ platform: 'win32', runDeps: () => slow }).run(input({ signal: ac.signal, timeoutMs: 1000 }) as never)
         if (how === 'cancel') ac.abort()
@@ -1513,9 +1557,16 @@ describe('the Codex reviewer: ADR-009 round 1, environment and reply (WP2 5a)', 
   it('only absolute PATH entries reach the reviewer, under any spelling of PATH on Windows', () => {
     const { deps, spawned } = fakeDeps()
     void createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run({ ...base, env: { SystemRoot: 'C:\\Windows', Path: 'C:\\Windows;.;node_modules\\.bin;;D:\\tools;"C:\\Program Files\\x";\\\\srv\\share\\bin;\\rooted;bin' } })
-    expect((spawned[0].opts.env as Record<string, string>).Path).toBe('C:\\Windows;D:\\tools;"C:\\Program Files\\x";\\\\srv\\share\\bin')
+    expect((spawned[0].opts.env as Record<string, string>).Path).toBe('C:\\Windows;D:\\tools;C:\\Program Files\\x;\\\\srv\\share\\bin')
     void createCodexReviewOperations({ platform: 'linux', runDeps: () => deps }).run({ ...base, executable: '/usr/bin/codex', cwd: '/proj', env: { PATH: '/usr/bin::bin:./x:/opt/b:' } })
     expect((spawned[1].opts.env as Record<string, string>).PATH).toBe('/usr/bin:/opt/b')
+  })
+
+  it('every PATH filter applies the same folder rule: a drive or a share reaches the reviewer, a device path or a bare server name never does', () => {
+    const { deps, spawned } = fakeDeps()
+    const entries = ['C:\\Windows', '\\\\?\\C:\\dev', '\\\\.\\C:\\dev', '//?/C:/dev', '//./pipe/x', '"\\\\?\\C:\\quoted"', '\\\\srvonly', 'D:/tools', '\\\\srv\\share\\bin', '//srv/share']
+    void createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run({ ...base, env: { SystemRoot: 'C:\\Windows', Path: entries.join(';') } })
+    expect((spawned[0].opts.env as Record<string, string>).Path).toBe('C:\\Windows;D:/tools;\\\\srv\\share\\bin;//srv/share')
   })
 
   it('a credential the review quotes is redacted; ordinary review text (code, hashes, "token:" in code) is not', async () => {
@@ -2067,7 +2118,7 @@ describe('the text-only analysis run (P3.9 round 1)', () => {
     '--disable', 'code_mode', '--disable', 'code_mode_host',
     '-c', 'web_search=disabled', '-c', 'project_doc_max_bytes=0', '-c', 'project_root_markers=[]', '-',
   ]
-  const REVIEW = ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', 'gpt-5.5', '-']
+  const REVIEW = ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only', '-m', 'gpt-5.5', '-']
   const input = (over: Record<string, unknown> = {}) => ({
     executable: 'C:\\Tools\\codex.exe', cwd: 'D:\\runs\\ccc-sentinel-codex-x', prompt: 'Analyse these notes.', timeoutMs: 1000,
     env: { PATH: 'C:\\Windows', SystemRoot: 'C:\\Windows', CODEX_HOME: 'C:\\res\\codex-realms\\r1' },

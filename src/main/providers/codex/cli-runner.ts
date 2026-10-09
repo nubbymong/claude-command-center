@@ -20,16 +20,21 @@
 // what the CLI started beyond them: a browser a sign-in opened is the user's.
 // A stopped run settles once that kill has landed and its root has exited, or
 // at CODEX_KILL_SETTLE_MS, whichever is first, so the caller hears back on
-// time. A kill still reading a slow process table at that bound carries on
-// (it never kills the root alone to meet the bound: that would leave the chain
-// below running), for at most CODEX_KILL_WORST_MS from the stop, and the
-// result says so (`killSettled`): a caller that holds a realm or a lease for
-// the run lets go only once that kill has finished. Nothing is killed by pid
-// once the root has exited: its pid may have been reused; an exec run stopped
+// time. A stop still under way at that bound -- a kill still reading a slow
+// process table (it never kills the root alone to meet the bound: that would
+// leave the chain below running), or a root that has not exited yet -- carries
+// on, for at most CODEX_KILL_WORST_MS from the stop (a tree stop: plus its
+// leftovers step's own worst case), and the result says so (`killSettled`):
+// a caller that holds a realm or a lease for the run lets go only once that
+// kill has finished and the root has exited. Nothing is killed
+// by pid once the root has exited: its pid may have been reused; an exec run stopped
 // as a tree (scope 'tree') then ends only what the records taken while it ran
 // prove is left of it, as its own exit does (CodexKillTree.leftovers; on POSIX
 // only when the stop did not signal the run's group, its root having exited
-// before the kill could). At app
+// before the kill could). An exec run whose root has exited settles once that
+// leftovers step has run, or at CODEX_KILL_SETTLE_MS; a step still under way
+// then is reported the same way (`killSettled`, for at most
+// CODEX_LEFTOVERS_WORST_MS from its start). At app
 // quit, kills still reading kill what they know at once, an exec run's its
 // whole tree and, on Windows, what its records prove is left
 // (flushPendingCodexKills). See runCodexCli and makeCodexKillTree.
@@ -51,8 +56,10 @@ const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   'login-api-key': ['login', '--with-api-key'],
   // A reviewer invocation (WP2 commit 5a): non-interactive, JSONL events on
   // stdout, nothing persisted, read-only sandbox; the prompt arrives on stdin
-  // (`-`), never here. The caller runs it in the project folder.
-  'review': ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', 'gpt-5.5', '-'],
+  // (`-`), never here. The caller runs it in the project folder. As the
+  // analysis run does, it leaves out the settings file and the rules files
+  // of the account it runs on (--ignore-user-config, --ignore-rules).
+  'review': ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only', '-m', 'gpt-5.5', '-'],
   // Usage track MP7 (ADR-022; the owner's scoped WP1.41 exception): the
   // protocol helper for one usage read, on its default stdio transport only:
   // never `daemon`, `proxy` or `--listen`, and no `--enable`, `--disable`
@@ -215,11 +222,17 @@ export interface CodexRunResult {
   stopped?: 'cancel' | 'deadline'
   /** The process could not be started (the message is the spawn error's). */
   spawnError?: string
-  /** Present only when a stopped run settled at CODEX_KILL_SETTLE_MS with
-   *  its kill still under way (a slow process table): resolves once that
-   *  kill has finished, or CODEX_KILL_WORST_MS after the stop, and never
-   *  rejects. The run's processes may live until then, so a caller holding a
-   *  realm lock or an account lease for the run lets go only after it. */
+  /** Present only when a run settled at CODEX_KILL_SETTLE_MS with its
+   *  processes not yet ended: a stopped run whose stop was still under way (a
+   *  kill reading a slow process table, or a root that has not exited), or an
+   *  exec run whose root had exited with its leftovers step still under way.
+   *  Resolves once that kill has finished and the root has exited (a tree
+   *  stop: and what is left of the run has been ended), or CODEX_KILL_WORST_MS
+   *  after the stop (a tree stop: plus CODEX_LEFTOVERS_WORST_MS); for an
+   *  exited root, once its leftovers step has ended, or
+   *  CODEX_LEFTOVERS_WORST_MS after that step began. Never rejects. The run's
+   *  processes may live until then, so a caller holding a realm lock or an
+   *  account lease for the run lets go only after it. */
   killSettled?: Promise<void>
 }
 
@@ -479,8 +492,15 @@ const CODEX_KILL_MARGIN_MS = 1000
 /** The longest a kill can take: the kill's own table read, one more read with
  *  the early read's longer budget, then taskkill, plus CODEX_KILL_MARGIN_MS
  *  (makeCodexKillTree). A caller holding a realm or a lease for a stopped run
- *  holds it this long at most after the stop (CodexRunResult.killSettled). */
+ *  holds it this long at most after the stop, a tree stop
+ *  CODEX_LEFTOVERS_WORST_MS longer (CodexRunResult.killSettled). */
 export const CODEX_KILL_WORST_MS = CODEX_PROCESS_TABLE_TIMEOUT_MS + CODEX_PRIME_TABLE_TIMEOUT_MS + CODEX_TASKKILL_TIMEOUT_MS + CODEX_KILL_MARGIN_MS
+/** The longest a run's leftovers step can take (CodexKillTree.leftovers): a
+ *  read already under way, its own table read, then taskkill, plus
+ *  CODEX_KILL_MARGIN_MS. A caller holding a realm or a lease for a run whose
+ *  root has exited holds it this long at most after that step began
+ *  (CodexRunResult.killSettled); a tree stop adds it to CODEX_KILL_WORST_MS. */
+export const CODEX_LEFTOVERS_WORST_MS = 2 * CODEX_PROCESS_TABLE_TIMEOUT_MS + CODEX_TASKKILL_TIMEOUT_MS + CODEX_KILL_MARGIN_MS
 
 /** A kill still reading its table, as the quit flush sees it. */
 interface PendingKill {
@@ -1051,8 +1071,9 @@ export const CODEX_TREE_PRIME_MS = 2_000
 /** How long a stopped run waits for its kill to land before it settles
  *  anyway: longer than reading the process table plus taskkill, so a table
  *  read in the usual time does not settle a run whose kill has not been
- *  issued yet. A slower table settles the run with its kill under way
- *  (CodexRunResult.killSettled). */
+ *  issued yet. A slower table, or a root not yet exited, settles the run with
+ *  its stop under way (CodexRunResult.killSettled); so does an exited root's
+ *  leftovers step still under way at this bound. */
 export const CODEX_KILL_SETTLE_MS = 15_000
 
 /** Resolves once `ended` has, or after `ms`, whichever is first. Never rejects. */
@@ -1069,10 +1090,12 @@ function settleWithin(ended: Promise<void>, ms: number): Promise<void> {
  *  Settles on `close`. At the deadline or on cancel it kills the run's own
  *  chain and settles once the kill has landed and the root has exited, or
  *  after CODEX_KILL_SETTLE_MS, whichever is first; a kill still under way
- *  then is reported as `killSettled`. Nothing is killed once the root has
- *  exited -- if a descendant holds its output open (a browser a sign-in
- *  opened), the run settles with the root's exit code and the streams are
- *  destroyed instead. Nothing is reported once a stop has begun. */
+ *  then, a root not yet exited, or an exited root's leftovers step still
+ *  under way, is reported as `killSettled`. Nothing is
+ *  killed once the root has exited -- if a descendant holds its output open
+ *  (a browser a sign-in opened), the run settles with the root's exit code
+ *  and the streams are destroyed instead. Nothing is reported once a stop
+ *  has begun. */
 export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: CodexRunDeps = defaultCodexRunDeps()): Promise<CodexRunResult> {
   const cap = opts.maxOutput ?? 64 * 1024
   return new Promise((resolve) => {
@@ -1108,16 +1131,28 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
     /** An exec run whose root has exited (P3.9 round 2): the pipes are let
      *  go, what the records prove is left of the run is ended (bounded), and
      *  the run settles with the root's own exit code. `why`: a stop that came
-     *  after the exit, which skips none of this. */
+     *  after the exit, which skips none of this. A leftovers step still under
+     *  way at CODEX_KILL_SETTLE_MS carries on past it, and the result says
+     *  when it has ended (`killSettled`, at most CODEX_LEFTOVERS_WORST_MS
+     *  after it began), so a caller holding a realm or a lease for the run
+     *  lets go only once what is left of it has been ended. */
     const settleExited = (why?: 'deadline' | 'cancel') => {
       if (exitTimer) { clearTimeout(exitTimer); exitTimer = null }
       stopping = true
       if (timer) { clearTimeout(timer); timer = null }
       release()
       const c = child!
+      const stepAt = Date.now()
       let ended: Promise<void>
       try { ended = Promise.resolve(deps.killTree.leftovers?.(c, { since: spawnedAt, until: exitedAt })).then(() => undefined, () => undefined) } catch { ended = Promise.resolve() }
-      void settleWithin(ended, CODEX_KILL_SETTLE_MS).then(() => finish({ exitCode: exited ?? null, timedOut: false, ...(why ? { stopped: why } : {}) }))
+      // Set by the promise the bound below waits on, so it is true by the
+      // time a step that ended in time lets the run settle.
+      let stepDone = false
+      const stepEnded = ended.then(() => { stepDone = true })
+      void settleWithin(stepEnded, CODEX_KILL_SETTLE_MS).then(() => {
+        const outcome = { exitCode: exited ?? null, timedOut: false, ...(why ? { stopped: why } : {}) }
+        finish(stepDone ? outcome : { ...outcome, killSettled: settleWithin(stepEnded, CODEX_LEFTOVERS_WORST_MS - (Date.now() - stepAt)) })
+      })
     }
     const stop = (why: 'deadline' | 'cancel') => {
       if (settled || stopping || !child) return
@@ -1139,10 +1174,7 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
       const scope: CodexKillScope = opts.killScope === 'tree' ? 'tree' : 'chain'
       let killed: Promise<unknown>
       try { killed = Promise.resolve(deps.killTree(c, { scope })) } catch { killed = Promise.resolve() }
-      // Registered before the race below, so it has run by the time a kill
-      // that finished in time lets the run settle.
-      let killDone = false
-      const killEnded = killed.then(() => { killDone = true }, () => { killDone = true })
+      const killEnded = killed.then(() => undefined, () => undefined)
       const rootGone = new Promise<void>((res) => { if (exited !== undefined) res(); else c.once('exit', () => res()) })
       // A tree stop then ends what the records taken while the run ran prove
       // is left of it, for the root's own lifetime, as the run's own exit
@@ -1153,20 +1185,29 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
       // the table): the step then signals the group only while a process its
       // records saw still runs, as at the run's own exit; a stop that did
       // signal the group runs no second signal at a reaped root's id.
-      const ended: Promise<unknown> = scope === 'tree' && deps.killTree.leftovers
+      // The stop has ended once the kill has finished AND the root has exited
+      // (a tree stop: and its leftovers step has run). Never rejects.
+      const ended: Promise<void> = (scope === 'tree' && deps.killTree.leftovers
         ? Promise.all([killEnded, rootGone])
           .then(() => (deps.platform === 'win32' || !deps.killTree.groupSignalled?.(c) ? deps.killTree.leftovers?.(c, { since: spawnedAt, until: exitedAt }) : undefined))
-          .then(() => undefined, () => undefined)
-        : Promise.all([killEnded, rootGone])
+        : Promise.all([killEnded, rootGone])).then(() => undefined, () => undefined)
+      // Set by the promise the race below waits on, so it is true by the time
+      // a stop that ended in time lets the run settle.
+      let stopDone = false
+      const stopEnded = ended.then(() => { stopDone = true })
       let bound: ReturnType<typeof setTimeout> | null = null
       const bounded = new Promise<void>((res) => { bound = setTimeout(res, CODEX_KILL_SETTLE_MS) })
-      void Promise.race([ended, bounded]).then(() => {
+      void Promise.race([stopEnded, bounded]).then(() => {
         if (bound) clearTimeout(bound)
         release()
-        // A kill still reading a slow table carries on past the bound: the
-        // result says when it has finished, so a caller holding a realm or a
-        // lease for the run lets go only then.
-        finish(killDone ? outcome : { ...outcome, killSettled: settleWithin(killEnded, CODEX_KILL_WORST_MS - (Date.now() - stoppedAt)) })
+        // A stop still under way at the bound -- a kill still reading a slow
+        // table, or a root that has not exited yet -- carries on past it: the
+        // result says when it has ended, so a caller holding a realm or a
+        // lease for the run lets go only once its process has exited. A tree
+        // stop's leftovers step, which runs after the root has exited, has
+        // its own worst case on top of the kill's.
+        const worst = scope === 'tree' && deps.killTree.leftovers ? CODEX_KILL_WORST_MS + CODEX_LEFTOVERS_WORST_MS : CODEX_KILL_WORST_MS
+        finish(stopDone ? outcome : { ...outcome, killSettled: settleWithin(stopEnded, worst - (Date.now() - stoppedAt)) })
       })
     }
     const onAbort = () => stop('cancel')

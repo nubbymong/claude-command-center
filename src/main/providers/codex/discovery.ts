@@ -107,8 +107,9 @@ export async function discoverCodex(deps: CodexDiscoveryDeps): Promise<CodexDisc
   if ('refused' in cmd) return { ...base, state: 'invalid', executable: canonical, identity, detail: cmd.refused }
   let run: CodexRunResult
   let scratch: { home: string; dispose(): void } | null = null
-  // A stopped run whose kill is still under way may still be using the home:
-  // it is removed once that kill has finished (CodexRunResult.killSettled).
+  // A run whose processes have not all ended (a stop still under way, a root
+  // not yet exited, or a leftovers step still running) may still be using the
+  // home: it is removed once they have (CodexRunResult.killSettled).
   let kill: Promise<void> | undefined
   try {
     scratch = deps.versionHome()
