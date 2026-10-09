@@ -823,6 +823,7 @@ describe('What\'s New (2.1.1-beta.2): the hardening it ships, as guarantees', ()
       /extra CLI arguments now come after the app's own options on its start line\. On Windows each word reaches a local Claude Code session as one argument, exactly as typed\./,
       /the resume list hands agent templates and other options to Claude Code exactly as written, or starts nothing and says why/,
       /starts under your login shell when it is sh, bash, zsh, dash or ksh/,
+      /finds Claude Code where that shell finds it when asked to run a command, so a PATH change made only in interactive shells, such as nvm\.fish's default node, is not seen \(see Known issues in the Feature Guide\)\./,
       /On macOS and Linux, a terminal tab whose shell is outside the sh family, such as fish or PowerShell, opens in its folder, and the app types no folder line into it\./,
       /A session's status bar shows only its own status updates\./,
       /the log says why, and a status line of your own still shows/,
@@ -871,6 +872,8 @@ describe('app knowledge for the 2.1.1-beta.2 hardening', () => {
       /Ask Conductor cannot start, on either assistant, when the resources folder's path holds a ; on Windows \(a : on macOS and Linux\) or a control character; it says so and starts nothing\. Workaround: choose a resources folder whose path has none\./,
       /holds a % sign or a control character: it starts nothing, and names the template or option where it can\. Workaround: remove the % sign, or install the native Claude Code\./,
       /other variables set only in that shell's own configuration are not passed on\. Workaround: set them in \.zshenv \(macOS\) or \.bashrc \(Linux\) in your home folder as well\./,
+      /a folder added to PATH only in interactive fish shells, such as nvm\.fish's default node version, is not seen, and a Claude Code installed with npm under that node reads as not found\./,
+      /Workaround: add the line nvm use --silent \$nvm_default_version to your config\.fish outside any is-interactive block\./,
       /also add Claude Code's folder to PATH in \.zprofile \(macOS\) or \.profile \(Linux; \.bash_profile if you have one\) in your home folder; until then the app may report Claude Code as not found/,
       /add the folder that holds it \(for Claude Code, the folder with claude\.exe or claude\.cmd\) to your PATH as a full path, then restart the app\./,
       /only when you name it with \.\\ in front \(\.\\build\.cmd rather than build\.cmd\)\. Terminal tabs are unchanged\./,
@@ -884,6 +887,9 @@ describe('app knowledge for the 2.1.1-beta.2 hardening', () => {
       /On macOS the app keeps your accounts' sign-in folders in your resources folder to you alone, and the Insights and Sentinel folders there writable only by you, through their owner and permissions\. That holds when the resources folder is on a volume that honours ownership/,
       /Workaround: keep the resources folder on your Mac's own disk, or on a drive whose Get Info has Ignore ownership on this volume turned off/,
     ]) expect(k).toMatch(said)
+    // Sessions start through node (the resume picker), so the native installer
+    // alone does not help a user whose only node is an interactive-only one.
+    expect(k).not.toMatch(/native Claude Code installer, which needs no node/)
   })
 
   it('says on macOS that the sign-in folders stay yours only while only you can write to the resources folder, and how to keep it so', () => {
