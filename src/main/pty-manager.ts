@@ -83,7 +83,7 @@ import { prepareCodexCanvasLaunch } from './canvas/codex-canvas-launch'
 import { registerCodexCanvasRoots } from './canvas/codex-canvas-roots'
 import { noteCodexSessionGuidance, forgetCodexSessionGuidance } from './canvas/codex-guidance'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
-import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
+import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, checkProfileCredentialFolders, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
 export { withProfileHome } from './account-profiles'
 import { gateManagedLaunchDirs, recordManagedLaunchPreflight, displayPath } from './managed-launch-diagnostics'
 import { stripSpoofableText } from '../shared/safe-text'
@@ -5731,13 +5731,18 @@ function spawnPtyResolved(
     const askCeiling = options?.isAsk === true ? askGitCeiling(resolvedCwd, os.platform()) : undefined
     if (resolvedProfileId && options?.projectGate === undefined) {
       const gateDirs = managedLaunchGateDirs(sessionId, resolvedCwd, options)
+      const gateProfileId = resolvedProfileId
       // The picker's candidates join the set (see pickerCandidateDirs); the
       // verdict and the FULL set it was formed for travel together.
       const pickerEnv = askCeiling ? askGitEnvironment(process.env, askCeiling, os.platform()) : process.env
       const pending = (managedPickerLaunch(options) ? pickerCandidateDirs(resolvedCwd, pickerEnv) : Promise.resolve<string[]>([]))
         .then(async (candidates) => {
           const dirs = [...new Set([...gateDirs, ...candidates])]
-          return { verdict: await gateManagedLaunchDirs(dirs), dirs }
+          // Windows: the account's sign-in folders are checked owner-only (once a
+          // run, asynchronously) while the launch is held here, so the launch
+          // below reads their verdict instead of finding none (account-profiles).
+          const [verdict] = await Promise.all([gateManagedLaunchDirs(dirs), checkProfileCredentialFolders(gateProfileId)])
+          return { verdict, dirs }
         })
       deferSpawnUntil(win, sessionId, resolvedProfileId, inheritedTeardown, pending,
         `checking the project settings in ${gateDirs.map(describePathForLog).join(' and ')}${managedPickerLaunch(options) ? ' and every worktree the resume picker may open' : ''} before the managed launch`,

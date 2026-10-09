@@ -32,7 +32,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError, logInfo, logWarn } from '../debug-logger'
 import { gateManagedLaunch, peekGateVerdict } from '../managed-launch-diagnostics'
-import { getProfileConfigDir, getProfilesRoot, getPrimaryProfileId, withProfileHome, readProfilesStrict, removeProfileIdentityCredentials, MANAGED_LAUNCH_REFUSAL } from '../account-profiles'
+import { getProfileConfigDir, getProfilesRoot, getPrimaryProfileId, withProfileHome, readProfilesStrict, removeProfileIdentityCredentials, checkProfileCredentialFolders, profileCredentialFoldersChecked, MANAGED_LAUNCH_REFUSAL } from '../account-profiles'
 import { acquireProfileConsumer, holdProfileForRun, pendingProfileRefresh } from '../profile-consumers'
 import { isProfileInUseByLiveSession, sessionsOnProfile } from '../claude-account-identity'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
@@ -267,11 +267,12 @@ async function readClaudeCliAuthUncached(profileId: string, runner?: ClaudeCliAu
   //    can start), then wait for the in-flight one to land, then spawn. The
   //    other order left a microtask between the wait settling and the acquire
   //    in which a fresh rotation could begin (adversarial pass on #598).
-  //    Awaited ONLY when a rotation is actually in flight, or when the project
+  //    Awaited ONLY when a rotation is actually in flight, when the project
   //    gate has no recent verdict for this process's directory (the first
-  //    probe, and once per reuse window after): the common path stays
-  //    synchronous up to the spawn, which is what lets overlapping probes for
-  //    one profile share a single subprocess.
+  //    probe, and once per reuse window after), or when the account's
+  //    sign-in folders have no verdict yet this run (Windows): the common path
+  //    stays synchronous up to the spawn, which is what lets overlapping
+  //    probes for one profile share a single subprocess.
   //
   //    Through a runner (the provider-neutral check, WP2 PR 4) the profile is
   //    held for the runner's own time limit plus a grace, and let go only once
@@ -299,6 +300,10 @@ async function readClaudeCliAuthUncached(profileId: string, runner?: ClaudeCliAu
       // built its own env is exactly how it would have kept inheriting an
       // ambient ANTHROPIC_API_KEY and reported the wrong account as signed
       // in. For HOME, see the note on the CLI auth environment above.
+      // Windows: the account's sign-in folders are checked owner-only (once a
+      // run, asynchronously) before the CLI first runs in its home, and the
+      // environment below reads their verdict.
+      if (!profileCredentialFoldersChecked(profileId)) await checkProfileCredentialFolders(profileId)
       const env = Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-status', cwd: probeCwd, probe: true, projectGate }), process.platform === 'darwin' ? {} : { HOME: home })
       if (runner) {
         const r = await runner.run(['auth', 'status'], env, STATUS_TIMEOUT_MS)
@@ -461,6 +466,9 @@ async function runLogout(profileId: string, runner: ClaudeCliAuthRunner): Promis
     const projectGate = peekGateVerdict(runner.cwd) ?? await gateManagedLaunch(runner.cwd)
     const home = join(getProfilesRoot(), profileId)
     if (!existsSync(home)) return refusedLogout('no-home')
+    // Windows: as for the check, the account's sign-in folders have a
+    // verdict before the sign-out runs in its home (account-profiles).
+    if (!profileCredentialFoldersChecked(profileId)) await checkProfileCredentialFolders(profileId)
     let env: Record<string, string>
     try {
       env = Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-logout', cwd: runner.cwd, probe: true, projectGate }), process.platform === 'darwin' ? {} : { HOME: home })

@@ -6,7 +6,7 @@ import {
   listProfiles, upsertProfile, safeTeardownProfile,
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
   captureDetectedAccount, backupProfileHomeToCanonical, restoreProfileIdentityFromCanonical,
-  readProfileCredentialStamp,
+  readProfileCredentialStamp, startProfileStepsSettled,
 } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
 import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession, sessionsOnProfile, detectedNewAccountEmail } from '../claude-account-identity'
@@ -41,7 +41,13 @@ export function registerAccountProfilesHandlers(getWindow: () => BrowserWindow |
     ipcMain.handle(channel, (e, ...args) => (trusted(e) ? fn(e, ...args) : UNTRUSTED))
   }
 
-  handle(IPC.ACCOUNT_PROFILES_LIST, () => listProfiles())
+  // Windows: the start's profile steps (the first account made from the
+  // user's own sign-in among them) run once the sign-in folders are checked;
+  // the list waits for them, so the window never reads it before they ran.
+  handle(IPC.ACCOUNT_PROFILES_LIST, async () => {
+    await startProfileStepsSettled()
+    return listProfiles()
+  })
 
   // Managed-launch preflight reports. This channel is what makes layer 4 of the
   // account-isolation hardening VISIBLE. Without it the preflight is

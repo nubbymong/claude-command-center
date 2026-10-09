@@ -25,6 +25,8 @@ vi.mock('../../src/main/account-profiles', () => ({
   readProfileAccountEmail: () => null,
   atomicWriteSecure: vi.fn(),
   hardenCredentialFile: vi.fn(),
+  // The sign-in folder has passed the owner-only check (the rule is off off Windows).
+  credentialFoldersVerdict: () => ({ ok: true }),
 }))
 vi.mock('../../src/main/debug-logger', () => ({ logWarn: vi.fn(), logInfo: vi.fn() }))
 

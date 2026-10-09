@@ -174,6 +174,16 @@ describe('secureFoldersWindows: one PowerShell call for every folder, in order',
     expect(sentLines).toEqual(['C:\\ok'])
   })
 
+  it('a call that gives no read says so for every folder; a folder read and refused, or one that cannot be named safely, does not', async () => {
+    const dirs = ['C:\\a', 'C:\\a\\b']
+    for (const run of [async () => { throw new Error('timed out') }, async () => 'not json', async () => 'null', async () => JSON.stringify({ user: USER })]) {
+      const out = await secureFoldersWindows(dirs, run)
+      expect(out.map((r) => [r.ok, r.unread])).toEqual([[false, true], [false, true]])
+    }
+    const read = await secureFoldersWindows(['relative\\x', ...dirs], async () => JSON.stringify({ user: USER, folders: [{ ...good(dirs[0]), owner: OWNER_ONLY_ADMINISTRATORS_SID }, { dir: dirs[1], error: 'its parent was refused' }] }))
+    expect(read.map((r) => [r.ok, r.unread])).toEqual([[false, undefined], [false, undefined], [false, undefined]])
+  })
+
   it('a single folder read back as one object (not a list) still counts', async () => {
     const out = await secureFoldersWindows(['C:\\a'], async () => JSON.stringify({ user: USER, folders: good('C:\\a') }))
     expect(out.map((r) => r.ok)).toEqual([true])

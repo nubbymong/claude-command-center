@@ -57,7 +57,7 @@ import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
-import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, getProfilesRoot, getProfileConfigDir, isValidProfileId } from './account-profiles'
+import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, startOwnerOnlyCredentialFolders, getProfilesRoot, getProfileConfigDir, isValidProfileId } from './account-profiles'
 import { secureOwnerOnlyFolders } from './owner-only-folders'
 import { startCodexHookFolders, codexHookFoldersSettingsChanged } from './codex-hook-folders'
 import { startCodexUserSkills, codexUserSkillsSettingsChanged } from './canvas/codex-user-skills'
@@ -751,20 +751,28 @@ if (!gotTheLock) {
     // recall and resume. Idempotent + best-effort; only touches per-profile shared
     // links + the shared store.
     try { repairSharedProjectJunctions() } catch (e) { logInfo(`[profiles] shared-junction repair skipped: ${e}`) }
-    // Capture the current global login into a protected "primary" profile so no
-    // session runs on the bare global ~/.claude (idempotent; best-effort).
-    try { runFirstRunCapture() } catch (e) { logInfo(`[profiles] first-run capture skipped: ${e}`) }
-    // Bug 2: migrate OFF the per-session-home model. Sessions of one account now
-    // share its profile home (one rotating-OAuth store); salvage the freshest live
-    // token out of any retired account-homes/<sessionId>/ into the profile home +
-    // canonical (so no re-auth after upgrade), then KEEP + re-point those homes at
-    // the shared store (UPGRADE GUARD -- a resumed pre-upgrade session may still
-    // name an account-homes path, so we never delete it). Idempotent; bounded set.
-    try { cleanupSessionHomes() } catch (e) { logInfo(`[profiles] session-home cleanup skipped: ${e}`) }
-    // Auth-outside-CCC fix: heal a stale real global ~/.claude/.credentials.json on
-    // launch (a prior session rotated the primary account's OAuth token, leaving
-    // external `claude -p` on a dead refresh token). Freshest-wins + email-guarded.
-    try { const r = syncPrimaryCredentialsWithGlobal(); if (r !== 'none') logInfo(`[profiles] primary<->global credential sync at launch: ${r}`) } catch (e) { logInfo(`[profiles] credential sync skipped: ${e}`) }
+    // Windows: every account's sign-in folders are made readable by this user
+    // alone and checked (asynchronously, once per folder this run) BEFORE the
+    // profile steps below write a sign-in; each write reads its folder's
+    // verdict, and a launch before then waits for its own profile's check.
+    // After the layout migration and the junction repair above, which write
+    // no sign-in, so the check never makes a config folder an old layout lacks.
+    void startOwnerOnlyCredentialFolders(() => {
+      // Capture the current global login into a protected "primary" profile so no
+      // session runs on the bare global ~/.claude (idempotent; best-effort).
+      try { runFirstRunCapture() } catch (e) { logInfo(`[profiles] first-run capture skipped: ${e}`) }
+      // Bug 2: migrate OFF the per-session-home model. Sessions of one account now
+      // share its profile home (one rotating-OAuth store); salvage the freshest live
+      // token out of any retired account-homes/<sessionId>/ into the profile home +
+      // canonical (so no re-auth after upgrade), then KEEP + re-point those homes at
+      // the shared store (UPGRADE GUARD -- a resumed pre-upgrade session may still
+      // name an account-homes path, so we never delete it). Idempotent; bounded set.
+      try { cleanupSessionHomes() } catch (e) { logInfo(`[profiles] session-home cleanup skipped: ${e}`) }
+      // Auth-outside-CCC fix: heal a stale real global ~/.claude/.credentials.json on
+      // launch (a prior session rotated the primary account's OAuth token, leaving
+      // external `claude -p` on a dead refresh token). Freshest-wins + email-guarded.
+      try { const r = syncPrimaryCredentialsWithGlobal(); if (r !== 'none') logInfo(`[profiles] primary<->global credential sync at launch: ${r}`) } catch (e) { logInfo(`[profiles] credential sync skipped: ${e}`) }
+    }).catch((e) => logInfo(`[profiles] start profile steps failed: ${e}`))
     registerScreenshotHandlers(getWindow)
     registerDiagnosticsHandlers(getWindow)
     registerWebviewHandlers(getWindow)

@@ -8,7 +8,9 @@
 // link is refused and its target left as it was; a folder below a refused
 // one is not made. Round 5 (G1, G2): folders
 // with any Unicode name make the same round trip; a name ending in a dot is
-// refused and nothing is made for it.
+// refused and nothing is made for it. Under Constrained Language Mode, where
+// the script gives no read, the rule's fallback with Windows' own programs
+// leaves the same rights, and refuses a link the same way.
 //
 // HOST QUARANTINE: this suite writes a temp directory, changes rights on it
 // and starts processes (Windows PowerShell and icacls). It runs in CI and on
@@ -18,7 +20,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { secureFoldersWindows, runWindowsPowerShell } from '../../../src/main/owner-only-folders'
+import { secureFoldersWindows, runWindowsPowerShell, nativeOwnerOnlyTools } from '../../../src/main/owner-only-folders'
+import type { PowerShellRunner } from '../../../src/main/owner-only-folders'
 
 const IS_WIN = process.platform === 'win32'
 const PREFIX = 'ccc-owner-only-real-'
@@ -142,5 +145,59 @@ describe.runIf(IS_WIN)('secureFoldersWindows: the real rights it leaves (P3.10 r
     expect(aces).toHaveLength(2)
     expect(aces).toContain(fullFor(SYSTEM_SID))
     expect(aces.find((a) => a !== fullFor(SYSTEM_SID))).toMatch(/^0\|3\|2032127\|S-1-5-21-\d+-\d+-\d+-500$/)
+  })
+})
+
+/** Windows PowerShell restricted to Constrained Language Mode, as AppLocker
+ *  or WDAC script enforcement leaves it: what the rule's own calls get. */
+const constrained: PowerShellRunner = (script, env) =>
+  runWindowsPowerShell("$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'\n" + script, env)
+
+describe.runIf(IS_WIN)('secureFoldersWindows under Constrained Language Mode: the same real rights, with Windows\' own programs', () => {
+  it('the script alone gives no read there (what the rule falls back from)', async () => {
+    const top = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), PREFIX)))
+    made.push(top)
+    const out = await secureFoldersWindows([path.join(top, 'x')], constrained, null)
+    expect(out.map((r) => [r.ok, r.unread])).toEqual([[false, true]])
+  })
+
+  it('a folder already there (another account\'s entries, a deny, inherited rights) and one it makes: exactly the user and SYSTEM, inheritance off, owned by the user', async () => {
+    const top = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), PREFIX)))
+    made.push(top)
+    const scratch = path.join(top, 'scratch')
+    fs.mkdirSync(scratch)
+    execFileSync(ICACLS, [top, '/grant', '*S-1-1-0:(OI)(CI)F'], { stdio: 'ignore', windowsHide: true, timeout: 30_000 })
+    const existing = path.join(top, 'existing')
+    fs.mkdirSync(existing)
+    execFileSync(ICACLS, [existing, '/grant', '*S-1-5-32-545:(R)', '/deny', '*S-1-5-32-546:(W)'], { stdio: 'ignore', windowsHide: true, timeout: 30_000 })
+    const fresh = path.join(existing, 'fresh')
+    const user = (await runWindowsPowerShell('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value', {})).trim()
+
+    const out = await secureFoldersWindows([existing, fresh], constrained, nativeOwnerOnlyTools)
+    expect(out.map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only'], [true, 'owner-only']])
+    for (const d of [existing, fresh]) {
+      const s = sddl(d, scratch)
+      expect(s.startsWith('D:P'), s).toBe(true)
+      expect(await acesBySid(s), s).toEqual([fullFor(user), fullFor(SYSTEM_SID)].sort())
+      const owner = (await runWindowsPowerShell('[IO.Directory]::GetAccessControl($env:CCC_T_DIR, [Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value', { CCC_T_DIR: d })).trim()
+      expect(owner).toBe(user)
+    }
+  })
+
+  it('a link is refused and its target left as it was; a folder below it is not made', async () => {
+    const top = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), PREFIX)))
+    made.push(top)
+    const scratch = path.join(top, 'scratch')
+    fs.mkdirSync(scratch)
+    const target = path.join(top, 'target')
+    fs.mkdirSync(target)
+    const before = sddl(target, scratch)
+    const link = path.join(top, 'link')
+    fs.symlinkSync(target, link, 'junction')
+    links.push(link)
+    const out = await secureFoldersWindows([link, path.join(link, 'child')], constrained, nativeOwnerOnlyTools)
+    expect(out.map((r) => [r.ok, r.detail])).toEqual([[false, 'a link'], [false, 'its parent was refused']])
+    expect(sddl(target, scratch)).toBe(before)
+    expect(fs.existsSync(path.join(target, 'child'))).toBe(false)
   })
 })

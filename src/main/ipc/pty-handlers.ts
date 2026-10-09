@@ -47,6 +47,7 @@ import {
   CODEX_EFFORTS,
   CODEX_PRESETS,
 } from '../sanitize-restored-spawn-options'
+import { startProfileStepsPending, startProfileStepsSettled } from '../account-profiles'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
 interface RendererSSHOptions {
@@ -865,7 +866,13 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // the tab's own previous run is this spawn's to supersede, as a prepared
     // Codex spawn's is.
     const askSpawn = options?.isAsk === true && !options.shellOnly
-    const preparation = codexSession || legacyInstall || askSpawn ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
+    // A local Claude session that names no account runs on the primary
+    // account (pty-manager). While the start's profile steps, which make the
+    // first one from the user's own sign-in, are still to run, it waits for
+    // them as a prepared spawn (a close or a newer spawn of the tab
+    // supersedes it meanwhile), so it starts on that account.
+    const holdForStartSteps = launchProvider === 'claude' && !options?.ssh && !options?.profileId && startProfileStepsPending()
+    const preparation = codexSession || legacyInstall || askSpawn || holdForStartSteps ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
     // PR-level ADR-009 round 1 (B1): once that preparation is cancelled or
     // superseded, this spawn's ticket stops counting as one under way.
     if (preparation) noteConfigLaunchPreparation(configClaim.ticket, () => preparation.current)
@@ -1017,6 +1024,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         // launch gets no hooks whatever the folders).
         if (!options?.ssh && getGateway()?.status()?.listening === true) await awaitCodexHookFolders()
       }
+
+      // The start's profile steps (holdForStartSteps above), waited for before
+      // the check below, so nothing starts for a tab closed meanwhile.
+      if (holdForStartSteps) await startProfileStepsSettled()
 
       // Closed, swept or superseded while it was prepared: start nothing, and
       // SAY so. The renderer holds any pty:exit that arrives while its own
