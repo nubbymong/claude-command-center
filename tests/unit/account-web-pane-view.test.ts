@@ -248,8 +248,10 @@ describe('the account view', () => {
     expect(badSub.preventDefault).toHaveBeenCalled()
     expect(openedExternal).toHaveLength(0)
 
-    // A MAIN-frame off-site nav IS handed to the OS browser (one tab, gestured).
+    // A MAIN-frame off-site nav IS handed to the OS browser (one tab, gestured:
+    // the user's click in the view comes first).
     const main = { preventDefault: vi.fn(), isMainFrame: true }
+    createdViews[0].view.webContents.handlers['before-mouse-event']?.({ preventDefault() {} }, { type: 'mouseDown', button: 'left', x: 1, y: 1 })
     nav(main, 'https://example.com/paper')
     expect(main.preventDefault).toHaveBeenCalled()
     expect(openedExternal).toEqual(['https://example.com/paper'])
@@ -329,11 +331,12 @@ describe('the account view', () => {
     expect(idp.preventDefault).not.toHaveBeenCalled()
     expect(openedExternal).toHaveLength(0)
 
-    // Signed in (authed=true): an off-site link is handed to the real browser.
+    // Signed in (authed=true): an off-site link the user clicks is handed to the real browser.
     ses.cookies.get.mockResolvedValue([{ name: 'sessionKey', expirationDate: 4102444800 }])
     ses.cookies.listeners[0](null, { name: 'sessionKey' })
     await flushNav(); await flushNav()
     const offsite = { preventDefault: vi.fn() }
+    createdViews[0].view.webContents.handlers['before-mouse-event']?.({ preventDefault() {} }, { type: 'mouseDown', button: 'left', x: 1, y: 1 })
     nav(offsite, 'https://example.com/paper')
     expect(offsite.preventDefault).toHaveBeenCalled()
     expect(openedExternal).toContain('https://example.com/paper')

@@ -8,6 +8,7 @@
 // and "any https" would then let a session-bearing chatgpt.com view roam.
 // With the list, a wrong guess widens navigation at most to those hosts.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import vm from 'node:vm'
 
 const createdViews: { opts: any; view: any }[] = []
 /** When set, every view's loadURL rejects with it (as Electron's does, the URL in the message). */
@@ -103,7 +104,7 @@ vi.mock('../../src/main/channel-storage', () => ({
 
 const {
   openAccountPane, openCodexAccountPane, closeAccountPane, closeAccountPanesForProfile, closeCodexAccountPanes, closeCodexAccountPanesWhere,
-  closeAllAccountPanes, getAccountPaneState, codexPaneNavDecision,
+  closeAllAccountPanes, getAccountPaneState, codexPaneNavDecision, FOCUSED_CONTROL_PROBE,
 } = await import('../../src/main/account-web/account-pane')
 const { webPartitionForCodexAccount, webPartitionForProfile, CODEX_WEB_SERVICE } = await import('../../src/shared/account-web-session')
 const { getCodexWebSession, saveCodexWebSession, removeCodexWebSession, codexWebViewFor } = await import('../../src/main/account-web/codex-web-store')
@@ -114,6 +115,25 @@ const BOUNDS = { x: 0, y: 0, width: 800, height: 600 }
 const TOKEN_COOKIE = [{ name: '__Secure-next-auth.session-token', expirationDate: 4102444800 }]
 const IDP = `https://${CODEX_WEB_SERVICE.signInHosts[0]}/authorize`
 const flush = () => new Promise((r) => setTimeout(r, 0))
+/** The user presses a mouse button in the view (an OS input event). */
+const click = (wc: any, type = 'mouseDown') => wc.handlers['before-mouse-event']?.({ preventDefault() {} }, { type, button: 'left', x: 10, y: 10 })
+/** The user taps the view on a touch screen (Chromium's gesture for a tap). */
+const tap = (wc: any, type = 'gestureTap') => wc.handlers['input-event']?.({ preventDefault() {} }, { type, modifiers: [] })
+/** The user presses a key in the view. */
+const press = (wc: any, input: Record<string, unknown>) => wc.handlers['before-input-event']?.({ preventDefault() {} }, { type: 'keyDown', ...input })
+/** A popup's details as Electron hands them over: its URL and the page that opened it. */
+const popup = (url: string, referrer?: string) => (referrer === undefined
+  ? { url, frameName: '', features: '', disposition: 'foreground-tab' }
+  : { url, referrer: { url: referrer, policy: 'strict-origin-when-cross-origin' }, frameName: '', features: '', disposition: 'foreground-tab' })
+/** A popup as Electron hands it over for a link written the way both services
+ *  write their links out, `<a href=... target="_blank" rel="noopener noreferrer">`:
+ *  such a link sends no referrer, so the page that opened it is named as ''. */
+const newTabLink = (url: string) => ({ url, referrer: { url: '', policy: 'no-referrer' }, frameName: '', features: '', disposition: 'foreground-tab' })
+/** What the view's read of its focused element answers after a key press:
+ *  true when the key landed on a link or a button. Every other script the
+ *  view runs (the email read) gets nothing. */
+const keyLandsOn = (wc: any, answer: () => unknown) => wc.executeJavaScriptInIsolatedWorld.mockImplementation(
+  async (_world: number, scripts: Array<{ code: string }>) => (scripts?.[0]?.code === FOCUSED_CONTROL_PROBE ? answer() : null))
 
 beforeEach(() => {
   closeAllAccountPanes()
@@ -204,6 +224,7 @@ describe('[host] the Codex account view', () => {
     ses.cookies.listeners[0](null, { name: '__Secure-next-auth.session-token' })
     await flush(); await flush()
     const off = { preventDefault: vi.fn(), isMainFrame: true }
+    click(createdViews[0].view.webContents)
     nav(off, 'https://example.com/paper')
     expect(off.preventDefault).toHaveBeenCalled()
     expect(openedExternal).toEqual(['https://example.com/paper'])
@@ -221,9 +242,10 @@ describe('[host] the Codex account view', () => {
     const wc = createdViews[0].view.webContents
     await flush()
     wc.loadURL.mockClear()
-    expect(wc.handlers.__open({ url: IDP })).toEqual({ action: 'deny' })
+    click(wc)
+    expect(wc.handlers.__open(popup(IDP, 'https://chatgpt.com/'))).toEqual({ action: 'deny' })
     expect(wc.loadURL).not.toHaveBeenCalled()
-    expect(wc.handlers.__open({ url: 'https://chatgpt.com/c/2' })).toEqual({ action: 'deny' })
+    expect(wc.handlers.__open(popup('https://chatgpt.com/c/2', 'https://chatgpt.com/'))).toEqual({ action: 'deny' })
     expect(wc.loadURL).toHaveBeenCalledWith('https://chatgpt.com/c/2')
     closeAccountPane('sess-pop')
   })
@@ -494,8 +516,9 @@ describe('[host] a page load that fails is logged by host and code, and never re
       ses.cookies.get.mockResolvedValue(TOKEN_COOKIE)
       ses.cookies.listeners[0](null, { name: '__Secure-next-auth.session-token' })
       await flush(); await flush()
-      // A popup to the service's own URL is followed in this view.
-      wc.handlers.__open({ url: 'https://chatgpt.com/c/2?q=SECRET' })
+      // A popup to the service's own URL, from its own page after a click, is followed in this view.
+      click(wc)
+      wc.handlers.__open(popup('https://chatgpt.com/c/2?q=SECRET', 'https://chatgpt.com/'))
       await new Promise((r) => setTimeout(r, 20))
       expect(wc.loadURL.mock.calls.length).toBeGreaterThanOrEqual(3)
       const lines = logged.filter((l) => /could not load/.test(l))
@@ -616,5 +639,528 @@ describe('[host] a sign-in in the pane whose record cannot be saved is cleared, 
     expect(getCodexWebSession(ACCT)).toMatchObject({ accountEmail: 'me@example.com' })
     expect(cleared).toEqual([])
     closeAccountPane('sess-rec')
+  })
+})
+
+describe('[host] the account view follows a popup only from its own page, and opens the browser only after your click', () => {
+  const SERVICES = [
+    {
+      kind: 'Claude',
+      open: (win: FakeParentWindow, sid: string) => openAccountPane(win as never, sid, 'profile-p1a', BOUNDS),
+      home: 'https://claude.ai/artifacts',
+      page: 'https://claude.ai/chat/2',
+      partition: () => webPartitionForProfile('profile-p1a'),
+      cookie: [{ name: 'sessionKey', expirationDate: 4102444800 }],
+    },
+    {
+      kind: 'Codex',
+      open: (win: FakeParentWindow, sid: string) => openCodexAccountPane(win as never, sid, ACCT, BOUNDS),
+      home: 'https://chatgpt.com/',
+      page: 'https://chatgpt.com/c/2',
+      partition: () => webPartitionForCodexAccount(ACCT),
+      cookie: TOKEN_COOKIE,
+    },
+  ] as const
+
+  for (const s of SERVICES) {
+    /** A signed-in view of the service, with no input in it yet. */
+    async function signedInView(win = new FakeParentWindow()) {
+      s.open(win, 'sess-pop')
+      const wc = createdViews[0].view.webContents
+      const ses = partitions[s.partition()]
+      ses.cookies.get.mockResolvedValue(s.cookie)
+      ses.cookies.listeners[0](null, { name: s.cookie[0].name })
+      await flush(); await flush()
+      wc.loadURL.mockClear()
+      openedExternal.length = 0
+      return wc
+    }
+
+    it(`${s.kind}: a popup to the service from its own page loads in the view right after a click, once, and never without one`, async () => {
+      const wc = await signedInView()
+      expect(wc.handlers.__open(popup(s.page, s.home))).toEqual({ action: 'deny' })
+      expect(wc.loadURL).not.toHaveBeenCalled()
+      click(wc)
+      expect(wc.handlers.__open(popup(s.page, s.home))).toEqual({ action: 'deny' })
+      expect(wc.loadURL.mock.calls).toEqual([[s.page]])
+      // The same click lets nothing else through.
+      wc.handlers.__open(popup(s.page, s.home))
+      expect(wc.loadURL).toHaveBeenCalledTimes(1)
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: a popup to the service opened by a page from elsewhere, or by a page that names no referrer, loads nothing even after a click`, async () => {
+      const wc = await signedInView()
+      click(wc)
+      expect(wc.handlers.__open(popup(s.page, 'https://frames.example/embed'))).toEqual({ action: 'deny' })
+      click(wc)
+      expect(wc.handlers.__open(popup(s.page, ''))).toEqual({ action: 'deny' })
+      click(wc)
+      expect(wc.handlers.__open(popup(s.page))).toEqual({ action: 'deny' })
+      click(wc)
+      expect(wc.handlers.__open(popup(s.page, 'not a url'))).toEqual({ action: 'deny' })
+      expect(wc.loadURL).not.toHaveBeenCalled()
+      expect(openedExternal).toEqual([])
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: a popup off the service reaches the browser only after a click, one popup per click`, async () => {
+      const wc = await signedInView()
+      expect(wc.handlers.__open(popup('https://example.com/paper', s.home))).toEqual({ action: 'deny' })
+      expect(openedExternal).toEqual([])
+      click(wc)
+      wc.handlers.__open(popup('https://example.com/paper', s.home))
+      wc.handlers.__open(popup('https://example.com/second', s.home))
+      expect(openedExternal).toEqual(['https://example.com/paper'])
+      click(wc)
+      wc.handlers.__open(popup('https://example.com/third', s.home))
+      expect(openedExternal).toEqual(['https://example.com/paper', 'https://example.com/third'])
+      expect(wc.loadURL).not.toHaveBeenCalled()
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: a click more than a second old lets nothing through`, async () => {
+      const wc = await signedInView()
+      const now = vi.spyOn(performance, 'now')
+      try {
+        now.mockReturnValue(1_000_000)
+        click(wc)
+        now.mockReturnValue(1_000_000 + 1_001)
+        wc.handlers.__open(popup('https://example.com/paper', s.home))
+        wc.handlers.__open(popup(s.page, s.home))
+        expect(openedExternal).toEqual([])
+        expect(wc.loadURL).not.toHaveBeenCalled()
+        now.mockReturnValue(1_000_000 + 2_000)
+        click(wc)
+        now.mockReturnValue(1_000_000 + 2_900)
+        wc.handlers.__open(popup('https://example.com/paper', s.home))
+        expect(openedExternal).toEqual(['https://example.com/paper'])
+      } finally {
+        now.mockRestore()
+      }
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: a click's age is measured on a clock that never runs back: a wall clock set back keeps no old click fresh`, async () => {
+      const wc = await signedInView()
+      const wall = vi.spyOn(Date, 'now')
+      const steady = vi.spyOn(performance, 'now')
+      try {
+        wall.mockReturnValue(5_000_000_000)
+        steady.mockReturnValue(10_000)
+        click(wc)
+        wall.mockReturnValue(5_000_000_000 - 3_600_000)
+        steady.mockReturnValue(10_000 + 1_001)
+        wc.handlers.__open(popup('https://example.com/paper', s.home))
+        wc.handlers.__open(popup(s.page, s.home))
+        expect(openedExternal).toEqual([])
+        expect(wc.loadURL).not.toHaveBeenCalled()
+        wall.mockReturnValue(5_000_000_000 + 3_600_000)
+        steady.mockReturnValue(10_000 + 2_000)
+        click(wc)
+        wall.mockReturnValue(5_000_000_000 - 3_600_000)
+        steady.mockReturnValue(10_000 + 2_500)
+        wc.handlers.__open(popup('https://example.com/paper', s.home))
+        expect(openedExternal).toEqual(['https://example.com/paper'])
+      } finally {
+        wall.mockRestore()
+        steady.mockRestore()
+      }
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: a tap on a touch screen counts as a click, once; a touch, a press, a scroll or a long press does not`, async () => {
+      const wc = await signedInView()
+      const out = (n: number) => wc.handlers.__open(popup(`https://example.com/t${n}`, s.home))
+      tap(wc, 'touchStart'); out(1)
+      tap(wc, 'gestureTapDown'); out(2)
+      tap(wc, 'gestureScrollBegin'); out(3)
+      tap(wc, 'gestureLongPress'); out(4)
+      tap(wc, 'touchEnd'); out(5)
+      expect(openedExternal).toEqual([])
+      tap(wc); out(6); out(7)
+      expect(openedExternal).toEqual(['https://example.com/t6'])
+      tap(wc)
+      wc.handlers.__open(popup(s.page, s.home))
+      expect(wc.loadURL).toHaveBeenCalledTimes(1)
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: Enter or Space on a link or a button counts as a click; another key, a held key's repeat, a mouse move or a release does not`, async () => {
+      const wc = await signedInView()
+      keyLandsOn(wc, () => true)
+      const out = (n: number) => wc.handlers.__open(popup(`https://example.com/p${n}`, s.home))
+      press(wc, { key: 'a', code: 'KeyA' }); out(1)
+      press(wc, { key: 'Enter', code: 'Enter', isAutoRepeat: true }); out(2)
+      press(wc, { key: 'Tab', code: 'Tab' }); out(3)
+      click(wc, 'mouseMove'); out(4)
+      click(wc, 'mouseUp'); out(5)
+      wc.handlers['before-input-event']?.({ preventDefault() {} }, { type: 'keyUp', key: 'Enter', code: 'Enter' }); out(6)
+      await flush()
+      expect(openedExternal).toEqual([])
+      press(wc, { key: 'Enter', code: 'Enter' }); out(7)
+      await flush()
+      press(wc, { key: ' ', code: 'Space' }); out(8)
+      await flush()
+      expect(openedExternal).toEqual(['https://example.com/p7', 'https://example.com/p8'])
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: Enter or Space typed into the page's text box lets nothing out; on a link or a button, one popup or one link`, async () => {
+      const wc = await signedInView()
+      let onControl = false
+      keyLandsOn(wc, () => onControl)
+      const out = (n: number) => wc.handlers.__open(popup(`https://example.com/k${n}`, s.home))
+      const servicePopup = () => wc.handlers.__open(popup(s.page, s.home))
+      const nav = (url: string) => { const e = { preventDefault: vi.fn(), isMainFrame: true }; wc.handlers['will-navigate'](e, url); return e }
+      // Writing a message: a Space, Shift+Enter for a new line, Enter to send.
+      press(wc, { key: 'h', code: 'KeyH' })
+      press(wc, { key: ' ', code: 'Space' }); out(1); servicePopup()
+      press(wc, { key: 'Enter', code: 'Enter', shift: true, modifiers: ['shift'] }); out(2)
+      press(wc, { key: 'Enter', code: 'Enter' }); out(3); servicePopup()
+      press(wc, { key: 'Enter', code: 'NumpadEnter' })
+      expect(nav('https://example.com/k4').preventDefault).toHaveBeenCalled()
+      await flush(); await flush()
+      expect(openedExternal).toEqual([])
+      expect(wc.loadURL).not.toHaveBeenCalled()
+      // The same keys on a link or a button: one hand-off each.
+      onControl = true
+      press(wc, { key: 'Enter', code: 'Enter' }); out(5); out(6)
+      await flush()
+      expect(openedExternal).toEqual(['https://example.com/k5'])
+      press(wc, { key: ' ', code: 'Space' }); servicePopup()
+      await flush()
+      expect(wc.loadURL.mock.calls).toEqual([[s.page]])
+      press(wc, { key: 'Enter', code: 'Enter' }); nav('https://example.com/k7')
+      await flush()
+      expect(openedExternal).toEqual(['https://example.com/k5', 'https://example.com/k7'])
+      // Where the key landed is read in a world of the app's own, never by the page's scripts.
+      const probes = wc.executeJavaScriptInIsolatedWorld.mock.calls.filter((c: any[]) => c[1]?.[0]?.code === FOCUSED_CONTROL_PROBE)
+      expect(probes.length).toBeGreaterThan(0)
+      for (const c of probes) expect(c[0]).toBeGreaterThan(0)
+      expect(wc.executeJavaScript.mock.calls.filter((c: any[]) => c[0] === FOCUSED_CONTROL_PROBE)).toEqual([])
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: a key whose landing place cannot be read, or is read only after a newer key, lets nothing through`, async () => {
+      const wc = await signedInView()
+      const out = (n: number) => wc.handlers.__open(popup(`https://example.com/r${n}`, s.home))
+      // The read fails.
+      keyLandsOn(wc, () => { throw new Error('read failed') })
+      press(wc, { key: 'Enter', code: 'Enter' }); out(1)
+      await flush()
+      // The read answers something that is not a plain yes.
+      keyLandsOn(wc, () => 'true')
+      press(wc, { key: 'Enter', code: 'Enter' }); out(2)
+      await flush()
+      expect(openedExternal).toEqual([])
+      // A link's yes that lands after a key typed into the text box arms nothing.
+      const answers: Array<(v: boolean) => void> = []
+      keyLandsOn(wc, () => new Promise<boolean>((r) => { answers.push(r) }))
+      press(wc, { key: 'Enter', code: 'Enter' })
+      press(wc, { key: ' ', code: 'Space' })
+      answers[1](false)
+      answers[0](true)
+      await flush(); await flush()
+      out(3)
+      await flush()
+      expect(openedExternal).toEqual([])
+      // A click while a key's read is still out lets one through at once.
+      press(wc, { key: 'Enter', code: 'Enter' })
+      click(wc)
+      out(4)
+      expect(openedExternal).toEqual(['https://example.com/r4'])
+      answers[2](true)
+      await flush()
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: a key whose landing place is never read lets nothing through once its second is up`, async () => {
+      const wc = await signedInView()
+      keyLandsOn(wc, () => new Promise<boolean>(() => { /* never answers */ }))
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        press(wc, { key: 'Enter', code: 'Enter' })
+        wc.handlers.__open(popup('https://example.com/never', s.home))
+        await vi.advanceTimersByTimeAsync(1_001)
+        expect(openedExternal).toEqual([])
+      } finally {
+        vi.useRealTimers()
+      }
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: a popup off the service that names the page that opened it reaches the browser only when that page is the service's own`, async () => {
+      const wc = await signedInView()
+      for (const from of ['https://embed.thirdparty.example/frame', 'not a url', 'about:srcdoc', 'about:blank', ' ']) {
+        click(wc)
+        expect(wc.handlers.__open(popup('https://example.com/elsewhere', from))).toEqual({ action: 'deny' })
+        await flush()
+      }
+      expect(openedExternal).toEqual([])
+      // A refused popup does not use up the click: the service's own popup after it still goes.
+      click(wc)
+      wc.handlers.__open(popup('https://example.com/elsewhere', 'https://embed.thirdparty.example/frame'))
+      wc.handlers.__open(popup('https://example.com/paper', s.home))
+      expect(openedExternal).toEqual(['https://example.com/paper'])
+      expect(logged.filter((l) => /did not open a popup/.test(l)).join('\n')).not.toMatch(/elsewhere|thirdparty/)
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: a link that opens in a new tab and sends no referrer reaches the browser after a click, a tap or a key on it, once each, and never without one`, async () => {
+      const wc = await signedInView()
+      // No input yet: nothing, whatever the link.
+      expect(wc.handlers.__open(newTabLink('https://example.com/source-0'))).toEqual({ action: 'deny' })
+      expect(wc.handlers.__open(popup('https://example.com/source-0b'))).toEqual({ action: 'deny' })
+      expect(openedExternal).toEqual([])
+      // A click on such a link: it opens in the browser, once.
+      click(wc)
+      expect(wc.handlers.__open(newTabLink('https://example.com/source-1'))).toEqual({ action: 'deny' })
+      wc.handlers.__open(newTabLink('https://example.com/source-1-again'))
+      expect(openedExternal).toEqual(['https://example.com/source-1'])
+      // A tap, and a page that names no opener at all: the same.
+      tap(wc)
+      wc.handlers.__open(popup('https://example.com/source-2'))
+      expect(openedExternal).toEqual(['https://example.com/source-1', 'https://example.com/source-2'])
+      // Enter on the link: the same, once its landing place is read.
+      keyLandsOn(wc, () => true)
+      press(wc, { key: 'Enter', code: 'Enter' })
+      wc.handlers.__open(newTabLink('https://example.com/source-3'))
+      await flush(); await flush()
+      expect(openedExternal).toEqual(['https://example.com/source-1', 'https://example.com/source-2', 'https://example.com/source-3'])
+      // Enter typed into the message box lets no such link out.
+      keyLandsOn(wc, () => false)
+      press(wc, { key: 'Enter', code: 'Enter' })
+      wc.handlers.__open(newTabLink('https://example.com/source-4'))
+      await flush(); await flush()
+      expect(openedExternal).toHaveLength(3)
+      // Right after a click, a popup that names a page from elsewhere stays refused and uses none of the click.
+      click(wc)
+      wc.handlers.__open(popup('https://example.com/source-5', 'https://embed.thirdparty.example/frame'))
+      wc.handlers.__open(newTabLink('https://example.com/source-6'))
+      expect(openedExternal).toEqual(['https://example.com/source-1', 'https://example.com/source-2', 'https://example.com/source-3', 'https://example.com/source-6'])
+      // Such a link to the service itself is still not followed into the view.
+      click(wc)
+      wc.handlers.__open(newTabLink(s.page))
+      expect(wc.loadURL).not.toHaveBeenCalled()
+      expect(openedExternal).toHaveLength(4)
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: a popup or a link asked for before your click is not let through by that click`, async () => {
+      const wc = await signedInView()
+      const nav = (url: string) => { const e = { preventDefault: vi.fn(), isMainFrame: true }; wc.handlers['will-navigate'](e, url); return e }
+      const answers: Array<(v: boolean) => void> = []
+      keyLandsOn(wc, () => new Promise<boolean>((r) => { answers.push(r) }))
+      // A Space typed into the message box, its landing place still being read;
+      // the page asks for a popup, a link and a service popup now, with no click yet.
+      press(wc, { key: ' ', code: 'Space' })
+      wc.handlers.__open(popup('https://example.com/early', s.home))
+      wc.handlers.__open(newTabLink('https://example.com/early-tab'))
+      nav('https://example.com/early-nav')
+      wc.handlers.__open(popup(s.page, s.home))
+      // The user clicks something afterwards; then the read answers.
+      click(wc)
+      answers[0](false)
+      await flush(); await flush()
+      expect(openedExternal).toEqual([])
+      expect(wc.loadURL).not.toHaveBeenCalled()
+      // Those refusals used none of the click: a popup asked for after it goes.
+      wc.handlers.__open(popup('https://example.com/after', s.home))
+      expect(openedExternal).toEqual(['https://example.com/after'])
+      // The same when the key was on a link but a click came before its read answered:
+      // the requests made before the click wait for the key, which the click replaced.
+      press(wc, { key: 'Enter', code: 'Enter' })
+      wc.handlers.__open(popup('https://example.com/early-2', s.home))
+      click(wc)
+      answers[1](true)
+      await flush(); await flush()
+      expect(openedExternal).toEqual(['https://example.com/after'])
+      // A key on a link with no click after it: the request made while its read was out goes, once.
+      press(wc, { key: 'Enter', code: 'Enter' })
+      wc.handlers.__open(popup('https://example.com/keyed', s.home))
+      wc.handlers.__open(popup('https://example.com/keyed-again', s.home))
+      answers[2](true)
+      await flush(); await flush()
+      expect(openedExternal).toEqual(['https://example.com/after', 'https://example.com/keyed'])
+      // A key on a link pressed after the request, whose read answers first, does not let it through either.
+      press(wc, { key: ' ', code: 'Space' })
+      wc.handlers.__open(popup('https://example.com/early-3', s.home))
+      press(wc, { key: 'Enter', code: 'Enter' })
+      answers[4](true)
+      await flush(); await flush()
+      answers[3](false)
+      await flush(); await flush()
+      expect(openedExternal).toEqual(['https://example.com/after', 'https://example.com/keyed'])
+      // That later key's own hand-off still goes.
+      wc.handlers.__open(popup('https://example.com/later-key', s.home))
+      expect(openedExternal).toEqual(['https://example.com/after', 'https://example.com/keyed', 'https://example.com/later-key'])
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: a key's second runs from the key press, not from when its landing place was read`, async () => {
+      const wc = await signedInView()
+      const now = vi.spyOn(performance, 'now')
+      try {
+        const answers: Array<(v: boolean) => void> = []
+        keyLandsOn(wc, () => new Promise<boolean>((r) => { answers.push(r) }))
+        // Enter on a link at T; the read answers 900 ms later; a popup at T + 1.5 s: refused.
+        now.mockReturnValue(3_000_000)
+        press(wc, { key: 'Enter', code: 'Enter' })
+        now.mockReturnValue(3_000_000 + 900)
+        answers[0](true)
+        await flush(); await flush()
+        now.mockReturnValue(3_000_000 + 1_500)
+        wc.handlers.__open(popup('https://example.com/late', s.home))
+        wc.handlers.__open(newTabLink('https://example.com/late-tab'))
+        wc.handlers.__open(popup(s.page, s.home))
+        await flush()
+        expect(openedExternal).toEqual([])
+        expect(wc.loadURL).not.toHaveBeenCalled()
+        // The same late answer with a popup inside the key's own second: it goes.
+        now.mockReturnValue(4_000_000)
+        press(wc, { key: 'Enter', code: 'Enter' })
+        now.mockReturnValue(4_000_000 + 900)
+        answers[1](true)
+        await flush(); await flush()
+        now.mockReturnValue(4_000_000 + 950)
+        wc.handlers.__open(popup('https://example.com/in-time', s.home))
+        expect(openedExternal).toEqual(['https://example.com/in-time'])
+      } finally {
+        now.mockRestore()
+      }
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: a link off the service in the view itself reaches the browser only after a click, once per click`, async () => {
+      const wc = await signedInView()
+      const nav = (url: string) => { const e = { preventDefault: vi.fn(), isMainFrame: true }; wc.handlers['will-navigate'](e, url); return e }
+      expect(nav('https://example.com/paper').preventDefault).toHaveBeenCalled()
+      expect(openedExternal).toEqual([])
+      click(wc)
+      nav('https://example.com/paper')
+      nav('https://example.com/again')
+      expect(openedExternal).toEqual(['https://example.com/paper'])
+      // A redirect off the service right after the click: the same rule.
+      click(wc)
+      wc.handlers['will-redirect']({ preventDefault: vi.fn(), isMainFrame: true }, 'https://example.com/redirected')
+      expect(openedExternal).toEqual(['https://example.com/paper', 'https://example.com/redirected'])
+      closeAccountPane('sess-pop')
+    })
+
+    it(`${s.kind}: Escape still closes the view, and a refused popup is logged by host only`, async () => {
+      const win = new FakeParentWindow()
+      const wc = await signedInView(win)
+      press(wc, { key: 'Escape', code: 'Escape' })
+      expect(win.webContents.send).toHaveBeenCalledWith('webview:escapePressed', 'sess-pop')
+      logged.length = 0
+      wc.handlers.__open(popup('https://example.com/paper?token=POPUP-VALUE#frag', s.home))
+      wc.handlers.__open(popup(`${s.page}?q=POPUP-VALUE`, 'https://frames.example/x'))
+      const lines = logged.filter((l) => /popup/.test(l))
+      expect(lines.length).toBe(2)
+      expect(lines.join('\n')).toContain('example.com')
+      expect(lines.join('\n')).not.toMatch(/POPUP-VALUE|\/paper|frag|\?/)
+      closeAccountPane('sess-pop')
+    })
+  }
+})
+
+describe('[host] where a key landed: Enter or Space counts only on a link or a button (a menu item among them), never in a text box', () => {
+  type El = Record<string, unknown>
+  /** A focused element as the read sees it, in a world of its own: no page script can change these. */
+  const el = (tagName: string, o: { attrs?: Record<string, string>; type?: string; editable?: boolean; shadowFocus?: El | null; frame?: 'other-site' | El | null } = {}): El => ({
+    tagName,
+    type: o.type ?? '',
+    isContentEditable: o.editable === true,
+    getAttribute: (n: string) => (o.attrs && n in o.attrs ? o.attrs[n] : null),
+    hasAttribute: (n: string) => !!o.attrs && n in o.attrs,
+    shadowRoot: o.shadowFocus !== undefined ? { activeElement: o.shadowFocus } : null,
+    // A frame from another site gives no document; a frame of the page's own gives its focus.
+    contentDocument: o.frame === undefined || o.frame === 'other-site' ? null : { activeElement: o.frame },
+  })
+  const landsOnControl = (active: El | null) => vm.runInNewContext(String(FOCUSED_CONTROL_PROBE), { document: { activeElement: active } })
+
+  it('a link, a button, a menu item or a form button counts', () => {
+    const yes: Array<[string, El]> = [
+      ['a link', el('A', { attrs: { href: '/x' } })],
+      ['an image-map link', el('AREA', { attrs: { href: '/x' } })],
+      ['a button', el('BUTTON')],
+      ['a summary', el('SUMMARY')],
+      ['a submit input', el('INPUT', { type: 'submit' })],
+      ['a button input', el('INPUT', { type: 'button' })],
+      ['an image input', el('INPUT', { type: 'image' })],
+      ['a reset input', el('INPUT', { type: 'reset' })],
+      ['role=button', el('DIV', { attrs: { role: 'button' } })],
+      ['role=link', el('SPAN', { attrs: { role: 'link' } })],
+      ['role=menuitem', el('DIV', { attrs: { role: 'menuitem' } })],
+      ['role=menuitemcheckbox', el('DIV', { attrs: { role: 'menuitemcheckbox' } })],
+      ['role=menuitemradio', el('DIV', { attrs: { role: 'MenuItemRadio' } })],
+      ['a button inside a shadow root', el('X-WIDGET', { shadowFocus: el('BUTTON') })],
+      ["a link inside a frame of the page's own", el('IFRAME', { frame: el('A', { attrs: { href: '/x' } }) })],
+    ]
+    for (const [what, e] of yes) expect(landsOnControl(e), what).toBe(true)
+  })
+
+  it('a text box, the page itself, an editable element or a frame from another site does not', () => {
+    const no: Array<[string, El | null]> = [
+      ['nothing focused', null],
+      ['the page body', el('BODY')],
+      ['a text area', el('TEXTAREA')],
+      ['a text input', el('INPUT', { type: 'text' })],
+      ['a search input', el('INPUT', { type: 'search' })],
+      ['an input of no type', el('INPUT')],
+      ['a check box', el('INPUT', { type: 'checkbox' })],
+      ['a file input', el('INPUT', { type: 'file' })],
+      ['an editable composer', el('DIV', { editable: true })],
+      ['role=textbox', el('DIV', { attrs: { role: 'textbox' }, editable: true })],
+      ['an editable button', el('BUTTON', { editable: true })],
+      ['an editable role=button', el('DIV', { attrs: { role: 'button' }, editable: true })],
+      ['a link that is a text box by role', el('A', { attrs: { href: '/x', role: 'textbox' } })],
+      ['a link with no address', el('A')],
+      ['a plain element', el('DIV')],
+      ['role=presentation', el('DIV', { attrs: { role: 'presentation' } })],
+      ['a text area inside a shadow root', el('X-EDITOR', { shadowFocus: el('TEXTAREA') })],
+      ['a frame from another site', el('IFRAME', { frame: 'other-site' })],
+      ["a text box inside a frame of the page's own", el('IFRAME', { frame: el('TEXTAREA') })],
+    ]
+    for (const [what, e] of no) expect(landsOnControl(e), what).toBe(false)
+  })
+
+  it('a text area, an input that takes typed text, or a choice box never counts, whatever role it is given', () => {
+    const no: Array<[string, El]> = [
+      ['a text area given the button role', el('TEXTAREA', { attrs: { role: 'button' } })],
+      ['a text area given the link role', el('TEXTAREA', { attrs: { role: 'link' } })],
+      ['a text input given the link role', el('INPUT', { type: 'text', attrs: { role: 'link' } })],
+      ['an input of no type given the menu item role', el('INPUT', { attrs: { role: 'menuitem' } })],
+      ['a search input given the button role', el('INPUT', { type: 'search', attrs: { role: 'button' } })],
+      ['an email input given the button role', el('INPUT', { type: 'EMAIL', attrs: { role: 'button' } })],
+      ['an address input given the link role', el('INPUT', { type: 'url', attrs: { role: 'link' } })],
+      ['a phone input given the button role', el('INPUT', { type: 'tel', attrs: { role: 'button' } })],
+      ['a password input given the button role', el('INPUT', { type: 'password', attrs: { role: 'button' } })],
+      ['a number input given the button role', el('INPUT', { type: 'number', attrs: { role: 'button' } })],
+      ['a date input given the button role', el('INPUT', { type: 'date', attrs: { role: 'button' } })],
+      ['an input of a type the page made up, given the link role', el('INPUT', { type: 'x-made-up', attrs: { role: 'link' } })],
+      ['a choice box given the button role', el('SELECT', { attrs: { role: 'button' } })],
+      ['a plain choice box', el('SELECT')],
+      ['a text area given the button role inside a shadow root', el('X-EDITOR', { shadowFocus: el('TEXTAREA', { attrs: { role: 'button' } }) })],
+      ["a text input given the link role inside a frame of the page's own", el('IFRAME', { frame: el('INPUT', { type: 'text', attrs: { role: 'link' } }) })],
+    ]
+    for (const [what, e] of no) expect(landsOnControl(e), what).toBe(false)
+    // A form button keeps its role, and so does a check box or a radio in a menu.
+    const yes: Array<[string, El]> = [
+      ['a button input given the link role', el('INPUT', { type: 'button', attrs: { role: 'link' } })],
+      ['an image input given the menu item role', el('INPUT', { type: 'image', attrs: { role: 'menuitem' } })],
+      ['a check box in a menu', el('INPUT', { type: 'checkbox', attrs: { role: 'menuitemcheckbox' } })],
+      ['a radio in a menu', el('INPUT', { type: 'radio', attrs: { role: 'menuitemradio' } })],
+    ]
+    for (const [what, e] of yes) expect(landsOnControl(e), what).toBe(true)
+  })
+
+  it('a document that throws, or nests without end, does not', () => {
+    expect(vm.runInNewContext(String(FOCUSED_CONTROL_PROBE), { document: { get activeElement() { throw new Error('x') } } })).toBe(false)
+    // A button whose focus never ends in an element: not a control the key landed on.
+    const loop: El = { tagName: 'BUTTON', isContentEditable: false, getAttribute: () => null, hasAttribute: () => false, contentDocument: null }
+    loop.shadowRoot = { activeElement: loop }
+    expect(landsOnControl(loop)).toBe(false)
   })
 })
