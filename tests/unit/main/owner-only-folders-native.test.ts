@@ -6,12 +6,14 @@
 // SYSTEM granted, every other account's own entry removed: exactly the user
 // and SYSTEM, full control passed to what is inside; never /restore, which
 // needs a privilege only an elevated process has) and the owner with
-// icacls.exe /setowner, each on the folder itself (/L); then what is inside
-// each folder is read (Get-ChildItem, Get-Acl's SDDL), an entry this user or
-// the Administrators group owns that lets anyone else in is reset with
-// icacls.exe /reset on that entry itself (/L) and read again, and a read-back
-// that uses only what that mode allows (Get-Item, Get-Acl's SDDL) is judged
-// by the same verdicts. Same order and the same refusals as the
+// icacls.exe /setowner, each on the folder itself (/L); then, for the
+// account sign-in folders only (they ask for it), what is inside each folder
+// is read (Get-ChildItem, Get-Acl's SDDL), an entry this user, the
+// Administrators group or SYSTEM owns that lets anyone else in is reset with
+// icacls.exe /reset on that entry itself (/L; never a link, never a file
+// with more than one name) and read again, and a read-back that uses only
+// what that mode allows (Get-Item, Get-Acl's SDDL) is judged by the same
+// verdicts. The route has one time limit of its own. Same order and the same refusals as the
 // script: a link, a junction or any reparse point, not a folder, a missing
 // parent, or anything below a refused folder is refused, and nothing is
 // written to it. Without the user's SID or a first read, nothing is changed
@@ -40,10 +42,10 @@ vi.mock('node:child_process', async (importOriginal) => {
 
 import {
   secureFoldersWindows, secureFoldersNative, folderReadFromSddl, ownerFromSddl, sidFromWhoami, ownerOnlyVerdict, windowsPowerShellEnv,
-  OWNER_ONLY_SCRIPT, OWNER_ONLY_READ_SCRIPT, OWNER_ONLY_INSIDE_SCRIPT, OWNER_ONLY_DIRS_ENV, OWNER_ONLY_SKIP_ENV, OWNER_ONLY_USER_ENV,
+  OWNER_ONLY_SCRIPT, OWNER_ONLY_READ_SCRIPT, OWNER_ONLY_INSIDE_SCRIPT, OWNER_ONLY_DIRS_ENV, OWNER_ONLY_SKIP_ENV, OWNER_ONLY_USER_ENV, OWNER_ONLY_SHARED_ENV,
   OWNER_ONLY_SYSTEM_SID, OWNER_ONLY_ADMINISTRATORS_SID,
 } from '../../../src/main/owner-only-folders'
-import type { NativeOwnerOnlyTools } from '../../../src/main/owner-only-folders'
+import type { NativeOwnerOnlyTools, OwnerOnlyOptions } from '../../../src/main/owner-only-folders'
 
 const USER = 'S-1-5-21-1111111111-2222222222-3333333333-1001'
 const OTHER = 'S-1-5-21-1111111111-2222222222-3333333333-1005'
@@ -55,10 +57,12 @@ const INHERITED_DACL = (sid: string) => `D:AI(A;ID;FA;;;SY)(A;ID;FA;;;${sid})`
 /** A local group of this machine (synthetic). */
 const OTHER_GROUP = 'S-1-5-21-1111111111-2222222222-3333333333-1007'
 
-/** `link`: a link to a folder (a junction); `filelink`: a symbolic link to a file. */
+/** `link`: a link to a folder (a junction); `filelink`: a symbolic link to a file; `reparse`: a folder with
+ *  another kind of reparse point. */
 type Kind = 'dir' | 'file' | 'link' | 'reparse' | 'filelink'
-/** `id`: its file identity (a folder made in its place has another). `path`: as it was named. */
-interface Entry { kind: Kind; owner: string; dacl: string; id: number; path: string }
+/** `id`: its file identity (a folder made in its place has another). `path`: as it was named. `names`: a file's
+ *  number of names (hard links). */
+interface Entry { kind: Kind; owner: string; dacl: string; id: number; path: string; names: number }
 
 /** Every entry of an SDDL access list is inherited (what Windows rewrites when the folder above gets rights of its own). */
 const inheritsOnly = (dacl: string) => (dacl.match(/\(([^()]*)\)/g) ?? []).every((a) => a.split(';')[1].includes('ID'))
@@ -72,7 +76,7 @@ function machine(opts: { user?: string; whoami?: { code: number | null; stdout: 
   const parentOf = (p: string) => p.replace(/\\[^\\]+$/, '')
   const calls: Array<{ program: string; args: string[] }> = []
   const reads: Array<{ script: string; dirs: string[] }> = []
-  const insideReads: Array<{ dir: string; skip: string[]; user: string }> = []
+  const insideReads: Array<{ dir: string; skip: string[]; shared: string[]; user: string }> = []
   const made: string[] = []
   let ids = 0
   const state = {
@@ -101,10 +105,13 @@ function machine(opts: { user?: string; whoami?: { code: number | null; stdout: 
     sddlOverride: new Map<string, string | null>(),
     /** Runs once the first read has answered (what changes before the folders are written). */
     afterFirstRead: null as null | (() => void),
+    /** Runs before every program the rule starts (a test may move its clock). */
+    beforeRun: null as null | ((program: string, args: readonly string[]) => void),
   }
-  const add = (p: string, e: Partial<Entry> & { kind: Kind }) => entries.set(k(p), { owner: OWNER_ONLY_ADMINISTRATORS_SID, dacl: 'D:AI(A;OICIID;FA;;;WD)(A;OICIID;FA;;;SY)', id: ++ids, path: p, ...e })
+  const add = (p: string, e: Partial<Entry> & { kind: Kind }) => entries.set(k(p), { owner: OWNER_ONLY_ADMINISTRATORS_SID, dacl: 'D:AI(A;OICIID;FA;;;WD)(A;OICIID;FA;;;SY)', id: ++ids, path: p, names: 1, ...e })
   const tools: NativeOwnerOnlyTools = {
     run: async (program, args) => {
+      state.beforeRun?.(program, args)
       calls.push({ program, args: [...args] })
       if (program === 'whoami') return opts.whoami ?? { code: 0, stdout: `"box\\person","${user}"\r\n` }
       if (args[1] === '/inheritance:r') {
@@ -136,7 +143,7 @@ function machine(opts: { user?: string; whoami?: { code: number | null; stdout: 
     lstat: (p) => {
       if (state.lstatOverride.has(k(p))) return state.lstatOverride.get(k(p))!
       const e = entries.get(k(p))
-      return e ? { link: e.kind === 'link', folder: e.kind === 'dir' || e.kind === 'reparse', id: `1:${e.id}` } : null
+      return e ? { link: e.kind === 'link', folder: e.kind === 'dir' || e.kind === 'reparse', id: `1:${e.id}`, names: e.names } : null
     },
     isFolder: (p) => { const e = entries.get(k(p)); return !!e && (e.kind === 'dir' || e.kind === 'reparse' || e.kind === 'link') },
     mkdir: (p) => {
@@ -147,30 +154,42 @@ function machine(opts: { user?: string; whoami?: { code: number | null; stdout: 
     },
   }
   const ATTR: Record<Kind, number> = { dir: 0x10, file: 0x20, link: 0x410, reparse: 0x410, filelink: 0x420 }
-  /** As the script decides what to print: an owner this user or the Administrators group, allow entries for the user, SYSTEM or the Administrators group only. */
-  const plainlyClean = (e: Entry) => (e.owner === user || e.owner === 'BA' || e.owner === OWNER_ONLY_ADMINISTRATORS_SID) &&
-    (e.dacl.match(/\(([^()]*)\)/g) ?? []).every((a) => { const f = a.slice(1, -1).split(';'); return f[0] === 'A' && ['SY', 'BA', user, OWNER_ONLY_SYSTEM_SID, OWNER_ONLY_ADMINISTRATORS_SID].includes(f[5]) })
+  /** This user as SDDL may name it: its SID, and LA when it is the computer's built-in Administrator. */
+  const userIds = /^S-1-5-21-\d+-\d+-\d+-500$/.test(user) ? [user, 'LA'] : [user]
+  /** As the script decides which folders to go into: one this user, the Administrators group or SYSTEM owns. */
+  const ownerOk = (e: Entry) => [...userIds, 'BA', OWNER_ONLY_ADMINISTRATORS_SID, 'SY', OWNER_ONLY_SYSTEM_SID].includes(e.owner)
+  /** As the script decides what to print: such an owner, allow entries for the user, SYSTEM or the Administrators group only. */
+  const plainlyClean = (e: Entry) => ownerOk(e) &&
+    (e.dacl.match(/\(([^()]*)\)/g) ?? []).every((a) => { const f = a.slice(1, -1).split(';'); return f[0] === 'A' && ['SY', 'BA', ...userIds, OWNER_ONLY_SYSTEM_SID, OWNER_ONLY_ADMINISTRATORS_SID].includes(f[5]) })
+  const LINK_TYPE: Partial<Record<Kind, string>> = { link: 'Junction', filelink: 'SymbolicLink', reparse: '' }
   /** The read of what is inside one folder (OWNER_ONLY_INSIDE_SCRIPT), from the machine. */
   const readInside = (env: Record<string, string>): string => {
     const dir = env[OWNER_ONLY_DIRS_ENV]
     const skip = env[OWNER_ONLY_SKIP_ENV].split('\n').filter(Boolean)
-    insideReads.push({ dir, skip, user: env[OWNER_ONLY_USER_ENV] })
+    const shared = String(env[OWNER_ONLY_SHARED_ENV] ?? '').split('\n').filter(Boolean)
+    insideReads.push({ dir, skip, shared, user: env[OWNER_ONLY_USER_ENV] })
     if (state.insideFails) throw new Error('timed out')
     if (state.insideErrors.has(k(dir))) return JSON.stringify([{ inside: [], error: true }])
     const skipped = new Set(skip.map(k))
-    const inside: Array<{ name: number[]; attributes: number; sddl: string | null }> = []
+    const sharedSet = new Set(shared.map(k))
+    const inside: Array<{ name: number[]; attributes: number; sddl: string | null; linkType?: string }> = []
     const codes = (t: string) => [...t].map((c) => c.charCodeAt(0))
     const walk = (at: string, rel: string) => {
       for (const [p, e] of entries) {
         if (parentOf(p) !== k(at) || skipped.has(p)) continue
+        // A shared entry is left out while it is a file with more than one name (never a sign-in file).
+        if (e.kind === 'file' && sharedSet.has(p) && e.names > 1 && !['.claude.json', '.credentials.json'].includes(e.path.slice(at.length + 1).toLowerCase())) continue
         const name = rel ? `${rel}\\${e.path.slice(at.length + 1)}` : e.path.slice(at.length + 1)
-        if (e.kind === 'link' || e.kind === 'reparse' || e.kind === 'filelink') {
-          if (!rel || e.kind === 'filelink') inside.push({ name: codes(name), attributes: ATTR[e.kind], sddl: null })
+        const sddl = `O:${e.owner}G:${e.owner}${e.dacl}`
+        if (e.kind === 'filelink') { inside.push({ name: codes(name), attributes: ATTR[e.kind], sddl: null, linkType: LINK_TYPE[e.kind] }); continue }
+        if (e.kind === 'link' || e.kind === 'reparse') {
+          // A link to a folder: read by its own rights, never gone into.
+          if (!rel || !plainlyClean(e) || e.kind === 'reparse') inside.push({ name: codes(name), attributes: ATTR[e.kind], sddl, linkType: LINK_TYPE[e.kind] })
           continue
         }
         const clean = plainlyClean(e)
-        if (!rel || !clean) inside.push({ name: codes(name), attributes: ATTR[e.kind], sddl: `O:${e.owner}G:${e.owner}${e.dacl}` })
-        if (e.kind === 'dir' && (e.owner === user || e.owner === 'BA' || e.owner === OWNER_ONLY_ADMINISTRATORS_SID)) walk(e.path, name)
+        if (!rel || !clean) inside.push({ name: codes(name), attributes: ATTR[e.kind], sddl })
+        if (e.kind === 'dir' && ownerOk(e)) walk(e.path, name)
       }
     }
     walk(entries.get(k(dir))?.path ?? dir, '')
@@ -575,10 +594,10 @@ describe('a folder is never taken over from another account', () => {
     '{"error":false,"attributes":16,"missing":false,"sddl":"O:S-1-5-21-1234567890-1234567890-1234567890-1000G:S-1-5-21-1234567890-1234567890-1234567890-513' + CAPTURED_DACL + '"},' +
     '{"error":false,"attributes":null,"missing":true,"sddl":null}]'
   // The main script's answer, captured again once it read what is inside
-  // (an administrator's elevated process, a temp folder that lets Everyone
-  // in; folder names shortened): the same three folders, the Administrators
-  // group's holding one file the Administrators group owns, which took the
-  // folder's rights.
+  // (asked for, as the account sign-in folders ask; an administrator's
+  // elevated process, a temp folder that lets Everyone in; folder names
+  // shortened): the same three folders, the Administrators group's holding
+  // one file the Administrators group owns, which took the folder's rights.
   const CAPTURED_MAIN = '{"user":"S-1-5-21-1234567890-1234567890-1234567890-1000","folders":[' +
     '{"dir":"C:\\\\t\\\\sys","error":"its owner is not this user","owner":null,"protected":false,"rules":[],"inside":null,"insideError":null},' +
     '{"dir":"C:\\\\t\\\\sys\\\\inside","error":"its parent was refused","owner":null,"protected":false,"rules":[],"inside":null,"insideError":null},' +
@@ -616,7 +635,7 @@ describe('a folder is never taken over from another account', () => {
   })
 
   it('replays the main script\'s real answer: the folder SYSTEM owns and the one inside it refused, the Administrators group\'s owner-only', async () => {
-    const out = await secureFoldersWindows(['C:\\t\\sys', 'C:\\t\\sys\\inside', 'C:\\t\\ba'], async () => CAPTURED_MAIN)
+    const out = await secureFoldersWindows(['C:\\t\\sys', 'C:\\t\\sys\\inside', 'C:\\t\\ba'], async () => CAPTURED_MAIN, undefined, { inside: true })
     expect(out.map((r) => [r.ok, r.detail, r.unread])).toEqual([
       [false, 'its owner is not this user', undefined],
       [false, 'its parent was refused', undefined],
@@ -776,6 +795,8 @@ describe('the read-back: SDDL read by SID, in any language', () => {
 // the folder passed only when what is inside then reads back owner-only.
 describe('what is inside a folder made owner-only in place, with Windows\' own programs', () => {
   const HOME = 'C:\\r\\home'
+  /** The account sign-in folders' call: what is inside read too. */
+  const INSIDE: OwnerOnlyOptions = { inside: true }
   const resets = (m: ReturnType<typeof machine>) => icacls(m).filter((c) => c.args[1] === '/reset').map((c) => c.args)
   /** A profile home the Administrators group owns, every file inheriting another group's read. */
   const adminOwnedHome = (m: ReturnType<typeof machine>) => {
@@ -795,14 +816,14 @@ describe('what is inside a folder made owner-only in place, with Windows\' own p
   it('a profile home the Administrators group owns: every file the Administrators group owns takes the folder\'s rights with the rights alone written, and all three folders pass', async () => {
     const m = machine()
     const dirs = adminOwnedHome(m)
-    const out = await secureFoldersWindows(dirs, m.run, m.tools)
+    const out = await secureFoldersWindows(dirs, m.run, m.tools, INSIDE)
     expect(out.map((r) => [r.ok, r.detail])).toEqual(dirs.map(() => [true, 'owner-only']))
     for (const f of ['.claude.json', '.claude\\.credentials.json', '.claude\\todos\\t1.json', 'identity\\.credentials.json']) {
       expect(m.entries.get(`${HOME}\\${f}`.toLowerCase()), f).toMatchObject({ owner: OWNER_ONLY_ADMINISTRATORS_SID, dacl: INHERITED_DACL(USER) })
     }
     expect(resets(m)).toEqual([])
-    // One read of what is inside per folder set, each told the folders of the whole call and the user.
-    expect(m.insideReads).toEqual(dirs.map((dir) => ({ dir, skip: dirs, user: USER })))
+    // One read of what is inside per folder set, each told the folders of the whole call, the shared entries and the user.
+    expect(m.insideReads).toEqual(dirs.map((dir) => ({ dir, skip: dirs, shared: [], user: USER })))
   })
 
   it('an entry with an entry of its own for another account is reset on the entry itself (/L) and read again; then the folder passes', async () => {
@@ -811,7 +832,7 @@ describe('what is inside a folder made owner-only in place, with Windows\' own p
     m.entries.get(`${HOME}\\.claude\\.credentials.json`.toLowerCase())!.dacl = `D:AI(A;;FR;;;${OTHER_GROUP})(A;ID;FA;;;${USER})(A;ID;FA;;;SY)`
     m.entries.get(`${HOME}\\identity\\.credentials.json`.toLowerCase())!.dacl = `D:PAI(A;;FA;;;${USER})(A;;FR;;;BU)`
     m.entries.get(`${HOME}\\.claude\\todos\\t1.json`.toLowerCase())!.dacl = `D:AI(A;;FR;;;WD)(A;ID;FA;;;${USER})`
-    const out = await secureFoldersWindows(dirs, m.run, m.tools)
+    const out = await secureFoldersWindows(dirs, m.run, m.tools, INSIDE)
     expect(out.map((r) => [r.ok, r.detail])).toEqual(dirs.map(() => [true, 'owner-only']))
     expect(resets(m)).toEqual([
       [`${HOME}\\.claude\\.credentials.json`, '/reset', '/L', '/Q'],
@@ -834,7 +855,7 @@ describe('what is inside a folder made owner-only in place, with Windows\' own p
       const dirs = adminOwnedHome(m)
       m.entries.get(`${HOME}\\.claude\\.credentials.json`.toLowerCase())!.dacl = `D:AI(A;;FR;;;${OTHER_GROUP})(A;ID;FA;;;${USER})`
       arrange(m)
-      const out = await secureFoldersWindows(dirs, m.run, m.tools)
+      const out = await secureFoldersWindows(dirs, m.run, m.tools, INSIDE)
       expect(out.map((r) => [r.ok, r.detail, r.unread]), name).toEqual([[true, 'owner-only', undefined], want, [true, 'owner-only', undefined]])
     }
   })
@@ -844,28 +865,47 @@ describe('what is inside a folder made owner-only in place, with Windows\' own p
     const dirs = adminOwnedHome(m)
     m.entries.get(`${HOME}\\.claude\\todos`.toLowerCase())!.owner = OTHER
     m.entries.get(`${HOME}\\.claude\\todos\\t1.json`.toLowerCase())!.dacl = `D:AI(A;;FR;;;WD)(A;ID;FA;;;${USER})`
-    const out = await secureFoldersWindows(dirs, m.run, m.tools)
+    const out = await secureFoldersWindows(dirs, m.run, m.tools, INSIDE)
     expect(out.map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only'], [false, "an entry inside it is another account's"], [true, 'owner-only']])
     expect(resets(m)).toEqual([])
     expect(m.entries.get(`${HOME}\\.claude\\todos\\t1.json`.toLowerCase())!.dacl).toBe(`D:AI(A;;FR;;;WD)(A;ID;FA;;;${USER})`)
   })
 
-  it('a link to a file inside refuses the folder; a link to a folder is neither judged nor gone into', async () => {
+  it('a link to a file inside refuses the folder; a link to a folder is judged by its own rights and never gone into or reset', async () => {
     const m = machine()
     const dirs = adminOwnedHome(m)
     m.add('C:\\shared', { kind: 'dir' })
-    m.add(`${HOME}\\.claude\\projects`, { kind: 'link', owner: OTHER, dacl: 'D:(A;;FA;;;WD)' })
+    // The links' own rights are taken from the folder above (the rights alone, written, reach them); what they point to is another account's.
+    m.add(`${HOME}\\.claude\\projects`, { kind: 'link', dacl: 'D:AI(A;OICIID;FA;;;WD)' })
     m.add(`${HOME}\\.claude\\projects\\p.jsonl`, { kind: 'file', owner: OTHER, dacl: 'D:(A;;FA;;;WD)' })
-    m.add(`${HOME}\\.ssh`, { kind: 'link', owner: OTHER, dacl: 'D:(A;;FA;;;WD)' })
-    let out = await secureFoldersWindows(dirs, m.run, m.tools)
+    m.add(`${HOME}\\.ssh`, { kind: 'link', dacl: 'D:AI(A;OICIID;FA;;;WD)' })
+    let out = await secureFoldersWindows(dirs, m.run, m.tools, INSIDE)
     expect(out.map((r) => [r.ok, r.detail])).toEqual(dirs.map(() => [true, 'owner-only']))
     expect(resets(m)).toEqual([])
     expect(m.entries.get(`${HOME}\\.claude\\projects\\p.jsonl`.toLowerCase())).toMatchObject({ owner: OTHER, dacl: 'D:(A;;FA;;;WD)' })
+    // A link to a folder with an entry of its own for Everyone, or another account's: refused, never reset.
+    for (const [arrange, detail] of [
+      [(e: Entry) => { e.dacl = 'D:AI(A;;FR;;;WD)(A;OICIID;FA;;;SY)' }, 'an entry inside it is not owner-only'],
+      [(e: Entry) => { e.owner = OTHER }, "an entry inside it is another account's"],
+    ] as Array<[(e: Entry) => void, string]>) {
+      const l = machine()
+      adminOwnedHome(l)
+      l.add(`${HOME}\\.claude\\projects`, { kind: 'link', dacl: 'D:AI(A;OICIID;FA;;;WD)' })
+      arrange(l.entries.get(`${HOME}\\.claude\\projects`.toLowerCase())!)
+      const got = await secureFoldersWindows(dirs, l.run, l.tools, INSIDE)
+      expect(got.map((r) => [r.ok, r.detail]), detail).toEqual([[true, 'owner-only'], [false, detail], [true, 'owner-only']])
+      expect(resets(l)).toEqual([])
+    }
+    // A folder with another kind of reparse point (not a link): refused, what it holds not read.
+    const o = machine()
+    adminOwnedHome(o)
+    o.add(`${HOME}\\.claude\\cloud`, { kind: 'reparse', dacl: 'D:AI(A;OICIID;FA;;;SY)' })
+    expect((await secureFoldersWindows(dirs, o.run, o.tools, INSIDE)).map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only'], [false, 'a folder inside it is neither a plain folder nor a link'], [true, 'owner-only']])
     const n = machine()
     adminOwnedHome(n)
     n.entries.delete(`${HOME}\\identity\\.credentials.json`.toLowerCase())
     n.add(`${HOME}\\identity\\.credentials.json`, { kind: 'filelink', owner: OTHER, dacl: 'D:(A;;FA;;;WD)' })
-    out = await secureFoldersWindows(dirs, n.run, n.tools)
+    out = await secureFoldersWindows(dirs, n.run, n.tools, INSIDE)
     expect(out.map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only'], [true, 'owner-only'], [false, 'a link to a file is inside it']])
   })
 
@@ -873,11 +913,11 @@ describe('what is inside a folder made owner-only in place, with Windows\' own p
     const m = machine()
     const dirs = adminOwnedHome(m)
     m.state.insideFails = true
-    expect((await secureFoldersWindows(dirs, m.run, m.tools)).map((r) => [r.ok, r.unread])).toEqual(dirs.map(() => [false, true]))
+    expect((await secureFoldersWindows(dirs, m.run, m.tools, INSIDE)).map((r) => [r.ok, r.unread])).toEqual(dirs.map(() => [false, true]))
     const n = machine()
     adminOwnedHome(n)
     n.state.insideErrors.add(dirs[1].toLowerCase())
-    expect((await secureFoldersWindows(dirs, n.run, n.tools)).map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only'], [false, 'what is inside it was not read'], [true, 'owner-only']])
+    expect((await secureFoldersWindows(dirs, n.run, n.tools, INSIDE)).map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only'], [false, 'what is inside it was not read'], [true, 'owner-only']])
   })
 
   it('an entry whose path is past Windows\' 260-character limit is reset by its \\\\?\\ name', async () => {
@@ -886,8 +926,112 @@ describe('what is inside a folder made owner-only in place, with Windows\' own p
     const deep = `${HOME}\\.claude\\todos\\${'d'.repeat(120)}`
     m.add(deep, { kind: 'dir' })
     m.add(`${deep}\\${'f'.repeat(120)}.json`, { kind: 'file', dacl: `D:AI(A;;FR;;;WD)(A;ID;FA;;;${USER})` })
-    const out = await secureFoldersWindows(dirs, m.run, m.tools)
+    const out = await secureFoldersWindows(dirs, m.run, m.tools, INSIDE)
     expect(out.map((r) => r.ok)).toEqual([true, true, true])
     expect(resets(m)).toEqual([[`\\\\?\\${deep}\\${'f'.repeat(120)}.json`, '/reset', '/L', '/Q']])
+  })
+  it('without the option (every caller but the account sign-in folders): the folders\' own rights only, nothing inside read or reset', async () => {
+    const m = machine()
+    const dirs = adminOwnedHome(m)
+    m.entries.get(`${HOME}\\.claude\\.credentials.json`.toLowerCase())!.dacl = `D:AI(A;;FR;;;${OTHER_GROUP})(A;ID;FA;;;${USER})`
+    const out = await secureFoldersWindows(dirs, m.run, m.tools)
+    expect(out.map((r) => [r.ok, r.detail])).toEqual(dirs.map(() => [true, 'owner-only']))
+    expect(m.insideReads).toEqual([])
+    expect(resets(m)).toEqual([])
+    expect(m.entries.get(`${HOME}\\.claude\\.credentials.json`.toLowerCase())!.dacl).toBe(`D:AI(A;;FR;;;${OTHER_GROUP})(A;ID;FA;;;${USER})`)
+  })
+
+  it('an entry SYSTEM owns that lets another group in is reset and read again, and the folder passes; one another account owns is still refused, not reset', async () => {
+    const m = machine()
+    const dirs = adminOwnedHome(m)
+    const t1 = m.entries.get(`${HOME}\\.claude\\todos\\t1.json`.toLowerCase())!
+    t1.owner = 'SY'
+    t1.dacl = `D:AI(A;;FR;;;${OTHER_GROUP})(A;ID;FA;;;SY)(A;ID;FA;;;${USER})`
+    // And a folder SYSTEM owns is gone into: what is in it is read too.
+    const todos = m.entries.get(`${HOME}\\.claude\\todos`.toLowerCase())!
+    todos.owner = 'SY'
+    expect((await secureFoldersWindows(dirs, m.run, m.tools, INSIDE)).map((r) => [r.ok, r.detail])).toEqual(dirs.map(() => [true, 'owner-only']))
+    expect(resets(m)).toEqual([[`${HOME}\\.claude\\todos\\t1.json`, '/reset', '/L', '/Q']])
+    expect(t1).toMatchObject({ owner: 'SY', dacl: INHERITED_DACL(USER) })
+    const n = machine()
+    adminOwnedHome(n)
+    Object.assign(n.entries.get(`${HOME}\\.claude\\todos\\t1.json`.toLowerCase())!, { owner: 'S-1-5-19', dacl: `D:AI(A;;FR;;;${OTHER_GROUP})(A;ID;FA;;;${USER})` })
+    expect((await secureFoldersWindows(dirs, n.run, n.tools, INSIDE)).map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only'], [false, "an entry inside it is another account's"], [true, 'owner-only']])
+    expect(resets(n)).toEqual([])
+  })
+
+  it('a file with more than one name is never reset: one that is not owner-only refuses the folder; named as shared it is left out and the folder passes; a sign-in file is read even when named as shared', async () => {
+    const leaky = `D:AI(A;;FR;;;BU)(A;ID;FA;;;SY)(A;ID;FA;;;${USER})`
+    // Not named as shared: read, never reset, refused.
+    const m = machine()
+    const dirs = adminOwnedHome(m)
+    m.add(`${HOME}\\.gitconfig`, { kind: 'file', owner: USER, dacl: leaky, names: 2 })
+    expect((await secureFoldersWindows(dirs, m.run, m.tools, INSIDE)).map((r) => [r.ok, r.detail])).toEqual([[false, 'an entry inside it is not owner-only'], [true, 'owner-only'], [true, 'owner-only']])
+    expect(resets(m)).toEqual([])
+    expect(m.entries.get(`${HOME}\\.gitconfig`.toLowerCase())!.dacl).toBe(leaky)
+    // Named as shared (the home mirror's link to the user's own file): left out, its rights as they were.
+    const n = machine()
+    adminOwnedHome(n)
+    n.add(`${HOME}\\.gitconfig`, { kind: 'file', owner: USER, dacl: leaky, names: 2 })
+    const shared = { inside: true, shared: [`${HOME}\\.gitconfig`, `${HOME}\\.claude.json`] }
+    expect((await secureFoldersWindows(dirs, n.run, n.tools, shared)).map((r) => [r.ok, r.detail])).toEqual(dirs.map(() => [true, 'owner-only']))
+    expect(n.entries.get(`${HOME}\\.gitconfig`.toLowerCase())!.dacl).toBe(leaky)
+    // The sign-in file is never sent as shared, and a copy (one name) named as shared is read and put right.
+    expect(n.insideReads[0].shared).toEqual([`${HOME}\\.gitconfig`])
+    const o = machine()
+    adminOwnedHome(o)
+    o.add(`${HOME}\\.gitconfig`, { kind: 'file', owner: USER, dacl: leaky, names: 1 })
+    Object.assign(o.entries.get(`${HOME}\\.claude.json`.toLowerCase())!, { dacl: leaky, names: 2 })
+    expect((await secureFoldersWindows(dirs, o.run, o.tools, shared)).map((r) => [r.ok, r.detail])).toEqual([[false, 'an entry inside it is not owner-only'], [true, 'owner-only'], [true, 'owner-only']])
+    expect(resets(o)).toEqual([[`${HOME}\\.gitconfig`, '/reset', '/L', '/Q']])
+    expect(o.entries.get(`${HOME}\\.claude.json`.toLowerCase())!.dacl).toBe(leaky)
+  })
+
+  it('the computer\'s built-in Administrator, whom SDDL names LA: a folder inside it owns is gone into, and a deeper entry that lets another group in refuses the folder', async () => {
+    const m = machine({ user: ADMIN_500 })
+    m.add('C:\\r', { kind: 'dir' })
+    m.add(HOME, { kind: 'dir', owner: 'LA', dacl: 'D:AI(A;OICIID;FA;;;LA)(A;OICIID;FA;;;SY)' })
+    m.add(`${HOME}\\sub`, { kind: 'dir', owner: 'LA', dacl: 'D:AI(A;OICIID;FA;;;LA)(A;OICIID;FA;;;SY)' })
+    m.add(`${HOME}\\sub\\deep.json`, { kind: 'file', owner: 'LA', dacl: `D:PAI(A;;FA;;;LA)(A;;FR;;;${OTHER_GROUP})` })
+    m.state.resetCode = 5
+    const out = await secureFoldersWindows([HOME], m.run, m.tools, INSIDE)
+    expect(out.map((r) => [r.ok, r.detail])).toEqual([[false, 'what is inside it could not be made owner-only']])
+    // Not put right: refused, never passed.
+    const n = machine({ user: ADMIN_500 })
+    n.add('C:\\r', { kind: 'dir' })
+    n.add(HOME, { kind: 'dir', owner: 'LA', dacl: 'D:AI(A;OICIID;FA;;;LA)(A;OICIID;FA;;;SY)' })
+    n.add(`${HOME}\\sub`, { kind: 'dir', owner: 'LA', dacl: 'D:AI(A;OICIID;FA;;;LA)(A;OICIID;FA;;;SY)' })
+    n.add(`${HOME}\\sub\\deep.json`, { kind: 'file', owner: 'LA', dacl: `D:PAI(A;;FA;;;LA)(A;;FR;;;${OTHER_GROUP})` })
+    n.state.resetTakes = false
+    expect((await secureFoldersWindows([HOME], n.run, n.tools, INSIDE)).map((r) => [r.ok, r.detail])).toEqual([[false, 'an entry inside it is not owner-only']])
+    expect(n.insideReads.length).toBe(2)
+  })
+
+  it('more entries to reset than a read may refuse: the folder is refused and none is reset, one by one', async () => {
+    const m = machine()
+    const dirs = adminOwnedHome(m)
+    for (let i = 0; i < 50; i++) m.add(`${HOME}\\.claude\\f${i}.json`, { kind: 'file', dacl: `D:AI(A;;FR;;;WD)(A;ID;FA;;;${USER})` })
+    const out = await secureFoldersWindows(dirs, m.run, m.tools, INSIDE)
+    expect(out.map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only'], [false, 'what is inside it could not be made owner-only'], [true, 'owner-only']])
+    expect(resets(m)).toEqual([])
+  })
+
+  it('the route has one time limit: no program or read starts after it, and a folder it has not reached is not read (unread), never passed', async () => {
+    const m = machine()
+    const dirs = adminOwnedHome(m)
+    let now = 0
+    // The time runs out once the second folder's rights are set.
+    m.state.beforeRun = (_program, args) => { if (args[0] === dirs[1] && args[1] === '/setowner') now = 61_000 }
+    const out = await secureFoldersNative(dirs, m.tools, m.run, INSIDE, () => now)
+    expect(out!.map((r) => [r.dir, r.ok, r.unread])).toEqual(dirs.map((d) => [d, false, true]))
+    expect(out![0].detail).toBe('its rights could not be read back')
+    expect(out![2].detail).toBe('it was not reached in time')
+    // Nothing started after the limit: no third folder written, no read of what is inside.
+    expect(icacls(m).map((c) => c.args[0])).not.toContain(dirs[2])
+    expect(m.insideReads).toEqual([])
+    // Within the limit the same folders pass.
+    const n = machine()
+    adminOwnedHome(n)
+    expect((await secureFoldersNative(dirs, n.tools, n.run, INSIDE, () => 0))!.map((r) => r.ok)).toEqual([true, true, true])
   })
 })

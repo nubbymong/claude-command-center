@@ -5,9 +5,11 @@
 // given the owner-only folder rule and read back -- asynchronously, once per
 // folder in a run -- before anything is written there or a session runs in the
 // profile. In place first; where that is refused, a new folder is made beside
-// it, checked, given what the old one held and swapped into place; otherwise
-// nothing is written, the folder stays exactly as it was, and a launch is
-// refused. The write and launch paths only read the verdict.
+// it, checked, given what the old one held and swapped into place, and checked
+// again with what it then holds; otherwise nothing is written, the folder
+// stays exactly as it was, and a launch is refused. A read of what is inside
+// a folder that failed (as against an entry judged) is asked once more before
+// anything is made anew. The write and launch paths only read the verdict.
 //
 // The rule is replaced here (no process starts, no folder's rights change): it
 // makes a missing folder in its existing parent, as the real one does, and
@@ -29,6 +31,8 @@ vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
 // asynchronously it answers as `powershellAnswer` says.
 const syncPowerShell: string[] = []
 const asyncPowerShell: string[][] = []
+/** What each asynchronous Windows PowerShell call asked: whether what is inside is read, and the shared entries. */
+const asyncAsks: Array<{ inside: string | undefined; shared: string | undefined }> = []
 let powershellAnswer: (dirs: string[]) => string = () => ''
 vi.mock('node:child_process', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:child_process')>()
@@ -41,6 +45,7 @@ vi.mock('node:child_process', async (importOriginal) => {
     if (!/powershell/i.test(String(file))) { cb(new Error(`no process in this test: ${file}`), '', ''); return }
     const dirs = String(opts?.env?.CCC_OWNER_ONLY_DIRS ?? '').split('\n').filter(Boolean)
     asyncPowerShell.push(dirs)
+    asyncAsks.push({ inside: opts?.env?.CCC_OWNER_ONLY_INSIDE, shared: opts?.env?.CCC_OWNER_ONLY_SHARED })
     setTimeout(() => cb(null, powershellAnswer(dirs), ''), 1)
   })
   return { ...real, execFileSync, execFile, default: { ...real, execFileSync, execFile } }
@@ -72,14 +77,22 @@ let src = ''
 
 /** The owner-only rule, replaced: each call recorded; a missing folder made in
  *  its existing parent (as the real script does, before it reads it back);
- *  every folder answered by `ok`, with `detail` as the refusal's reason. */
-function useRule(ok: (dir: string) => boolean, rename: ((from: string, to: string) => void) | null = null, detail = 'its owner is not this user') {
+ *  every folder answered by `ok`, with `detail` as the refusal's reason -- but
+ *  a folder made anew where one was refused (another file identity at that
+ *  path: the remade folder, asked again with what it holds) by `remade`. */
+function useRule(ok: (dir: string) => boolean, rename: ((from: string, to: string) => void) | null = null, detail = 'its owner is not this user', remade: (dir: string) => boolean = () => true) {
   const calls: string[][] = []
+  const refusedAt = new Map<string, string>()
   _setCredentialFolderRuleForTest(async (dirs) => {
     calls.push([...dirs])
     return dirs.map((dir) => {
       if (!fs.existsSync(dir) && fs.existsSync(path.dirname(dir))) fs.mkdirSync(dir)
-      return ok(dir) ? { dir, ok: true, detail: 'owner-only' } : { dir, ok: false, detail }
+      let id = ''
+      try { id = idOf(dir) } catch { id = '' }
+      const was = refusedAt.get(dir)
+      const pass = was !== undefined && was !== id ? remade(dir) : ok(dir)
+      if (!pass && was === undefined) refusedAt.set(dir, id)
+      return pass ? { dir, ok: true, detail: 'owner-only' } : { dir, ok: false, detail }
     })
   }, rename)
   return calls
@@ -132,6 +145,7 @@ beforeEach(() => {
   warned.length = 0
   syncPowerShell.length = 0
   asyncPowerShell.length = 0
+  asyncAsks.length = 0
   powershellAnswer = () => ''
   base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-owner-only-cred-')))
   const resourcesDir = path.join(base, 'res')
@@ -252,7 +266,7 @@ describe('a sign-in is written only into a folder read back as owner-only', () =
     const before = snapshot(claudeDir)
     const id = idOf(claudeDir)
     await checkProfileCredentialFolders(ID)
-    expect(calls).toEqual([[home, claudeDir, identityDir], [`${claudeDir}${STAGED}`]])
+    expect(calls).toEqual([[home, claudeDir, identityDir], [`${claudeDir}${STAGED}`], [claudeDir]])
     // Another folder now, holding everything the old one held (times kept)
     // and the profile's shared folders, linked to the shared ones again.
     expect(idOf(claudeDir)).not.toBe(id)
@@ -264,7 +278,7 @@ describe('a sign-in is written only into a folder read back as owner-only', () =
     // Checked: the write lands, and asks nothing.
     copyCredentialFile(src, path.join(claudeDir, '.credentials.json'))
     expect(fs.readFileSync(path.join(claudeDir, '.credentials.json'), 'utf8')).toBe(NEW_CREDENTIAL)
-    expect(calls.length).toBe(2)
+    expect(calls.length).toBe(3)
   })
 
   it('the profile folder refused in place is made anew the same way: what it holds carried, its folders checked again inside it, its links made again', async () => {
@@ -273,7 +287,7 @@ describe('a sign-in is written only into a folder read back as owner-only', () =
     const before = snapshot(home)
     const id = idOf(home)
     await checkProfileCredentialFolders(ID)
-    expect(calls).toEqual([[home, claudeDir, identityDir], [`${home}${STAGED}`], [claudeDir, identityDir]])
+    expect(calls).toEqual([[home, claudeDir, identityDir], [`${home}${STAGED}`], [home], [claudeDir, identityDir]])
     expect(idOf(home)).not.toBe(id)
     expect(snapshot(home)).toEqual(before)
     expect(linkedToShared()).toBe(true)
@@ -486,10 +500,51 @@ describe('a sign-in is written only into a folder read back as owner-only', () =
       return out
     })
     await checkProfileCredentialFolders(ID)
-    // The rule is asked again, for a new folder made beside it.
-    expect(calls).toEqual([[home, claudeDir, identityDir], [`${claudeDir}${STAGED}`]])
+    // The rule is asked again, for a new folder made beside it, and for that folder once in place.
+    expect(calls).toEqual([[home, claudeDir, identityDir], [`${claudeDir}${STAGED}`], [claudeDir]])
     expect(fs.existsSync(path.join(claudeDir, 'put-there.json'))).toBe(true)
     expect(leftovers()).toEqual([])
+  })
+
+  it('a folder made anew is asked about again once in place, with what it then holds: refused then, nothing is written, the refusal is logged in fixed words, and the old copy goes', async () => {
+    linkShared()
+    const calls = useRule((dir) => dir !== claudeDir, null, undefined, () => false)
+    await checkProfileCredentialFolders(ID)
+    expect(calls).toEqual([[home, claudeDir, identityDir], [`${claudeDir}${STAGED}`], [claudeDir]])
+    expect(() => copyCredentialFile(src, path.join(claudeDir, '.credentials.json'))).toThrow(CREDENTIAL_FOLDER_REFUSAL)
+    expect(fs.readFileSync(path.join(claudeDir, '.credentials.json'), 'utf8')).toBe(OLD_CREDENTIAL)
+    expect(refusals().length).toBe(1)
+    expect(refusals()[0]).toContain('the new folder did not read back owner-only with what it holds')
+    expect(refusals()[0]).not.toContain(base)
+    expect(leftovers()).toEqual([])
+    // The refusal holds for the run while it is the same folder.
+    await checkProfileCredentialFolders(ID)
+    expect(calls.length).toBe(3)
+  })
+
+  it('the profile folder made anew and refused once in place: its folders inside are new copies, asked about there', async () => {
+    const calls = useRule((dir) => dir !== home, null, undefined, () => false)
+    await checkProfileCredentialFolders(ID)
+    expect(calls).toEqual([[home, claudeDir, identityDir], [`${home}${STAGED}`], [home], [claudeDir, identityDir]])
+    expect(credentialFoldersVerdict([home])).toEqual({ ok: false, message: CREDENTIAL_FOLDER_REFUSAL })
+    expect(leftovers()).toEqual([])
+  })
+
+  it('a read of what is inside a folder that failed (an entry gone while it was read) is asked once more before anything is made anew: it passes in place', async () => {
+    const calls: string[][] = []
+    let n = 0
+    _setCredentialFolderRuleForTest(async (dirs) => {
+      calls.push([...dirs])
+      const out = madeAndPassed(dirs)
+      return ++n === 1 ? out.map((r) => (r.dir === claudeDir ? { dir: claudeDir, ok: false, detail: 'what is inside it could not be made owner-only' } : r)) : out
+    })
+    const id = idOf(claudeDir)
+    await checkProfileCredentialFolders(ID)
+    expect(calls).toEqual([[home, claudeDir, identityDir], [home, claudeDir, identityDir]])
+    expect(idOf(claudeDir)).toBe(id)
+    expect(refusals()).toEqual([])
+    copyCredentialFile(src, path.join(claudeDir, '.credentials.json'))
+    expect(fs.readFileSync(path.join(claudeDir, '.credentials.json'), 'utf8')).toBe(NEW_CREDENTIAL)
   })
 
   it('a refusal is logged in fixed words: a reason that names a path or a user is not repeated', async () => {
@@ -521,12 +576,13 @@ describe('a sign-in is written only into a folder read back as owner-only', () =
   it('no read of the new folder made for one refused in place is no refusal either: the folder is asked again and made anew then', async () => {
     const calls: string[][] = []
     let stagedAsks = 0
+    const id = idOf(home)
     _setCredentialFolderRuleForTest(async (dirs) => {
       calls.push([...dirs])
       if (dirs[0] === `${home}${STAGED}` && ++stagedAsks === 1) return noRead(dirs)
-      return madeAndPassed(dirs).map((r) => (r.dir === home ? { dir: home, ok: false, detail: 'its owner is not this user' } : r))
+      // The profile folder in place is refused; the one made anew passes.
+      return madeAndPassed(dirs).map((r) => (r.dir === home && idOf(home) === id ? { dir: home, ok: false, detail: 'its owner is not this user' } : r))
     })
-    const id = idOf(home)
     await checkProfileCredentialFolders(ID)
     expect(refusals()).toEqual([])
     expect(calls.filter((c) => c[0] === `${home}${STAGED}`).length).toBe(2)
@@ -925,6 +981,9 @@ describe('at start: the rule is turned on and every profile checked before the s
 
   it('the app\'s own rule runs Windows PowerShell asynchronously only: no write or launch starts one synchronously', async () => {
     upsertProfile({ id: ID, name: '', accountEmail: '', createdAt: 1 })
+    // The real home's dot-files: the home mirror links these into the profile folder (never the private or sign-in ones).
+    const realHome = path.dirname(sharedRoot())
+    for (const name of ['.gitconfig', '.claude.json', '.credentials.json']) fs.writeFileSync(path.join(realHome, name), '{}')
     powershellAnswer = (dirs) => {
       const user = 'S-1-5-21-1-2-3-1001'
       for (const d of dirs) if (!fs.existsSync(d) && fs.existsSync(path.dirname(d))) fs.mkdirSync(d)
@@ -939,8 +998,11 @@ describe('at start: the rule is turned on and every profile checked before the s
     expect(withProfileHome({ PATH: 'x' }, home).USERPROFILE).toBe(home)
     expect(fs.readFileSync(path.join(claudeDir, '.credentials.json'), 'utf8')).toBe(NEW_CREDENTIAL)
     expect(syncPowerShell).toEqual([])
-    if (onWindows) expect(asyncPowerShell[0]).toEqual([home, claudeDir, identityDir])
-    else expect(asyncPowerShell).toEqual([])
+    if (onWindows) {
+      expect(asyncPowerShell[0]).toEqual([home, claudeDir, identityDir])
+      // It asked for what is inside to be read, leaving out the mirror's link to the real home's .gitconfig only.
+      expect(asyncAsks[0]).toEqual({ inside: '1', shared: path.join(home, '.gitconfig') })
+    } else expect(asyncPowerShell).toEqual([])
   })
 })
 
@@ -958,17 +1020,17 @@ describe('the app\'s own rule reads back what is inside a sign-in folder too', (
     const user = 'S-1-5-21-1-2-3-1001'
     const full = (sid: string) => ({ sid, rights: 0x1f01ff, allow: true, inherited: false, flags: 3 })
     const inherited = (sid: string, rights = 0x1f01ff) => ({ sid, rights, allow: true, inherited: true, flags: 0 })
+    const id = idOf(claudeDir)
     powershellAnswer = (dirs) => {
       for (const d of dirs) if (!fs.existsSync(d) && fs.existsSync(path.dirname(d))) fs.mkdirSync(d)
       return JSON.stringify({ user, folders: dirs.map((dir) => ({
         dir, error: null, owner: user, protected: true, rules: [full(user), full('S-1-5-18')],
-        // The config folder in place: its sign-in file, the Administrators group's, with another group's inherited read.
-        inside: dir === claudeDir ? [{ name: '.credentials.json', link: false, folder: false, owner: 'S-1-5-32-544', rules: [inherited(user), inherited('S-1-5-18'), inherited('S-1-5-21-1-2-3-1007', 0x1200a9)] }] : [],
+        // The config folder in place (not the one made anew): its sign-in file, the Administrators group's, with another group's inherited read.
+        inside: dir === claudeDir && idOf(claudeDir) === id ? [{ name: '.credentials.json', link: false, folder: false, owner: 'S-1-5-32-544', rules: [inherited(user), inherited('S-1-5-18'), inherited('S-1-5-21-1-2-3-1007', 0x1200a9)] }] : [],
         insideError: null,
       })) })
     }
     linkShared()
-    const id = idOf(claudeDir)
     const before = snapshot(claudeDir)
     await startOwnerOnlyCredentialFolders(() => {})
     if (!onWindows) {
@@ -978,6 +1040,9 @@ describe('the app\'s own rule reads back what is inside a sign-in folder too', (
     }
     expect(asyncPowerShell[0]).toEqual([home, claudeDir, identityDir])
     expect(asyncPowerShell).toContainEqual([`${claudeDir}${STAGED}`])
+    // The folder made anew was asked about again once in place, with what it holds.
+    const staged = asyncPowerShell.findIndex((c) => c.length === 1 && c[0] === `${claudeDir}${STAGED}`)
+    expect(asyncPowerShell.findIndex((c, i) => i > staged && c.length === 1 && c[0] === claudeDir)).toBeGreaterThan(staged)
     // Another folder now, holding what the old one held (times kept) and its shared folders, linked again.
     expect(idOf(claudeDir)).not.toBe(id)
     expect(snapshot(claudeDir)).toEqual(before)

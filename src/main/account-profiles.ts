@@ -14,7 +14,7 @@ import path from 'node:path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { isValidProfileId, profileIdFromHome, PROFILES_ROOT_DIRNAME } from './profile-id'
 import { atomicWriteFileSync } from './atomic-write'
-import { secureFoldersWindows, OWNER_ONLY_INSIDE_REASONS } from './owner-only-folders'
+import { secureSignInFoldersWindows, OWNER_ONLY_INSIDE_REASONS, OWNER_ONLY_INSIDE_FAILED_REASONS } from './owner-only-folders'
 import type { OwnerOnlyFolderResult } from './owner-only-folders'
 import { logInfo, logWarn } from './debug-logger'
 import { recordSettingsSanitise, recordAmbientStrip, clearSettingsSanitise } from './managed-launch-state'
@@ -887,6 +887,30 @@ let readyHomeCheck: Promise<void> | null = null
 /** The start's profile steps while they are still to run. */
 let startStepsPending: Promise<void> | null = null
 
+/** The app's own rule for the sign-in folders (Windows): each folder made
+ *  owner-only and read back with what is inside it, the home mirror's links
+ *  to the user's own files left out of that read (homeMirrorLinks). */
+const signInFolderRule: CredentialFolderRule = (dirs) => secureSignInFoldersWindows(dirs, homeMirrorLinks(dirs))
+
+/** The home mirror's links to the user's own files (mirrorRealHome) in each
+ *  profile home among `dirs`, by full path: the real home's dot-files, but
+ *  never the private or sign-in ones. The rule leaves each out of its read of
+ *  what is inside that home while it is a file with more than one name, so
+ *  it never writes the rights of the user's real files (a copy made where a
+ *  link could not be is the profile's own, and is read). Best-effort: none
+ *  when the real home cannot be read. */
+function homeMirrorLinks(dirs: readonly string[]): string[] {
+  const homes = dirs.filter((d) => isProfileHome(d))
+  if (homes.length === 0) return []
+  let names: string[]
+  try {
+    names = fs.readdirSync(realHomeDir(), { withFileTypes: true })
+      .filter((e) => e.isFile() && e.name.startsWith('.') && !HOME_PRIVATE.has(e.name) && !CREDENTIAL_FILE_NAMES.includes(e.name))
+      .map((e) => e.name)
+  } catch { return [] }
+  return homes.flatMap((home) => names.map((name) => path.join(home, name)))
+}
+
 /** Start (main process): turns the owner-only rule on for the sign-in folders
  *  (Windows), checks every profile's folders and makes a checked home ready
  *  for the next new profile, THEN runs `steps` -- the start's profile steps
@@ -895,7 +919,7 @@ let startStepsPending: Promise<void> | null = null
  *  owner-only rule unless a test brings one. */
 export async function startOwnerOnlyCredentialFolders(
   steps: () => void | Promise<void>,
-  rule: CredentialFolderRule = (dirs) => secureFoldersWindows(dirs),
+  rule: CredentialFolderRule = signInFolderRule,
 ): Promise<void> {
   enabledCredentialFolderRule = rule
   let settle!: () => void
@@ -1132,6 +1156,23 @@ function passed(dir: string, answers: RuleAnswers): boolean {
   return !!r?.answer && r.answer.ok === true && r.answer.dir === dir && id !== null && (r.asked === null || r.asked === id)
 }
 
+/** The rule's read of what is inside this folder failed (an entry gone while
+ *  it was read can do that), as against an entry read and judged. */
+function insideReadFailed(dir: string, answers: RuleAnswers): boolean {
+  const a = answers.get(dir)?.answer
+  return !!a && a.ok !== true && OWNER_ONLY_INSIDE_FAILED_REASONS.includes(String(a.detail))
+}
+
+/** `dirs` asked once more, as one call, when the read of what is inside any of
+ *  them failed (insideReadFailed): a passing condition is not taken for a
+ *  refusal and made anew, as a call that gave no read is not
+ *  (checkHomesAnswering). Their answers are replaced by the new ones. */
+async function askAgainWhereInsideFailed(rule: CredentialFolderRule, dirs: readonly string[], answers: RuleAnswers): Promise<void> {
+  if (!dirs.some((d) => insideReadFailed(d, answers))) return
+  const again = await askRule(rule, dirs)
+  for (const d of dirs) answers.set(d, again.get(d)!)
+}
+
 /** The rule gave no read of this folder: no answer for it, an answer for
  *  another folder, or a call that could not run or end. No verdict, never a
  *  refusal: nothing is made anew for it. */
@@ -1225,20 +1266,26 @@ async function checkFolders(homes: readonly string[], rule: CredentialFolderRule
     // The home is another folder (or none) now and its account was removed
     // meanwhile: what is in its place was made after the check began.
     if (realFolderId(home) !== homeId && profileRemoved(home)) { dropRemovedProfileHome(home); continue }
+    await askAgainWhereInsideFailed(rule, set, answers)
     for (const dir of set) {
       if (!isProfileHome(dir)) { await settleOne(dir, answers, rule, refused, unanswered); continue }
       if (passed(dir, answers)) { recordVerdict(dir, true); clearAside(dir); continue }
       if (unread(dir, answers)) { markUnanswered(unanswered, home); continue }
+      const was = realFolderId(dir)
       const made = await remakeOwnerOnly(dir, rule)
-      if (made === UNREAD) { markUnanswered(unanswered, home); continue }
-      if (made !== null) { recordVerdict(dir, false); refused.push([dir, `${loggedReason(answers.get(dir))}; ${made}`]); continue }
-      // The home is another folder now: everything inside it is a new copy.
+      if (made === UNREAD) markUnanswered(unanswered, home)
+      else if (made !== null) { recordVerdict(dir, false); refused.push([dir, `${loggedReason(answers.get(dir))}; ${made}`]) }
+      // Not made anew: the folders inside it keep their own answers.
+      if (realFolderId(dir) === was) continue
+      // The home is another folder now (whatever its new read said):
+      // everything inside it is a new copy.
       for (const inside of signInFoldersOf(dir).slice(1)) if (realFolderId(inside) !== null) again.push(inside)
       break
     }
   }
   if (again.length > 0) {
     const second = await askRule(rule, again)
+    await askAgainWhereInsideFailed(rule, again, second)
     for (const dir of again) await settleOne(dir, second, rule, refused, unanswered)
   }
   for (const { home } of checks) {
@@ -1390,8 +1437,12 @@ const UNREAD = Symbol('unread')
 
 /** Step 2 for one folder the rule refused in place. Null when the new folder
  *  is in place and checked (its verdict recorded); UNREAD (no verdict) when
- *  the rule gave no read of the new folder; else why not. Every step is
- *  undone unless null. */
+ *  the rule gave no read of the new folder; else why not. Every step before
+ *  the swap is undone unless null. Once swapped in, the new folder is asked
+ *  about again with what it now holds (the copy, its sign-in files and its
+ *  links): it passes only when that read holds; a refusal is recorded, and
+ *  no read leaves it without a verdict. The old copy goes either way: the
+ *  new folder holds everything it held. */
 async function remakeOwnerOnly(dir: string, rule: CredentialFolderRule): Promise<string | null | typeof UNREAD> {
   if (realFolderId(dir) === null) return 'it is missing'
   const staged = dir + STAGED_SUFFIX
@@ -1435,10 +1486,15 @@ async function remakeOwnerOnly(dir: string, rule: CredentialFolderRule): Promise
     return 'the new folder could not be put in its place'
   }
   if (realFolderId(dir) !== stagedId) return 'the new folder could not be put in its place'
-  recordVerdict(dir, true)
   relinkAfterRemake(dir)
+  const answers = await askRule(rule, [dir])
+  await askAgainWhereInsideFailed(rule, [dir], answers)
+  const ok = passed(dir, answers) && realFolderId(dir) === stagedId
+  if (ok) recordVerdict(dir, true)
+  else if (!unread(dir, answers)) recordVerdict(dir, false)
   clearAside(dir)
-  return null
+  if (ok) return null
+  return unread(dir, answers) ? UNREAD : 'the new folder did not read back owner-only with what it holds'
 }
 
 /** The checked home kept ready for the next new profile: made by the rule with

@@ -124,3 +124,29 @@ describe('the Claude sign-in check and sign-out run only once their account\'s s
     }
   })
 })
+
+// Only the account sign-in folders have what is inside them read and put
+// right (secureSignInFoldersWindows); every other caller of the owner-only
+// rule -- the other assistant's managed folders and its hook folders -- gets
+// the folders' own rights only (secureOwnerOnlyFolders), so a folder those
+// callers secure never has what an account keeps inside it judged or reset.
+describe('only the account sign-in folders have what is inside them read', () => {
+  /** Every TypeScript file below `dir`, by its path from the repository root. */
+  const files = (dir: string): string[] => fs.readdirSync(path.join(__dirname, '..', '..', '..', dir), { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? files(path.join(dir, e.name)) : e.name.endsWith('.ts') ? [path.join(dir, e.name)] : []))
+
+  it('the account rule asks for it, with the home mirror\'s links left out; no other source calls the rule with what is inside, or the rule\'s parts directly', () => {
+    const ap = code('src/main/account-profiles.ts')
+    expect(ap).toContain('const signInFolderRule: CredentialFolderRule = (dirs) => secureSignInFoldersWindows(dirs, homeMirrorLinks(dirs))')
+    expect(ap).toContain('rule: CredentialFolderRule = signInFolderRule,')
+    const sources = files(path.join('src', 'main')).filter((f) => path.basename(f) !== 'owner-only-folders.ts')
+    expect(sources.length).toBeGreaterThan(10)
+    for (const f of sources) {
+      const src = code(f)
+      if (path.basename(f) !== 'account-profiles.ts') expect(src, f).not.toMatch(/secureSignInFoldersWindows/)
+      expect(src, f).not.toMatch(/secureFoldersWindows\s*\(|secureFoldersNative\s*\(/)
+    }
+    // The hook folders get the folders' own rule.
+    expect(code('src/main/index.ts')).toContain('getResourcesDirectory(), secureOwnerOnlyFolders)')
+  })
+})

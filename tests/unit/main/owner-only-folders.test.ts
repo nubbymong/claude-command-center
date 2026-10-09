@@ -4,11 +4,12 @@
 // (started asynchronously from the system folder by its full path) makes each
 // missing folder inside the one before it, sets its owner to the user and its
 // rights to the user and SYSTEM with inheritance off, and reads owner and
-// rights back by SID, then reads what is inside it; the app uses a folder
-// only when that read holds exactly the user and SYSTEM (the Administrators
-// group accepted), owned by the user, inheritance off, and what is inside
-// reads back owner-only too (owner-only-folders-inside.test.ts has that
-// verdict). No process starts here: the runner is injected, and
+// rights back by SID, then -- for the account sign-in folders, which ask for
+// it -- reads what is inside it; the app uses a folder only when that read
+// holds exactly the user and SYSTEM (the Administrators group accepted),
+// owned by the user, inheritance off, and, where it was asked for, what is
+// inside reads back owner-only too (owner-only-folders-inside.test.ts has
+// that verdict). No process starts here: the runner is injected, and
 // child_process is replaced for the runner's own case. The real resulting
 // rights are owner-only-folders-real.test.ts (CI and the VM).
 import { describe, it, expect, vi, beforeEach } from 'vitest'

@@ -1,7 +1,9 @@
 // The app's own owner-only folder rule -- what the account sign-in folders
-// get (secureFoldersWindows with no runner of a test's own) and what every
-// managed folder of the other assistant gets (secureOwnerOnlyFolders) --
-// answers on a Windows whose PowerShell runs in Constrained Language Mode:
+// get (secureSignInFoldersWindows: what is inside each folder read too) and
+// what every managed folder of the other assistant gets
+// (secureOwnerOnlyFolders: the folders' own rights only, nothing inside read
+// or changed) -- answers on a Windows whose PowerShell runs in Constrained
+// Language Mode:
 // the script's call fails there, and the rule falls back to Windows' own
 // programs and a read that mode allows (owner-only-folders-native.test.ts
 // has the rule itself; owner-only-folders-real.test.ts the real round trip).
@@ -40,6 +42,10 @@ const win = vi.hoisted(() => ({
   modulesBroken: false,
   /** The module path each Windows PowerShell call is handed, as the child would see it. */
   modulePaths: [] as Array<string | undefined>,
+  /** What each call of the rule's main script asked: whether what is inside is read ('1'), and the shared entries. */
+  mainAsks: [] as Array<{ inside: string | undefined; shared: string | undefined }>,
+  /** The folders each read of what is inside was handed. */
+  insideReads: [] as string[][],
 }))
 
 vi.mock('node:child_process', async (importOriginal) => {
@@ -60,6 +66,7 @@ vi.mock('node:child_process', async (importOriginal) => {
       const modulePath = key === undefined ? undefined : env[key]
       win.modulePaths.push(modulePath)
       if (script !== win.readScript && script !== win.insideScript) {
+        win.mainAsks.push({ inside: env.CCC_OWNER_ONLY_INSIDE, shared: env.CCC_OWNER_ONLY_SHARED })
         cb(Object.assign(new Error('Cannot invoke method. Method invocation is supported only on core types in this language mode.'), { code: 1 }), '', '')
         return
       }
@@ -76,6 +83,7 @@ vi.mock('node:child_process', async (importOriginal) => {
       }
       const dirs = String(env[win.dirsEnv] ?? '').split('\n').filter(Boolean)
       if (script === win.insideScript) {
+        win.insideReads.push(dirs)
         // What is inside each folder, from the real folders (the call's own left out), as the read prints it.
         const skip = new Set(String(env.CCC_OWNER_ONLY_SKIP ?? '').split('\n').filter(Boolean).map(k))
         cb(null, JSON.stringify(dirs.map((d) => ({
@@ -121,7 +129,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   return { ...real, execFile, execFileSync: vi.fn(no), spawn: vi.fn(no), spawnSync: vi.fn(no), execSync: vi.fn(no) }
 })
 
-import { secureFoldersWindows, secureOwnerOnlyFolders, OWNER_ONLY_READ_SCRIPT, OWNER_ONLY_INSIDE_SCRIPT, OWNER_ONLY_DIRS_ENV } from '../../../src/main/owner-only-folders'
+import { secureSignInFoldersWindows, secureOwnerOnlyFolders, OWNER_ONLY_READ_SCRIPT, OWNER_ONLY_INSIDE_SCRIPT, OWNER_ONLY_DIRS_ENV } from '../../../src/main/owner-only-folders'
 win.readScript = OWNER_ONLY_READ_SCRIPT
 win.insideScript = OWNER_ONLY_INSIDE_SCRIPT
 win.dirsEnv = OWNER_ONLY_DIRS_ENV
@@ -137,6 +145,8 @@ beforeEach(() => {
   win.brokenModules.clear()
   win.modulesBroken = false
   win.modulePaths.length = 0
+  win.mainAsks.length = 0
+  win.insideReads.length = 0
   base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), PREFIX)))
 })
 
@@ -156,23 +166,35 @@ function windowsPowerShellModules(): string {
 const ownerOnly = (dir: string) => win.acl.get(dir.toLowerCase())
 
 describe.runIf(process.platform === 'win32')('the app\'s owner-only rule answers under Constrained Language Mode', () => {
-  it('the account sign-in folders\' rule (no runner of its own): both folders owner-only and owned by the user', async () => {
+  it('the account sign-in folders\' rule: both folders owner-only and owned by the user, what is inside each read too', async () => {
     const home = path.join(base, 'profile')
     const dirs = [home, path.join(home, '.claude')]
-    const out = await secureFoldersWindows(dirs)
+    const out = await secureSignInFoldersWindows(dirs, [path.join(home, '.gitconfig')])
     expect(out.map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only'], [true, 'owner-only']])
     for (const d of dirs) {
       expect(fs.statSync(d).isDirectory()).toBe(true)
       expect(ownerOnly(d)).toEqual({ owner: USER, dacl: `D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;${USER})` })
     }
     expect(win.started).toContain('icacls.exe')
+    // It asked the script for what is inside, naming the shared entries, and read what is inside each folder.
+    expect(win.mainAsks).toEqual([{ inside: '1', shared: path.join(home, '.gitconfig') }])
+    expect(win.insideReads).toEqual(dirs.map((d) => [d]))
   })
 
-  it('the rule the other assistant\'s managed folders get: the same', async () => {
+  it('the rule the other assistant\'s managed folders get: the same folders\' own rights, and nothing inside read or changed', async () => {
     const root = path.join(base, 'realms')
-    const out = await secureOwnerOnlyFolders([root, path.join(root, 'realm-a')])
+    // A realm an earlier prepare left, holding a grant of its own that a tool of that account set.
+    const sibling = path.join(root, 'realm-a')
+    fs.mkdirSync(path.join(sibling, '.sandbox-bin'), { recursive: true })
+    const grant = { owner: USER, dacl: `D:AI(A;OICI;0x1200a9;;;BU)(A;OICIID;FA;;;SY)(A;OICIID;FA;;;${USER})` }
+    win.acl.set(path.join(sibling, '.sandbox-bin').toLowerCase(), { ...grant })
+    const out = await secureOwnerOnlyFolders([root, path.join(root, 'realm-b')])
     expect(out.map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only'], [true, 'owner-only']])
     expect(ownerOnly(root)).toEqual({ owner: USER, dacl: `D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;${USER})` })
+    // It asked the script for the folders' own rights only; nothing inside was read or reset.
+    expect(win.mainAsks).toEqual([{ inside: '0', shared: '' }])
+    expect(win.insideReads).toEqual([])
+    expect(ownerOnly(path.join(sibling, '.sandbox-bin'))).toEqual(grant)
   })
 
   it('started by PowerShell 7 (its own modules first in the module path this process has): a sign-in folder already there and one made inside it are owner-only, and every Windows PowerShell call gets its own modules folder', async () => {
@@ -183,7 +205,7 @@ describe.runIf(process.platform === 'win32')('the app\'s owner-only rule answers
     const home = path.join(base, 'profile')
     fs.mkdirSync(home)
     const dirs = [home, path.join(home, '.claude')]
-    const out = await secureFoldersWindows(dirs)
+    const out = await secureSignInFoldersWindows(dirs)
     expect(out.map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only'], [true, 'owner-only']])
     for (const d of dirs) expect(ownerOnly(d)).toEqual({ owner: USER, dacl: `D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;${USER})` })
     // The script, the read, a read of what is inside each folder and the read-back: five calls, none with the inherited path.
@@ -200,7 +222,7 @@ describe.runIf(process.platform === 'win32')('the app\'s owner-only rule answers
     fs.mkdirSync(home)
     const before = { owner: OTHER, dacl: 'D:AI(A;OICIID;FA;;;WD)' }
     win.acl.set(home.toLowerCase(), { ...before })
-    const out = await secureFoldersWindows([home, path.join(home, '.claude')])
+    const out = await secureSignInFoldersWindows([home, path.join(home, '.claude')])
     expect(out.map((r) => [r.ok, r.detail, r.unread])).toEqual([
       [false, 'its owner is not this user', undefined],
       [false, 'its parent was refused', undefined],
@@ -224,7 +246,7 @@ describe.runIf(process.platform === 'win32')('the app\'s owner-only rule answers
     win.modulesBroken = true
     const home = path.join(base, 'profile')
     fs.mkdirSync(home)
-    const out = await secureFoldersWindows([home, path.join(home, '.claude')])
+    const out = await secureSignInFoldersWindows([home, path.join(home, '.claude')])
     expect(out.map((r) => [r.ok, r.unread])).toEqual([[false, true], [false, true]])
     expect(win.started).not.toContain('icacls.exe')
     expect(fs.existsSync(path.join(home, '.claude'))).toBe(false)
