@@ -11,7 +11,8 @@
 // PowerShell would load the read's Get-Acl from there and fail, so every call
 // gets Windows PowerShell's own modules folder; and a Windows PowerShell that
 // cannot load the read's cmdlets at all gives no read (unread), never a
-// refusal of each folder.
+// refusal of each folder. A folder already there that another account owns
+// is never taken over: refused, and nothing is written to it or made in it.
 //
 // Host-safe: every program start is faked (execFile answers as Windows would
 // under that mode, from an in-memory record of each folder's owner and
@@ -24,6 +25,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 const USER = 'S-1-5-21-1111111111-2222222222-3333333333-1001'
+const OTHER = 'S-1-5-21-1111111111-2222222222-3333333333-1005'
 const win = vi.hoisted(() => ({
   /** Each folder's owner and rights as SDDL, by its path in lower case. */
   acl: new Map<string, { owner: string; dacl: string }>(),
@@ -174,6 +176,31 @@ describe.runIf(process.platform === 'win32')('the app\'s owner-only rule answers
     const root = path.join(base, 'realms')
     expect((await secureOwnerOnlyFolders([root])).map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only']])
     expect(win.modulePaths.every((p) => p === windowsPowerShellModules())).toBe(true)
+  })
+
+  it('a sign-in folder already there that another account owns is refused before anything is written: no icacls call, nothing made inside it, its owner and rights as they were', async () => {
+    const home = path.join(base, 'profile')
+    fs.mkdirSync(home)
+    const before = { owner: OTHER, dacl: 'D:AI(A;OICIID;FA;;;WD)' }
+    win.acl.set(home.toLowerCase(), { ...before })
+    const out = await secureFoldersWindows([home, path.join(home, '.claude')])
+    expect(out.map((r) => [r.ok, r.detail, r.unread])).toEqual([
+      [false, 'its owner is not this user', undefined],
+      [false, 'its parent was refused', undefined],
+    ])
+    expect(win.started).not.toContain('icacls.exe')
+    expect(fs.existsSync(path.join(home, '.claude'))).toBe(false)
+    expect(ownerOnly(home)).toEqual(before)
+  })
+
+  it('the managed folders\' rule the same: a folder SYSTEM owns (SY, as Get-Acl writes it) is refused unwritten', async () => {
+    const root = path.join(base, 'realms')
+    fs.mkdirSync(root)
+    win.acl.set(root.toLowerCase(), { owner: 'SY', dacl: 'D:AI(A;OICIID;FA;;;WD)' })
+    const out = await secureOwnerOnlyFolders([root, path.join(root, 'realm-a')])
+    expect(out.map((r) => [r.ok, r.detail])).toEqual([[false, 'its owner is not this user'], [false, 'its parent was refused']])
+    expect(win.started).not.toContain('icacls.exe')
+    expect(fs.existsSync(path.join(root, 'realm-a'))).toBe(false)
   })
 
   it('a Windows PowerShell that cannot load the read\'s cmdlets at all gives no read: nothing is made or written, and both folders say unread, never refused', async () => {

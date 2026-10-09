@@ -13,7 +13,11 @@
 // leaves the same rights, and refuses a link the same way -- also when the
 // module path this process has names, first, a Microsoft.PowerShell.Security
 // Windows PowerShell cannot load (as PowerShell 7 leaves it for every program
-// it starts, CI's test step included).
+// it starts, CI's test step included). By either route, a folder already
+// there that another account owns (SYSTEM stands in for one: only an
+// administrator's elevated process can give a folder away, so those cases
+// skip without one) is refused and left exactly as it was, while one the
+// Administrators group owns (what an elevated process makes) is taken in place.
 //
 // HOST QUARANTINE: this suite writes a temp directory, changes rights on it
 // and starts processes (Windows PowerShell and icacls). It runs in CI and on
@@ -68,6 +72,60 @@ async function acesBySid(sddlText: string): Promise<string[]> {
  *  full control (FA, 0x1F01FF), for `sid`. */
 const fullFor = (sid: string) => `0|3|2032127|${sid}`
 const SYSTEM_SID = 'S-1-5-18'
+const ADMINISTRATORS_SID = 'S-1-5-32-544'
+
+/** Gives `dir` to `sid` (icacls /setowner, which needs the right to restore
+ *  files that an administrator's elevated process has); false when this
+ *  process cannot. */
+function giveTo(dir: string, sid: string): boolean {
+  try {
+    execFileSync(ICACLS, [dir, '/setowner', `*${sid}`], { stdio: 'ignore', windowsHide: true, timeout: 30_000 })
+    return true
+  } catch { return false }
+}
+/** A folder's owner by SID, read with Windows PowerShell. */
+async function ownerOf(dir: string): Promise<string> {
+  return (await runWindowsPowerShell('[IO.Directory]::GetAccessControl($env:CCC_T_DIR, [Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value', { CCC_T_DIR: dir })).trim()
+}
+
+/** A folder already there that SYSTEM owns, inside a temp folder that lets
+ *  Everyone in (so the rule could take it over if it would), and one the
+ *  Administrators group owns; null when this process cannot give a folder
+ *  away. */
+function foldersOwnedByOthers(): { top: string; scratch: string; theirs: string; admins: string } | null {
+  const top = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), PREFIX)))
+  made.push(top)
+  const scratch = path.join(top, 'scratch')
+  fs.mkdirSync(scratch)
+  execFileSync(ICACLS, [top, '/grant', '*S-1-1-0:(OI)(CI)F'], { stdio: 'ignore', windowsHide: true, timeout: 30_000 })
+  const theirs = path.join(top, 'theirs')
+  const admins = path.join(top, 'admins')
+  fs.mkdirSync(theirs)
+  fs.mkdirSync(admins)
+  if (!giveTo(theirs, SYSTEM_SID) || !giveTo(admins, ADMINISTRATORS_SID)) return null
+  return { top, scratch, theirs, admins }
+}
+const NEEDS_ELEVATION = 'giving a folder to another account needs an administrator\'s elevated process'
+
+/** By `route`: the SYSTEM folder refused and left exactly as it was, nothing
+ *  made in it; the Administrators group's taken in place. */
+async function refusesTheirsTakesAdmins(f: NonNullable<ReturnType<typeof foldersOwnedByOthers>>, route: (dirs: string[]) => ReturnType<typeof secureFoldersWindows>): Promise<void> {
+  // Control: each folder is the account's it was given to.
+  expect(await ownerOf(f.theirs)).toBe(SYSTEM_SID)
+  expect(await ownerOf(f.admins)).toBe(ADMINISTRATORS_SID)
+  const before = sddl(f.theirs, f.scratch)
+  expect(before).toMatch(/S-1-1-0|WD/)
+  const user = (await runWindowsPowerShell('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value', {})).trim()
+  const out = await route([f.theirs, path.join(f.theirs, 'inside')])
+  expect(out.map((r) => [r.ok, r.detail, r.unread])).toEqual([[false, 'its owner is not this user', undefined], [false, 'its parent was refused', undefined]])
+  expect(await ownerOf(f.theirs)).toBe(SYSTEM_SID)
+  expect(sddl(f.theirs, f.scratch)).toBe(before)
+  expect(fs.existsSync(path.join(f.theirs, 'inside'))).toBe(false)
+  const taken = await route([f.admins])
+  expect(taken.map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only']])
+  expect(await ownerOf(f.admins)).toBe(user)
+  expect(await acesBySid(sddl(f.admins, f.scratch))).toEqual([fullFor(user), fullFor(SYSTEM_SID)].sort())
+}
 
 describe.runIf(IS_WIN)('secureFoldersWindows: the real rights it leaves (P3.10 round 4)', () => {
   it('a folder already there and one it makes: exactly the user and SYSTEM, inheritance off, owned by the user', async () => {
@@ -143,6 +201,12 @@ describe.runIf(IS_WIN)('secureFoldersWindows: the real rights it leaves (P3.10 r
     expect(fs.existsSync(path.join(top, 'sub'))).toBe(false)
   })
 
+  it('a folder already there that another account owns is refused and left exactly as it was, nothing made in it; one the Administrators group owns is taken in place', async (ctx) => {
+    const f = foldersOwnedByOthers()
+    if (!f) return ctx.skip(NEEDS_ELEVATION)
+    await refusesTheirsTakesAdmins(f, (dirs) => secureFoldersWindows(dirs))
+  })
+
   it('the SDDL read gives each account its full SID, the built-in Administrator\'s abbreviation (LA) included', async () => {
     const aces = await acesBySid('D:PAI(A;OICI;FA;;;LA)(A;OICI;FA;;;SY)')
     expect(aces).toHaveLength(2)
@@ -185,6 +249,12 @@ describe.runIf(IS_WIN)('secureFoldersWindows under Constrained Language Mode: th
       const owner = (await runWindowsPowerShell('[IO.Directory]::GetAccessControl($env:CCC_T_DIR, [Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value', { CCC_T_DIR: d })).trim()
       expect(owner).toBe(user)
     }
+  })
+
+  it('a folder already there that another account owns is refused and left exactly as it was, nothing made in it; one the Administrators group owns is taken in place', async (ctx) => {
+    const f = foldersOwnedByOthers()
+    if (!f) return ctx.skip(NEEDS_ELEVATION)
+    await refusesTheirsTakesAdmins(f, (dirs) => secureFoldersWindows(dirs, constrained, nativeOwnerOnlyTools))
   })
 
   it('a link is refused and its target left as it was; a folder below it is not made', async () => {

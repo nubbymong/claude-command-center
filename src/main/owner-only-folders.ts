@@ -12,6 +12,16 @@
 // accepted beside the two); anything else, or any doubt, refuses it, and
 // every folder below a refused one is refused too.
 //
+// A folder is never taken over from another account. Before its owner or
+// rights are changed, its owner is read: anyone but this user or the
+// Administrators group refuses it, and nothing is written to it. Windows
+// checks rights when a handle is opened, so whoever owned a folder before
+// its rights were rewritten could keep what it had opened; and only this
+// user, or an administrator (who can take any folder anyway), can make a
+// folder that this user or that group owns. A folder the call makes itself
+// is read the same way once made, so one that another account put in its
+// place meanwhile is refused too.
+//
 // Windows: ONE Windows PowerShell call for all the folders, started
 // asynchronously (execFile, never the synchronous form) from the system folder
 // by its full path, the folders passed through the environment (never inside
@@ -27,7 +37,9 @@
 // the folder itself, never a link's target (/L); then everything is read back
 // with a script that uses only what that mode allows (Get-Item, Get-Acl and
 // its SDDL, which names every account by SID or by a fixed abbreviation, in
-// any language), and judged by the same verdict. Same order, same refusals.
+// any language), and judged by the same verdict. Same order, same refusals;
+// the owner a folder had before is read from the first read's SDDL, and the
+// folder must still be that same folder when it is written.
 //
 // Every Windows PowerShell call gets Windows PowerShell's own modules folder
 // as its module path (windowsPowerShellEnv), never the one this process
@@ -131,13 +143,18 @@ export const OWNER_ONLY_SCRIPT = [
   "    if ($done.ContainsKey($parent) -and (([IO.File]::GetAttributes($parent) -band $reparse) -ne 0)) { throw 'its parent is a link' }",
   '    $attr = $null',
   '    try { $attr = [IO.File]::GetAttributes($d) } catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] { $attr = $null }',
-  '    if ($null -ne $attr) {',
-  "      if (($attr -band $reparse) -ne 0) { throw 'a link' }",
-  "      if (($attr -band [IO.FileAttributes]::Directory) -eq 0) { throw 'not a folder' }",
-  '    } else {',
+  '    if ($null -eq $attr) {',
   "      if (-not [IO.Directory]::Exists($parent)) { throw 'its parent is missing' }",
   '      [void][IO.Directory]::CreateDirectory($d)',
+  '      $attr = [IO.File]::GetAttributes($d)',
   '    }',
+  "    if (($attr -band $reparse) -ne 0) { throw 'a link' }",
+  "    if (($attr -band [IO.FileAttributes]::Directory) -eq 0) { throw 'not a folder' }",
+  // Never taken over from another account (see the file's header): the owner
+  // it has now, read before anything is changed, also when the line above
+  // made it (CreateDirectory takes a folder already there without a word).
+  "    $was = [IO.Directory]::GetAccessControl($d, [Security.AccessControl.AccessControlSections]'Owner').GetOwner([Security.Principal.SecurityIdentifier]).Value",
+  "    if ($was -ne $user.Value -and $was -ne '" + OWNER_ONLY_ADMINISTRATORS_SID + "') { throw 'its owner is not this user' }",
   '    $s = New-Object Security.AccessControl.DirectorySecurity',
   '    $s.SetOwner($user)',
   '    $s.SetAccessRuleProtection($true, $false)',
@@ -287,8 +304,9 @@ export interface NativeOwnerOnlyTools {
    *  not start or end) and what it wrote. Never rejects. */
   run(program: 'whoami' | 'icacls', args: readonly string[]): Promise<{ code: number | null; stdout: string }>
   /** The entry itself, never a link's target: null when nothing is there;
-   *  throws on any other failure. */
-  lstat(p: string): { link: boolean; folder: boolean } | null
+   *  throws on any other failure. `id` is its file identity (volume and
+   *  file index), null when the file system gives none. */
+  lstat(p: string): { link: boolean; folder: boolean; id?: string | null } | null
   /** Whether `p` is a folder (a link followed, as making a folder in it does). */
   isFolder(p: string): boolean
   /** Make one folder inside its existing parent; throws when it cannot. */
@@ -312,12 +330,12 @@ export const nativeOwnerOnlyTools: NativeOwnerOnlyTools = {
     })
   }),
   lstat: (p) => {
-    let st: fs.Stats
-    try { st = fs.lstatSync(p) } catch (e) {
+    let st: fs.BigIntStats
+    try { st = fs.lstatSync(p, { bigint: true }) } catch (e) {
       if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') return null
       throw e
     }
-    return { link: st.isSymbolicLink(), folder: st.isDirectory() }
+    return { link: st.isSymbolicLink(), folder: st.isDirectory(), id: st.ino ? `${st.dev}:${st.ino}` : null }
   },
   isFolder: (p) => { try { return fs.statSync(p).isDirectory() } catch { return false } },
   mkdir: (p) => { fs.mkdirSync(p) },
@@ -397,6 +415,8 @@ export function sidFromWhoami(stdout: string): string {
 }
 
 const SDDL_ACCOUNT = 'S-1-\\d+(?:-\\d+)+|[A-Z]{2}'
+/** The owner, at the start of an SDDL string. */
+const SDDL_OWNER_RE = new RegExp(`^O:(${SDDL_ACCOUNT})(?=G:|D:|S:|$)`)
 /** Owner, group (if any), then the access list: its flags, then its entries,
  *  each in parentheses with none inside (a conditional entry has them:
  *  refused). */
@@ -433,6 +453,15 @@ function sddlRights(text: string): number {
     mask |= bits
   }
   return mask
+}
+
+/** The owner an SDDL string names, as the verdict names accounts (a SID, or
+ *  SYSTEM's, the Administrators group's or LA's abbreviation as sddlAccount
+ *  reads it); '' when it names none. Only the owner: the rights are what the
+ *  rule replaces. */
+export function ownerFromSddl(sddl: string, userSid: string): string {
+  const m = SDDL_OWNER_RE.exec(String(sddl))
+  return m ? sddlAccount(m[1], userSid) : ''
 }
 
 /** A folder's SDDL as the verdict reads it (owner, inheritance off, every
@@ -475,8 +504,12 @@ const ownerOnlySddl = (userSid: string): string => `D:PAI(A;OICI;FA;;;SY)(A;OICI
  *     loaded included), nothing is changed and the answer is null (no read).
  *  2. Each folder in turn: below a refused folder, refused; below a folder
  *     of this call that is now a link, refused; one already there must be a
- *     real folder (never a link, a junction or any reparse point); a missing
- *     one is made inside its existing parent. Then its rights are set
+ *     real folder (never a link, a junction or any reparse point), owned by
+ *     this user or the Administrators group by the first read's SDDL (see
+ *     the file's header; no owner read, as for one there now that the read
+ *     found missing, is a refusal too), and still the folder it was before
+ *     that read (its file identity); a missing one is made inside its
+ *     existing parent, failing if anything is there by then. Then its rights are set
  *     (icacls /restore: exactly the user and SYSTEM, full control passed to
  *     what is inside, inheritance off) and its owner (icacls /setowner), each
  *     on the folder itself, never a link's target (/L). A program that
@@ -494,6 +527,9 @@ export async function secureFoldersNative(dirs: readonly string[], tools: Native
   const who = await tools.run('whoami', ['/user', '/fo', 'csv', '/nh'])
   const user = who.code === 0 ? sidFromWhoami(who.stdout) : ''
   if (!user) return null
+  // Each folder's identity before the read: the folder written must be the
+  // one whose owner was read.
+  const ids = dirs.map((d) => { try { return tools.lstat(d)?.id ?? null } catch { return null } })
   const before = await readNative(dirs, read)
   if (!before) return null
   // Folders are named as Windows compares them: in any letter case.
@@ -523,6 +559,12 @@ export async function secureFoldersNative(dirs: readonly string[], tools: Native
       if (st) {
         if (st.link) throw new Error('a link')
         if (!st.folder) throw new Error('not a folder')
+        // Never taken over from another account (see the file's header).
+        if (pre.missing || pre.sddl === null) throw new Error('its owner could not be read')
+        const was = ownerFromSddl(pre.sddl, user)
+        if (!was) throw new Error('its owner could not be read')
+        if (was !== user && was !== OWNER_ONLY_ADMINISTRATORS_SID) throw new Error('its owner is not this user')
+        if ((st.id ?? null) !== ids[i]) throw new Error('it was replaced while it was checked')
       } else {
         if (!tools.isFolder(parent)) throw new Error('its parent is missing')
         tools.mkdir(d)

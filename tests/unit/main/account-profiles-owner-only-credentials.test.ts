@@ -708,6 +708,25 @@ describe('a new profile takes a home already made and checked, so its first sign
     expect(leftovers()).toEqual([])
   })
 
+  it('a ready home already there that this run has not read back owner-only (empty, as another account could leave one) is never taken over: it goes, and the rule makes a new one in its place', async () => {
+    const ready = path.join(getProfilesRoot(), '.owner-only-ready')
+    const readySet = [ready, path.join(ready, '.claude'), path.join(ready, 'identity')]
+    for (const name of ['.claude', 'identity']) fs.mkdirSync(path.join(ready, name), { recursive: true })
+    const seen: Array<[string, boolean]> = []
+    _setCredentialFolderRuleForTest(async (dirs) => {
+      for (const d of dirs) seen.push([d, fs.existsSync(d)])
+      return madeAndPassed(dirs)
+    })
+    await checkEveryProfileCredentialFolders()
+    // The rule was asked about the ready home only once nothing was there: it made all three.
+    expect(seen.filter(([d]) => readySet.includes(d))).toEqual(readySet.map((d) => [d, false]))
+    // The home it made is the one the next new profile takes.
+    const captured = captureGlobalLogin()
+    expect(captured).not.toBeNull()
+    expect(fs.readFileSync(path.join(getProfileConfigDir(captured!.id), '.claude', '.credentials.json'), 'utf8')).toBe(NEW_CREDENTIAL)
+    await checkEveryProfileCredentialFolders()
+  })
+
   it('a ready home that was never checked is not taken: the capture writes nothing and leaves no profile', async () => {
     useRule(() => true)
     const ready = path.join(getProfilesRoot(), '.owner-only-ready')

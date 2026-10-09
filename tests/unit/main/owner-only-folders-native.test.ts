@@ -10,7 +10,11 @@
 // script: a link, a junction or any reparse point, not a folder, a missing
 // parent, or anything below a refused folder is refused, and nothing is
 // written to it. Without the user's SID or a first read, nothing is changed
-// and the folders say they could not be checked.
+// and the folders say they could not be checked. A folder is never taken over
+// from another account: one already there whose owner, by the first read's
+// SDDL, is not this user or the Administrators group, one put there after
+// that read found nothing, and one replaced by another folder since that
+// read are each refused before anything is written to them.
 //
 // Host-safe: no process starts and no real folder is touched. Windows'
 // programs, the file system and PowerShell are an in-memory fake (the real
@@ -30,7 +34,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 })
 
 import {
-  secureFoldersWindows, secureFoldersNative, folderReadFromSddl, sidFromWhoami, ownerOnlyVerdict, windowsPowerShellEnv,
+  secureFoldersWindows, secureFoldersNative, folderReadFromSddl, ownerFromSddl, sidFromWhoami, ownerOnlyVerdict, windowsPowerShellEnv,
   OWNER_ONLY_SCRIPT, OWNER_ONLY_READ_SCRIPT, OWNER_ONLY_DIRS_ENV, OWNER_ONLY_SYSTEM_SID, OWNER_ONLY_ADMINISTRATORS_SID,
 } from '../../../src/main/owner-only-folders'
 import type { NativeOwnerOnlyTools } from '../../../src/main/owner-only-folders'
@@ -42,7 +46,8 @@ const CLM_REFUSAL = 'Cannot invoke method. Method invocation is supported only o
 const OWNER_ONLY_DACL = (sid: string) => `D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;${sid})`
 
 type Kind = 'dir' | 'file' | 'link' | 'reparse'
-interface Entry { kind: Kind; owner: string; dacl: string }
+/** `id`: its file identity (a folder made in its place has another). */
+interface Entry { kind: Kind; owner: string; dacl: string; id: number }
 
 /** A Windows machine in memory: folders, their owner and rights (SDDL), and
  *  the programs the rule runs against them. */
@@ -55,6 +60,7 @@ function machine(opts: { user?: string; whoami?: { code: number | null; stdout: 
   const lists: string[] = []
   const reads: Array<{ script: string; dirs: string[] }> = []
   const made: string[] = []
+  let ids = 0
   const state = {
     restoreCode: 0 as number | null,
     ownerCode: 0 as number | null,
@@ -71,8 +77,12 @@ function machine(opts: { user?: string; whoami?: { code: number | null; stdout: 
     readCountOff: false,
     /** lstat answers, by path, overriding the machine (a swap after a pass). */
     lstatOverride: new Map<string, { link: boolean; folder: boolean } | null>(),
+    /** The SDDL every read gives for a folder there, by path, overriding the machine's. */
+    sddlOverride: new Map<string, string | null>(),
+    /** Runs once the first read has answered (what changes before the folders are written). */
+    afterFirstRead: null as null | (() => void),
   }
-  const add = (p: string, e: Partial<Entry> & { kind: Kind }) => entries.set(k(p), { owner: OWNER_ONLY_ADMINISTRATORS_SID, dacl: 'D:AI(A;OICIID;FA;;;WD)(A;OICIID;FA;;;SY)', ...e })
+  const add = (p: string, e: Partial<Entry> & { kind: Kind }) => entries.set(k(p), { owner: OWNER_ONLY_ADMINISTRATORS_SID, dacl: 'D:AI(A;OICIID;FA;;;WD)(A;OICIID;FA;;;SY)', id: ++ids, ...e })
   const tools: NativeOwnerOnlyTools = {
     run: async (program, args) => {
       calls.push({ program, args: [...args] })
@@ -97,7 +107,7 @@ function machine(opts: { user?: string; whoami?: { code: number | null; stdout: 
     lstat: (p) => {
       if (state.lstatOverride.has(k(p))) return state.lstatOverride.get(k(p))!
       const e = entries.get(k(p))
-      return e ? { link: e.kind === 'link', folder: e.kind === 'dir' || e.kind === 'reparse' } : null
+      return e ? { link: e.kind === 'link', folder: e.kind === 'dir' || e.kind === 'reparse', id: `1:${e.id}` } : null
     },
     isFolder: (p) => { const e = entries.get(k(p)); return !!e && (e.kind === 'dir' || e.kind === 'reparse' || e.kind === 'link') },
     mkdir: (p) => {
@@ -118,8 +128,10 @@ function machine(opts: { user?: string; whoami?: { code: number | null; stdout: 
     const out = dirs.map((d) => {
       if (state.readErrors.has(k(d))) return { missing: false, attributes: null, sddl: null, error: true }
       const e = entries.get(k(d))
-      return e ? { missing: false, attributes: ATTR[e.kind], sddl: `O:${e.owner}G:${e.owner}${e.dacl}`, error: false } : { missing: true, attributes: null, sddl: null, error: false }
+      const sddl = state.sddlOverride.has(k(d)) ? state.sddlOverride.get(k(d)) : `O:${e?.owner}G:${e?.owner}${e?.dacl}`
+      return e ? { missing: false, attributes: ATTR[e.kind], sddl, error: false } : { missing: true, attributes: null, sddl: null, error: false }
     })
+    if (reads.length === 1) state.afterFirstRead?.()
     return JSON.stringify(state.readCountOff ? out.slice(1) : out)
   }
   return { entries, add, tools, run, calls, lists, reads, made, state, user }
@@ -395,6 +407,161 @@ describe('the owner-only rule answers where Windows PowerShell gives its script 
     m.add('C:\\r', { kind: 'dir' })
     const out = await secureFoldersNative(['C:\\r\\a', 'C:\\r\\f'], m.tools, m.run)
     expect(out!.map((r) => [r.dir, r.ok])).toEqual([['C:\\r\\a', true], ['C:\\r\\f', true]])
+  })
+})
+
+describe('a folder is never taken over from another account', () => {
+  const ORIGINAL = 'D:AI(A;OICIID;FA;;;WD)'
+
+  it('a folder already there that another account owns is refused before anything is written: no icacls call, nothing made below it, its owner and rights as they were', async () => {
+    // As Get-Acl writes them: another account by SID, SYSTEM as SY, and LA for
+    // a user who is not the built-in Administrator (so LA is another account).
+    for (const owner of [OTHER, 'SY', 'LA']) {
+      const m = machine()
+      m.add('C:\\r', { kind: 'dir' })
+      m.add('C:\\r\\home', { kind: 'dir', owner, dacl: ORIGINAL })
+      const out = await secureFoldersWindows(['C:\\r\\home', 'C:\\r\\home\\.claude'], m.run, m.tools)
+      expect(out.map((r) => [r.ok, r.detail, r.unread]), owner).toEqual([
+        [false, 'its owner is not this user', undefined],
+        [false, 'its parent was refused', undefined],
+      ])
+      expect(icacls(m), owner).toEqual([])
+      expect(m.lists, owner).toEqual([])
+      expect(m.made, owner).toEqual([])
+      expect(m.entries.get('c:\\r\\home'), owner).toMatchObject({ owner, dacl: ORIGINAL })
+    }
+  })
+
+  it('a folder this user or the Administrators group owns is taken in place, however the SDDL names the owner', async () => {
+    const cases: Array<[string, string]> = [[USER, USER], ['BA', USER], [OWNER_ONLY_ADMINISTRATORS_SID, USER], ['LA', ADMIN_500]]
+    for (const [owner, user] of cases) {
+      const m = machine({ user })
+      m.add('C:\\r', { kind: 'dir' })
+      m.add('C:\\r\\home', { kind: 'dir', owner, dacl: ORIGINAL })
+      const out = await secureFoldersWindows(['C:\\r\\home'], m.run, m.tools)
+      expect(out.map((r) => [r.ok, r.detail]), owner).toEqual([[true, 'owner-only']])
+      expect(m.entries.get('c:\\r\\home'), owner).toMatchObject({ owner: user, dacl: OWNER_ONLY_DACL(user) })
+    }
+  })
+
+  it('a folder whose owner the first read does not give is refused unwritten', async () => {
+    for (const sddl of [null, 'nonsense', OWNER_ONLY_DACL(USER), `G:${USER}${OWNER_ONLY_DACL(USER)}`, `O:BAX${OWNER_ONLY_DACL(USER)}`]) {
+      const m = machine()
+      m.add('C:\\r', { kind: 'dir' })
+      m.add('C:\\r\\a', { kind: 'dir', owner: USER, dacl: ORIGINAL })
+      m.state.sddlOverride.set('c:\\r\\a', sddl)
+      const out = await secureFoldersWindows(['C:\\r\\a', 'C:\\r\\a\\b'], m.run, m.tools)
+      expect(out.map((r) => [r.ok, r.detail]), String(sddl)).toEqual([[false, 'its owner could not be read'], [false, 'its parent was refused']])
+      expect(icacls(m), String(sddl)).toEqual([])
+      expect(m.made, String(sddl)).toEqual([])
+    }
+  })
+
+  it('a folder put there after the first read found nothing is refused unwritten, never taken over: its owner was never read', async () => {
+    for (const owner of [OTHER, USER]) {
+      const m = machine()
+      m.add('C:\\r', { kind: 'dir' })
+      m.state.afterFirstRead = () => m.add('C:\\r\\a', { kind: 'dir', owner, dacl: ORIGINAL })
+      const out = await secureFoldersWindows(['C:\\r\\a', 'C:\\r\\a\\b'], m.run, m.tools)
+      expect(out.map((r) => [r.ok, r.detail, r.unread]), owner).toEqual([
+        [false, 'its owner could not be read', undefined],
+        [false, 'its parent was refused', undefined],
+      ])
+      expect(icacls(m), owner).toEqual([])
+      expect(m.made, owner).toEqual([])
+      expect(m.entries.get('c:\\r\\a'), owner).toMatchObject({ owner, dacl: ORIGINAL })
+    }
+  })
+
+  it('a folder replaced by another between the first read and its write is refused unwritten: the folder written must be the one whose owner was read', async () => {
+    const m = machine()
+    m.add('C:\\r', { kind: 'dir' })
+    m.add('C:\\r\\a', { kind: 'dir', owner: USER, dacl: ORIGINAL })
+    // Read while this user's; then moved away and another account's put in its place.
+    m.state.afterFirstRead = () => m.add('C:\\r\\a', { kind: 'dir', owner: OTHER, dacl: ORIGINAL })
+    const out = await secureFoldersWindows(['C:\\r\\a', 'C:\\r\\a\\b'], m.run, m.tools)
+    expect(out.map((r) => [r.ok, r.detail])).toEqual([[false, 'it was replaced while it was checked'], [false, 'its parent was refused']])
+    expect(icacls(m)).toEqual([])
+    expect(m.made).toEqual([])
+    expect(m.entries.get('c:\\r\\a')).toMatchObject({ owner: OTHER, dacl: ORIGINAL })
+  })
+
+  it('a folder the call makes is made only where nothing is by then: one put there meanwhile fails the make and is refused unwritten', async () => {
+    const m = machine()
+    m.add('C:\\r', { kind: 'dir' })
+    // Nothing there at the first read or at the look just before the make; there by the make itself.
+    const tools: NativeOwnerOnlyTools = { ...m.tools, mkdir: (p) => { m.add(p, { kind: 'dir', owner: OTHER, dacl: ORIGINAL }); m.tools.mkdir(p) } }
+    const out = await secureFoldersWindows(['C:\\r\\a', 'C:\\r\\a\\b'], m.run, tools)
+    expect(out.map((r) => r.ok)).toEqual([false, false])
+    expect(out[1].detail).toBe('its parent was refused')
+    expect(icacls(m)).toEqual([])
+    expect(m.entries.get('c:\\r\\a')).toMatchObject({ owner: OTHER, dacl: ORIGINAL })
+  })
+
+  // Captured from real Windows PowerShell 5.1 (an administrator's elevated
+  // process), each folder inside a temp folder that lets Everyone in: one
+  // SYSTEM owns, one the Administrators group owns, one this user owns, one
+  // missing. The read under Constrained Language Mode, and the main script's
+  // answer in Full Language for the first, a folder inside it and the second.
+  const CAPTURED_USER = 'S-1-5-21-1234567890-1234567890-1234567890-1000'
+  const CAPTURED_DACL = 'D:AI(A;OICIID;FA;;;WD)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;SY)(A;OICIID;0x1200a9;;;BU)(A;ID;0x1301bf;;;AU)(A;OICIIOID;SDGXGWGR;;;AU)'
+  const CAPTURED_READ = '[{"error":false,"attributes":16,"missing":false,"sddl":"O:SYG:S-1-5-21-1234567890-1234567890-1234567890-513' + CAPTURED_DACL + '"},' +
+    '{"error":false,"attributes":16,"missing":false,"sddl":"O:BAG:S-1-5-21-1234567890-1234567890-1234567890-513' + CAPTURED_DACL + '"},' +
+    '{"error":false,"attributes":16,"missing":false,"sddl":"O:S-1-5-21-1234567890-1234567890-1234567890-1000G:S-1-5-21-1234567890-1234567890-1234567890-513' + CAPTURED_DACL + '"},' +
+    '{"error":false,"attributes":null,"missing":true,"sddl":null}]'
+  const CAPTURED_MAIN = '{"user":"S-1-5-21-1234567890-1234567890-1234567890-1000","folders":[' +
+    '{"dir":"C:\\\\fixture\\\\t\\\\own-EM0zuK\\\\sys","error":"its owner is not this user","owner":null,"protected":false,"rules":[]},' +
+    '{"dir":"C:\\\\fixture\\\\t\\\\own-EM0zuK\\\\sys\\\\inside","error":"its parent was refused","owner":null,"protected":false,"rules":[]},' +
+    '{"dir":"C:\\\\fixture\\\\t\\\\own-EM0zuK\\\\ba","error":null,"owner":"S-1-5-21-1234567890-1234567890-1234567890-1000","protected":true,"rules":[' +
+    '{"sid":"S-1-5-18","rights":2032127,"allow":true,"inherited":false,"flags":3},{"sid":"S-1-5-21-1234567890-1234567890-1234567890-1000","rights":2032127,"allow":true,"inherited":false,"flags":3}]}]}'
+
+  it('replays the real read under Constrained Language Mode: the folder SYSTEM owns is refused unwritten; the Administrators group\'s, this user\'s and a missing one are made owner-only', async () => {
+    const m = machine({ user: CAPTURED_USER })
+    m.add('C:\\t', { kind: 'dir' })
+    const dirs = ['C:\\t\\sys', 'C:\\t\\ba', 'C:\\t\\mine', 'C:\\t\\missing']
+    m.add(dirs[0], { kind: 'dir', owner: 'SY', dacl: CAPTURED_DACL })
+    m.add(dirs[1], { kind: 'dir', owner: 'BA', dacl: CAPTURED_DACL })
+    m.add(dirs[2], { kind: 'dir', owner: CAPTURED_USER, dacl: CAPTURED_DACL })
+    let first = true
+    const run = async (script: string, env: Record<string, string>) => {
+      if (script === OWNER_ONLY_READ_SCRIPT && first) {
+        first = false
+        expect(env[OWNER_ONLY_DIRS_ENV].split('\n')).toEqual(dirs)
+        return CAPTURED_READ
+      }
+      return m.run(script, env)
+    }
+    const out = await secureFoldersWindows(dirs, run, m.tools)
+    expect(out.map((r) => [r.dir, r.ok, r.detail])).toEqual([
+      [dirs[0], false, 'its owner is not this user'],
+      [dirs[1], true, 'owner-only'],
+      [dirs[2], true, 'owner-only'],
+      [dirs[3], true, 'owner-only'],
+    ])
+    expect(icacls(m).map((c) => c.args[0])).not.toContain(dirs[0])
+    expect(m.entries.get('c:\\t\\sys')).toMatchObject({ owner: 'SY', dacl: CAPTURED_DACL })
+    expect(m.made).toEqual([dirs[3]])
+  })
+
+  it('replays the main script\'s real answer: the folder SYSTEM owns and the one inside it refused, the Administrators group\'s owner-only', async () => {
+    const out = await secureFoldersWindows(['C:\\t\\sys', 'C:\\t\\sys\\inside', 'C:\\t\\ba'], async () => CAPTURED_MAIN)
+    expect(out.map((r) => [r.ok, r.detail, r.unread])).toEqual([
+      [false, 'its owner is not this user', undefined],
+      [false, 'its parent was refused', undefined],
+      [true, 'owner-only', undefined],
+    ])
+  })
+
+  it('the owner an SDDL string names, as the verdict names accounts; none when it names none', () => {
+    expect(ownerFromSddl(`O:${USER}G:${USER}${OWNER_ONLY_DACL(USER)}`, USER)).toBe(USER)
+    expect(ownerFromSddl(`O:${USER}`, USER)).toBe(USER)
+    expect(ownerFromSddl(`O:BAG:SY${OWNER_ONLY_DACL(USER)}`, USER)).toBe(OWNER_ONLY_ADMINISTRATORS_SID)
+    expect(ownerFromSddl(`O:BAD:PAI(A;OICI;FA;;;SY)`, USER)).toBe(OWNER_ONLY_ADMINISTRATORS_SID)
+    expect(ownerFromSddl('O:SYG:SYD:PAI', USER)).toBe(OWNER_ONLY_SYSTEM_SID)
+    expect(ownerFromSddl('O:LAG:LAD:PAI', ADMIN_500)).toBe(ADMIN_500)
+    expect(ownerFromSddl('O:LAG:LAD:PAI', USER)).toBe('LA')
+    expect(ownerFromSddl('O:BUG:BUD:PAI', USER)).toBe('BU')
+    for (const s of ['', 'nonsense', OWNER_ONLY_DACL(USER), `G:${USER}O:${USER}`, 'O:BAX', 'O:S-1-5', ` O:${USER}`]) expect(ownerFromSddl(s, USER), s).toBe('')
   })
 })
 

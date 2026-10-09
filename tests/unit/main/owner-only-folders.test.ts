@@ -155,6 +155,21 @@ describe('secureFoldersWindows: one PowerShell call for every folder, in order',
     expect(script.indexOf('$done.ContainsKey($parent)')).toBeLessThan(script.indexOf('CreateDirectory'))
   })
 
+  it('the script never takes a folder over from another account: the owner it has, read before its owner or rights are set (also once the script made it), refuses it unless it is this user or the Administrators group', async () => {
+    let script = ''
+    await secureFoldersWindows(['C:\\x'], async (s) => { script = s; return '' })
+    const read = "$was = [IO.Directory]::GetAccessControl($d, [Security.AccessControl.AccessControlSections]'Owner').GetOwner([Security.Principal.SecurityIdentifier]).Value"
+    expect(script).toContain(read)
+    expect(script).toContain(`if ($was -ne $user.Value -and $was -ne '${OWNER_ONLY_ADMINISTRATORS_SID}') { throw 'its owner is not this user' }`)
+    expect(script.indexOf(read)).toBeGreaterThan(script.indexOf('CreateDirectory'))
+    expect(script.indexOf(read)).toBeLessThan(script.indexOf('$s.SetOwner($user)'))
+    expect(script.indexOf(read)).toBeLessThan(script.indexOf('SetAccessControl'))
+    // What is there once the script made it is looked at again: a link put there meanwhile is refused.
+    expect(script).toContain('[void][IO.Directory]::CreateDirectory($d)\n      $attr = [IO.File]::GetAttributes($d)\n')
+    expect(script.indexOf("throw 'a link'")).toBeGreaterThan(script.indexOf('CreateDirectory'))
+    expect(script.indexOf("throw 'a link'")).toBeLessThan(script.indexOf(read))
+  })
+
   it('a failed or unreadable call leaves every folder refused; nothing is sent for an empty list or a folder that cannot be named safely', async () => {
     const dirs = ['C:\\a', 'C:\\a\\b']
     for (const run of [async () => { throw new Error('timed out') }, async () => 'not json', async () => JSON.stringify({ user: USER })]) {

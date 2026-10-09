@@ -1168,6 +1168,7 @@ const LOGGED_REASONS = new Set([
   'an entry could not be read', 'an inherited entry', 'a deny entry', 'this user lacks full control over it and what is inside',
   'SYSTEM is missing', 'the folder cannot be named safely', 'a name in its path ends in a dot or a space',
   'the answer could not be read', 'the answer does not match what was asked',
+  'its owner could not be read', 'it was replaced while it was checked',
 ])
 function loggedReason(a: { answer: OwnerOnlyFolderResult | undefined } | undefined): string {
   const detail = typeof a?.answer?.detail === 'string' ? a.answer.detail : 'no answer'
@@ -1435,9 +1436,11 @@ async function remakeOwnerOnly(dir: string, rule: CredentialFolderRule): Promise
 }
 
 /** The checked home kept ready for the next new profile: made by the rule with
- *  its two sign-in folders, all read back owner-only. One at a time; an earlier
- *  one that holds anything else is taken away first; one whose check gave no
- *  read is asked once more; a refused one goes. */
+ *  its two sign-in folders, all read back owner-only. One at a time; one this
+ *  run has not read back owner-only (an earlier run's, or one anything else
+ *  put there: the profiles folder may let other accounts in) is taken away
+ *  first, never taken over; one whose check gave no read is asked once more;
+ *  a refused one goes. */
 function readyHomePath(): string { return path.join(getProfilesRoot(), READY_HOME_NAME) }
 
 /** A ready home holds only its two sign-in folders, both empty real folders. */
@@ -1455,8 +1458,13 @@ function prepareReadyHome(rule: CredentialFolderRule): Promise<void> {
   if (readyHomeCheck) return readyHomeCheck
   const run: Promise<void> = (async () => {
     fs.mkdirSync(getProfilesRoot(), { recursive: true })
-    if (existsAtAll(ready) && !readyHomeIsEmpty(ready)) {
+    // Whatever is there has no passing verdict from this run (see the early
+    // answer above), so the rule makes the home anew rather than taking over
+    // a folder it did not make. A link or a file is left as it is: no home
+    // is ready.
+    if (existsAtAll(ready)) {
       if (realFolderId(ready) === null) return
+      for (const d of signInFoldersOf(ready)) credentialFolderVerdicts.delete(folderKey(d))
       safeTeardown(ready)
     }
     const set = signInFoldersOf(ready)
