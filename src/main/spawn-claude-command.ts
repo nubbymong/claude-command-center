@@ -412,9 +412,25 @@ export function buildResumeTranscriptPath(
   return nodePath.join(homedir(), '.claude', 'projects', claudeProjectDirName(launchCwd, launchFolder), `${uuid}.jsonl`)
 }
 
+/** A folder cmd.exe cannot start in: a share or a device path (two leading
+ *  slashes of either kind). Claude Code's npm launcher (claude.cmd) runs
+ *  under cmd.exe, so it is never started there. */
+const CMD_EXE_NETWORK_FOLDER_RE = /^[\\/]{2}/
+/** Why a launch through Claude Code's npm launcher in such a folder is
+ *  refused (the resume picker says the same, scripts/resume-picker.js). */
+export const CLAUDE_NETWORK_FOLDER_REFUSAL = 'Cannot start Claude Code in a network folder through its npm launcher: open the folder from a mapped drive letter, or install the native Claude Code.'
+
 export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions): string {
   const { cwd, claudeBin, extraFlags, agentsFlag, useResumePicker, pickerScript, resumeUuid } = opts
   const isWin32 = opts.platform === 'win32'
+  // Every line below that starts Claude Code itself starts it in `cwd`: an
+  // npm launcher there is refused, with the reason, when cmd.exe cannot start
+  // in that folder. The picker line starts node, which can; the picker
+  // refuses its own launch there.
+  const startsPicker = !resumeUuid && useResumePicker && !!pickerScript
+  if (isWin32 && !startsPicker && /\.(cmd|bat)$/i.test(claudeBin) && typeof cwd === 'string' && CMD_EXE_NETWORK_FOLDER_RE.test(cwd)) {
+    throw new Error(CLAUDE_NETWORK_FOLDER_REFUSAL)
+  }
   // Positional opening prompt, by env reference — never the text itself.
   // Trailing position: `claude [options] [prompt]`.
   //
