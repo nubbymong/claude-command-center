@@ -33,7 +33,8 @@ describe('the Codex transcript folders of the live accounts (AccountsService.ses
   })
 
   it('lists nothing while the registry is unavailable, and leaves out a realm that cannot be located', async () => {
-    const h = await harness()
+    // The pauses before a folder that cannot be found is left out, shortened.
+    const h = await harness({ usageReads: { accountFolderRetryMs: [1, 1, 1] } })
     const a = await addCodexAccount(h, 'A')
     h.useStore(null)
     expect(await h.service.sessionsDirs('codex')).toEqual([])

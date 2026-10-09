@@ -95,7 +95,7 @@ export interface AccountsServiceDeps {
   log?: (message: string) => void
   /** Usage track MP8: the fresh reads' clock and pacing. Absent: the
    *  shipped values (tests shorten them). */
-  usageReads?: { now?: () => number; gapMs?: number; reuseMs?: number; retryFloorMs?: number; settleMaxMs?: number }
+  usageReads?: { now?: () => number; gapMs?: number; reuseMs?: number; retryFloorMs?: number; settleMaxMs?: number; accountFolderRetryMs?: readonly number[] }
   /** Whether the registry's load has run, whatever came of it. Until it
    *  has, no registry (or one not loaded) means "not read yet"; after, it
    *  means none can be read. Absent: never settled. */
@@ -118,6 +118,13 @@ export const USAGE_READ_TRANSIENT_LIMIT = 3
  *  The package bounds it itself (the Codex runner: CODEX_KILL_WORST_MS);
  *  past this, a package that never says goes on without it. */
 export const USAGE_READ_SETTLE_MAX_MS = 60_000
+
+/** The usage index's list of account folders (sessionsRoots): a live
+ *  realm whose folder cannot be found at that moment (its lookup throws or
+ *  answers none) holds the list back, asked again after each of these
+ *  pauses; after the last, the list goes without it and says so once. Never
+ *  longer: the index must not wait for ever. */
+export const ACCOUNT_FOLDER_RETRY_MS: readonly number[] = [250, 750, 2_000]
 
 /** One fresh read of one account (MP8): joined by a second asker, stopped
  *  by a launch, sign-in, sign-out, archive or inactivate on it. `done`
@@ -407,6 +414,11 @@ export class AccountsService {
   private readonly usageReadLeases = new Map<string, number>()
   /** The app is quitting: no fresh read starts again (stopUsageReads). */
   private usageStopped = false
+  /** Per provider, the live realms a list of its account folders already
+   *  went without (after its bounded wait), until each is found again: a
+   *  later list does not wait for them again, nor say so again. A list for
+   *  one provider never changes another's. */
+  private readonly accountFolderGaps = new Map<ProviderId, Set<string>>()
   private subscribedStore: AccountRegistryStore | null = null
   private unsubscribeStore: (() => void) | null = null
 
@@ -3156,40 +3168,67 @@ export class AccountsService {
     }
   }
 
-  /** The transcript folders of a provider's live realms (plan A13): what the
-   *  usage index reads beside the provider's own default folder. Paths only;
-   *  a realm that cannot be located now is left out. */
-  /** The same folders with whose sessions each holds (usage track MP9: the
-   *  Tokenomics account attribution): the realm's account (null only for a
-   *  record naming none), and whether it is this computer's own home
-   *  (`external`), which the user's own tools share. Paths and opaque ids
-   *  only. */
+  /** The transcript folders of a provider's live realms (plan A13), with
+   *  whose sessions each holds (usage track MP9: the Tokenomics account
+   *  attribution): the realm's account (null only for a record naming none),
+   *  and whether it is this computer's own home (`external`), which the
+   *  user's own tools share. What the usage index reads beside the
+   *  provider's own default folder; the index settles its first sort on the
+   *  first list it is given, so a list names every live realm's folder: one
+   *  that cannot be found at that moment holds the list back, asked again
+   *  after each pause (ACCOUNT_FOLDER_RETRY_MS), and only after the last
+   *  does the list go without it, saying so once. Paths and opaque ids only. */
   async sessionsRoots(providerId: ProviderId): Promise<Array<{ dir: string; accountId: string | null; external: boolean }> | null> {
     const p = this.pkg(providerId)
     if (!p?.launch || !launchKindsOf(p).includes('session')) return []
-    // Null while the registry has not been read (no store yet, or one not
-    // loaded): the index is not told "no folders" before it could know
-    // (MP9 round 1, lens B). A registry that cannot be read lists none, and
-    // so does one still missing or unloaded once its load has run (its load
-    // threw): otherwise the index would wait for it for ever.
-    const store = this.currentStore()
-    const status = store?.status()
-    if (!store || (status?.mode === 'recovery' && status.reason === 'unloaded')) {
-      let settled = false
-      try { settled = this.deps.registrySettled?.() === true } catch { settled = false }
-      return settled ? [] : null
+    const launch = p.launch
+    const pauses = this.accountFolderPauses()
+    let gaps = this.accountFolderGaps.get(p.id)
+    if (!gaps) { gaps = new Set<string>(); this.accountFolderGaps.set(p.id, gaps) }
+    for (let attempt = 0; ; attempt++) {
+      // Null while the registry has not been read (no store yet, or one not
+      // loaded): the index is not told "no folders" before it could know
+      // (MP9 round 1, lens B). A registry that cannot be read lists none, and
+      // so does one still missing or unloaded once its load has run (its load
+      // threw): otherwise the index would wait for it for ever.
+      const store = this.currentStore()
+      const status = store?.status()
+      if (!store || (status?.mode === 'recovery' && status.reason === 'unloaded')) {
+        let settled = false
+        try { settled = this.deps.registrySettled?.() === true } catch { settled = false }
+        return settled ? [] : null
+      }
+      const ready = this.ready()
+      if ('ok' in ready) return []
+      const out: Array<{ dir: string; accountId: string | null; external: boolean }> = []
+      const live = new Set<string>()
+      const missing: string[] = []
+      for (const realm of ready.doc.realms) {
+        if (realm.providerId !== p.id || realm.lifecycle !== 'active') continue
+        live.add(realm.id)
+        let dir: string | null = null
+        try { dir = await launch.sessionsDir({ authRealmId: realm.id }) } catch { dir = null }
+        if (typeof dir !== 'string' || !dir) { missing.push(realm.id); continue }
+        gaps.delete(realm.id)
+        if (out.some((o) => o.dir === dir)) continue
+        out.push({ dir, accountId: findAccount(ready.doc, realm.ownerProviderAccountId)?.id ?? null, external: realm.ownership === 'external-default' })
+      }
+      for (const id of [...gaps]) if (!live.has(id)) gaps.delete(id)
+      const waiting = missing.filter((id) => !gaps.has(id))
+      if (waiting.length === 0) return out
+      if (attempt >= pauses.length) {
+        for (const id of waiting) gaps.add(id)
+        this.log(`the usage index lists ${waiting.length} account folder(s) fewer: they could not be found`)
+        return out
+      }
+      await new Promise<void>((resolve) => { setTimeout(resolve, pauses[attempt]) })
     }
-    const ready = this.ready()
-    if ('ok' in ready) return []
-    const out: Array<{ dir: string; accountId: string | null; external: boolean }> = []
-    for (const realm of ready.doc.realms) {
-      if (realm.providerId !== p.id || realm.lifecycle !== 'active') continue
-      let dir: string | null = null
-      try { dir = await p.launch.sessionsDir({ authRealmId: realm.id }) } catch { dir = null }
-      if (typeof dir !== 'string' || !dir || out.some((o) => o.dir === dir)) continue
-      out.push({ dir, accountId: findAccount(ready.doc, realm.ownerProviderAccountId)?.id ?? null, external: realm.ownership === 'external-default' })
-    }
-    return out
+  }
+
+  /** The pauses a list of account folders waits through (tests shorten them). */
+  private accountFolderPauses(): readonly number[] {
+    const v = this.deps.usageReads?.accountFolderRetryMs
+    return Array.isArray(v) && v.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0) ? v : ACCOUNT_FOLDER_RETRY_MS
   }
 
   /** The account a provider's legacy record is linked to (usage track MP10:
@@ -3212,20 +3251,12 @@ export class AccountsService {
     return link && findAccount(ready.doc, link.accountId) ? link.accountId : null
   }
 
+  /** The same folders, paths only, by the same rule (sessionsRoots); none
+   *  while the registry has not been read. Only a package whose sessions
+   *  launch here writes session transcripts in its realms (a reviewer
+   *  invocation persists none). */
   async sessionsDirs(providerId: ProviderId): Promise<string[]> {
-    const p = this.pkg(providerId)
-    const ready = this.ready()
-    // Only a package whose sessions launch here writes session transcripts in
-    // its realms (a reviewer invocation persists none).
-    if (!p?.launch || !launchKindsOf(p).includes('session') || 'ok' in ready) return []
-    const out: string[] = []
-    for (const realm of ready.doc.realms) {
-      if (realm.providerId !== p.id || realm.lifecycle !== 'active') continue
-      let dir: string | null = null
-      try { dir = await p.launch.sessionsDir({ authRealmId: realm.id }) } catch { dir = null }
-      if (typeof dir === 'string' && dir && !out.includes(dir)) out.push(dir)
-    }
-    return out
+    return ((await this.sessionsRoots(providerId)) ?? []).map((r) => r.dir)
   }
 
   /** WP2 PR 4, P4.4 (rows 55, 56): each account's own folders -- its log
