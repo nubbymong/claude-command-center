@@ -788,7 +788,7 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
       // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup):
       // the full node.exe path, from the folders this session's own PATH
       // names (resolveNodeExe), looked up for the platform this launch is
-      // built for. None there: nothing starts, before anything is made for it.
+      // built for. None there: nothing starts, and its pick folder is not made.
       const nodeExe = resolveNodeExe({ env, platform: process.platform })
       if (!nodeExe) throw new Error(PICKER_NODE_NOT_ON_PATH)
       const pickerEnv = { ...env }
