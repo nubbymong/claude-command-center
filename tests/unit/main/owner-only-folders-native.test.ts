@@ -17,11 +17,11 @@
 // script: a link, a junction or any reparse point, not a folder, a missing
 // parent, or anything below a refused folder is refused, and nothing is
 // written to it. Without the user's SID or a first read, nothing is changed
-// and the folders say they could not be checked. A folder is never taken over
-// from another account: one already there whose owner, by the first read's
-// SDDL, is not this user or the Administrators group, one put there after
-// that read found nothing, and one replaced by another folder since that
-// read are each refused before anything is written to them.
+// and the folders say they could not be checked. A folder another account
+// owns is refused: one already there whose owner, by the first read's SDDL,
+// is not this user or the Administrators group, one put there after that
+// read found nothing, and one replaced by another folder since that read are
+// each refused before anything is written to them.
 //
 // Host-safe: no process starts and no real folder is touched. Windows'
 // programs, the file system and PowerShell are an in-memory fake (the real
@@ -495,7 +495,7 @@ describe('the owner-only rule answers where Windows PowerShell gives its script 
   })
 })
 
-describe('a folder is never taken over from another account', () => {
+describe('a folder another account owns is refused before anything is written', () => {
   const ORIGINAL = 'D:AI(A;OICIID;FA;;;WD)'
 
   it('a folder already there that another account owns is refused before anything is written: no icacls call, nothing made below it, its owner and rights as they were', async () => {
@@ -541,7 +541,7 @@ describe('a folder is never taken over from another account', () => {
     }
   })
 
-  it('a folder put there after the first read found nothing is refused unwritten, never taken over: its owner was never read', async () => {
+  it('a folder put there after the first read found nothing is refused unwritten: its owner was never read', async () => {
     for (const owner of [OTHER, USER]) {
       const m = machine()
       m.add('C:\\r', { kind: 'dir' })

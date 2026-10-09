@@ -807,10 +807,15 @@ function writeProfileHomeIdentity(home: string, data: string | Uint8Array): void
 //
 //   1. In place: the folder is given the rule and read back, and so is
 //      everything already inside it (the sign-in files among it): each entry
-//      takes the folder's rights, and the folder passes only when every
-//      entry read back is this user's or the Administrators group's and lets
-//      no other account in. An entry another account owns, one that cannot
-//      be read or put right, or a link to a file, refuses it.
+//      this user, the Administrators group or SYSTEM owns takes the folder's
+//      rights (never a link or a file with more than one name), and the
+//      folder passes only when every entry read back is this user's, the
+//      Administrators group's or SYSTEM's and lets no other account in (the
+//      home's links to the user's own dot-files are left out while each has
+//      more than one name). An entry another account owns, one that cannot
+//      be read or put right, a file with more than one name that is not
+//      owner-only, a link to a file, or a folder that is neither plain nor a
+//      link refuses it.
 //   2. Where that is refused (its owner cannot be made this user, say), a new
 //      folder is made beside it by the rule and read back, everything plain in
 //      the old one is copied in as new files (each takes the new folder's
@@ -821,7 +826,10 @@ function writeProfileHomeIdentity(home: string, data: string | Uint8Array): void
 //      every such sign-in file first (one newer than the copy in place is
 //      carried in, never dropped). A failure at any step undoes that step and
 //      falls to 3. The copy is complete before the swap begins, so a swap a
-//      quit interrupted is settled by the next check.
+//      quit interrupted is settled by the next check. Once swapped in, the
+//      new folder is read again with what it holds; if that read refuses it,
+//      it stays in place (the old copy goes), no sign-in is written to it and
+//      its account is refused as in 3.
 //   3. Otherwise nothing is written there, a launch is refused with
 //      CREDENTIAL_FOLDER_REFUSAL, the folder and what it holds stay exactly as
 //      they were, and one log line says why, in fixed words (never a path).
@@ -896,9 +904,10 @@ const signInFolderRule: CredentialFolderRule = (dirs) => secureSignInFoldersWind
  *  profile home among `dirs`, by full path: the real home's dot-files, but
  *  never the private or sign-in ones. The rule leaves each out of its read of
  *  what is inside that home while it is a file with more than one name, so
- *  it never writes the rights of the user's real files (a copy made where a
- *  link could not be is the profile's own, and is read). Best-effort: none
- *  when the real home cannot be read. */
+ *  that read never resets the user's real files: they keep their own entries
+ *  (what the home's own rights pass on still reaches them, as it reaches any
+ *  file in the home; a copy made where a link could not be is the profile's
+ *  own, and is read). Best-effort: none when the real home cannot be read. */
 function homeMirrorLinks(dirs: readonly string[]): string[] {
   const homes = dirs.filter((d) => isProfileHome(d))
   if (homes.length === 0) return []
@@ -1462,8 +1471,9 @@ async function remakeOwnerOnly(dir: string, rule: CredentialFolderRule): Promise
     try { safeTeardown(staged) } catch { /* settled by the next check */ }
     return 'what it holds could not be copied'
   }
-  // From here to the old copy's clearing nothing waits: no other step of the
-  // app runs in between.
+  // From here to the swap nothing waits: no other step of the app runs in
+  // between. The read of the new folder once it is in place does wait; the
+  // old copy is cleared when that read is done, whatever it says.
   const rename = credentialFolderRenameForTest ?? fs.renameSync
   try {
     rename(dir, aside)
@@ -1499,10 +1509,9 @@ async function remakeOwnerOnly(dir: string, rule: CredentialFolderRule): Promise
 
 /** The checked home kept ready for the next new profile: made by the rule with
  *  its two sign-in folders, all read back owner-only. One at a time; one this
- *  run has not read back owner-only (an earlier run's, or one anything else
- *  put there: the profiles folder may let other accounts in) is taken away
- *  first, never taken over; one whose check gave no read is asked once more;
- *  a refused one goes. */
+ *  run has not read back owner-only (an earlier run's, or one found already
+ *  there) is taken away first and made anew; one whose check gave no read is
+ *  asked once more; a refused one goes. */
 function readyHomePath(): string { return path.join(getProfilesRoot(), READY_HOME_NAME) }
 
 /** A ready home holds only its two sign-in folders, both empty real folders. */

@@ -34,24 +34,21 @@
 // what the folder's own rights pass on reaches it) -- and must give rights to
 // nobody but the user, SYSTEM and the Administrators group; one that does not
 // loses every entry of its own and takes the folder's rights (inheritance
-// on), and is read again -- unless it is a file with more than one name (its
-// rights are never written here: another of its names can be outside the
-// folder), which then refuses the folder. An entry gone since it was listed is
+// on), and is read again -- unless it is a file with more than one name (it
+// is never reset: another of its names can be outside the folder), which
+// then refuses the folder. An entry gone since it was listed is
 // passed over. The folder passes only when every entry read then holds that:
 // every entry directly inside it, and any entry deeper that does not, comes
 // back with the answer and is judged by the same verdict
 // (ownerOnlyInsideVerdict). An entry that cannot be read or made so refuses
 // the folder.
 //
-// A folder is never taken over from another account. Before its owner or
-// rights are changed, its owner is read: anyone but this user or the
-// Administrators group refuses it, and nothing is written to it. Windows
-// checks rights when a handle is opened, so whoever owned a folder before
-// its rights were rewritten could keep what it had opened; and only this
-// user, or an administrator (who can take any folder anyway), can make a
-// folder that this user or that group owns. A folder the call makes itself
-// is read the same way once made, so one that another account put in its
-// place meanwhile is refused too.
+// Before a folder's owner or rights are changed, its owner is read: anyone
+// but this user or the Administrators group refuses it, and nothing is
+// written to it (only this user, or an administrator, who can take any
+// folder anyway, can make a folder that this user or that group owns). A
+// folder the call makes itself is read the same way once made, so one that
+// another account put in its place meanwhile is refused too.
 //
 // Windows: ONE Windows PowerShell call for all the folders, started
 // asynchronously (execFile, never the synchronous form) from the system folder
@@ -235,7 +232,7 @@ export const OWNER_ONLY_SCRIPT = [
   'function There([string]$x) { [IO.File]::Exists($x) -or [IO.Directory]::Exists($x) }',
   // Whether a file has exactly one name, by fsutil from the system folder
   // (Windows PowerShell's own link type misses a link when it cannot open the
-  // file); a file with more than one, or no answer, is never written.
+  // file); a file with more than one, or no answer, is never reset.
   "$fsutil = [IO.Path]::Combine([Environment]::SystemDirectory, 'fsutil.exe')",
   "function OneName([string]$x) { $ErrorActionPreference = 'Continue'; $o = @(& $fsutil hardlink list $x 2>$null); ($LASTEXITCODE -eq 0) -and ($o.Count -eq 1) }",
   // Whether a read holds the owner-only rights inside (owner and every entry,
@@ -267,7 +264,7 @@ export const OWNER_ONLY_SCRIPT = [
   '    }',
   "    if (($attr -band $reparse) -ne 0) { throw 'a link' }",
   "    if (($attr -band [IO.FileAttributes]::Directory) -eq 0) { throw 'not a folder' }",
-  // Never taken over from another account (see the file's header): the owner
+  // Another account's folder is refused (see the file's header): the owner
   // it has now, read before anything is changed, also when the line above
   // made it (CreateDirectory takes a folder already there without a word).
   "    $was = [IO.Directory]::GetAccessControl($d, [Security.AccessControl.AccessControlSections]'Owner').GetOwner([Security.Principal.SecurityIdentifier]).Value",
@@ -1033,7 +1030,7 @@ export async function secureFoldersNative(dirs: readonly string[], given: Native
       if (st) {
         if (st.link) throw new Error('a link')
         if (!st.folder) throw new Error('not a folder')
-        // Never taken over from another account (see the file's header).
+        // Another account's folder is refused (see the file's header).
         if (pre.missing || pre.sddl === null) throw new Error('its owner could not be read')
         const was = ownerFromSddl(pre.sddl, user)
         if (!was) throw new Error('its owner could not be read')

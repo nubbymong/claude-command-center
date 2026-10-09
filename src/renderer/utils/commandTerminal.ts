@@ -28,7 +28,10 @@ export function spentCommand(opts: TerminalOptions | undefined): TerminalOptions
  * third party's install script, so the secrets are left out of the
  * environment it inherits. That keeps them out of its way; it is not a
  * boundary against a script running as the same user. It stays on the tab's
- * options, so a Restart's plain shell goes without them too.
+ * options, so a Restart's plain shell goes without them too. On Windows the
+ * same mark keeps the tab's program lookup to the folders PATH names in full
+ * (pty-manager passes it to the spawn builder as fullyQualifiedLookup), so
+ * leaving it out also drops that.
  *
  * Returns the new session id.
  */

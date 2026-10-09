@@ -158,7 +158,7 @@ describe('secureFoldersWindows: one PowerShell call for every folder, in order',
     expect(script.indexOf('$done.ContainsKey($parent)')).toBeLessThan(script.indexOf('CreateDirectory'))
   })
 
-  it('the script never takes a folder over from another account: the owner it has, read before its owner or rights are set (also once the script made it), refuses it unless it is this user or the Administrators group', async () => {
+  it('the script reads a folder\'s owner before its owner or rights are set (also once the script made it) and refuses it unless it is this user or the Administrators group', async () => {
     let script = ''
     await secureFoldersWindows(['C:\\x'], async (s) => { script = s; return '' })
     const read = "$was = [IO.Directory]::GetAccessControl($d, [Security.AccessControl.AccessControlSections]'Owner').GetOwner([Security.Principal.SecurityIdentifier]).Value"

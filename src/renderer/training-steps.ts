@@ -85,7 +85,6 @@ export const trainingSteps: TrainingStep[] = [
     bullets: [
       'Create **saved configs** with custom working directories and models',
       'Effort is **live** -- run `/effort` in Claude to change it; the level shows on the card and in the statusline',
-      '**Bundle agent templates** from your Library into the spawned session',
       'Connect to remote machines via **SSH** with full Claude support -- same statusline, account and usage as a local session',
     ],
     withoutClaude: {

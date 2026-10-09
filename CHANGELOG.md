@@ -100,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A Codex review now runs without the Codex settings file or the rules files of the account it runs on.
 - Failure text from a review, a Codex Insights run, a Codex cloud agent or a Sentinel analysis that runs on Codex hides credentials written inside URLs and session values.
 - On Windows a Codex session's PATH keeps only absolute folders, as it already did on macOS and Linux.
-- On Windows a Claude session's PATH keeps only absolute folders too, and so does the PATH of the terminals in which the app sets up Claude Code and runs its /insights command, and of a cloud agent, a Sentinel or Insights run, a Claude review or the check of whether one can run, the sign-in check, the Claude Code version check during onboarding, the list of versions to pin and a pinned version's install.
+- On Windows a Claude session's PATH keeps only absolute folders too, and so does the PATH of the terminals in which the app sets up Claude Code, runs its /insights command or runs an install or update command you confirmed, and of a cloud agent, a Sentinel or Insights run, a Claude review or the check of whether one can run, the sign-in check, the Claude Code version check during onboarding, the list of versions to pin and a pinned version's install.
 - On Windows the app finds node, git, Claude Code and its helper tools only in the folders PATH names or in the Windows system folder, never in the current folder.
 - A Claude Code or Codex session in a network folder that its npm launcher cannot start from is refused, with the reason (see Known issues in the Feature Guide).
 - Ask Conductor's conversation list stays inside its help folder, even when the resources folder is inside a git repository or the environment names another one.
@@ -119,7 +119,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On Windows, an account's sign-in is written only into folders the app has made readable by you alone and checked: the account's own folder, its Claude Code folder and its identity copy (see Known issues in the Feature Guide).
 - A web sign-in you cancel or leave unfinished never stays signed in after a restart, for every account.
 - The account view opens a link in your browser, or follows a popup, only right after your own click, tap, Enter or Space in the view.
-- Signing in to chatgpt.com inside the app now reaches the sign-in pages of one more sign-in method, which the window used to block.
+- Signing in to chatgpt.com inside the app reaches the sign-in pages of one more sign-in method.
 - Insights keeps its reports only in its own folder, and keeps Claude Code's report exactly as it was written (see Known issues in the Feature Guide).
 - Insights shows no report, rather than waiting, when a report cannot be read.
 - The cross-account roll-up's written analysis is shown as plain text.

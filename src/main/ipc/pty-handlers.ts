@@ -293,7 +293,9 @@ export const spawnOptionsSchema = z.object({
     // install script inherits. That keeps them out of the script's way; it is
     // not a boundary against a script running as the same user. A renderer
     // can only ask for fewer secrets with it, never more, so honouring what it
-    // sends is safe.
+    // sends is safe. On Windows the mark also keeps a shell-only tab's program
+    // lookup to the folders PATH names in full; that too can only narrow what
+    // the tab finds, so honouring it as sent is still safe.
     noCommandSecrets: z.boolean().optional(),
   }).optional(),
   configId: z.string().optional(),

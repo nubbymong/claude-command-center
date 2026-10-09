@@ -764,7 +764,7 @@ describe('a new profile takes a home already made and checked, so its first sign
     expect(leftovers()).toEqual([])
   })
 
-  it('a ready home already there that this run has not read back owner-only (empty, as another account could leave one) is never taken over: it goes, and the rule makes a new one in its place', async () => {
+  it('a ready home already there that this run has not read back owner-only, even an empty one, goes, and the rule makes a new one in its place', async () => {
     const ready = path.join(getProfilesRoot(), '.owner-only-ready')
     const readySet = [ready, path.join(ready, '.claude'), path.join(ready, 'identity')]
     for (const name of ['.claude', 'identity']) fs.mkdirSync(path.join(ready, name), { recursive: true })

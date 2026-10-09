@@ -363,7 +363,7 @@ describe('the resume picker passes the value it got on to Claude Code unchanged'
 describe('claudeAgentsObject: the one object keyed by agent name that Claude Code takes', () => {
   const ok = { description: 'd', prompt: 'p' }
 
-  it('each name holds the rest of its template, as written, in the order given', () => {
+  it('each name holds its description, prompt, model and tools as written, names in the order given', () => {
     const odd = `q"uote %PATH% !x! ${BS} \u4e2d`
     const o = claudeAgentsObject([
       { name: 'reviewer', description: 'checks', prompt: 'review it', model: 'opus[1m]', tools: ['Read', 'Bash'] },

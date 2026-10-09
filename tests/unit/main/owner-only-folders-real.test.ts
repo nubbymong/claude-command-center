@@ -356,7 +356,7 @@ describe.runIf(IS_WIN)('secureFoldersWindows under Constrained Language Mode: th
 // entry another account owns (LOCAL SERVICE stands in for one) refuses the
 // folder and keeps its own entries; a link to a file inside refuses it and
 // what it points to keeps its rights. The home mirror's link to one of the
-// user's own files (a file with two names) is never written: named as
+// user's own files (a file with two names) is never reset: named as
 // shared, it is left out and the user's file keeps its own entries. Every
 // other caller of the rule (secureOwnerOnlyFolders) gets the folders' own
 // rights only: what another folder inside holds keeps its rights exactly.
@@ -471,7 +471,7 @@ async function mirrorLinkKeepsItsRights(route: (dirs: string[], shared: string[]
   expect(fs.statSync(link).nlink).toBe(2)
   const before = ownEntries(real, f.scratch)
   expect(before.join('')).toMatch(/;;;(?:BU|S-1-5-32-545)\)/)
-  // Not named as shared: read, never written, and the home is refused.
+  // Not named as shared: read, never reset, and the home is refused.
   const refused = await route([f.home], [])
   expect(refused.map((r) => [r.ok, r.detail])).toEqual([[false, 'an entry inside it is not owner-only']])
   expect(ownEntries(real, f.scratch)).toEqual(before)
@@ -540,7 +540,7 @@ describe.runIf(IS_WIN)('secureFoldersWindows: what is already inside a folder ma
   it('the same under Constrained Language Mode', async (ctx) => {
     await refusesALinkToAFile((dirs) => secureFoldersWindows(dirs, constrained, nativeOwnerOnlyTools, { inside: true }), ctx)
   })
-  it('the home mirror\'s link to one of the user\'s own files is never written: named as shared, the home passes and the user\'s file keeps its own entries; not named, it refuses the home, unwritten', async () => {
+  it('the home mirror\'s link to one of the user\'s own files is never reset: named as shared, the home passes and the user\'s file keeps its own entries; not named, it refuses the home, never reset', async () => {
     await mirrorLinkKeepsItsRights((dirs, shared) => secureSignInFoldersWindows(dirs, shared))
   })
   it('the same under Constrained Language Mode', async () => {

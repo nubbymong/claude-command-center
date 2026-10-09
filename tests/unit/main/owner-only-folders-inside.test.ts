@@ -18,7 +18,7 @@
 // The script writes the folder's owner and its rights separately (owner
 // first), so that the rights alone are what Windows passes on to what is
 // inside; it never goes through a link, writes only an entry this user, the
-// Administrators group or SYSTEM owns, never writes a file with more than one
+// Administrators group or SYSTEM owns, never resets a file with more than one
 // name, and leaves out the shared entries (the home mirror's links to the
 // user's own files) while each is such a file. The rule with Windows' own
 // programs (where Constrained Language Mode refuses the script) never uses

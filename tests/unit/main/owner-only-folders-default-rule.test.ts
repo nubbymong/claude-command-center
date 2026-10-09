@@ -14,7 +14,7 @@
 // gets Windows PowerShell's own modules folder; and a Windows PowerShell that
 // cannot load the read's cmdlets at all gives no read (unread), never a
 // refusal of each folder. A folder already there that another account owns
-// is never taken over: refused, and nothing is written to it or made in it.
+// is refused, and nothing is written to it or made in it.
 //
 // Host-safe: every program start is faked (execFile answers as Windows would
 // under that mode, from an in-memory record of each folder's owner and
