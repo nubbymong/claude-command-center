@@ -1127,7 +1127,8 @@ const CLAUDE_SYNTHESIS_FOLDERS: RunFolders = { dirname: '.insights-claude-runs',
  * and it real folders (never links), its real path
  * `<real resources>/insights/<runs folder>`, and on POSIX both this user's
  * and both writable by no one else. Asked before any launch, again just
- * before the stale sweep, and again just before a run's folder is removed:
+ * before the stale sweep (and by the sweep before its listing and before
+ * each folder it removes), and again just before a run's folder is removed:
  * the sweep and the removal go ahead only on a runs folder that holds at
  * that check. Never throws.
  */
@@ -1212,7 +1213,7 @@ function codexRunsParent(): string | null {
  *  its own, so nothing above it is read. */
 function makeRunFolder(parent: string, kind: RunFolders): string {
   if (!runsFolderHolds(parent, kind)) throw new Error('the runs folder is not the one checked')
-  sweepStaleFolders(parent, kind.prefix, { maxAgeMs: STALE_CODEX_RUN_FOLDER_MS })
+  sweepStaleFolders(parent, kind.prefix, { maxAgeMs: STALE_CODEX_RUN_FOLDER_MS, parentHolds: () => runsFolderHolds(parent, kind) })
   const dir = mkdtempSync(join(parent, kind.prefix))
   let ok = false
   try {

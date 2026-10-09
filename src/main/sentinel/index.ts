@@ -13,7 +13,7 @@
 // built). A provider that is off is never checked, probed or analysed.
 import * as fs from 'fs'
 import * as path from 'path'
-import { sweepStaleFolders } from '../stale-folder-sweep'
+import { ownerOnlyThroughHandle, sweepStaleFolders } from '../stale-folder-sweep'
 import { SentinelState } from './sentinel-state'
 import { makeObserver, type Observation } from './sentinel-observe'
 import { parseClaudeVersion, minVersionFindings, type ManifestEntry } from './sentinel-version'
@@ -344,8 +344,9 @@ async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner
       },
       accountLabel,
       end: () => {
-        // Only the folder this run made: its own prefix, in the runs folder.
-        try { if (isAnalysisFolder(cwd, parent!, CLAUDE_ANALYSIS_DIR_PREFIX)) fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* a leftover is swept by a later run */ }
+        // Only the folder this run made: its own prefix, in the runs folder,
+        // and only while the runs folder is still the one checked.
+        try { if (isAnalysisFolder(cwd, parent!, CLAUDE_ANALYSIS_DIR_PREFIX) && runsFolderHolds(parent!)) fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* a leftover is swept by a later run */ }
         begun.end()
       },
     }
@@ -383,21 +384,59 @@ export const STALE_ANALYSIS_FOLDER_MS = 60 * 60 * 1000
 
 /** P3.9 round 1: the parent of every analysis folder, the app's own and this
  *  user's: Sentinel's folder in the resources folder, its `runs` folder made
- *  there, each a real folder (never a link) and, on POSIX, this user's, not a
- *  shared temp folder another user can write into. Null when it cannot be. */
+ *  there, each a real folder (never a link) and, on POSIX, this user's and
+ *  writable by no one else, not a shared temp folder another user can write
+ *  into (runsFolderHolds). Sentinel's folder is readied first
+ *  (sentinelDirReady). Null when it cannot be. */
 function analysisParent(): string | null {
   if (!sentinelDir) return null
   const parent = path.join(sentinelDir, SENTINEL_RUNS_DIRNAME)
   try {
+    if (!sentinelDirReady(sentinelDir)) return null
     fs.mkdirSync(parent, { recursive: true, mode: 0o700 })
-    for (const dir of [sentinelDir, parent]) {
-      const st = fs.lstatSync(dir)
-      if (st.isSymbolicLink() || !st.isDirectory()) return null
-      if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return null
-    }
-    return parent
+    return runsFolderHolds(parent) ? parent : null
   } catch {
     return null
+  }
+}
+
+/** Sentinel's own folder, readied for its runs folder: one not there yet is
+ *  left to the make after this (owner-only, 0700); a link, or not a folder,
+ *  is refused before anything is made through it; on POSIX one of this
+ *  user's that others can write to (made under a group-writable umask) is
+ *  first made owner-only through a handle on the folder its lstat saw
+ *  (ownerOnlyThroughHandle). runsFolderHolds checks the result. Never
+ *  throws. */
+function sentinelDirReady(dir: string): boolean {
+  let st: fs.BigIntStats
+  try { st = fs.lstatSync(dir, { bigint: true }) } catch (e) { return (e as NodeJS.ErrnoException)?.code === 'ENOENT' }
+  if (st.isSymbolicLink() || !st.isDirectory()) return false
+  if (typeof process.getuid === 'function' && Number(st.uid) === process.getuid() && (Number(st.mode) & 0o022) !== 0) return ownerOnlyThroughHandle(dir, st)
+  return true
+}
+
+/** Whether `parent` is still Sentinel's runs folder as it was checked:
+ *  `sentinel` and `runs` real folders (never links), on POSIX both this
+ *  user's and both writable by no one else, and the real path of `runs`
+ *  `<real resources>/sentinel/runs`. Asked when the runs folder is chosen,
+ *  before the stale sweep lists it, before each folder that sweep removes,
+ *  and before a run's own folder is removed: nothing is swept or removed
+ *  through a runs folder that does not hold. Never throws. */
+function runsFolderHolds(parent: string): boolean {
+  try {
+    if (!sentinelDir) return false
+    if (!samePath(path.resolve(parent), path.resolve(sentinelDir, SENTINEL_RUNS_DIRNAME))) return false
+    const posix = typeof process.getuid === 'function'
+    for (const dir of [sentinelDir, parent]) {
+      const st = fs.lstatSync(dir)
+      if (st.isSymbolicLink() || !st.isDirectory()) return false
+      if (posix && st.uid !== process.getuid!()) return false
+      if (posix && (st.mode & 0o022) !== 0) return false
+    }
+    const expected = path.join(fs.realpathSync.native(path.dirname(sentinelDir)), path.basename(sentinelDir), SENTINEL_RUNS_DIRNAME)
+    return samePath(fs.realpathSync.native(parent), expected)
+  } catch {
+    return false
   }
 }
 
@@ -421,7 +460,7 @@ function samePath(a: string, b: string): boolean {
  *  git's own search, which an empty `.git` file ends at once with an
  *  error). */
 function makeAnalysisFolder(parent: string, prefix: string = CODEX_ANALYSIS_DIR_PREFIX, marker = true): string {
-  sweepStaleFolders(parent, prefix, { maxAgeMs: STALE_ANALYSIS_FOLDER_MS })
+  sweepStaleFolders(parent, prefix, { maxAgeMs: STALE_ANALYSIS_FOLDER_MS, parentHolds: () => runsFolderHolds(parent) })
   const dir = fs.mkdtempSync(path.join(parent, prefix))
   let where: string | null = null
   try {
@@ -508,8 +547,9 @@ async function codexAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner 
       end: () => {
         const letGo = () => {
           try { launch.lease.release() } catch { /* a release never throws the analysis away */ }
-          // Only the folder this run made: its own prefix, in the runs folder.
-          try { if (isAnalysisFolder(cwd, parent!)) fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* a leftover is swept by a later run */ }
+          // Only the folder this run made: its own prefix, in the runs folder,
+          // and only while the runs folder is still the one checked.
+          try { if (isAnalysisFolder(cwd, parent!) && runsFolderHolds(parent!)) fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* a leftover is swept by a later run */ }
           begun.end()
         }
         if (kills.length) void Promise.all(kills).then(letGo, letGo)

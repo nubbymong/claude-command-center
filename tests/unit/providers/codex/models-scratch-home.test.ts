@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { codexModelsScratchHome, CODEX_MODELS_HOME_PREFIX, STALE_RUN_FOLDER_MS } from '../../../../src/main/providers/codex'
+import { codexModelsScratchHome, codexModelsScratchParent, CODEX_MODELS_HOME_PREFIX, STALE_RUN_FOLDER_MS } from '../../../../src/main/providers/codex'
 
 const PREFIX = 'ccc-models-home-test-'
 let parent = ''
@@ -47,5 +47,15 @@ describe('codexModelsScratchHome', () => {
     expect(fs.existsSync(path.join(target, 'keep.txt'))).toBe(true)
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true)
     h.dispose()
+  })
+})
+
+describe('codexModelsScratchParent', () => {
+  it('is the temp folder by its real path, so the leftover sweep runs where the temp folder is named through a link', () => {
+    expect(codexModelsScratchParent('/tmp', (p) => (p === '/tmp' ? '/private/tmp' : p))).toBe('/private/tmp')
+  })
+
+  it('is the temp folder as named when its real path cannot be read', () => {
+    expect(codexModelsScratchParent('/gone', () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) })).toBe('/gone')
   })
 })

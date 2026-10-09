@@ -701,7 +701,7 @@ function realCatalogueDeps(): Omit<CodexCatalogueDeps, 'proven'> {
     executablePorts: realExecutablePorts(platform),
     baseEnv: () => codexOperationBaseEnv(process.env, platform),
     run: (cmd, opts) => runCodexCli(cmd, opts, defaultCodexRunDeps(platform)),
-    scratchHome: () => codexModelsScratchHome(os.tmpdir()),
+    scratchHome: () => codexModelsScratchHome(codexModelsScratchParent()),
   }
 }
 
@@ -709,6 +709,15 @@ function realCatalogueDeps(): Omit<CodexCatalogueDeps, 'proven'> {
 export const CODEX_MODELS_HOME_PREFIX = 'ccc-codex-models-'
 /** A run's own folder older than this is a leftover (P3.9 round 1). */
 export const STALE_RUN_FOLDER_MS = 60 * 60 * 1000
+
+/** The folder the model list read's homes are made in: the temp folder by
+ *  its real path, so the leftover sweep (which lists nothing through a
+ *  link) still runs where the temp folder is named through one (macOS
+ *  /tmp; a TEMP folder behind a junction); the temp folder as named when
+ *  its real path cannot be read. */
+export function codexModelsScratchParent(tmp: string = os.tmpdir(), realpath: (p: string) => string = fs.realpathSync.native): string {
+  try { return realpath(tmp) } catch { return tmp }
+}
 
 /** A fresh empty home for one model list read, under `parent`, removed by
  *  its dispose. P3.9 round 1: a home an earlier read left behind (a crash or

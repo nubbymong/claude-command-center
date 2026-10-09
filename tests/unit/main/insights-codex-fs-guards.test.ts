@@ -581,6 +581,18 @@ describe('the runs folder is checked again before anything in it is removed [hos
     expect(h.released).toBe(1)
   })
 
+  it('swapped for a link once the stale sweep has listed it: a leftover of the same name in the link target is not removed; no model run [host]', async () => {
+    const leftover = staleVictim(runsParent(), 'ccc-insights-codex-old2')
+    const elsewhere = join(h.tmpRoot, 'elsewhere3')
+    const victim = staleVictim(elsewhere, 'ccc-insights-codex-old2')
+    h.onReaddir = (p) => { if (fkey(p) === fkey(runsParent())) { h.onReaddir = null; h.links.set(nodePath.resolve(runsParent()), elsewhere) } }
+    const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    expect(R().readFileSync(join(victim, 'keep.txt'), 'utf8')).toBe('kept')
+    expect(R().existsSync(join(leftover, 'keep.txt'))).toBe(true)
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: NO_FOLDER })
+    expect(h.execCalls).toHaveLength(0)
+  })
+
   it('swapped for a link while the model runs: the removal after it removes nothing in the link target [host]', async () => {
     const elsewhere = join(h.tmpRoot, 'elsewhere2')
     R().mkdirSync(elsewhere, { recursive: true })
