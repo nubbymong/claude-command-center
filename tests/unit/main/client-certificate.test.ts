@@ -1,15 +1,31 @@
 /**
- * [host] A main-process `net` request (webContents null) gets no client
- * certificate, as on Electron 43, where such a request failed with
- * ERR_SSL_CLIENT_AUTH_CERT_NEEDED. The app's one `net` caller probes whatever
- * URL the user typed into the in-app browser (webview-manager.ts checkUrl).
- * Nothing real is requested.
+ * [host] No request the app makes presents a client certificate without the
+ * user's choice, and the app offers none: a main-process `net` request
+ * (webContents null; the in-app browser's URL check, webview-manager.ts
+ * checkUrl) and a page in any window or view (a webContents) alike are
+ * answered with no certificate, whatever the store holds. Each refusal is
+ * logged once per server per run, by its host and port alone, as Electron
+ * names the server (`host:port`, an IPv6 address in brackets). Nothing real
+ * is requested.
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 import { parse } from '@babel/parser'
-import { selectClientCertificate, installClientCertificatePolicy } from '../../../src/main/client-certificate'
+
+const logged = vi.hoisted(() => [] as string[])
+vi.mock('../../../src/main/debug-logger', () => {
+  const log = (...a: unknown[]): void => { logged.push(a.map(String).join(' ')) }
+  return { logInfo: log, logWarn: log, logError: log, logDebug: log }
+})
+
+const CC = await import('../../../src/main/client-certificate')
+const { selectClientCertificate, installClientCertificatePolicy } = CC
+
+beforeEach(() => {
+  logged.length = 0
+  CC._resetClientCertificateLogForTest()
+})
 
 type Statement = ReturnType<typeof parse>['program']['body'][number]
 type ImportDeclaration = Extract<Statement, { type: 'ImportDeclaration' }>
@@ -31,14 +47,25 @@ function loadTimeBlocks(body: Statement[], out: Statement[][] = []): Statement[]
 
 const CERT = { subjectName: 'CN=me', issuerName: 'CN=corp', fingerprint: 'sha256/x' } as unknown as Electron.Certificate
 
-function answer(webContents: unknown) {
+const CERT2 = { subjectName: 'CN=me-too', issuerName: 'CN=other', fingerprint: 'sha256/y' } as unknown as Electron.Certificate
+
+/** One request as Electron hands it over: the server it asked, named `host:port`
+ *  (App::SelectClientCertificate passes the request's host and port, not a URL). */
+function answer(webContents: unknown, certificates: Electron.Certificate[] = [CERT], url = 'typed.example:443') {
   const event = { preventDefault: vi.fn() }
   const callback = vi.fn()
-  selectClientCertificate(event, webContents as Electron.WebContents | null, 'https://typed.example/', [CERT], callback)
+  selectClientCertificate(event, webContents as Electron.WebContents | null, url, certificates, callback)
   return { event, callback }
 }
 
-describe('select-client-certificate: a main-process net request presents no certificate', () => {
+/** Prevented once, and answered once with no certificate. */
+function expectNoCertificate({ event, callback }: ReturnType<typeof answer>): void {
+  expect(event.preventDefault).toHaveBeenCalledTimes(1)
+  expect(callback).toHaveBeenCalledTimes(1)
+  expect(callback.mock.calls[0]).toEqual([])
+}
+
+describe('select-client-certificate: no request presents a client certificate', () => {
   it('a main-process net request (webContents null) presents no certificate: the default is prevented and the callback gets none', () => {
     const { event, callback } = answer(null)
     expect(event.preventDefault).toHaveBeenCalledTimes(1)
@@ -46,10 +73,60 @@ describe('select-client-certificate: a main-process net request presents no cert
     expect(callback.mock.calls[0]).toEqual([])
   })
 
-  it('a request with a WebContents is not answered by this handler', () => {
-    const { event, callback } = answer({ id: 7 })
-    expect(event.preventDefault).not.toHaveBeenCalled()
-    expect(callback).not.toHaveBeenCalled()
+  it('a page request presents no client certificate: a request with a webContents is prevented and answered with none, exactly once', () => {
+    expectNoCertificate(answer({ id: 7 }))
+    expectNoCertificate(answer({ id: 7 }, []))
+    expectNoCertificate(answer({ id: 8 }, [CERT, CERT2]))
+  })
+
+  it('a page request and a main-process request to a host already refused are refused again, every time', () => {
+    for (let i = 0; i < 3; i++) {
+      expectNoCertificate(answer({ id: 9 }, [CERT], 'idp.example:443'))
+      expectNoCertificate(answer(null, [CERT], 'idp.example:443'))
+    }
+  })
+
+  it('a refused request is logged by the server Electron names (host and port), once per server per run', () => {
+    answer({ id: 7 }, [CERT], 'client.example:443')
+    answer(null, [CERT], 'client.example:443')
+    answer({ id: 7 }, [CERT], '10.0.0.1:443')
+    answer({ id: 8 }, [CERT], '[::1]:8443')
+    answer({ id: 8 }, [CERT], '[::1]:8443')
+    answer(null, [CERT], 'Other.Example:8443')
+    const lines = logged.filter((l) => l.includes('certificate'))
+    expect(lines).toHaveLength(4)
+    expect(lines[0]).toContain('client.example:443 asked')
+    expect(lines[1]).toContain('10.0.0.1:443 asked')
+    expect(lines[2]).toContain('[::1]:8443 asked')
+    expect(lines[3]).toContain('other.example:8443 asked')
+    for (const l of lines) expect(l).not.toMatch(/\(no host\)|\(unparseable\)|\(unprintable host\)|CN=/)
+  })
+
+  it('past the logging bound one line says more servers were refused, and every request is still refused', () => {
+    for (let i = 0; i < 200; i++) expectNoCertificate(answer({ id: 7 }, [CERT], `h${i}.example:443`))
+    expectNoCertificate(answer({ id: 7 }, [CERT], 'h200.example:443'))
+    expectNoCertificate(answer(null, [CERT], 'h201.example:443'))
+    const lines = logged.filter((l) => l.includes('certificate'))
+    expect(lines).toHaveLength(201)
+    expect(lines[199]).toContain('h199.example:443 asked')
+    expect(lines[200]).toMatch(/more servers asked for a client certificate; none was sent/)
+    expect(lines.join('\n')).not.toMatch(/h20[01]\.example/)
+  })
+
+  it('a URL, should one be given, is logged by its host only, once per host per run', () => {
+    answer({ id: 7 }, [CERT], 'https://login.idp.example:8443/sso/start?ticket=VALUE-ONE#frag-two')
+    answer({ id: 7 }, [CERT], 'https://login.idp.example:8443/other/path?x=VALUE-THREE')
+    answer(null, [CERT], 'https://second.example/a?b=VALUE-FOUR')
+    const lines = logged.filter((l) => l.includes('certificate'))
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toContain('login.idp.example:8443')
+    expect(lines[1]).toContain('second.example')
+    for (const l of lines) expect(l).not.toMatch(/VALUE|frag|\/sso|\/other|\/a|\?|#|CN=/)
+  })
+
+  it('a URL that does not parse is still refused, and logged without it', () => {
+    expectNoCertificate(answer({ id: 7 }, [CERT], 'not a url VALUE-FIVE'))
+    expect(logged.join(' ')).not.toContain('VALUE')
   })
 
   it('installs the handler on app select-client-certificate', () => {
