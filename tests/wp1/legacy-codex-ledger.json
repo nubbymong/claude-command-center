@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "f42e51d8ea747b7a1cdd459d41e4379f760d6b277fc5f2dd563c741442b4bc4a",
-  "manifestHead": "a7ed55bbc0bb118a6f5ee80b20ef43bf1cc0ffa7",
+  "manifestPathDigest": "e1ee53cc2024f822b367f8d59a8e5aa9cfd26be427face5e74eb4ea705d18044",
+  "manifestHead": "664e124ed9cf8c096b1f09e91388e6a53bb73ad8",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -13,9 +13,34 @@
   },
   "claudeTestChanges": [
     {
+      "path": "tests/unit/account-web-adversarial-regressions.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added a group with one case: an account stays closed to a new sign-in until the clear of an abandoned system-browser sign-in has finished, a clear that takes longer than its time limit included; the existing cases are kept; this mapping also covers changes made after the WP1 baseline and before this batch; tests/unit/account-web-adversarial-regressions.test.ts"
+    },
+    {
+      "path": "tests/unit/account-web-artifacts-and-ipc.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added a group with two cases: every window on an account partition blocks downloads, the artifacts window logging the host only, and a page load that fails is logged by host and code; the existing cases are kept; tests/unit/account-web-artifacts-and-ipc.test.ts"
+    },
+    {
+      "path": "tests/unit/account-web-browser-fallback.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added one Windows case: with no plain system folder to name taskkill from, no taskkill starts and the browser is ended directly; the existing cases are kept; tests/unit/account-web-browser-fallback.test.ts"
+    },
+    {
+      "path": "tests/unit/account-web-in-app-sign-in.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added a group with one case: Claude's sign-in window prevents a download and logs the host only; the existing cases are kept; tests/unit/account-web-in-app-sign-in.test.ts"
+    },
+    {
       "path": "tests/unit/claude-cli-auth-read.test.ts",
       "disposition": "replace",
       "evidence": "WP1.38: WP1 (#619, the project gate for managed Claude launches) added the cases \"a REFUSED project gate never launches the CLI\": the probe is not spawned and the read falls back to the credential file, it is a managed launch (ambient authority stripped, no host-managed flag), and the gate runs for the directory it inherits; the existing cases are kept; tests/unit/claude-cli-auth-read.test.ts; the PR 4 owner answers review (a831b860) added three cases: the status runs claude auth status through the runner, never by name through a shell; a runner that could not start the CLI falls back to the credential file and says where its answer came from; on macOS HOME is left at the real home (WP1.33); tests/unit/claude-cli-auth-read.test.ts"
+    },
+    {
+      "path": "tests/unit/claude-headless-argv-guard.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added one case: every argument a real call site passes reaches an npm claude.cmd on Windows unchanged; the existing cases are kept; tests/unit/claude-headless-argv-guard.test.ts"
     },
     {
       "path": "tests/unit/claude-headless-profile-consumer.test.ts",
@@ -23,14 +48,44 @@
       "evidence": "WP1.38: WP1 (#619) added the project-gate cases: the first run for a directory defers behind the gate and holds the profile across it, and a refused managed launch resolves { code: 1 } with the refusal on stderr, spawning nothing and releasing the hold, on the direct and the deferred path; the existing cases are kept; tests/unit/claude-headless-profile-consumer.test.ts"
     },
     {
+      "path": "tests/unit/claude-headless-timeout-kill.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch renamed the tree case (the whole process tree, not just the first process) and added a Windows group: a taskkill that ran ends the tree and the run is not signalled as well, a taskkill that could not start leaves the run's own process to be ended, and with no plain system folder no taskkill starts and the run's own process is ended; the existing cases are kept; tests/unit/claude-headless-timeout-kill.test.ts"
+    },
+    {
       "path": "tests/unit/cloud-agent-manager.test.ts",
       "disposition": "replace",
-      "evidence": "WP1.38: WP1 (#619) added one case, a dispatch whose project settings could redirect the account is refused by the project gate; WP2 (accec3c2, main refuses a provider that is off) changed no case name; the existing cases are kept; tests/unit/cloud-agent-manager.test.ts"
+      "evidence": "WP1.38: WP1 (#619) added one case, a dispatch whose project settings could redirect the account is refused by the project gate; WP2 (accec3c2, main refuses a provider that is off) changed no case name; the existing cases are kept; tests/unit/cloud-agent-manager.test.ts; the 2.1.1-beta.2 batch renamed the default dispatch case: claude -p starts by its full path with no shell, the prompt on stdin (WP1.33); tests/unit/cloud-agent-manager.test.ts"
     },
     {
       "path": "tests/unit/end-remote-fallback-exec.test.ts",
       "disposition": "replace",
       "evidence": "WP1.55: WP2 PR 4 (be38c516, the provider deep imports routed through the registry) added one case, the End remote command comes from the registered Claude provider's SSH surface, and registers the real ClaudeProvider for the file; the existing cases are kept; tests/unit/end-remote-fallback-exec.test.ts"
+    },
+    {
+      "path": "tests/unit/github/repo-detector.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added a group: git is started by its absolute path from the first absolute PATH folder that has it, with no shell, no current-folder lookup, no pager and no fsmonitor, on Windows, macOS and Linux; with no git in PATH's absolute folders the run rejects and nothing starts; a git log shows no signatures whatever the repository's own settings say; a non-zero exit still rejects with git's own message; the existing cases are kept; tests/unit/github/repo-detector.test.ts"
+    },
+    {
+      "path": "tests/unit/insights-catalogue-write.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch renamed two cases to add that start-up goes on when the catalogue cannot be written; the existing cases are kept; tests/unit/insights-catalogue-write.test.ts"
+    },
+    {
+      "path": "tests/unit/insights-cross-account-pure.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added a group: the written cross-account analysis is kept as plain text whoever writes it (control and invisible characters, terminal links and line separators replaced; the caps kept after replacing; a cut on whole characters; a bullet or key of nothing but such characters left out; a plain narrative returned exactly as written); the existing cases are kept; this mapping also covers changes made after the WP1 baseline and before this batch; tests/unit/insights-cross-account-pure.test.ts"
+    },
+    {
+      "path": "tests/unit/insights-cross-account-run.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added two cases: Claude Code's written analysis, and the reason one is missing, are kept as plain text in the roll-up's kpis.json; the existing cases are kept; tests/unit/insights-cross-account-run.test.ts"
+    },
+    {
+      "path": "tests/unit/insights-run-id-guard.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added a group: the previous-run comparison reads only a run inside the insights folder, skips a newer entry whose id is not a run name, and does not read a kpis.json past its size limit; the existing cases are kept; tests/unit/insights-run-id-guard.test.ts"
     },
     {
       "path": "tests/unit/legacy-version-security.test.ts",
@@ -43,9 +98,19 @@
       "evidence": "WP1.60 enable/disable: WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md) added the accountUsage:knownLabels handler cases (cached labels, input ignored, a failure is no labels) and mocks knownUsageLabels; the existing cases are kept; tests/unit/main/account-usage-stream-handler.test.ts; WP2 P3 usage track MP3 round-2 review fixes added the cases that the credential state is not read while Claude Code is off (a rule that throws is a no) and that an older stream never reads as current again after a newer one finished, and holds the scripted source per call; WP2 P3 usage track MP4 review fixes renamed the gate it mocks to claudeAccountDataAllowed; the existing cases are kept"
     },
     {
+      "path": "tests/unit/main/canvas-content-egress.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch replaced the case for a request that carries no requesting address with three: a permission request with no page address is refused, a frame inside canvas content is refused every permission, and the app's own pages keep their grants in every spelling they report; the existing cases are kept; tests/unit/main/canvas-content-egress.test.ts"
+    },
+    {
+      "path": "tests/unit/main/claude-cli-probe.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch replaced the Windows lookup cases: the probe finds Claude Code only in PATH's folders, reporting the full path with no process started and never a bare name; a found Claude Code is reused briefly for the same PATH value only, a miss is never reused, and twenty concurrent callers share one PATH walk; the existing cases are kept; tests/unit/main/claude-cli-probe.test.ts"
+    },
+    {
       "path": "tests/unit/main/credentials-handlers.test.ts",
       "disposition": "replace",
-      "evidence": "WP1.33 mapping: WP2 PR 4 owner answers (0c80dbdd) added four cases, credentials:delete skips quietly an id the save door never accepts, still warns for a key that is not a string, says so when the store cannot delete a key that could hold a credential, and refuses exactly the keys the save door refuses; the existing cases are kept; tests/unit/main/credentials-handlers.test.ts; WP2 PR 4 owner answers review (9d606305, C-Q3): a delete for an id outside the shape warns when the store holds an entry under it or cannot be read to tell, stays quiet otherwise (own entries only), and reads the store without writing it; the quiet-skip case is renamed for that (WP1.33); tests/unit/main/credentials-handlers.test.ts"
+      "evidence": "WP1.33 mapping: WP2 PR 4 owner answers (0c80dbdd) added four cases, credentials:delete skips quietly an id the save door never accepts, still warns for a key that is not a string, says so when the store cannot delete a key that could hold a credential, and refuses exactly the keys the save door refuses; the existing cases are kept; tests/unit/main/credentials-handlers.test.ts; WP2 PR 4 owner answers review (9d606305, C-Q3): a delete for an id outside the shape warns when the store holds an entry under it or cannot be read to tell, stays quiet otherwise (own entries only), and reads the store without writing it; the quiet-skip case is renamed for that (WP1.33); tests/unit/main/credentials-handlers.test.ts; the 2.1.1-beta.2 batch added two groups: exactly the two credential doors are registered, wired to the app window through a getter read on every call, and they answer only the app window's main frame (any other sender or frame, a destroyed window or no window is refused, with one log line that carries no part of the request) (WP1.33); tests/unit/main/credentials-handlers.test.ts"
     },
     {
       "path": "tests/unit/main/debug-logger-epipe-loop.test.ts",
@@ -55,12 +120,37 @@
     {
       "path": "tests/unit/main/end-remote-detached-fallback.test.ts",
       "disposition": "replace",
-      "evidence": "WP1.33 mapping, not a WP1 change: the WP2 T24 fix (End says when Claude may still be running in a rootful container) renamed its pty-manager mock to endSshRemoteDetailed, the function the ssh:endRemote handler now calls (every existing assertion reads the same mock under the new name), and added four cases in a new group: the handler resolves with the End result, passes an ordinary outcome through, still refuses an invalid payload before End runs, and calls End synchronously, before it yields; 21 baseline cases to 25; tests/unit/main/end-remote-detached-fallback.test.ts"
+      "evidence": "WP1.33 mapping, not a WP1 change: the WP2 T24 fix (End says when Claude may still be running in a rootful container) renamed its pty-manager mock to endSshRemoteDetailed, the function the ssh:endRemote handler now calls (every existing assertion reads the same mock under the new name), and added four cases in a new group: the handler resolves with the End result, passes an ordinary outcome through, still refuses an invalid payload before End runs, and calls End synchronously, before it yields; 21 baseline cases to 25; tests/unit/main/end-remote-detached-fallback.test.ts; the 2.1.1-beta.2 batch added one case: End carries the saved remote OS, so a Windows host is cleaned up the Windows way (WP1.33); tests/unit/main/end-remote-detached-fallback.test.ts"
+    },
+    {
+      "path": "tests/unit/main/extra-args-guard.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added groups: an option the app sets is refused in any spelling, as is a word claude reads as a command; the spawn schema's refusal names the rule; a restored Claude session whose saved extra arguments the rule refuses starts without them, logged, keeping the rest; the existing cases are kept; tests/unit/main/extra-args-guard.test.ts"
+    },
+    {
+      "path": "tests/unit/main/login-shell.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added groups: a launch line is typed only into a sh-family shell (a $SHELL outside the family is set aside for the fallback; a terminal tab keeps the user's own shell); the PATH a login shell outside the sh family builds is asked through /bin/sh by its full path, absolute entries only, never on Windows; a program is found in a POSIX PATH without a shell, from absolute folders only; the existing cases are kept; this mapping also covers changes made after the WP1 baseline and before this batch; tests/unit/main/login-shell.test.ts"
+    },
+    {
+      "path": "tests/unit/main/per-session-settings-statusline.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added three cases: the app sets up no status line of its own from a resources folder path the shell would read as more than a path, says why and keeps the user's own status line, and an ordinary path with spaces still gets it; the existing cases are kept; tests/unit/main/per-session-settings-statusline.test.ts"
     },
     {
       "path": "tests/unit/profile-consumers.test.ts",
       "disposition": "replace",
       "evidence": "WP1.16: WP2 commit 5b (bb0b7ab9) added holdProfileForRun, the hold a Claude review takes on its profile: held at once with nothing in flight, held while a refresh is waited out so no new rotation starts, its bound counted from after the wait, and released at once on a cancel during the wait; the existing cases are kept; tests/unit/profile-consumers.test.ts"
+    },
+    {
+      "path": "tests/unit/providers/claude/login-shell-fallback.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch renamed two cases and added two: a sh-family $SHELL wins as a login shell; a launch line goes only into a sh-family shell; a terminal tab, an elevated one included, keeps the user's own shell; on Windows PowerShell starts by its full path in the system folder; the existing cases are kept; tests/unit/providers/claude/login-shell-fallback.test.ts"
+    },
+    {
+      "path": "tests/unit/providers/claude/spawn.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch renamed both command cases: off Windows, for a sh-family login shell, claude by name, which that shell finds; on Windows the full path found in PATH's folders, or a refusal that names them, never a bare name; the existing cases are kept; tests/unit/providers/claude/spawn.test.ts"
     },
     {
       "path": "tests/unit/providers/claude/ssh-shim.test.ts",
@@ -70,7 +160,7 @@
     {
       "path": "tests/unit/pty-manager-ssh-tmux.test.ts",
       "disposition": "replace",
-      "evidence": "WP1.33 mapping, not a WP1 change: the PR 4 owner answers review (a831b860, A1-Q1) added one case, a shell prompt chunk carrying the composer glyph and vertical bars before claude is launched over SSH leaves the flow short of claude-running, and the same chunk after the launch latches it; the existing cases are kept; tests/unit/pty-manager-ssh-tmux.test.ts"
+      "evidence": "WP1.33 mapping, not a WP1 change: the PR 4 owner answers review (a831b860, A1-Q1) added one case, a shell prompt chunk carrying the composer glyph and vertical bars before claude is launched over SSH leaves the flow short of claude-running, and the same chunk after the launch latches it; the existing cases are kept; tests/unit/pty-manager-ssh-tmux.test.ts; the 2.1.1-beta.2 batch renamed one case: killPty on a non-persistent SSH session types nothing into the live Claude pane (WP1.33); tests/unit/pty-manager-ssh-tmux.test.ts"
     },
     {
       "path": "tests/unit/pty-shell-only-profile-hold.test.ts",
@@ -133,6 +223,16 @@
       "evidence": "WP1.33 mapping, not a WP1 change: the WP2 PR 4 final review nits renamed two cases to say what is read (a bare name resolved from the PATH folders alone; the name taken as given, with no extension added, from the PATH folders alone); their assertions are unchanged; tests/unit/resolve-executable.test.ts"
     },
     {
+      "path": "tests/unit/scripts/resume-picker-spawn-target.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch renamed three cases: the shim path is written the same way in every folder, a launch passes the verbatim flag exactly when its line is written for cmd.exe and a refused target starts nothing, and cmd.exe starts from the system folder with the shim and its arguments on one verbatim line; the existing cases are kept; this mapping also covers changes made after the WP1 baseline and before this batch; tests/unit/scripts/resume-picker-spawn-target.test.ts"
+    },
+    {
+      "path": "tests/unit/scripts/resume-picker.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added a group: git and Claude Code are run only from the folders PATH names (git by its full path with no shell, never from the project folder; Claude Code found without starting anything, the native claude.exe before claude.cmd; an npm claude.cmd runs with the same rule in its environment; the launch says so and starts nothing when Claude Code is not in PATH's folders or an argument cannot pass the npm route); the existing cases are kept; this mapping also covers changes made after the WP1 baseline and before this batch; tests/unit/scripts/resume-picker.test.ts"
+    },
+    {
       "path": "tests/unit/sentinel-changelog.test.ts",
       "disposition": "replace",
       "evidence": "WP1.33 mapping: WP2 PR 4 owner answers (12e53c99, the Sentinel chase) added four cases, fetchChangelog returns only a 200 answer as the changelog, any other answer as not read, gives up a trickling reply at its deadline, and returns null with no network; the existing cases are kept; tests/unit/sentinel-changelog.test.ts; the PR 4 owner answers review (fa79af12) added three cases: a non-200 answer's connection is closed at once, a 200 reply cut off before its end is null, an answer that arrives before the request call returns is read in full"
@@ -146,6 +246,11 @@
       "path": "tests/unit/ssh-tmux.test.ts",
       "disposition": "replace",
       "evidence": "WP1.33 mapping, not a WP1 change: #618 (the tmux wheel-scroll fix, merged to beta after the WP1 baseline) added the wheel-binding, launch-line-limit, key-table and copy-mode cases; the WP2 final fixes changed assertions (the single-quoted tmux target) but no case name; tests/unit/ssh-tmux.test.ts"
+    },
+    {
+      "path": "tests/unit/tk-pricing-registry.test.ts",
+      "disposition": "replace",
+      "evidence": "WP1.33 mapping, not a WP1 change: the 2.1.1-beta.2 batch added one case: Haiku 5.5 carries its published rates; the existing cases are kept; this mapping also covers changes made after the WP1 baseline and before this batch; tests/unit/tk-pricing-registry.test.ts"
     },
     {
       "path": "tests/unit/training-steps.test.ts",
@@ -5400,7 +5505,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP2 PR 4 P4.7 (row 68; 9c4f219e): every kpis.json and report.json the insights runner writes, a Codex report's included, goes through the atomic helper with mode 0600 (WP1.33); tests/unit/credential-file-mode-hardening.test.ts; WP2 PR 4 P4.7 fix pass 6 (d4c9fcb2): the fifth kpis.json writer, a roll-up kept as numbers only, pinned atomic and 0600 (WP1.33); tests/unit/credential-file-mode-hardening.test.ts",
+      "evidence": "WP2 PR 4 P4.7 (row 68; 9c4f219e): every kpis.json and report.json the insights runner writes, a Codex report's included, goes through the atomic helper with mode 0600 (WP1.33); tests/unit/credential-file-mode-hardening.test.ts; WP2 PR 4 P4.7 fix pass 6 (d4c9fcb2): the fifth kpis.json writer, a roll-up kept as numbers only, pinned atomic and 0600 (WP1.33); tests/unit/credential-file-mode-hardening.test.ts; 2.1.1-beta.2 (WP1.33): a run's files have one writer, the atomic helper with mode 0600, and Claude Code's report and its facets are copied through it, never by a plain copy; tests/unit/credential-file-mode-hardening.test.ts",
       "note": ""
     },
     {
@@ -5687,6 +5792,16 @@
       "category": "TEST",
       "disposition": "added",
       "evidence": "new WP2 PR 4 P4.1 (row 51) test: a Codex session's roots and worktree from the configured folder only (WP1.33); tests/unit/main/canvas-codex-roots-spawn.test.ts; WP2 PR 4 lane A round 2 (9e200c0a, the provider port; no behaviour change): the Codex spawn reaches the canvas launch through the provider port (WP1.33); tests/unit/main/canvas-codex-roots-spawn.test.ts; WP2 PR 4 fix pass 13 (cdde4930): its mock of the Conductor MCP server names releaseMcpSessionProvider; no Codex text changed",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/canvas-launch-tools-switch.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/main/canvas-launch-tools-switch.test.ts): a canvas launch reads the Built-in Tools switch from the saved settings: saved off is off whatever the launch was handed, saved on or not saved is on, and settings that cannot be read never remove the user's own skills copy; the user's own skills copies read the switch the same way (WP1.68); tests/unit/main/canvas-launch-tools-switch.test.ts",
       "note": ""
     },
     {
@@ -6029,7 +6144,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: rewritten in WP2 commit 5a with the move to a prepared review launch: the install and sign-in gate cases became the prepared-launch refusals (an unverified sign-in, no account, Codex off, accounts not ready); the argv, tmpfile, stream-timeout, exit-code and temp-folder cleanup cases went with the exec, now the Codex reviewer adapter tested in tests/wp1/cli-discovery.test.ts; the path-containment, git-repo guard and session-binding cases are kept; WP2 5a and 5b added the lease, cancel and session-close cases and the claude_review tool cases; adapted in place: tests/unit/main/codex-review-mcp-tool.test.ts; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the suite gained a mock of the launch gate answering on; the run-time refusal is tested in tests/unit/main/review-provider-off.test.ts",
+      "evidence": "WP1.58: rewritten in WP2 commit 5a with the move to a prepared review launch: the install and sign-in gate cases became the prepared-launch refusals (an unverified sign-in, no account, Codex off, accounts not ready); the argv, tmpfile, stream-timeout, exit-code and temp-folder cleanup cases went with the exec, now the Codex reviewer adapter tested in tests/wp1/cli-discovery.test.ts; the path-containment, git-repo guard and session-binding cases are kept; WP2 5a and 5b added the lease, cancel and session-close cases and the claude_review tool cases; adapted in place: tests/unit/main/codex-review-mcp-tool.test.ts; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the suite gained a mock of the launch gate answering on; the run-time refusal is tested in tests/unit/main/review-provider-off.test.ts; 2.1.1-beta.2 (WP1.62): a review that completed while what it left is still being ended keeps its lease until that has ended, and the agent has the review at once; tests/unit/main/codex-review-mcp-tool.test.ts",
       "note": ""
     },
     {
@@ -6595,6 +6710,18 @@
       "note": "created by WP2 PR 3 P3.16a; node-pty faked, the real integrity monitor, nothing spawned"
     },
     {
+      "path": "tests/unit/main/pty-local-tools-switch-checked.test.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/main/pty-local-tools-switch-checked.test.ts): when the settings cannot be read, a local Claude Code launch gets no built-in tools entry, no pre-allowed canvas tools and no canvas plugin, and a Codex launch's canvas is told the tools are off; settings read and on keep the tools as before (WP1.68); tests/unit/main/pty-local-tools-switch-checked.test.ts",
+      "note": ""
+    },
+    {
       "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",
       "predicates": [
         "P13"
@@ -6734,6 +6861,16 @@
       "note": "created by WP2 (the provider-off rule); P3.8 added the Codex check cases"
     },
     {
+      "path": "tests/unit/main/sentinel-apply.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/main/sentinel-apply.test.ts): a model entry Sentinel proposes follows the model picker's rule for its family, Claude Code's and Codex's: an id or alias the picker would not take is refused with fixed text, a field of the wrong kind is refused, a refusal names a pattern and a family as plain text, and the renderer's picker reads the same rule the main process applies (WP1.33); tests/unit/main/sentinel-apply.test.ts",
+      "note": ""
+    },
+    {
       "path": "tests/unit/main/sentinel-codex-service.test.ts",
       "predicates": [
         "P01",
@@ -6744,6 +6881,16 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.9 (rows 39, 42) test (tests/unit/main/sentinel-codex-service.test.ts): the real Sentinel service runs the Codex checks only while Codex is on, compares the live model list, raises version findings, baselines the first check, analyses a changed version on the provider that is on (both on: Claude Code unless Ask Conductor runs on Codex), runs a Codex analysis as a reviewer launch in a fresh temp folder removed after, falls back from an unusable chosen account, and counts Codex runs as Codex in use; the P04 hits are the fake's CODEX_HOME (WP1.60, WP1.68); WP2 PR 3 fixer 10 (gate 3 F9, ADR-009 C1 and D1, row 42): for both providers, the real start-up check over 40 starts taking two versions in turn (three analyses of each, unmatched; one, matched), the A, A, B sequence (each recorded at its third analysis), real updates, and a downgrade not analysed at start (WP1.68); tests/unit/main/sentinel-codex-service.test.ts; WP2 PR 3 fixer 11 (gate 3 F10, ADR-009 D1 round 2 and R2-1, row 42): for both providers, the panel names the installed version after a downgrade, a Re-run of the lower of two installs at the cap kept the higher one from being analysed again (changed by fixer 12, below), a stored version of another type re-baselines, and an update is analysed from the highest version checked (WP1.68); tests/unit/main/sentinel-codex-service.test.ts; WP2 PR 3 fixer 12 (ADR-009 R3-1, row 42): for both providers, a highest version checked stuck far ahead (9999.0.0, or a prerelease far ahead) blocks no update after a Re-run of the installed version, whether that Re-run matches or reaches its third analysis; after a Re-run of the lower of two installs at the cap, the higher one is analysed again at start at most three times, then never again (WP1.68); tests/unit/main/sentinel-codex-service.test.ts; WP2 PR 3 fixer 13 (ADR-009 lens D round 3 MINOR 1, fixer 12 quality NIT 1, row 42): both providers stuck at 9999.0.0, one Re-run sets each analysed provider's highest checked to its installed version, also with Claude Code's version unavailable; an unmatched Re-run of a version no start analyses says to use Re-run again, one of a newer version says the next check (WP1.68); tests/unit/main/sentinel-codex-service.test.ts; WP2 PR 4 owner answers review fix pass (fa79af12): the three cases that plant junctions moved unchanged to tests/unit/main/sentinel-analysis-folders-links.test.ts (HOST QUARANTINE), so this file plants none and runs on the host (WP1.68); tests/unit/main/sentinel-codex-service.test.ts; WP2 PR 4 owner answers review round 2 (2cb791d4): a failed run, unreadable notes and a launch Codex could not prepare mark the analysis failed; unmatched findings, a provider turned off, the launch rule's refusal and a carried problem do not (WP1.68); tests/unit/main/sentinel-codex-service.test.ts; WP2 PR 4 polish (10c6f431): a changelog read that throws at start, and a version check that throws in a Re-run, mark the analysis failed (WP1.68); tests/unit/main/sentinel-codex-service.test.ts; WP2 PR 4 final review nits (E-Q15): a changelog read and a version check that throw a plain value mark the check failed with its text, and the chip reads incomplete (WP1.68); tests/unit/main/sentinel-codex-service.test.ts",
       "note": "created by WP2 PR 3 P3.9; no process, no network"
+    },
+    {
+      "path": "tests/unit/main/sentinel-runs-folder-checked.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/main/sentinel-runs-folder-checked.test.ts): Sentinel's analyses, Claude Code's and Codex's, make and remove their folders only inside the runs folder that was checked, matched by its real path as well as its lstat; the stale sweep checks again before each folder it removes; Sentinel's own folder is checked before its runs folder is made in it; on POSIX a runs folder that others can write to is refused (WP1.33); tests/unit/main/sentinel-runs-folder-checked.test.ts",
+      "note": ""
     },
     {
       "path": "tests/unit/main/sentinel-unreachable-timing.test.ts",
@@ -6796,6 +6943,16 @@
       "disposition": "replace",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json; WP2 PR 3 P3.5: its cases unchanged, with new cases for a Codex session's kept conversation (WP1.33); tests/unit/main/session-resume-enrich.test.ts; WP2 PR 3 P3.7 (row 36): the conversations' running times are written from main's own list at every save, and none is written when main cannot give one (WP1.33, WP1.38); tests/unit/main/session-resume-enrich.test.ts; WP2 PR 3 fixer 9 A3 (row 36): the comment and its test say what the code does, the running-time list dropped when main's getter throws while the uncertain list keeps the state's copy, no change in behaviour (WP1.33); tests/unit/main/session-resume-enrich.test.ts",
       "note": "P3.5 added cases (replace)"
+    },
+    {
+      "path": "tests/unit/main/spawn-site-inventory.json",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test fixture (tests/unit/main/spawn-site-inventory.json): the reviewed list of every process-start site in the main process and the shipped scripts, Codex's among them, each with how Windows finds its program; held by tests/unit/main/spawn-site-inventory.test.ts (WP1.68); tests/unit/main/spawn-site-inventory.test.ts",
+      "note": "data only; read by its test, which starts no process"
     },
     {
       "path": "tests/unit/main/ssh-end-remote-password.test.ts",
@@ -6856,6 +7013,17 @@
       "disposition": "added",
       "evidence": "new WP2 P3 usage track MP10 (owner decision 2026-09-26, Q1.4: Claude attributed from the session id and the profile recorded at launch, from now on; no manual attribution) test (tests/unit/main/tokenomics-attribution.test.ts): the strict transcript name, the launch profile and its registry link, first wins and bounded memory, the supervisor handing attributions to the worker (buffered, replayed to a restarted one), and main composing it beside the transcript binder; the Codex strings are refusal cases (a Codex key is never a Claude session's account) (WP1.2); WP2 P3 usage track MP10 round 1 (review fix: the transcript path decides the account): cases for the profile a transcript path names and a session moving on to another account (WP1.2); tests/unit/main/tokenomics-attribution.test.ts; WP2 P3 usage track MP10 round 1 (spec blocker and nits): cases for the real profile layout, the old one rejected, the root reached through a link, and the linked account found without case (WP1.2); tests/unit/main/tokenomics-attribution.test.ts; WP2 P3 usage track MP10 (review nit): a case for a profile folder reported in other case on Windows (WP1.2); tests/unit/main/tokenomics-attribution.test.ts; WP2 PR 3 P3.10 follow-up (WP1.2): the MP10 wiring scan follows main's route through pty-manager's routeHookTranscriptPath (a Codex session's path kept to that session; every other one to the attribution, then the binder); tests/unit/main/tokenomics-attribution.test.ts; WP2 PR 3 P3.16a main track, M1 (WP1.68): the route notes a Claude transcript for the not-indexed windows before the attribution and the binder; tests/unit/main/tokenomics-attribution.test.ts",
       "note": "created by WP2 usage track MP10"
+    },
+    {
+      "path": "tests/unit/main/usage-account-folders-complete.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/main/usage-account-folders-complete.test.ts): the account folder list waits while an account's folder cannot be found yet and names every folder once found; the wait is bounded, after which the list goes without that folder and says so once, a later list neither waits for it nor says so again, and an account archived while the list waits is not waited for (WP1.33); tests/unit/main/usage-account-folders-complete.test.ts",
+      "note": ""
     },
     {
       "path": "tests/unit/main/watchdog/codex-watchdog-submit.test.ts",
@@ -7219,6 +7387,17 @@
       "note": ""
     },
     {
+      "path": "tests/unit/providers/codex/cli-runner-settle.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/providers/codex/cli-runner-settle.test.ts): a stopped run reports settling until its process has exited; at the settle bound a stop still under way (the kill, the root's exit, a tree stop's leftovers step) carries killSettled, bounded by CODEX_KILL_WORST_MS; an exec run whose root has exited carries killSettled while its leftovers step is still under way, bounded by CODEX_LEFTOVERS_WORST_MS (WP1.62, WP1.68); tests/unit/providers/codex/cli-runner-settle.test.ts",
+      "note": ""
+    },
+    {
       "path": "tests/unit/providers/codex/codex-binary-path-order.test.ts",
       "predicates": [
         "P01",
@@ -7262,6 +7441,17 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.6 (row 22) test (tests/unit/providers/codex/conversation-carry.test.ts): the carried copy lands at the same place and resumes by id there; whole lines; a new copy never over anything, never through a link; bounded; only the source realm's own conversation (WP1.28, WP1.68); WP2 PR 3 fixer 9 (gate 3, S3 NIT 1, row 22): the Lens A T1b case asserts the re-point never ran (WP1.68); tests/unit/providers/codex/conversation-carry.test.ts; WP2 PR 4 CI fixes (7fd211ed): changed by those fixes (WP1.68); tests/unit/providers/codex/conversation-carry.test.ts",
       "note": "real folders under the system temp folder; no Codex process"
+    },
+    {
+      "path": "tests/unit/providers/codex/failure-text-hides-credentials.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 batch test (tests/unit/providers/codex/failure-text-hides-credentials.test.ts): the failure text of a Codex Insights run (the stderr tail, Codex's own error event, a start that failed, the line given when the model cannot be reached), of a Codex cloud agent (the stderr tail) and of a Codex analysis (the line given when the model cannot be reached) hides a URL's password and a session value at each of those places (WP1.33)",
+      "note": "fake spawn, no process; synthetic values"
     },
     {
       "path": "tests/unit/providers/codex/hook-wrapper-start-folder.test.ts",
@@ -7401,6 +7591,17 @@
       "note": "host-safe: pure functions, no process"
     },
     {
+      "path": "tests/unit/providers/codex/realm-folders-owner-only-wiring.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/providers/codex/realm-folders-owner-only-wiring.test.ts): the managed folders on this disk get the owner-only folder rule: on Windows the root, then the home, are given to the rule and a refusal refuses the folder (POSIX: 0700); a test folder filesystem never reaches the app's rule, and the app's composition brings no folder filesystem of its own (WP1.28); tests/unit/providers/codex/realm-folders-owner-only-wiring.test.ts",
+      "note": ""
+    },
+    {
       "path": "tests/unit/providers/codex/resume-picker-deploy.test.ts",
       "predicates": [
         "P01",
@@ -7422,6 +7623,31 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.5 (rows 34, 38) test (tests/unit/providers/codex/rollout-lookup.test.ts): a conversation's rollout found by its id in any date folder of its realm, never through a link or junction, never on a name alone; where an exact resume starts (WP1.68)",
       "note": "created by WP2 PR 3 P3.5"
+    },
+    {
+      "path": "tests/unit/providers/codex/run-holds-account-until-ended.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/providers/codex/run-holds-account-until-ended.test.ts): a Codex review, analysis, Insights report or cloud agent whose codex has exited carries killSettled whatever the outcome, completed, failed or stopped, and holds its account until what is left of the run has ended (WP1.62, WP1.68); tests/unit/providers/codex/run-holds-account-until-ended.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/spawn-ask-git-ceiling.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/providers/codex/spawn-ask-git-ceiling.test.ts): an Ask launch lists only the conversations of its help folder: git stops at the help folder's parent on a fresh launch, in the picker and on an exact resume (the conversation's own folder, else the help folder); an Ask launch whose help folder is not an absolute path, or whose parent git would read as two folders, is refused and says what to change; it carries no variable naming a repository; a launch that is not Ask's is unchanged (WP1.68); tests/unit/providers/codex/spawn-ask-git-ceiling.test.ts",
+      "note": ""
     },
     {
       "path": "tests/unit/providers/codex/spawn-ask.test.ts",
@@ -7476,6 +7702,19 @@
       "note": "created by WP2 PR 3 P3.10"
     },
     {
+      "path": "tests/unit/providers/codex/spawn-node-lookup.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/providers/codex/spawn-node-lookup.test.ts): node for the resume picker is node.exe from the first fully qualified folder of the launch environment's PATH, found without starting a process and never in the current folder, for the platform the launch is built for; a found node is kept for later launches under the same PATH (WP1.68); tests/unit/providers/codex/spawn-node-lookup.test.ts",
+      "note": ""
+    },
+    {
       "path": "tests/unit/providers/codex/spawn-resume.test.ts",
       "predicates": [
         "P01",
@@ -7489,6 +7728,19 @@
       "note": "created by WP2 PR 3 P3.5"
     },
     {
+      "path": "tests/unit/providers/codex/spawn-unc-folder.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/providers/codex/spawn-unc-folder.test.ts): a Codex launch on the npm launcher route in a network folder (a share or a device path; fresh, resumed, or the picker's fallback) is refused with the reason; a standalone codex, the npm launcher in a drive folder, the picker itself and every launch on macOS and Linux start as before (WP1.68); tests/unit/providers/codex/spawn-unc-folder.test.ts",
+      "note": ""
+    },
+    {
       "path": "tests/unit/providers/codex/spawn.test.ts",
       "predicates": [
         "P01",
@@ -7498,7 +7750,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: cases retained; realm-env cases added (tests/wp1/launch-handoff.test.ts); WP2 final fixes: the resolveBinary case now asserts that CodexProvider refuses both PATH lookups, and resolveCodexBinary, the discovery lookup, keeps its cases (WP1.17); WP2 P3 usage track MP3 follow-up (a stale case CI caught): the telemetry case now pins the sixth argument, the allowance callback that records the session's figure as its own realm's live figure and forgets it when the session stops (WP1.68); tests/unit/providers/codex/spawn.test.ts; WP1.33 mapping: WP2 PR 3 P3.8 added one case (max and ultra reach the launch; Default adds no -m and no effort); the existing cases are kept; tests/unit/providers/codex/spawn.test.ts; WP1.33 mapping: WP2 PR 3 P3.8 round 1 added one case (the plan preset launches as standard does); tests/unit/providers/codex/spawn.test.ts; WP1.33 mapping: WP2 PR 3 P3.8 round 2: the plan preset case now expects the read-only launch; tests/unit/providers/codex/spawn.test.ts",
+      "evidence": "WP1.58: cases retained; realm-env cases added (tests/wp1/launch-handoff.test.ts); WP2 final fixes: the resolveBinary case now asserts that CodexProvider refuses both PATH lookups, and resolveCodexBinary, the discovery lookup, keeps its cases (WP1.17); WP2 P3 usage track MP3 follow-up (a stale case CI caught): the telemetry case now pins the sixth argument, the allowance callback that records the session's figure as its own realm's live figure and forgets it when the session stops (WP1.68); tests/unit/providers/codex/spawn.test.ts; WP1.33 mapping: WP2 PR 3 P3.8 added one case (max and ultra reach the launch; Default adds no -m and no effort); the existing cases are kept; tests/unit/providers/codex/spawn.test.ts; WP1.33 mapping: WP2 PR 3 P3.8 round 1 added one case (the plan preset launches as standard does); tests/unit/providers/codex/spawn.test.ts; WP1.33 mapping: WP2 PR 3 P3.8 round 2: the plan preset case now expects the read-only launch; tests/unit/providers/codex/spawn.test.ts; 2.1.1-beta.2 (WP1.68): the node fallback case says that no process starts when no PATH folder holds node.exe; tests/unit/providers/codex/spawn.test.ts",
       "note": ""
     },
     {
@@ -9417,6 +9669,17 @@
       "note": "created by WP2 PR 3 P3.12"
     },
     {
+      "path": "tests/unit/scripts/codex-resume-picker-network-folder.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/scripts/codex-resume-picker-network-folder.test.ts): the Codex resume picker never starts the npm launcher in a network folder or where its start folder is not known, and gives the same reason the app's own launch uses; the shim in a drive folder and the standalone codex.exe start as before (WP1.68); tests/unit/scripts/codex-resume-picker-network-folder.test.ts",
+      "note": ""
+    },
+    {
       "path": "tests/unit/scripts/codex-resume-picker-open-elsewhere.test.ts",
       "predicates": [
         "P01",
@@ -9557,7 +9820,17 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "existing test retained; its cases are unchanged; WP2 PR 3 P3.10 round 1 (S2): two cases added, the Session Watchdog guide covers Codex sessions under the one switch and says what differs, and Codex's one-time hooks review is explained (what to choose, what declining costs, how to trust later) (WP1.33); tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.10 round 2 (the round 1 re-review and the VM re-check) (WP1.33): cases added for the round's fixes; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.10 round 3 (the round 2 re-review and VM re-check) (WP1.33): cases added for the round's fixes; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.10 rounds 3b and 4 (the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders prepared asynchronously and read back; approval pairing; the Watchdog episode) (WP1.35): the overload backoff wording; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.11 (row 62, extra CLI arguments; parity) (WP1.35): the Codex extra CLI arguments sentence; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.11 round 1 (the text) (WP1.35): the round-1 wording of the Codex extra CLI arguments sentence; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.35): the P3.12 sentences, and nothing still says Codex conversations are not indexed; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.15 (rows 70, 71) (WP1.35): the Alt+V tip and Feature Guide line, the Windows sandbox known issue and its tip; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.15 round 1 (the spec, code-quality and ADR-009 lens findings, and the VM re-check) (WP1.35): the scoped Alt+V, sandbox known-issue and tip texts, and the tip's platforms; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.15 round 2 (the round 1 spec, code-quality and ADR-009 pass 2 findings) (WP1.35): the command named, and that both supported CLIs list it in their slash popup; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.15 round 3 (the VM at 98455d52) (WP1.35): the known issue for a tab left open after Codex quits; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.15 round 4 (the rounds 2-3 reviews and the P3.16a ADR-009 lenses) (WP1.35): the sandbox command's scope and the stuck tab; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.15 round 5 (the round 4 reviews) (WP1.35): the unanswered prompt and the close-the-tab advice, and no claim about a No; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 fixer 9 (gate 3, spec item 3, F2, row 42): the Sentinel section says at most three analyses in all (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 fixer 11 (ADR-009 lens D round 2 finding 5, gate 3 F11, row 42): the Sentinel section and the What's New line on a downgrade are pinned (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 fixer 12 (gate 3 F14 and F15, row 42): the Sentinel section and the What's New line pinned as reworded (the newest one checked; Claude Code, with Codex working the same way) (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 fixer 13 (gate 3 F16, row 42): the Sentinel section and the What's New line pinned as reworded (once that analysis is done; Re-run again) (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 ADR-009 round 2 (29df3867): changed by the pass's fixes (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 VM checkpoint fixes (5e5d0478), review fixes (3e9ae9d6): changed by those fixes (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 review fixes (988e02a0, 1e06a073): changed by those fixes (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 P4.11 (4bf3d0ac, 103a5b7b): the P4.11 sweep's copy pins (WP1.36); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 P4.11 review (2cf39a0b, 1948b98a): the P4.11 review pins: the filter sentence, the 2.1.1 lines, the README image, the privacy reads (naming .codex/config.toml) and the first-launch known issue (WP1.36); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 (c1c34f1f): changed by those commits (WP1.36); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 P4.7 fix pass 2: the privacy policy's Run all paragraph pinned (WP1.36); tests/unit/shared/app-knowledge.test.ts; WP1.33 mapping: WP2 PR 4 surface sweep before the 2.1.1-beta.2 cut: the release record is held to saying the README images are not yet recaptured and await the owner's approval",
+      "evidence": "existing test retained; its cases are unchanged; WP2 PR 3 P3.10 round 1 (S2): two cases added, the Session Watchdog guide covers Codex sessions under the one switch and says what differs, and Codex's one-time hooks review is explained (what to choose, what declining costs, how to trust later) (WP1.33); tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.10 round 2 (the round 1 re-review and the VM re-check) (WP1.33): cases added for the round's fixes; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.10 round 3 (the round 2 re-review and VM re-check) (WP1.33): cases added for the round's fixes; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.10 rounds 3b and 4 (the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders prepared asynchronously and read back; approval pairing; the Watchdog episode) (WP1.35): the overload backoff wording; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.11 (row 62, extra CLI arguments; parity) (WP1.35): the Codex extra CLI arguments sentence; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.11 round 1 (the text) (WP1.35): the round-1 wording of the Codex extra CLI arguments sentence; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.35): the P3.12 sentences, and nothing still says Codex conversations are not indexed; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.15 (rows 70, 71) (WP1.35): the Alt+V tip and Feature Guide line, the Windows sandbox known issue and its tip; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.15 round 1 (the spec, code-quality and ADR-009 lens findings, and the VM re-check) (WP1.35): the scoped Alt+V, sandbox known-issue and tip texts, and the tip's platforms; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.15 round 2 (the round 1 spec, code-quality and ADR-009 pass 2 findings) (WP1.35): the command named, and that both supported CLIs list it in their slash popup; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.15 round 3 (the VM at 98455d52) (WP1.35): the known issue for a tab left open after Codex quits; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.15 round 4 (the rounds 2-3 reviews and the P3.16a ADR-009 lenses) (WP1.35): the sandbox command's scope and the stuck tab; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 P3.15 round 5 (the round 4 reviews) (WP1.35): the unanswered prompt and the close-the-tab advice, and no claim about a No; tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 fixer 9 (gate 3, spec item 3, F2, row 42): the Sentinel section says at most three analyses in all (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 fixer 11 (ADR-009 lens D round 2 finding 5, gate 3 F11, row 42): the Sentinel section and the What's New line on a downgrade are pinned (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 fixer 12 (gate 3 F14 and F15, row 42): the Sentinel section and the What's New line pinned as reworded (the newest one checked; Claude Code, with Codex working the same way) (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 3 fixer 13 (gate 3 F16, row 42): the Sentinel section and the What's New line pinned as reworded (once that analysis is done; Re-run again) (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 ADR-009 round 2 (29df3867): changed by the pass's fixes (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 VM checkpoint fixes (5e5d0478), review fixes (3e9ae9d6): changed by those fixes (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 review fixes (988e02a0, 1e06a073): changed by those fixes (WP1.35); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 P4.11 (4bf3d0ac, 103a5b7b): the P4.11 sweep's copy pins (WP1.36); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 P4.11 review (2cf39a0b, 1948b98a): the P4.11 review pins: the filter sentence, the 2.1.1 lines, the README image, the privacy reads (naming .codex/config.toml) and the first-launch known issue (WP1.36); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 (c1c34f1f): changed by those commits (WP1.36); tests/unit/shared/app-knowledge.test.ts; WP2 PR 4 P4.7 fix pass 2: the privacy policy's Run all paragraph pinned (WP1.36); tests/unit/shared/app-knowledge.test.ts; WP1.33 mapping: WP2 PR 4 surface sweep before the 2.1.1-beta.2 cut: the release record is held to saying the README images are not yet recaptured and await the owner's approval; WP1.33 mapping: the 2.1.1-beta.2 surfaces (WP1.35): five cases added (the entry lists each guarantee in plain ASCII; the review line and the handler line claim no more than their own flags and channels; the Claude Code extra CLI arguments rule and how to give a folder or a value; a Claude session whose account is gone; each new known issue carries its workaround), and the PR 4 What's New pin names Haiku 5.5; tests/unit/shared/app-knowledge.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/shared/extra-args.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/shared/extra-args.test.ts): Claude's extra CLI arguments: the options the app leaves to the user pass; every option that changes the session's conversation, folder, permission mode or settings is refused in any spelling, a managed option's one-letter form too; a word claude would read as a command, a word that names a server for the session to run on and a word PowerShell would expand are refused with how to give the value; a Codex session refuses its CLI's helper modes the same way; the character guard comes first (WP1.68); tests/unit/shared/extra-args.test.ts",
       "note": ""
     },
     {
@@ -9569,6 +9842,16 @@
       "category": "TEST",
       "disposition": "added",
       "evidence": "new WP2 PR 4 P4.7 (row 68) test: the stored Codex report rule: versions, card kinds, limits and plain text (WP1.33); tests/unit/shared/insights-codex-report.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/shared/safe-text-parity.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 test (tests/unit/shared/safe-text-parity.test.ts): the shown-text rule's three copies (the shared helper and the Claude and Codex resume pickers) agree: they drop exactly the same code points, globally, and keep a whole surrogate pair while dropping a lone half (WP1.68); tests/unit/shared/safe-text-parity.test.ts",
       "note": ""
     },
     {

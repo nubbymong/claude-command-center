@@ -1,9 +1,9 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-07T12:05:19.860Z",
-  "head": "a7ed55bbc0bb118a6f5ee80b20ef43bf1cc0ffa7",
-  "tree": "2e17bb338ea931f4e012cfa04fbc27993b25b1d0",
-  "scannedWorkingTree": true,
+  "generatedAt": "2026-10-08T23:52:34.807Z",
+  "head": "664e124ed9cf8c096b1f09e91388e6a53bb73ad8",
+  "tree": "4846b7f3c0d9a638e474e84ab05b34160d1684d6",
+  "scannedWorkingTree": false,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
     {
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2817,
+  "trackedFileCount": 2895,
   "excludedFileCount": 405,
-  "scannedFileCount": 2412,
+  "scannedFileCount": 2490,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 848,
-  "pathDigest": "f42e51d8ea747b7a1cdd459d41e4379f760d6b277fc5f2dd563c741442b4bc4a",
+  "matchedPathCount": 864,
+  "pathDigest": "e1ee53cc2024f822b367f8d59a8e5aa9cfd26be427face5e74eb4ea705d18044",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -329,7 +329,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 28
+      "lineCount": 32
     },
     {
       "path": "scripts/readme-shots/README.md",
@@ -660,7 +660,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 47
+      "lineCount": 46
     },
     {
       "path": "src/main/codex-review-usage.ts",
@@ -718,7 +718,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 38
+      "lineCount": 39
     },
     {
       "path": "src/main/hooks/hooks-gateway.ts",
@@ -755,7 +755,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 8
+      "lineCount": 7
     },
     {
       "path": "src/main/insights-runner.ts",
@@ -763,7 +763,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 174
+      "lineCount": 169
     },
     {
       "path": "src/main/install-secret.ts",
@@ -1040,7 +1040,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 48
+      "lineCount": 49
     },
     {
       "path": "src/main/providers/codex/app-server-client.ts",
@@ -1075,7 +1075,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 12
+      "lineCount": 13
     },
     {
       "path": "src/main/providers/codex/cli-runner.ts",
@@ -1083,7 +1083,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 186
+      "lineCount": 197
     },
     {
       "path": "src/main/providers/codex/composer-submit.ts",
@@ -1144,7 +1144,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 274
+      "lineCount": 277
     },
     {
       "path": "src/main/providers/codex/insights-exec.ts",
@@ -1274,7 +1274,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 138
+      "lineCount": 149
     },
     {
       "path": "src/main/providers/codex/telemetry.ts",
@@ -2616,7 +2616,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 112
+      "lineCount": 114
     },
     {
       "path": "src/shared/ask-conductor-provider.ts",
@@ -2668,7 +2668,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 21
+      "lineCount": 28
     },
     {
       "path": "src/shared/github-types.ts",
@@ -2706,7 +2706,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 48
+      "lineCount": 52
     },
     {
       "path": "src/shared/providers/accounts-view.ts",
@@ -3750,7 +3750,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 104
+      "lineCount": 107
     },
     {
       "path": "tests/unit/codex-web-sign-in.test.ts",
@@ -4006,6 +4006,13 @@
       "lineCount": 20
     },
     {
+      "path": "tests/unit/main/canvas-launch-tools-switch.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 12
+    },
+    {
       "path": "tests/unit/main/canvas-marker-codex-delivery.test.ts",
       "predicates": [
         "P01",
@@ -4256,7 +4263,7 @@
         "P09",
         "P13"
       ],
-      "lineCount": 84
+      "lineCount": 85
     },
     {
       "path": "tests/unit/main/codex-review-session-abort.test.ts",
@@ -4359,7 +4366,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 30
+      "lineCount": 34
     },
     {
       "path": "tests/unit/main/codex-web-wiring.test.ts",
@@ -4399,7 +4406,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 54
+      "lineCount": 74
     },
     {
       "path": "tests/unit/main/conductor-mcp-review-switches.test.ts",
@@ -4407,7 +4414,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 28
+      "lineCount": 38
     },
     {
       "path": "tests/unit/main/conductor-mcp-server-source-filter.test.ts",
@@ -4460,7 +4467,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 62
+      "lineCount": 75
     },
     {
       "path": "tests/unit/main/insights-codex-links.test.ts",
@@ -4468,7 +4475,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 24
+      "lineCount": 25
     },
     {
       "path": "tests/unit/main/insights-codex-report.test.ts",
@@ -4494,7 +4501,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 135
+      "lineCount": 136
     },
     {
       "path": "tests/unit/main/insights-run-handler.test.ts",
@@ -4662,6 +4669,15 @@
       "lineCount": 3
     },
     {
+      "path": "tests/unit/main/pty-local-tools-switch-checked.test.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 19
+    },
+    {
       "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",
       "predicates": [
         "P13"
@@ -4762,13 +4778,27 @@
       "lineCount": 28
     },
     {
+      "path": "tests/unit/main/sentinel-apply.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 3
+    },
+    {
       "path": "tests/unit/main/sentinel-codex-service.test.ts",
       "predicates": [
         "P01",
         "P04",
         "P13"
       ],
-      "lineCount": 179
+      "lineCount": 182
+    },
+    {
+      "path": "tests/unit/main/sentinel-runs-folder-checked.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 18
     },
     {
       "path": "tests/unit/main/sentinel-unreachable-timing.test.ts",
@@ -4808,6 +4838,13 @@
       "lineCount": 31
     },
     {
+      "path": "tests/unit/main/spawn-site-inventory.json",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 21
+    },
+    {
       "path": "tests/unit/main/ssh-end-remote-password.test.ts",
       "predicates": [
         "P13"
@@ -4826,7 +4863,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 22
+      "lineCount": 33
     },
     {
       "path": "tests/unit/main/terminal-query-responder-xterm.test.ts",
@@ -4848,6 +4885,14 @@
         "P13"
       ],
       "lineCount": 7
+    },
+    {
+      "path": "tests/unit/main/usage-account-folders-complete.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "lineCount": 16
     },
     {
       "path": "tests/unit/main/watchdog/codex-watchdog-submit.test.ts",
@@ -5089,6 +5134,14 @@
       "lineCount": 18
     },
     {
+      "path": "tests/unit/providers/codex/cli-runner-settle.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 39
+    },
+    {
       "path": "tests/unit/providers/codex/codex-binary-path-order.test.ts",
       "predicates": [
         "P01",
@@ -5120,6 +5173,14 @@
         "P13"
       ],
       "lineCount": 89
+    },
+    {
+      "path": "tests/unit/providers/codex/failure-text-hides-credentials.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 29
     },
     {
       "path": "tests/unit/providers/codex/hook-wrapper-start-folder.test.ts",
@@ -5180,7 +5241,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 9
+      "lineCount": 12
     },
     {
       "path": "tests/unit/providers/codex/permissions.test.ts",
@@ -5212,7 +5273,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 9
+      "lineCount": 16
     },
     {
       "path": "tests/unit/providers/codex/rate-limits.test.ts",
@@ -5221,6 +5282,14 @@
         "P13"
       ],
       "lineCount": 119
+    },
+    {
+      "path": "tests/unit/providers/codex/realm-folders-owner-only-wiring.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 10
     },
     {
       "path": "tests/unit/providers/codex/resume-picker-deploy.test.ts",
@@ -5240,6 +5309,25 @@
       "lineCount": 55
     },
     {
+      "path": "tests/unit/providers/codex/run-holds-account-until-ended.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 24
+    },
+    {
+      "path": "tests/unit/providers/codex/spawn-ask-git-ceiling.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 65
+    },
+    {
       "path": "tests/unit/providers/codex/spawn-ask.test.ts",
       "predicates": [
         "P01",
@@ -5257,7 +5345,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 86
+      "lineCount": 96
     },
     {
       "path": "tests/unit/providers/codex/spawn-extra-args.test.ts",
@@ -5267,7 +5355,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 61
+      "lineCount": 63
     },
     {
       "path": "tests/unit/providers/codex/spawn-hooks.test.ts",
@@ -5280,6 +5368,16 @@
       "lineCount": 101
     },
     {
+      "path": "tests/unit/providers/codex/spawn-node-lookup.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 26
+    },
+    {
       "path": "tests/unit/providers/codex/spawn-resume.test.ts",
       "predicates": [
         "P01",
@@ -5290,6 +5388,16 @@
       "lineCount": 93
     },
     {
+      "path": "tests/unit/providers/codex/spawn-unc-folder.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 25
+    },
+    {
       "path": "tests/unit/providers/codex/spawn.test.ts",
       "predicates": [
         "P01",
@@ -5297,7 +5405,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 235
+      "lineCount": 237
     },
     {
       "path": "tests/unit/providers/codex/telemetry-bounded-reads.test.ts",
@@ -6269,7 +6377,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 45
+      "lineCount": 46
     },
     {
       "path": "tests/unit/renderer/session-dialog-codex-logging.test.tsx",
@@ -6693,6 +6801,14 @@
       "lineCount": 3
     },
     {
+      "path": "tests/unit/scripts/codex-resume-picker-network-folder.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 15
+    },
+    {
       "path": "tests/unit/scripts/codex-resume-picker-open-elsewhere.test.ts",
       "predicates": [
         "P01",
@@ -6707,7 +6823,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 26
+      "lineCount": 27
     },
     {
       "path": "tests/unit/scripts/codex-resume-picker.test.ts",
@@ -6715,7 +6831,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 40
+      "lineCount": 41
     },
     {
       "path": "tests/unit/scripts/readme-stage.test.ts",
@@ -6738,7 +6854,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 56
+      "lineCount": 57
     },
     {
       "path": "tests/unit/sentinel-codex-changelog.test.ts",
@@ -6784,7 +6900,14 @@
         "P04",
         "P13"
       ],
-      "lineCount": 201
+      "lineCount": 209
+    },
+    {
+      "path": "tests/unit/shared/extra-args.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 5
     },
     {
       "path": "tests/unit/shared/insights-codex-report.test.ts",
@@ -6793,6 +6916,13 @@
         "P13"
       ],
       "lineCount": 29
+    },
+    {
+      "path": "tests/unit/shared/safe-text-parity.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
     },
     {
       "path": "tests/unit/status-ingest.test.ts",
