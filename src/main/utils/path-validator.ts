@@ -136,7 +136,9 @@ export function localPathFormProblem(p: unknown, platform: PathPlatform = proces
  * as written: the Kelvin sign is not k, dotless i is not I, sharp s never
  * becomes two letters, a surrogate is never folded. A volume can keep apart a
  * pair this folds (a case-sensitive folder or disk), so it never decides
- * whether a path is inside a folder: pathInside compares spellings exactly.
+ * whether a path is inside a folder: pathInside compares spellings exactly;
+ * and a folded match alone never passes the real-path test: isOwnRealPath
+ * asks the folder whether it reads both spellings as one entry.
  */
 export function foldPathCase(s: string): string {
   return s.replace(/[a-z]|[^\x00-\x7f]/g, (c) => {
@@ -160,11 +162,66 @@ const caseKey = (s: string, platform: PathPlatform): string => (platform === 'wi
 /**
  * Two spellings of one path as the platform compares them: on Windows and
  * macOS by foldPathCase (Windows also takes either separator); elsewhere
- * exact. A trailing separator is ignored, a root's is kept. For the real-path
- * test only, never containment (pathInside).
+ * exact. A trailing separator is ignored, a root's is kept. The spelling half
+ * of the real-path test (isOwnRealPath), never containment (pathInside).
  */
 export function samePathForm(a: string, b: string, platform: PathPlatform = process.platform): boolean {
   return caseKey(spelled(a, platform), platform) === caseKey(spelled(b, platform), platform)
+}
+
+/**
+ * Whether `folder` reads `name` and `variant` (the same name in another case)
+ * as one entry: each is looked at with lstat (the name itself, never what a
+ * link there points to), and the two must have the same device and file id.
+ * A case-insensitive folder answers both spellings with its one entry; a
+ * case-sensitive one (a case-sensitive disk, or a Windows folder with case
+ * sensitivity turned on) can hold two entries, or a link under one spelling to
+ * the other. A file system that gives no file id (0) cannot say, so that
+ * answers false too, as any error does.
+ */
+export async function folderIgnoresCase(
+  folder: string,
+  name: string,
+  variant: string,
+  platform: PathPlatform,
+  files: FolderCheckFs,
+): Promise<boolean> {
+  const sep = platform === 'win32' ? '\\' : '/'
+  const base = folder.endsWith(sep) ? folder : folder + sep
+  try {
+    const [a, b] = await Promise.all([files.lstat(base + name, { bigint: true }), files.lstat(base + variant, { bigint: true })])
+    return a.ino !== 0n && a.dev === b.dev && a.ino === b.ino
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The real-path test of the account-folder checks: `real`, the path the file
+ * system gave back for `target` (realpath), is `target` itself, so no link or
+ * junction lies on the way. Spellings that match exactly answer without a file
+ * call. Spellings that match only as samePathForm folds them (another case, on
+ * Windows or macOS) match only where each folder holding a name spelled in
+ * another case reads both spellings as one entry (folderIgnoresCase): on a
+ * case-sensitive disk or folder the other spelling can be a link. A Windows
+ * drive letter is the same drive in any case. Any error answers false.
+ */
+export async function isOwnRealPath(real: string, target: string, platform: PathPlatform, files: FolderCheckFs): Promise<boolean> {
+  const r = spelled(real, platform)
+  const t = spelled(target, platform)
+  if (r === t) return true
+  if (caseKey(r, platform) !== caseKey(t, platform)) return false
+  const sep = platform === 'win32' ? '\\' : '/'
+  const realNames = r.split(sep)
+  const targetNames = t.split(sep)
+  if (realNames.length !== targetNames.length) return false
+  // Index 0 is the root: '' on POSIX, the drive on Windows.
+  for (let i = 1; i < realNames.length; i++) {
+    if (realNames[i] === targetNames[i]) continue
+    const folder = realNames.slice(0, i).join(sep) || sep
+    if (!(await folderIgnoresCase(folder, realNames[i], targetNames[i], platform, files))) return false
+  }
+  return true
 }
 
 /**
@@ -284,6 +341,6 @@ export async function validateAccountMemoryPath(
   } catch {
     throw new AccountPathRefused('refused', 'the file could not be resolved')
   }
-  if (!samePathForm(realTarget, target, platform)) throw new AccountPathRefused('refused', 'reached through a link')
+  if (!(await isOwnRealPath(realTarget, target, platform, files))) throw new AccountPathRefused('refused', 'reached through a link')
   return { path: target, root, dev: st.dev, ino: st.ino, size: st.size }
 }
