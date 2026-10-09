@@ -1,4 +1,4 @@
-// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening); its managed launch asks the Claude Code its PATH walk finds for its version (here the suite's empty stand-in, which cannot start). [CI] [VM] only -- never run on the owner's machine.
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening); its managed launch asks Claude Code for its version (on Windows the suite's empty stand-in, found first on PATH, which cannot start; on Linux and macOS a login shell and the claude it finds, real processes). [CI] [VM] only -- never run on the owner's machine.
 // rc.15 review R3 (Codex, 2026-09-06; aicc_planning#49): the reviewer's
 // characterization (evidence/accounts-refresh-pty.review.test.ts) flipped into
 // the desired behaviour, credit Codex rc.15 stability review; RED against
