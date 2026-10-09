@@ -25,7 +25,7 @@ vi.mock('electron', () => ({
   app: { getVersion: () => '0.0.0' },
 }))
 vi.mock('../../../src/main/data-paths', () => ({ getDataDirectory: () => 'C:/fake/data' }))
-vi.mock('../../../src/main/account-web/sign-in', () => ({ cancelSignIn: vi.fn(), clearWebSession: vi.fn(), getSignInState: vi.fn(), runSignIn: vi.fn(), detectAuthBrowsers: vi.fn(() => []) }))
+vi.mock('../../../src/main/account-web/sign-in', () => ({ cancelSignIn: vi.fn(), clearWebSession: vi.fn(), getSignInState: vi.fn(), runSignIn: vi.fn(), detectAuthBrowsers: vi.fn(() => []), discardSignInRun: vi.fn() }))
 vi.mock('../../../src/main/account-web/artifacts', () => ({ closeArtifacts: vi.fn(), openArtifacts: vi.fn() }))
 const readClaudeCliAuth = vi.fn(async () => ({ authenticated: true, email: 'someone@example.com' }))
 vi.mock('../../../src/main/account-web/claude-cli-auth', () => ({
@@ -34,13 +34,20 @@ vi.mock('../../../src/main/account-web/claude-cli-auth', () => ({
 }))
 vi.mock('../../../src/main/account-web/session-store', () => ({
   getAuthBrowser: vi.fn(() => 'chrome'), getAuthMethod: vi.fn(() => 'claudeai'), getWebSignInMode: vi.fn(() => 'auto'),
-  removeWebSession: vi.fn(), saveWebSession: vi.fn(), setAuthBrowser: vi.fn(), setAuthMethod: vi.fn(), setWebSignInMode: vi.fn(),
+  removeWebSession: vi.fn(), saveWebSession: vi.fn(() => true), setAuthBrowser: vi.fn(), setAuthMethod: vi.fn(), setWebSignInMode: vi.fn(),
   viewFor: vi.fn((profileId: string) => ({ profileId, status: 'active' })),
+  claudeWebStoreIsNewer: () => false, NEWER_WEB_STORE_REASON: 'written by a newer version of the app',
 }))
 vi.mock('../../../src/main/pty-manager', () => ({ resolveClaudeForPty: () => ({ cmd: 'claude' }) }))
 const spawnClaudeHeadless = vi.fn(async () => ({ code: 0, stdout: '2.1.281 (Claude Code)', stderr: '' }))
 vi.mock('../../../src/main/claude-headless', () => ({ spawnClaudeHeadless: (...a: unknown[]) => spawnClaudeHeadless(...(a as [])) }))
 vi.mock('../../../src/main/help-workspace', () => ({ ensureHelpWorkspace: vi.fn() }))
+// Registering the CLI handlers asks a login shell outside the sh family for its
+// PATH; that question is answered here, so no shell starts on any host.
+vi.mock('../../../src/main/claude-cli-probe', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/claude-cli-probe')>()),
+  claudeInLoginShellPathAsync: vi.fn(async () => null),
+}))
 const installVersion = vi.fn(async () => ({ ok: true }))
 vi.mock('../../../src/main/legacy-version-manager', () => ({
   initLegacyVersionManager: vi.fn(), fetchAvailableVersions: vi.fn(), isVersionInstalled: vi.fn(() => false),

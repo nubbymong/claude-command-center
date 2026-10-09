@@ -64,7 +64,8 @@ import { webSessionFromElectronCookies } from './cookie-harvest'
 import { blockPartitionDownloads, diagHost, subFrameNavAllowed, toChromeUserAgent } from './in-app-sign-in'
 import { clearCodexWebSession } from './codex-web-session'
 import { readAccountEmail, readServiceAccountEmail } from './account-email-read'
-import { getWebSession, saveWebSession, removeWebSession } from './session-store'
+import { claudeWebStoreIsNewer, getWebSession, NEWER_WEB_STORE_REASON, saveWebSession, removeWebSession } from './session-store'
+import { clearWebSession, isClaudeWebClearing, WEB_SESSION_CLEARING_REASON } from './sign-in'
 import { getCodexWebSession, saveCodexWebSession, removeCodexWebSession } from './codex-web-store'
 import { attachPaneView, detachPaneView } from '../pane-slot'
 
@@ -182,8 +183,15 @@ interface PaneService {
    *  it, as the sign-in window's path does, so nothing stays signed in with no
    *  record (and no Sign out). */
   recordFailed?: (ownerId: string) => void
+  /** Why the view may not open on this account now, or null: checked before
+   *  the partition is touched. */
+  refuseOpen?: (ownerId: string) => string | null
   stateOf: (sessionId: string, ownerId: string, authed: boolean | null, email: string | null) => AccountPaneState
 }
+
+/** What the renderer shows when a claude.ai view closes because the sign-in
+ *  made in it could not be recorded. */
+const CLAUDE_RECORD_FAILED_REASON = 'The claude.ai sign-in in this view could not be recorded, so the view closed and the sign-in is being cleared. Try again.'
 
 const CLAUDE_PANE: PaneService = {
   label: 'claude.ai',
@@ -205,6 +213,21 @@ const CLAUDE_PANE: PaneService = {
     origin: 'in-pane',
   }),
   remove: (id) => removeWebSession(id),
+  recordFailed: (id) => {
+    // A store written by a newer build keeps its own records: nothing is
+    // cleared on its account (the view does not open over such a store).
+    if (claudeWebStoreIsNewer()) return
+    // The account's views close first, each with the reason; the clear starts
+    // in the same tick (and bars the account), so no view opens between the two.
+    closeAccountPanesForProfile(id, CLAUDE_RECORD_FAILED_REASON)
+    void clearWebSession(id).catch((err) => {
+      logError(`[account-pane] could not clear the unrecorded claude.ai session of ${id}: ${(err as Error)?.message ?? err}`)
+    })
+  },
+  // Refused while the account's web session is being cleared (until that
+  // clear has really ended), and over a record store from a newer build,
+  // where a sign-in seen here could never be recorded.
+  refuseOpen: (id) => (isClaudeWebClearing(id) ? WEB_SESSION_CLEARING_REASON : claudeWebStoreIsNewer() ? NEWER_WEB_STORE_REASON : null),
   stateOf: (sessionId, id, authed, email) => ({ sessionId, profileId: id, authed, email }),
 }
 
@@ -556,6 +579,13 @@ function openPane(
   } catch (err) {
     return { ok: false, error: (err as Error)?.message ?? 'invalid account' }
   }
+  let refusal: string | null = null
+  try {
+    refusal = svc.refuseOpen?.(ownerId) ?? null
+  } catch (err) {
+    refusal = (err as Error)?.message ?? 'could not open the account view'
+  }
+  if (refusal) return { ok: false, error: refusal }
 
   const existing = panes.get(sessionId)
   if (existing) {
@@ -823,10 +853,11 @@ export function getAccountPaneState(sessionId: string): AccountPaneState | null 
   return entry.svc.stateOf(sessionId, entry.ownerId, entry.authed, entry.svc.stored(entry.ownerId)?.accountEmail ?? null)
 }
 
-/** Close every claude.ai account pane for one PROFILE - sign-out revokes the session. */
-export function closeAccountPanesForProfile(profileId: string): void {
+/** Close every claude.ai account pane for one PROFILE - sign-out revokes the
+ *  session, a clear is about to wipe it. A `reason` goes to the renderer. */
+export function closeAccountPanesForProfile(profileId: string, reason?: string): void {
   for (const [sessionId, entry] of [...panes.entries()]) {
-    if (entry.svc === CLAUDE_PANE && entry.ownerId === profileId) closeAccountPane(sessionId)
+    if (entry.svc === CLAUDE_PANE && entry.ownerId === profileId) closeAccountPane(sessionId, reason)
   }
 }
 

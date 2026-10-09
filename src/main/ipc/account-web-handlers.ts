@@ -20,8 +20,9 @@ import { PROFILE_ID_RE } from '../../shared/account-web-session'
 import { logError, logWarn } from '../debug-logger'
 import { appWindowSender } from './trusted-sender'
 import { getDataDirectory } from '../data-paths'
-import { cancelSignIn, clearWebSession, detectAuthBrowsers, getSignInState, runSignIn } from '../account-web/sign-in'
+import { cancelSignIn, clearWebSession, detectAuthBrowsers, discardSignInRun, getSignInState, runSignIn } from '../account-web/sign-in'
 import {
+  claudeWebStoreIsNewer,
   getAuthBrowser,
   getAuthMethod,
   getWebSignInMode,
@@ -31,6 +32,7 @@ import {
   setAuthMethod,
   setWebSignInMode,
   viewFor,
+  NEWER_WEB_STORE_REASON,
 } from '../account-web/session-store'
 import { readClaudeCliAuth, claudeAuthCommand } from '../account-web/claude-cli-auth'
 import type { ClaudeCliAuthStatus } from '../account-web/claude-cli-auth'
@@ -138,6 +140,9 @@ export function registerAccountWebHandlers(getWindow: () => BrowserWindow | null
     if (!trusted(e)) return refused('signIn')
     try {
       const id = profileIdSchema.parse(profileId)
+      // A record store written by a newer build cannot take this sign-in's
+      // record: refused up front, with the reason, before any window opens.
+      if (claudeWebStoreIsNewer()) return { ok: false, error: NEWER_WEB_STORE_REASON }
       const state = await runSignIn({
         profileId: id,
         dataDir: getDataDirectory(),
@@ -148,7 +153,14 @@ export function registerAccountWebHandlers(getWindow: () => BrowserWindow | null
         method: getAuthMethod(id),
         browser: getAuthBrowser(id),
       })
-      if (state.phase === 'done' && state.session) saveWebSession(state.session)
+      if (state.phase === 'done' && state.session && !saveWebSession(state.session)) {
+        // A finished sign-in is kept only with its record: one whose record
+        // cannot be written is cleared, and the run reads failed.
+        const error = 'The sign-in finished, but it could not be recorded, so it was cleared. Try again.'
+        discardSignInRun(id, error)
+        try { await clearWebSession(id) } catch (err) { logError(`[account-web] could not clear an unrecorded sign-in for ${id}: ${(err as Error)?.message ?? err}`) }
+        return { ok: true, state: { phase: 'failed', profileId: id, error } }
+      }
       return { ok: true, state }
     } catch (err) {
       return fail('signIn', err)

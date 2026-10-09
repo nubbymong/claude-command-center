@@ -52,6 +52,7 @@ import { onPartitionRevoked } from './account-web/partition-revocation'
 import { removeWebSession } from './account-web/session-store'
 // WP2 PR 4, P4.6 (row 58): a Codex account's chatgpt.com web session.
 import { wireCodexWebArchive, wireCodexWebSession } from './account-web/codex-web-wiring'
+import { wireClaudeWebSession } from './account-web/claude-web-wiring'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
@@ -427,8 +428,8 @@ if (!gotTheLock) {
     })
   }
 
-  // A main-process `net` request (the in-app browser's URL check) presents no
-  // client certificate, as on Electron 43; see client-certificate.ts.
+  // No request the app makes, from a page or from the main process, presents a
+  // client certificate; see client-certificate.ts.
   installClientCertificatePolicy(app)
 
   app.whenReady().then(() => {
@@ -664,6 +665,10 @@ if (!gotTheLock) {
     // here so it never has to import their heavy graphs. Both run synchronously.
     onPartitionRevoked(removeWebSession)
     onPartitionRevoked(closeAccountPanesForProfile)
+    // Before a wipe of an account's claude.ai partition, its views and its
+    // artifacts window close; at start, a session that has no record is wiped
+    // (account-web/claude-web-wiring.ts).
+    wireClaudeWebSession()
     // P4.6 (row 58): the same for a Codex account's chatgpt.com session: its
     // own channels (the app window only, the registry checked; a pane only for
     // a Codex session whose current launch is on the account, for as long as

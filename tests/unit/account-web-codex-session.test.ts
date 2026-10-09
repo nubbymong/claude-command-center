@@ -55,7 +55,7 @@ const acted = {
   runSignIn: vi.fn(), cancelSignIn: vi.fn(), clearWebSession: vi.fn(), getSignInState: vi.fn(),
   openArtifacts: vi.fn(() => ({ ok: true })), closeArtifacts: vi.fn(),
   readClaudeCliAuth: vi.fn(async () => ({ authenticated: false })),
-  viewFor: vi.fn(), saveWebSession: vi.fn(), removeWebSession: vi.fn(),
+  viewFor: vi.fn(), saveWebSession: vi.fn(() => true), removeWebSession: vi.fn(),
   setAuthMethod: vi.fn(), setAuthBrowser: vi.fn(), setWebSignInMode: vi.fn(),
   getAuthMethod: vi.fn(() => 'claudeai'), getAuthBrowser: vi.fn(() => 'edge'), getWebSignInMode: vi.fn(() => 'auto'),
   openAccountPane: vi.fn(() => ({ ok: true })), closeAccountPanesForProfile: vi.fn(), closeWebview: vi.fn(),
@@ -63,7 +63,7 @@ const acted = {
 }
 vi.mock('../../src/main/account-web/sign-in', () => ({
   runSignIn: acted.runSignIn, cancelSignIn: acted.cancelSignIn, clearWebSession: acted.clearWebSession,
-  getSignInState: acted.getSignInState, detectAuthBrowsers: () => [],
+  getSignInState: acted.getSignInState, detectAuthBrowsers: () => [], discardSignInRun: vi.fn(),
 }))
 vi.mock('../../src/main/account-web/artifacts', () => ({ openArtifacts: acted.openArtifacts, closeArtifacts: acted.closeArtifacts }))
 vi.mock('../../src/main/account-web/claude-cli-auth', () => ({ readClaudeCliAuth: acted.readClaudeCliAuth, claudeAuthCommand: () => 'claude auth login' }))
@@ -71,6 +71,7 @@ vi.mock('../../src/main/account-web/session-store', () => ({
   viewFor: acted.viewFor, saveWebSession: acted.saveWebSession, removeWebSession: acted.removeWebSession,
   setAuthMethod: acted.setAuthMethod, setAuthBrowser: acted.setAuthBrowser, setWebSignInMode: acted.setWebSignInMode,
   getAuthMethod: acted.getAuthMethod, getAuthBrowser: acted.getAuthBrowser, getWebSignInMode: acted.getWebSignInMode,
+  claudeWebStoreIsNewer: () => false, NEWER_WEB_STORE_REASON: 'written by a newer version of the app',
 }))
 vi.mock('../../src/main/account-web/account-pane', () => ({
   openAccountPane: acted.openAccountPane, closeAccountPanesForProfile: acted.closeAccountPanesForProfile,

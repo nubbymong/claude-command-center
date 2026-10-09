@@ -19,6 +19,7 @@ import { logError, logInfo } from '../debug-logger'
 import { webPartitionForProfile } from '../../shared/account-web-session'
 import { safeExternalHttpsHref } from '../../shared/safe-url'
 import { blockPartitionDownloads, diagHost } from './in-app-sign-in'
+import { isClaudeWebClearing, WEB_SESSION_CLEARING_REASON } from './sign-in'
 
 /** An Electron load error's code (`ERR_ABORTED -3`), never its message. */
 function loadErrorCode(err: unknown): string {
@@ -78,6 +79,9 @@ export function openArtifacts(profileId: string, parent?: BrowserWindow): { ok: 
   } catch (err) {
     return { ok: false, error: (err as Error)?.message ?? 'invalid account' }
   }
+  // Not while the account's web session is being cleared, until that clear
+  // has itself ended, so nothing on the partition writes to it mid-clear.
+  if (isClaudeWebClearing(profileId)) return { ok: false, error: WEB_SESSION_CLEARING_REASON }
 
   const existing = windows.get(profileId)
   if (existing && !existing.isDestroyed()) {

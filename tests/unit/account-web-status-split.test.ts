@@ -34,7 +34,7 @@ vi.mock('electron', () => ({
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
 vi.mock('../../src/main/data-paths', () => ({ getDataDirectory: () => 'C:/fake/data' }))
 vi.mock('../../src/main/account-web/sign-in', () => ({
-  cancelSignIn: vi.fn(), clearWebSession: vi.fn(), getSignInState: vi.fn(), runSignIn: vi.fn(),
+  cancelSignIn: vi.fn(), clearWebSession: vi.fn(), getSignInState: vi.fn(), runSignIn: vi.fn(), discardSignInRun: vi.fn(),
 }))
 vi.mock('../../src/main/account-web/artifacts', () => ({ closeArtifacts: vi.fn(), openArtifacts: vi.fn() }))
 vi.mock('../../src/main/account-web/claude-cli-auth', () => ({
@@ -50,10 +50,11 @@ vi.mock('../../src/main/account-web/session-store', () => ({
   getAuthBrowser: vi.fn(() => 'chrome'),
   getAuthMethod: vi.fn(() => 'claudeai'),
   removeWebSession: vi.fn(),
-  saveWebSession: vi.fn(),
+  saveWebSession: vi.fn(() => true),
   setAuthBrowser: vi.fn(),
   setAuthMethod: vi.fn(),
   viewFor: vi.fn((profileId: string) => ({ profileId, status: 'active', expiresAt: 4102444800000 })),
+  claudeWebStoreIsNewer: () => false, NEWER_WEB_STORE_REASON: 'written by a newer version of the app',
 }))
 
 const { registerAccountWebHandlers } = await import('../../src/main/ipc/account-web-handlers')

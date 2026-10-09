@@ -8,7 +8,9 @@ const fake = { disk: null as unknown }
 
 vi.mock('../../src/main/channel-storage', () => ({
   readJsonFile: (_n: string, seed: () => unknown) => (fake.disk ?? seed()),
-  writeJsonFile: (_n: string, v: unknown) => { fake.disk = JSON.parse(JSON.stringify(v)) },
+  writeJsonFile: (_n: string, v: unknown) => { fake.disk = JSON.parse(JSON.stringify(v)); return true },
+  peekJsonFile: () => (fake.disk == null ? { kind: 'absent' } : { kind: 'ok', value: fake.disk }),
+  quarantinedCopyOf: () => null,
 }))
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
 
