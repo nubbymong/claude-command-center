@@ -466,6 +466,8 @@ describe('C7: setup:isCliReady and setup:spawnCliSetup on the base', () => {
     vi.useFakeTimers()
     const saved = Object.getOwnPropertyDescriptor(process, 'platform')!
     const savedShell = process.env.SHELL
+    const savedPath = process.env.PATH
+    const restorePath = () => { if (savedPath === undefined) delete process.env.PATH; else process.env.PATH = savedPath }
     try {
       const { registerSetupHandlers } = await vi.importActual<typeof import('../../src/main/ipc/setup-handlers')>('../../src/main/ipc/setup-handlers')
       ipcHandlers.clear()
@@ -473,13 +475,23 @@ describe('C7: setup:isCliReady and setup:spawnCliSetup on the base', () => {
       const invoke = (ch: string, ...args: any[]) => ipcHandlers.get(ch)!({ sender: {} } as any, ...args)
 
       Object.defineProperty(process, 'platform', { value: 'win32' })
+      // A Windows PATH on every runner: fully qualified folders (a drive, a
+      // share) among a relative one, the current folder and a POSIX one.
+      process.env.PATH = ['C:\\wp1\\bin', 'wp1\\relative', '.', '/usr/wp1/bin', '\\\\wp1-host\\share\\tools', 'D:\\wp1 tools'].join(';')
+      process.env.WP1_C7_PARENT_VALUE = 'from-the-parent'
       expect(await invoke('setup:spawnCliSetup', 100, 20)).toBe('__cli_setup__')
       const w = ptyCalls[0]
       expect(w.cmd).toBe('claude-resolved')
       expect(w.args).toEqual([])
       expect(w.opts.cwd).toBe(installPath)
       // [to be inverted by decision D3 / design 12] the setup PTY inherits the raw parent environment
-      expect(w.opts.env.PATH ?? w.opts.env.Path).toBe(process.env.PATH ?? process.env.Path)
+      expect(w.opts.env.WP1_C7_PARENT_VALUE).toBe('from-the-parent')
+      // ...apart from PATH, kept to its fully qualified folders (the program
+      // lookup rule every Windows start of Claude Code has): the relative, the
+      // current-folder and the POSIX entries are dropped.
+      expect(w.opts.env.PATH ?? w.opts.env.Path).toBe(['C:\\wp1\\bin', '\\\\wp1-host\\share\\tools', 'D:\\wp1 tools'].join(';'))
+      restorePath()
+      delete process.env.WP1_C7_PARENT_VALUE
       w.pty.dataCb?.('hello from claude')
       w.pty.exitCb?.({ exitCode: 3 })
       expect(sends).toEqual([['pty:data:__cli_setup__', 'hello from claude'], ['pty:exit:__cli_setup__', 3]])
@@ -506,6 +518,8 @@ describe('C7: setup:isCliReady and setup:spawnCliSetup on the base', () => {
       expect(call.pty.kill).toHaveBeenCalledTimes(1) // live: killed
     } finally {
       if (savedShell === undefined) delete process.env.SHELL; else process.env.SHELL = savedShell
+      restorePath()
+      delete process.env.WP1_C7_PARENT_VALUE
       Object.defineProperty(process, 'platform', saved)
       vi.useRealTimers()
     }
