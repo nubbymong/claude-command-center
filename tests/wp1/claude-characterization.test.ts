@@ -46,11 +46,18 @@ const ptySpawnFactory = () => ({
   },
 })
 vi.mock('node-pty', () => ptySpawnFactory())
+// The launch gate asks for the Claude CLI's version: answered here as on a
+// machine with none (unknown), so no Claude CLI is started from this file.
+vi.mock('../../src/main/claude-cli-version', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/claude-cli-version')>()),
+  ensureClaudeCliVersion: () => {},
+  probeClaudeCliVersion: async () => null,
+}))
 vi.mock('../../src/main/usage/usage-snapshots', () => ({ loadSnapshots: () => new Map(), saveSnapshots() {} }))
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logVerbose: vi.fn() }))
 
 const profiles = await import('../../src/main/account-profiles')
-const { spawnPty, killPty } = await import('../../src/main/pty-manager')
+const { spawnPty, killPty, REMOVED_ACCOUNT_REFUSAL } = await import('../../src/main/pty-manager')
 const { registerProviderPackage, _resetProviderRegistryForTest } = await import('../../src/main/providers/core')
 const { createClaudePackage } = await import('../../src/main/providers/claude')
 const { getConfigDir } = await import('../../src/main/config-manager')
@@ -144,11 +151,12 @@ describe('C1: local Claude spawn resolves a profile and isolates it through USER
     else expect(env.HOME).toBeUndefined()
   })
 
-  it('an invalid or escaping requested id falls back to the primary profile instead of failing the spawn', async () => {
-    await launch('wp1-c1-invalid', { shellOnly: false, profileId: '../escape' })
-    expect(lastEnv().USERPROFILE).toBe(profiles.getProfileConfigDir(primaryId))
-    await launch('wp1-c1-missing', { shellOnly: false, profileId: 'profile-does-not-exist' })
-    expect(lastEnv().USERPROFILE).toBe(profiles.getProfileConfigDir(primaryId))
+  it('an invalid, escaping or removed requested account starts nothing and says why, never running on the primary profile', () => {
+    const before = spawned.length
+    sids.push('wp1-c1-invalid', 'wp1-c1-missing')
+    expect(() => spawnPty(win, 'wp1-c1-invalid', { cwd: sandbox, shellOnly: false, profileId: '../escape' } as never)).toThrow(REMOVED_ACCOUNT_REFUSAL)
+    expect(() => spawnPty(win, 'wp1-c1-missing', { cwd: sandbox, shellOnly: false, profileId: 'profile-does-not-exist' } as never)).toThrow(REMOVED_ACCOUNT_REFUSAL)
+    expect(spawned.length).toBe(before)
   })
 
   it('an interactive session with no requested profile never runs on the bare global home (clobber-proofing)', async () => {
@@ -486,11 +494,13 @@ describe('C7: setup:isCliReady and setup:spawnCliSetup on the base', () => {
       expect(call.opts.cols).toBe(100)
       expect(call.opts.rows).toBe(20)
       expect(call.opts.cwd).toBe(installPath)
-      // The resolved claude command is typed into the login shell after 500 ms.
+      // Changed with the sh-family session launcher: `claude` is typed into the
+      // user's own login shell after 500 ms, which finds Claude Code by name, as
+      // the CLI check asks it (Windows starts the resolved command directly).
       vi.advanceTimersByTime(499)
       expect(call.pty.write).not.toHaveBeenCalled()
       vi.advanceTimersByTime(1)
-      expect(call.pty.write).toHaveBeenCalledWith('claude-resolved\r')
+      expect(call.pty.write).toHaveBeenCalledWith('claude\r')
       await invoke('setup:killCliSetup')
       expect(call.pty.kill).toHaveBeenCalledTimes(1) // live: killed
     } finally {

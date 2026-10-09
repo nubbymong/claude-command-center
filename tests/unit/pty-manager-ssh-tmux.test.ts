@@ -2161,13 +2161,15 @@ describe('killPty / gracefulExitPty — a tmux-persistent remote is DETACHED, ne
     expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('rm -f'))).toBe(false)
   })
 
-  it('killPty on a NON-persistent SSH session still sweeps its sidecars in-band (unchanged behaviour)', () => {
+  // The session's files go over a separate connection on a close
+  // (pty-close-remote-cleanup.test.ts); nothing is typed into its pane.
+  it('killPty on a NON-persistent SSH session types nothing into the live Claude pane either', () => {
     driveToClaudeWrite('s-nonpersist-close', 'setup ok {NONCE} tmux=none\r\n')
     // tmux=none -> staging fails (helper) -> bare launch, so NOT persistent.
     expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session'))).toBe(false)
     writeMock.mockClear()
     killPty('s-nonpersist-close')
-    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('rm -f'))).toBe(true)
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('rm -f'))).toBe(false)
   })
 
   it('gracefulExitPty DETACHES a tmux-persistent SSH session (no ESC/Ctrl-C/`/exit`) so the remote survives app quit', () => {

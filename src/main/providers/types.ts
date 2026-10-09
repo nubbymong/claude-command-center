@@ -226,7 +226,8 @@ export interface SessionProvider {
   /** Optional -- Claude only: the `statusLine` value of a local session's
    *  settings file, running the bundled bridge script with the session id and
    *  the path of its status-URL file; null when a path the command would
-   *  carry is one the shell would read as more than a path (no status line). */
+   *  carry is one the shell would read as more than a path (the app sets up
+   *  no status line). */
   statuslineSetting?(resourcesDir: string, sessionId?: string, statusUrlFile?: string): { type: 'command'; command: string } | null
   /** Optional -- Claude only: the session's statusline POST URL on the
    *  conductor MCP server ('' while the server is not bound or the MCP is off;
@@ -335,9 +336,12 @@ export interface SshCapableProvider extends SessionProvider {
   ): string
   /** The launch line on a Windows remote, every variable set cmd.exe's way. */
   windowsLaunchCommand(input: { sessionId: string; envPrefixVars: string[]; extraFlags: string; continueFlag: string }): string
-  /** The line written down a non-persistent session's own PTY at teardown
-   *  that removes the per-session files it planted on the remote. */
+  /** The POSIX command that removes the per-session files a session planted
+   *  on the remote; run over its own ssh exec when the session is closed. */
   remoteSessionCleanupCommand(sessionId: string): string
+  /** The same removal on a Windows remote (cmd.exe or PowerShell); run over
+   *  its own ssh exec on End and on a close. */
+  windowsRemoteSessionCleanupCommand(sessionId: string): string
   /** The line a persistent (tmux) session writes before its launch to point
    *  the remote statusline at the staged tmux binary. */
   tmuxBinPatchCommand(sessionId: string): string

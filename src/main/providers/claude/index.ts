@@ -8,7 +8,7 @@ import type { ProviderPackage } from '../core'
 import { resolveClaudeBinary, buildClaudeLocalSpawn } from './spawn'
 import {
   getRemoteSetupCommand, remoteSessionSettingsPath, remoteSessionMcpConfigPath,
-  buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand,
+  buildRemoteSessionCleanupCommand, buildWindowsRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand,
   parseEndSudoSentinel, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand, statusPostUrl,
 } from './ssh-shim'
 import { detectClaudeUi, lastPromptLineForClaude, looksLikeShellPromptTail } from './ui-detection'
@@ -145,6 +145,9 @@ export class ClaudeProvider implements SshCapableProvider {
   }
   remoteSessionCleanupCommand(sessionId: string): string {
     return buildRemoteSessionCleanupCommand(sessionId)
+  }
+  windowsRemoteSessionCleanupCommand(sessionId: string): string {
+    return buildWindowsRemoteSessionCleanupCommand(sessionId)
   }
   tmuxBinPatchCommand(sessionId: string): string {
     return buildTmuxBinPatchCommand(sessionId)

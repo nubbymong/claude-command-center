@@ -143,20 +143,47 @@ function fanOutStatusline(data: StatuslineData, getWindow: (() => BrowserWindow 
   }
 }
 
+/** Sessions a refused update has been logged for: one line per session, so
+ *  a stream of them cannot fill the log. Bounded; cleared when full. */
+const otherSessionLogged = new Set<string>()
+const OTHER_SESSION_LOGGED_MAX = 256
+
+/** A session id as a session is started with one (the pty:spawn rule,
+ *  ipc/pty-handlers.ts sessionIdSchema): a status file's name is read as a
+ *  session only when it is one. */
+const STATUS_FILE_SESSION_ID_RE = /^[A-Za-z0-9_-]{1,200}$/
+
+/** Whether a payload naming `named` is taken for the session `from` it
+ *  arrived from: only when they are the same session. Said once per session
+ *  in the log, with neither the payload nor the session it named. */
+function isOwnSession(named: unknown, from: string, via: string): boolean {
+  if (named === from) return true
+  if (!otherSessionLogged.has(from)) {
+    if (otherSessionLogged.size >= OTHER_SESSION_LOGGED_MAX) otherSessionLogged.clear()
+    otherSessionLogged.add(from)
+    logWarn(`[statusline-watcher] a status update from session ${from} (${via}) named another session; not taken`)
+  }
+  return false
+}
+
 /**
  * Dispatch a statusline payload that arrived as a STRING (not via the file
  * watcher) to the renderer. Two callers: the conductor MCP server's /status
  * ingest (the primary channel for BOTH local and SSH sessions since the
- * harmonise-remote unification — the name predates that) and pty-manager's
- * OSC sentinel parser (SSH fallback). Every payload passes the same shape
- * filter regardless of origin.
+ * harmonise-remote unification — the name predates that), which binds the
+ * payload to the session its credential was issued for before it gets here,
+ * and pty-manager's OSC sentinel parser (SSH fallback), which passes the
+ * session whose terminal the sentinel arrived on as `fromSessionId`: a
+ * payload naming any other session is not taken (never re-keyed to this
+ * one). Every payload passes the same shape filter regardless of origin.
  */
-export function dispatchSSHStatuslineUpdate(json: string): void {
+export function dispatchSSHStatuslineUpdate(json: string, fromSessionId?: string): void {
   if (!sshDispatchWindow) return
   try {
     const parsed: unknown = JSON.parse(json)
     const data = sanitiseSentinelPayload(parsed)
     if (!data) return
+    if (fromSessionId !== undefined && !isOwnSession(data.sessionId, fromSessionId, 'terminal')) return
     fanOutStatusline(data, sshDispatchWindow)
   } catch { /* ignore malformed sentinel payloads */ }
 }
@@ -356,6 +383,10 @@ export function startStatuslineWatcher(getWindow: () => BrowserWindow | null): (
   async function processFile(filename: string): Promise<void> {
     const win = getWindow()
     if (!win || win.isDestroyed()) return
+    // A status file is `<session id>.json`. A name that is not a session id
+    // is no session's file: it is not read, and nothing is logged for it.
+    const fileSessionId = filename.slice(0, -'.json'.length)
+    if (!STATUS_FILE_SESSION_ID_RE.test(fileSessionId)) return
 
     const filePath = path.join(statusDir, filename)
     try {
@@ -364,7 +395,15 @@ export function startStatuslineWatcher(getWindow: () => BrowserWindow | null): (
       lastMtime.set(filename, mtime)
 
       const content = await fs.promises.readFile(filePath, 'utf-8')
-      const data: StatuslineData = JSON.parse(content)
+      // The same shape filter every other delivery passes (the /status
+      // ingest and the terminal sentinel, dispatchSSHStatuslineUpdate): a
+      // status file is read from the resources folder, so what it holds is
+      // checked field by field before anything reads it.
+      const data = sanitiseSentinelPayload(JSON.parse(content))
+      if (!data) return
+      // A status file is `<session id>.json`, written for that session alone:
+      // a payload naming another session is not taken.
+      if (!isOwnSession(data.sessionId, fileSessionId, 'status file')) return
       fanOutStatusline(data, getWindow)
     } catch { /* ignore read errors during writes */ }
   }

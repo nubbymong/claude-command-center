@@ -47,6 +47,7 @@ import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { TMUX_WHEEL_EXIT_KEY } from '../shared/tmux-wheel'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort, issueMcpSessionToken } from './conductor-mcp-server'
+import { conductorToolsMasterOn } from './conductor-tools-switch'
 import { buildSshArgs, buildSshExecArgs } from './ssh-args'
 import { getRemoteMcpPort } from './ssh-remote-port'
 import { resolveHostColorScheme, colorFgBgEnvToken } from './providers/host-color-scheme'
@@ -56,6 +57,9 @@ import { isSshCapable } from './providers/types'
 import type { TelemetrySource, SessionRunScreen, SpawnOptions, SshCapableProvider } from './providers/types'
 import { resolveCwd, isHomeOrAncestor } from './path-utils'
 import { buildTerminalLaunchLine } from './terminal-launch-line'
+import { findOnWindowsPathAsync } from './windows-programs'
+import { windowsPathFolderIsFullyQualified } from './providers/windows-path-names'
+import { isShFamilyShell, localSessionShell } from './login-shell'
 import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
 import { forgetSession } from './background-context'
 import { decorateStatuslineWithColour } from './account-color'
@@ -134,8 +138,10 @@ export function _getSshEntryNonceForTest(sessionId: string): string | undefined 
 
 /** Test-only: whether this session still has a captured end-remote target. Pins
  *  the lifecycle fix that the target must SURVIVE a natural PTY exit (a transient
- *  drop, so a later End can still reach the host) and be dropped only on a
- *  deliberate close (killPty) -- adversarial review 2026-08-18. */
+ *  drop, so a later End can still reach the host) and be dropped only by
+ *  killPty (a close; any other kill keeps it while the session's setup files
+ *  are on that host, see sshSetupWrittenBySession) -- adversarial review
+ *  2026-08-18. */
 export function _hasSshTargetForTest(sessionId: string): boolean {
   return sshTargetBySession.has(sessionId)
 }
@@ -1273,7 +1279,10 @@ function clearLastResumeTarget(sessionId: string): void {
 // NOT on a natural PTY exit: after a transient drop the tab stays (Retry), and
 // a later "End remote" must still be able to reach the host to kill the
 // now-detached remote -- clearing it on every exit made End a silent no-op
-// after any wifi blip (adversarial review, 2026-08-18).
+// after any wifi blip (adversarial review, 2026-08-18). A Restart or a
+// spawn's own kill keeps it while the session's setup files are on that host
+// (sshSetupWrittenBySession), so a close before the next launch connects can
+// still remove them; the next launch that connects replaces it.
 // #572: the saved SSH password (when the session authed that way) rides along
 // so End can actually reach a password-only host -- see endSshRemote. It stays
 // in this main-process map exactly as long as the target itself (cleared on
@@ -1300,22 +1309,42 @@ export interface SshEndTarget {
   password?: string
   runtime?: SshRuntime
   sudoPassword?: string
+  /** The remote's OS as the session's config says it: a `windows` host is
+   *  cleaned up with the Windows command (no tmux, no container step). */
+  remoteOs?: 'auto' | 'unix' | 'windows'
 }
 
 const sshTargetBySession = new Map<string, SshEndTarget>()
 
+/** Sessions an End was dispatched for over their LIVE target in this run:
+ *  their close dispatches no second exec. End's own command is the session's
+ *  removal, whatever its outcome: the close does not wait for it (the
+ *  renderer sends the close right after the End). Dropped at the end of
+ *  endLiveRun, every kill; a Restart after the End keeps no target or setup
+ *  mark for a later close. */
+const endDispatchedBySession = new Set<string>()
+
+/** Sessions whose Claude setup was written to their host (or container) in
+ *  this app run, by any of their runs, and not removed since. Only these have
+ *  files there for a close to remove: closing a session that never set Claude
+ *  up (a terminal over SSH) opens no second connection. A Restart or a spawn's
+ *  own kill keeps the mark and the session's target (the files stay for the
+ *  next launch, and a close before that launch sets Claude up removes them,
+ *  also when it never started connecting), except for a run left running in
+ *  tmux, whose files its remote session still uses until its next run writes
+ *  its setup again, and a session whose End was dispatched. A close drops it,
+ *  at the end of endLiveRun. */
+const sshSetupWrittenBySession = new Set<string>()
+
 // SSH tmux enhancement (items 1/4): sessions whose launch actually wrapped in a
 // tmux persistence session (`tmuxWrapped` at writeClaudeCmd). The remote for
 // these SURVIVES a local PTY teardown, so close/quit must DETACH, never destroy:
-//   - killPty must NOT type the U8 in-band `rm` cleanup down the live PTY -- for
-//     a tmux-wrapped launch the foreground is Claude, so the bytes land in its
-//     composer (LF doesn't submit) and are left PRE-TYPED in a session the user
-//     chose to leave running; the End-remote exec already removes the sidecars.
+//   - a close removes none of the session's files on the host (Leave running
+//     keeps them; the End-remote exec removes them), and no session has
+//     anything typed into its terminal at close (endLiveRun);
 //   - gracefulExitPty (app quit) must NOT send `/exit` -- inside tmux that quits
 //     Claude and tears the session down; killing the local PTY detaches instead.
-// Both are the exact regressions the persistence feature introduced against the
-// pre-existing close/quit paths (adversarial review, 2026-08-18). Cleared on
-// deliberate close alongside sshTargetBySession.
+// Dropped at the end of endLiveRun, every kill.
 const sshTmuxWrappedBySession = new Set<string>()
 
 /**
@@ -1454,7 +1483,13 @@ export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): 
   return endSshRemoteDetailed(sessionId, fallbackTarget).then((r) => r.outcome)
 }
 
-export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndTarget): Promise<SshEndRemoteResult> {
+/**
+ * `filesOnly` (a close of a non-persistent session, endLiveRun): remove the
+ * session's files on the host over the same exec machinery (the key exec, or
+ * the password PTY answering only ssh's prompt) -- no tmux kill, no container
+ * step. Main-internal: the End IPC never passes it.
+ */
+export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndTarget, opts?: { filesOnly?: boolean }): Promise<SshEndRemoteResult> {
   // Phase 3.5 — the DETACHED case. `sshTargetBySession` is captured at spawn and
   // dropped by killPty, and "Leave running" IS a killPty: so for every remote in
   // the resume registry the map is empty, and before this the End IPC resolved
@@ -1468,13 +1503,22 @@ export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndT
   // authed with, which is strictly better evidence than the config on disk.
   const target = sshTargetBySession.get(sessionId) ?? fallbackTarget
   if (!target) return Promise.resolve({ outcome: 'no-target' })
+  const filesOnly = opts?.filesOnly === true
+  if (!filesOnly && sshTargetBySession.get(sessionId) === target) endDispatchedBySession.add(sessionId)
+  // A Windows host has no tmux and takes no container step: End and a close
+  // both remove the session's files there with the Windows command.
+  const windowsHost = target.remoteOs === 'windows'
+  const withContainerStep = !filesOnly && !windowsHost
+  if (windowsHost && !filesOnly && isContainerRuntime(target.runtime)) {
+    logWarn(`[ssh] ${sessionId}: end-remote on a Windows host takes no container step; only the session's files are removed`)
+  }
   const bin = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
   const hasSudoPassword = Boolean(target.sudoPassword)
   // A rootful container with no saved sudo password: the kill segment probes
   // sudo and prints this End's sentinel when it cannot elevate (see above).
-  const sudoProbeNonce = target.runtime?.sudo && !hasSudoPassword ? randomId() : undefined
+  const sudoProbeNonce = withContainerStep && target.runtime?.sudo && !hasSudoPassword ? randomId() : undefined
   const claudeSsh = claudeSshSurface()
-  const containerKill = claudeSsh.containerKillCommand(sessionId, target.runtime, { hasSudoPassword, sudoProbeNonce })
+  const containerKill = withContainerStep ? claudeSsh.containerKillCommand(sessionId, target.runtime, { hasSudoPassword, sudoProbeNonce }) : ''
   const probing = Boolean(containerKill && sudoProbeNonce)
   /** The result for a finished exec: its own outcome, unless this End's sudo
    *  sentinel is in what it printed. */
@@ -1488,10 +1532,16 @@ export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndT
     }
     return { outcome }
   }
-  // Container kill FIRST, then the host tmux kill + sidecar cleanup.
-  const remoteCommand = containerKill
-    ? `${containerKill}; ${claudeSsh.remoteTmuxKillCommand(sessionId)}`
-    : claudeSsh.remoteTmuxKillCommand(sessionId)
+  // Container kill FIRST, then the host tmux kill + sidecar cleanup. A
+  // Windows host: its files only. A files-only removal: the POSIX rm line.
+  const remoteCommand = windowsHost
+    ? claudeSsh.windowsRemoteSessionCleanupCommand(sessionId)
+    : filesOnly
+      ? claudeSsh.remoteSessionCleanupCommand(sessionId).trimEnd()
+      : containerKill
+        ? `${containerKill}; ${claudeSsh.remoteTmuxKillCommand(sessionId)}`
+        : claudeSsh.remoteTmuxKillCommand(sessionId)
+  const what = filesOnly || windowsHost ? 'removing the session\'s files on the host' : 'ending remote session (tmux kill-session + sidecar cleanup)'
   // A rootful container whose sudo password we hold is the ONLY case that adds
   // a second prompt; `sudo -n` (no saved password) never prompts at all.
   const needsSudoPrompt = Boolean(containerKill && target.runtime?.sudo && hasSudoPassword)
@@ -1518,7 +1568,7 @@ export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndT
         accepts: (l) => END_REMOTE_SUDO_PROMPT_RE.test(l),
       })
     }
-    logInfo(`[ssh] ${sessionId}: ending remote session (kill exec under a dedicated PTY; ${pending.length} prompt(s) expected: ${pending.map((p) => p.kind).join(',')})`)
+    logInfo(`[ssh] ${sessionId}: ${what} (exec under a dedicated PTY; ${pending.length} prompt(s) expected: ${pending.map((p) => p.kind).join(',')})`)
     return new Promise((resolve) => {
       let settled = false
       let child: pty.IPty | null = null
@@ -1594,7 +1644,7 @@ export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndT
   return new Promise((resolve) => {
     try {
       const args = buildSshExecArgs(target, remoteCommand, os.platform())
-      logInfo(`[ssh] ${sessionId}: ending remote session (tmux kill-session + sidecar cleanup over a separate exec)`)
+      logInfo(`[ssh] ${sessionId}: ${what} over a separate exec`)
       const child = execFile(bin, args, { timeout: END_REMOTE_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
         if (err) logInfo(`[ssh] ${sessionId}: end-remote exec exited non-zero (host was already gone, or refused key auth): ${err.message}`)
         else logInfo(`[ssh] ${sessionId}: end-remote exec completed`)
@@ -1735,13 +1785,13 @@ export function probeTmuxLive(
 /** Test-only: seed an End target without a live spawn (unit tests for #572). */
 export function _setSshTargetForTest(
   sessionId: string,
-  target: { username: string; host: string; port: number; password?: string; runtime?: SshRuntime; sudoPassword?: string }
+  target: { username: string; host: string; port: number; password?: string; runtime?: SshRuntime; sudoPassword?: string; remoteOs?: 'auto' | 'unix' | 'windows' }
 ): void {
   sshTargetBySession.set(sessionId, target)
 }
 
 /** Test-only: read back what the spawn captured for End (runtime + secrets). */
-export function _getSshTargetForTest(sessionId: string): { username: string; host: string; port: number; password?: string; runtime?: SshRuntime; sudoPassword?: string } | undefined {
+export function _getSshTargetForTest(sessionId: string): { username: string; host: string; port: number; password?: string; runtime?: SshRuntime; sudoPassword?: string; remoteOs?: 'auto' | 'unix' | 'windows' } | undefined {
   return sshTargetBySession.get(sessionId)
 }
 
@@ -1792,7 +1842,8 @@ function extractSshOscSentinels(sessionId: string, chunk: string): string {
       return cleaned
     }
     const json = combined.slice(start + SSH_OSC_PREFIX.length, end)
-    try { dispatchSSHStatuslineUpdate(json) } catch { /* ignore */ }
+    // Taken only for this session: a payload naming another one is not.
+    try { dispatchSSHStatuslineUpdate(json, sessionId) } catch { /* ignore */ }
     i = end + SSH_OSC_TERMINATOR.length
   }
   sshOscBuffers.delete(sessionId)
@@ -1894,6 +1945,10 @@ export function emitDeferredSpawnFailure(
   win.webContents.send(`pty:exit:${sessionId}`, -1)
 }
 
+/** What a Claude session naming an account that is no longer set up here is
+ *  told (no id, no path): it starts nothing rather than run on another one. */
+export const REMOVED_ACCOUNT_REFUSAL = 'This session\'s Claude account is no longer set up here. Choose an account for it and start it again.'
+
 /** A user-chosen path as it may go into a log line: the same strip as the
  *  terminal message above, for the same reason (see ../shared/safe-text.ts). */
 const describePathForLog = (p: string): string => stripSpoofableText(p, 300)
@@ -1941,18 +1996,133 @@ function managedPickerLaunch(options: SpawnPtyOptions | undefined): boolean {
  * picker's own enumeration: no git, no repository, or a timeout yields no
  * extra directories, and the picker then degrades to its single-candidate
  * behaviour in the configured directory, which is gated.
+ *
+ * git runs the way the picker runs it, so the two lists are the same list:
+ * by its full path from a folder PATH names (pickerGitPath), never by a bare
+ * name; with the picker's arguments (no pager, no file-system monitor hook
+ * from the repository's settings); under `env` (the launch's: an Ask
+ * Conductor launch's carries its git ceiling), on Windows with
+ * NoDefaultCurrentDirectoryInExePath=1 in one spelling, so nothing git starts
+ * by name comes from the project folder. The project folder is git's working
+ * folder only.
  */
-function pickerCandidateDirs(cwd: string): Promise<string[]> {
-  return new Promise((resolve) => {
+function pickerCandidateDirs(cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<string[]> {
+  const platform = os.platform()
+  return pickerGitLookup(env, platform).then((git) => new Promise<string[]>((resolve) => {
+    if (!git) { resolve([]); return }
     try {
-      execFile('git', ['worktree', 'list', '--porcelain'], { cwd, timeout: 5000, windowsHide: true, maxBuffer: 1 << 20, encoding: 'utf8' }, (err, stdout) => {
+      execFile(git, [...PICKER_GIT_WORKTREE_ARGS], { cwd, env: pickerGitEnv(env, platform), timeout: 5000, windowsHide: true, maxBuffer: 1 << 20, encoding: 'utf8' }, (err, stdout) => {
         if (err || !stdout) { resolve([]); return }
         resolve(parseWorktreePaths(String(stdout)).map((p) => path.resolve(p)))
       })
     } catch {
       resolve([])
     }
-  })
+  }), () => [])
+}
+
+/** git's arguments for the picker's worktree list: the picker's own
+ *  (scripts/resume-picker.js GIT_WORKTREE_ARGS). */
+const PICKER_GIT_WORKTREE_ARGS: readonly string[] = Object.freeze(['--no-pager', '-c', 'core.fsmonitor=false', 'worktree', 'list', '--porcelain'])
+
+/** Off Windows a program is a file the user may run, as the system's own
+ *  lookup requires (resume-picker.js isRunnableOnDisk): a file without that
+ *  permission is passed over. */
+async function isRunnableFileAsync(p: string): Promise<boolean> {
+  if (!(await fs.promises.stat(p)).isFile()) return false
+  await fs.promises.access(p, fs.constants.X_OK)
+  return true
+}
+
+/**
+ * The git the resume picker runs, by the picker's own rule
+ * (scripts/resume-picker.js findOnPath): its full path in the first folder
+ * PATH names that holds it, never a bare name. On Windows only a fully
+ * qualified folder with no unexpanded `%` (windowsPathFolders, the same rule
+ * the picker mirrors); elsewhere only an absolute folder, and only a file the
+ * user may run. null when none holds it (no extra directories, as before).
+ * `isFile` is for tests.
+ */
+export async function pickerGitPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, isFile?: (p: string) => Promise<boolean>): Promise<string | null> {
+  if (platform === 'win32') return isFile ? findOnWindowsPathAsync(['git.exe'], env, isFile) : findOnWindowsPathAsync(['git.exe'], env)
+  const test = isFile ?? isRunnableFileAsync
+  for (const dir of (typeof env.PATH === 'string' ? env.PATH : '').split(':').filter((d) => d.startsWith('/'))) {
+    const candidate = path.posix.join(dir, 'git')
+    try { if (await test(candidate)) return candidate } catch { /* not there, or not reachable */ }
+  }
+  return null
+}
+
+let pickerGitLookup: (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) => Promise<string | null> = (env, platform) => pickerGitPath(env, platform)
+/** Test-only: answer the picker's git lookup (null restores the real one). */
+export function _setPickerGitLookupForTest(lookup: ((env: NodeJS.ProcessEnv, platform: NodeJS.Platform) => Promise<string | null>) | null): void {
+  pickerGitLookup = lookup ?? ((env, platform) => pickerGitPath(env, platform))
+}
+
+/** `env` with `name` = `value`, every other spelling of it removed first on
+ *  Windows (names are case-insensitive there and a child reads the first
+ *  match). `env` itself is not changed. */
+function withOwnedVariable(env: NodeJS.ProcessEnv, name: string, value: string, platform: NodeJS.Platform): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {}
+  for (const k of Object.keys(env)) {
+    if (platform === 'win32' ? k.toUpperCase() === name.toUpperCase() : k === name) continue
+    out[k] = env[k]
+  }
+  out[name] = value
+  return out
+}
+
+/** The environment the picker's git runs under: `env`, on Windows with
+ *  NoDefaultCurrentDirectoryInExePath=1 (resume-picker.js
+ *  withoutCurrentFolderLookup). */
+function pickerGitEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): NodeJS.ProcessEnv {
+  return platform === 'win32' ? withOwnedVariable(env, 'NoDefaultCurrentDirectoryInExePath', '1', platform) : { ...env }
+}
+
+/**
+ * Where git stops for an Ask Conductor launch: the help folder's parent, so
+ * git looks for a repository in the help folder itself and in no folder above
+ * it, wherever the resources folder sits (GIT_CEILING_DIRECTORIES). The
+ * session and the resume picker it runs inherit it, and so does the picker
+ * list the launch is checked for. GIT_CEILING_DIRECTORIES is a list (`;` on
+ * Windows, `:` elsewhere), so a help folder that is not absolute, or whose
+ * parent (the resources folder) holds that separator or a control character,
+ * cannot be bounded: the launch is refused, saying what to change, in the
+ * same sentences an Ask launch on the other provider gives.
+ */
+export function askGitCeiling(helpFolder: string, platform: NodeJS.Platform): string {
+  const win32 = platform === 'win32'
+  if (!(win32 ? windowsPathFolderIsFullyQualified(helpFolder) : helpFolder.startsWith('/'))) {
+    throw new Error('Cannot start Ask Conductor on Claude Code: its help folder is not an absolute path.')
+  }
+  const parent = (win32 ? path.win32 : path.posix).dirname(helpFolder)
+  const separator = win32 ? ';' : ':'
+  if (parent.includes(separator)) {
+    throw new Error(`Cannot start Ask Conductor on Claude Code: the resources folder's path holds a '${separator}', which git reads as a list of folders: choose a resources folder whose path has none.`)
+  }
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(parent)) {
+    throw new Error('Cannot start Ask Conductor on Claude Code: the resources folder\'s path holds a control character: choose a resources folder whose path has none.')
+  }
+  return parent
+}
+
+/** What an Ask Conductor launch's git must not inherit: the variables that
+ *  name a repository whatever folder git starts in, and any other spelling of
+ *  the ceiling. */
+const ASK_GIT_DROPPED: readonly string[] = ['GIT_CEILING_DIRECTORIES', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR']
+
+/** `env` as an Ask Conductor launch's git sees it: none of the variables that
+ *  name a repository (every spelling on Windows, where names are
+ *  case-insensitive; the exact name elsewhere), so git finds a repository
+ *  only from where it starts, and GIT_CEILING_DIRECTORIES = `ceiling` in one
+ *  spelling. `env` itself is not changed. */
+export function askGitEnvironment(env: NodeJS.ProcessEnv, ceiling: string, platform: NodeJS.Platform): NodeJS.ProcessEnv {
+  const win32 = platform === 'win32'
+  const out: NodeJS.ProcessEnv = {}
+  for (const k of Object.keys(env)) if (!ASK_GIT_DROPPED.some((n) => (win32 ? k.toUpperCase() === n : k === n))) out[k] = env[k]
+  out.GIT_CEILING_DIRECTORIES = ceiling
+  return out
 }
 
 /**
@@ -2481,8 +2651,12 @@ function spawnPtyResolved(
     // in tmux from an earlier run reconnects through it before any setup script
     // is written, still holding its session token: record that credential as
     // this session's now (SSH sessions are Claude-only, refused above for any
-    // other provider), so the reconnect is served.
-    if (localMcpPort > 0) issueMcpSessionToken(sessionId, 'claude')
+    // other provider), so the reconnect is served. This is the launch's FIRST
+    // issue, so it fixes the credential's form for the whole launch: the form
+    // that outlasts an app restart only for a session that can be left
+    // running (persistence on, not a container, not a Windows host), the
+    // per-run form for every other (conductor-mcp-server.ts).
+    if (localMcpPort > 0) issueMcpSessionToken(sessionId, 'claude', { persistent: persistenceEnabled && ssh.remoteOs !== 'windows' })
 
     // HTTP Hooks Gateway: when enabled, tunnel the gateway's loopback port so
     // Claude Code inside the SSH session can reach it via http://localhost:<port>.
@@ -2700,7 +2874,10 @@ function spawnPtyResolved(
     const sshNonce = randomId()
     sshNonceBySession.set(sessionId, sshNonce)
     // item 4: remember this session's connection target so a deliberate End can
-    // reach the host over a separate exec. Cleared in cleanupSessionResources.
+    // reach the host over a separate exec. Kept through a natural exit (for a
+    // later End or close); dropped at the end of endLiveRun unless that kill
+    // keeps the session's setup mark (a Restart or a spawn's own kill), and
+    // replaced here by the next launch that connects.
     // The structured runtime + sudo password ride along for the SAME reason the
     // ssh password does (#572, one hop deeper): for a container runtime the End
     // exec must also reach INSIDE the container to kill this session's claude,
@@ -2715,6 +2892,9 @@ function spawnPtyResolved(
       // claude inside the container.
       runtime: effectiveRuntime,
       sudoPassword: ssh.sudoPassword,
+      // Which cleanup the host takes (End, and a close): the Windows one
+      // for a Windows remote.
+      remoteOs: ssh.remoteOs,
     })
     // #242 round-3 correction (I3): which entry of buildTmuxLaunchCommand's
     // fixed literal table to use, once a 'setup ok'/stage/push sentinel
@@ -3158,13 +3338,16 @@ function spawnPtyResolved(
     const claudeModelCommonFlag = isWindowsRemote
       ? (winModelId ? `--model "${winModelId}"` : '')
       : modelFlag(options?.model, false)
+    // Advanced escape hatch: extra CLI args verbatim (IPC-charset-guarded),
+    // always the last options on the line (see claudeCmdWith).
+    const userExtraArgs = options?.extraArgs && options.extraArgs.trim() ? options.extraArgs.trim() : ''
     const claudeCommonFlags = [
       options?.effortLevel ? `--effort ${options.effortLevel}` : '',
       claudeModelCommonFlag,
       options?.permissionMode && options.permissionMode !== 'default' ? `--permission-mode ${options.permissionMode}` : '',
-      options?.extraArgs && options.extraArgs.trim() ? options.extraArgs.trim() : '',
+      userExtraArgs,
     ].filter(Boolean).join(' ')
-    const claudeFlags = [
+    const claudeAppFlags = [
       // --settings loads per-session config so concurrent sessions to the same
       // host don't clobber each other's statusline sessionId binding.
       `--settings ${claudeProvider.getSshSettingsPath(sessionId)}`,
@@ -3185,14 +3368,17 @@ function spawnPtyResolved(
       modelFlag(options?.model, false),
       // Per-config permission mode. 'default'/'' => no flag (Claude's own default).
       options?.permissionMode && options.permissionMode !== 'default' ? `--permission-mode ${options.permissionMode}` : '',
-      // Advanced escape hatch: extra CLI args verbatim (IPC-charset-guarded).
-      options?.extraArgs && options.extraArgs.trim() ? options.extraArgs.trim() : '',
     ].filter(Boolean).join(' ')
-    const claudeCmd = isWindowsRemote
+    /** The claude launch line. `continueFlag` ('--continue' on a bare
+     *  reconnect, see writeClaudeCmd; '' otherwise) goes AHEAD of the user's
+     *  extra args, which stay the last options on the line: an option among
+     *  them that takes a value can never take the app's own flag as it. */
+    const claudeCmdWith = (continueFlag: string): string => isWindowsRemote
       // item 3: cmd.exe launch (set X=Y&& claude --settings "%USERPROFILE%\.claude\..."). No
-      // tmux wrap ever (Windows has none); writeClaudeCmd appends --continue on reconnect.
-      ? claudeProvider.windowsLaunchCommand({ sessionId, envPrefixVars: claudeEnvVars, extraFlags: claudeCommonFlags, continueFlag: '' })
-      : [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
+      // tmux wrap ever (Windows has none).
+      ? claudeProvider.windowsLaunchCommand({ sessionId, envPrefixVars: claudeEnvVars, extraFlags: claudeCommonFlags, continueFlag })
+      : [claudeEnvPrefix, 'claude', claudeAppFlags, continueFlag, userExtraArgs].filter(Boolean).join(' ')
+    const claudeCmd = claudeCmdWith('')
     const password = ssh.password
     // Item e (structured Runtime): the app composes the container command from
     // the saved runtime block; a free-text postCommand (Advanced) is arbitrary
@@ -3326,10 +3512,12 @@ function spawnPtyResolved(
         // is defence-in-depth for any path that reaches here.
         if (destroyed) return
         try {
-          const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+          const s = readConfig<{ statusLineEnabled?: boolean }>('settings')
           const setupOpts = {
             includeStatusLine: s?.statusLineEnabled !== false,
-            includeConductorMcp: s?.conductorToolsEnabled !== false,
+            // The built-in tools switch, through the one checked read: off
+            // while the settings cannot be read (conductor-tools-switch.ts).
+            includeConductorMcp: conductorToolsMasterOn(),
             remoteMcpPort, // #24: bake the remote MCP URL with the per-session port
           }
           // item 3: Windows uses the PowerShell-delivered setup (no POSIX
@@ -3337,6 +3525,7 @@ function spawnPtyResolved(
           const setupCmd = isWindowsRemote
             ? claudeProvider.windowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
             : claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, setupOpts, sshNonce)
+          sshSetupWrittenBySession.add(sessionId)
           ptyProcess.write(setupCmd + '\r')
         } catch (err) {
           logError(`[ssh] ${sessionId}: host setup failed: ${(err as Error)?.message ?? err}`)
@@ -3521,10 +3710,12 @@ function spawnPtyResolved(
         // must not land on the host prompt behind it.
         if (destroyed || runtimeEntryFailed || !containerSetupSent) return
         try {
-          const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+          const s = readConfig<{ statusLineEnabled?: boolean }>('settings')
           const setupOpts = {
             includeStatusLine: s?.statusLineEnabled !== false,
-            includeConductorMcp: s?.conductorToolsEnabled !== false,
+            // The built-in tools switch, through the one checked read: off
+            // while the settings cannot be read (conductor-tools-switch.ts).
+            includeConductorMcp: conductorToolsMasterOn(),
             remoteMcpPort, // #24: bake the remote MCP URL with the per-session port
           }
           // item 3: Windows uses the PowerShell-delivered setup (no POSIX
@@ -3532,6 +3723,7 @@ function spawnPtyResolved(
           const setupCmd = isWindowsRemote
             ? claudeProvider.windowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
             : claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, setupOpts, sshNonce)
+          sshSetupWrittenBySession.add(sessionId)
           ptyProcess.write(setupCmd + '\r')
         } catch (err) {
           logError(`[ssh] ${sessionId}: container setup failed: ${(err as Error)?.message ?? err}`)
@@ -3631,7 +3823,9 @@ function spawnPtyResolved(
       // build-error in the try/catch above also means no tmux is in play
       // for this write, even though a binary WAS detected.
       const continueFlag = buildSshClaudeFlags({ reconnect: !!ssh.reconnect, tmuxInPlay: tmuxWrapped })
-      if (continueFlag) cmdToWrite = `${cmdToWrite} ${continueFlag}`
+      // Only ever set when the launch is bare (cmdToWrite is claudeCmd): the
+      // same line with the flag ahead of the user's extra args.
+      if (continueFlag) cmdToWrite = claudeCmdWith(continueFlag)
       // #242 tier 5: resolveRunningClaudeInfo defaults the reason to
       // 'probe=none' when this call carries no explicit one AND the launch
       // ended up unwrapped -- every live tier-3/4 failure path already
@@ -3768,7 +3962,7 @@ function spawnPtyResolved(
       // Reconnecting with no tmux in play is exactly the case tier 5 exists
       // for, so the bare retry carries --continue when this spawn is a respawn.
       const bareFlags = buildSshClaudeFlags({ reconnect: !!ssh.reconnect, tmuxInPlay: false })
-      const bareCmd = bareFlags ? `${claudeCmd} ${bareFlags}` : claudeCmd
+      const bareCmd = claudeCmdWith(bareFlags)
       setFlowState('running-claude', 'tmux-launch-refused')
       try {
         ptyProcess.write(bareCmd + '\r')
@@ -5120,7 +5314,9 @@ function spawnPtyResolved(
       // designates from the CONFIGURED folder, and the skills in the account's
       // own skills folder (a managed realm's, or this computer's own Codex
       // folder: question 5, answered C), which every route lists.
-      const codexToolsOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false && getConductorMcpPort() > 0
+      // The built-in tools switch, through the one checked read: off while the
+      // settings cannot be read (conductor-tools-switch.ts).
+      const codexToolsOn = conductorToolsMasterOn() && getConductorMcpPort() > 0
       const codexCanvas = prepareCodexCanvasLaunch({
         sessionId,
         configuredCwd: resolvedCwd,
@@ -5468,13 +5664,19 @@ function spawnPtyResolved(
     // it was missed when the other three were guarded. `pty:spawn` types
     // profileId as `z.string().optional()` — a type check, not a charset one — so
     // a renderer-supplied `../x` reaches here. Without this, getProfileConfigDir
-    // throws and the spawn hard-fails; with it, a crafted id takes the existing
-    // warn-and-fall-back-to-primary branch below, matching the other three
-    // resolvers and keeping that throw genuinely unreachable.
+    // throws and the spawn hard-fails; with it, a crafted id is treated as an
+    // account that is not set up here, below, and getProfileConfigDir's throw
+    // stays genuinely unreachable.
     if (wantProfileId && isValidProfileId(wantProfileId) && fs.existsSync(getProfileConfigDir(wantProfileId))) {
       resolvedProfileId = wantProfileId
+    } else if (wantProfileId && !shellOnly) {
+      // A Claude session runs on the account it names or not at all: never on
+      // another account in its place. A deferred start writes this sentence to
+      // the terminal (emitDeferredSpawnFailure); a direct one refuses pty:spawn.
+      logWarn(`[profiles] session ${sessionId}: the account it names is not set up here (folder missing, or not an account id); the session is not started`)
+      throw new Error(REMOVED_ACCOUNT_REFUSAL)
     } else if (wantProfileId) {
-      logWarn(`[profiles] session ${sessionId}: profile dir missing or invalid for profileId=${wantProfileId}; falling back to primary/default`)
+      logWarn(`[profiles] session ${sessionId}: profile dir missing or invalid for profileId=${wantProfileId}; the terminal opens without an account`)
     }
     // Clobber-proofing: a non-shell Claude session never runs on the bare global
     // home -- fall back to the captured primary profile.
@@ -5523,11 +5725,16 @@ function spawnPtyResolved(
     // target and may relocate a transcript, so it cannot run twice across a
     // deferral. The candidate is PEEKED here, not consumed, and spelled the way
     // the launch will spell it; the two verdicts merge into one.
+    // Ask Conductor: git stops at the help folder's parent, for the session,
+    // the picker it may run, and the picker list its launch is checked for
+    // (askGitCeiling). A session that is not Ask's is unchanged.
+    const askCeiling = options?.isAsk === true ? askGitCeiling(resolvedCwd, os.platform()) : undefined
     if (resolvedProfileId && options?.projectGate === undefined) {
       const gateDirs = managedLaunchGateDirs(sessionId, resolvedCwd, options)
       // The picker's candidates join the set (see pickerCandidateDirs); the
       // verdict and the FULL set it was formed for travel together.
-      const pending = (managedPickerLaunch(options) ? pickerCandidateDirs(resolvedCwd) : Promise.resolve<string[]>([]))
+      const pickerEnv = askCeiling ? askGitEnvironment(process.env, askCeiling, os.platform()) : process.env
+      const pending = (managedPickerLaunch(options) ? pickerCandidateDirs(resolvedCwd, pickerEnv) : Promise.resolve<string[]>([]))
         .then(async (candidates) => {
           const dirs = [...new Set([...gateDirs, ...candidates])]
           return { verdict: await gateManagedLaunchDirs(dirs), dirs }
@@ -5576,6 +5783,13 @@ function spawnPtyResolved(
     // session-state.json and label conversations with their CCC work name
     // (customName). Read-only, best-effort — never block the spawn (#130).
     try { finalSpawnEnv.CCC_CONFIG_DIR = getConfigDir() } catch { /* best-effort */ }
+    // Ask Conductor's git environment (askGitEnvironment): its ceiling, in
+    // one spelling, and none of the variables that name a repository.
+    if (askCeiling) {
+      const askEnv = askGitEnvironment(finalSpawnEnv, askCeiling, os.platform())
+      for (const k of Object.keys(finalSpawnEnv)) if (!(k in askEnv)) delete finalSpawnEnv[k]
+      finalSpawnEnv.GIT_CEILING_DIRECTORIES = askCeiling
+    }
     // The directories this launch's verdict covers, for the resume picker: it
     // relaunches the CLI in the chosen conversation's worktree and must not
     // step outside the gated set (see pickerCandidateDirs). Only a managed
@@ -5650,6 +5864,12 @@ function spawnPtyResolved(
       const cdCmd = isWin
         ? `Set-Location -LiteralPath ${quoteArgForShell(resolvedCwd, true)}`
         : `cd ${quoteArgForShell(resolvedCwd, false)} 2>/dev/null; clear`
+      // Off Windows the line above is sh syntax, quoted the sh way: it is typed
+      // only into a sh-family shell. The tab's shell is the user's own login
+      // shell (localSessionShell, as Alt+V classifies it; an elevated tab runs
+      // the same shell under sudo); any other shell gets no line and starts in
+      // the folder anyway, the PTY's own working folder.
+      const typeCdLine = isWin || isShFamilyShell(localSessionShell(process.env, os.platform()))
 
       // Terminal-only first-run command. `{secret}` becomes a REFERENCE to the
       // CCC_ARG_SECRET env var (set from the keychain in buildClaudeLocalSpawn),
@@ -5665,7 +5885,7 @@ function spawnPtyResolved(
         // the registered one.
         if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) { abandonLaunchHold(); return }
         try {
-          ptyProcess.write(cdCmd + '\r')
+          if (typeCdLine) ptyProcess.write(cdCmd + '\r')
           // Queued straight after the cd: the shell runs them in order, so the
           // command always starts in the configured directory.
           if (launchLine) {
@@ -5955,11 +6175,8 @@ function spawnPtyResolved(
       if (options?.permissionMode && options.permissionMode !== 'default') {
         extraFlags += ` --permission-mode ${options.permissionMode}`
       }
-      // Advanced escape hatch: extra CLI args verbatim (IPC-charset-guarded, no
-      // shell metacharacters, CCC-managed flags rejected at the IPC seam).
-      if (options?.extraArgs && options.extraArgs.trim()) {
-        extraFlags += ` ${options.extraArgs.trim()}`
-      }
+      // The user's extra CLI args are placed LAST, after the app's own options
+      // (below, after --plugin-dir).
 
       // P7.7.2: seed a per-session settings file for hooks/statusLine
       // overrides. P7.7.3: also seed a per-session MCP config file
@@ -5970,11 +6187,13 @@ function spawnPtyResolved(
       // block and the canvas-plugin block below all key off them, and reading
       // fresh per spawn is what lets a Settings toggle apply to the next
       // session without an app restart.
-      const appSettings = readConfig<{ disableClaudeWorkflows?: boolean; statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+      const appSettings = readConfig<{ disableClaudeWorkflows?: boolean; statusLineEnabled?: boolean }>('settings')
       // Built-in tools master (onboarding p6 / Settings): also gates the
       // canvas workflow plugin + pre-allowed canvas tools — without the
-      // conductor MCP entry there is nothing for either to talk to.
-      const conductorOn = appSettings?.conductorToolsEnabled !== false
+      // conductor MCP entry there is nothing for either to talk to. Read
+      // through the one checked read: off while the settings cannot be read
+      // (conductor-tools-switch.ts).
+      const conductorOn = conductorToolsMasterOn()
       try {
         // v1.5.12: thread the CCC AppSettings.disableClaudeWorkflows flag
         // through so Claude Code's dynamic-workflow feature can be killed
@@ -6055,6 +6274,18 @@ function spawnPtyResolved(
         } catch (err) {
           logWarn(`[pty] canvas plugin unavailable for ${sessionId}: ${(err as Error)?.message ?? err}`)
         }
+      }
+
+      // Advanced escape hatch: extra CLI args verbatim (IPC-charset-guarded, no
+      // shell metacharacters, CCC-managed flags rejected at the IPC seam),
+      // placed AFTER every option of the app's own (--settings, --mcp-config,
+      // --plugin-dir): an option among them that takes a value can never take
+      // one of the app's options as that value, and one left without a value
+      // makes Claude Code stop and say so. An Ask Conductor launch carries
+      // none: its `-- <question>` stays the last thing on the line.
+      if (options?.extraArgs && options.extraArgs.trim()) {
+        if (options?.isAsk === true) logWarn(`[pty] ${sessionId}: an Ask Conductor launch carries no extra CLI arguments; they were not placed`)
+        else extraFlags += ` ${options.extraArgs.trim()}`
       }
 
       // Build --agents flag if agent templates are configured
@@ -6885,10 +7116,6 @@ function cleanupSessionResources(sessionId: string): void {
   try { getWatchdogManager()?.stopWatchdog(sessionId) } catch { /* best-effort teardown */ }
 }
 
-// U8: grace before killing an SSH PTY so the in-band remote-cleanup command has
-// time to reach the remote shell and run before we tear the tunnel down.
-const REMOTE_CLEANUP_GRACE_MS = 400
-
 /** P3.16a round 2 (Q5): the sessions a Restart killed whose next process has
  *  not started yet. The exit of the process it ended restarts the Services
  *  count quietly instead of ending the session there. Set by a Restart's kill,
@@ -6975,30 +7202,42 @@ function endLiveRun(sessionId: string, opts: KillPtyOptions = {}): void {
   // Read persistence BEFORE cleanupSessionResources runs (it no longer clears
   // these, but killPty does, at the end).
   const tmuxPersistent = sshTmuxWrappedBySession.has(sessionId)
+  // U8: a CLOSE of a non-persistent SSH session removes the per-session files
+  // the app wrote for it on the host over a SEPARATE connection (the End exec
+  // machinery, files only; the target is read here, before it can be dropped
+  // below), fire-and-forget with that exec's bounded lifetime. Its terminal
+  // may still be there or its connection may already have ended (a dropped
+  // network, a remote exit): the target and the setup mark outlive a natural
+  // exit, so a close removes the files either way. Nothing is typed into the
+  // session's terminal. Never on a Restart or a spawn's own kill: the next
+  // launch of this id re-creates the same files, and a late removal would
+  // take the new launch's (it replaces leftovers itself); both keep the setup
+  // mark and the target, so a close before the next launch sets Claude up
+  // removes the files the earlier run wrote, also when that launch never
+  // started connecting. Not after an End for this session either: End's own
+  // command is the removal (the close does not wait for its outcome). A
+  // tmux-persistent session writes and dispatches nothing, its connection
+  // dropped or not: Leave running keeps its files, End removes them; after a
+  // Restart or a new launch over it, that holds until its next run writes its
+  // setup again. A session whose Claude setup was never written there (a
+  // terminal over SSH) has no files to remove and opens no second connection.
+  const removeHostFilesAtClose = opts.reason === 'close' && !tmuxPersistent && !endDispatchedBySession.has(sessionId) && sshSetupWrittenBySession.has(sessionId) && sshTargetBySession.has(sessionId)
   if (entry) {
     logInfo(`[pty] Killing PTY for session ${sessionId}${tmuxPersistent ? ' (tmux-persistent: detach only)' : ''}`)
-    if (sshFlows.has(sessionId) && !tmuxPersistent) {
-      // U8: sweep the per-session files we planted on the remote, in-band down the
-      // still-live PTY, then kill after a short grace so the `rm` runs before the
-      // tunnel dies. No SSH creds retained. A crash / natural exit can't do this
-      // (the tunnel is already gone), which is acceptable -- the files are inert.
-      // ptySessions.delete below means the delayed kill's onExit no-ops.
-      //
-      // Only for a NON-persistent SSH session. For a tmux-WRAPPED one the remote
-      // survives this teardown, so (a) the foreground is Claude and this line
-      // would land in its composer and stay pre-typed (LF doesn't submit), and
-      // (b) the sidecars must either survive (Leave running -- Claude still uses
-      // them) or be removed by the End-remote exec (which does its own rm). So we
-      // write nothing and just detach (adversarial review, 2026-08-18).
-      const proc = entry.ptyProcess
-      try { proc.write(claudeSshSurface().remoteSessionCleanupCommand(sessionId)) } catch { /* best-effort */ }
-      setTimeout(() => { try { proc.kill() } catch { /* already gone */ } }, REMOTE_CLEANUP_GRACE_MS)
-    } else {
-      // Non-SSH, or a tmux-persistent SSH session (killing the local PTY detaches
-      // the tmux client; the remote survives for reattach on relaunch).
-      try { entry.ptyProcess.kill() } catch (err) {
-        logError(`[pty] Error killing PTY ${sessionId}:`, err)
-      }
+  }
+  if (removeHostFilesAtClose) {
+    // A teardown never throws: a dispatch that cannot start is logged.
+    try {
+      void endSshRemoteDetailed(sessionId, undefined, { filesOnly: true })
+    } catch (err) {
+      logWarn(`[ssh] ${sessionId}: the session's files on the host could not be removed at close: ${(err as Error)?.message ?? err}`)
+    }
+  }
+  if (entry) {
+    // Every session, SSH or not: kill now (a tmux-persistent session's kill
+    // detaches its tmux client; the remote survives for reattach).
+    try { entry.ptyProcess.kill() } catch (err) {
+      logError(`[pty] Error killing PTY ${sessionId}:`, err)
     }
     ptySessions.delete(sessionId)
   }
@@ -7008,11 +7247,25 @@ function endLiveRun(sessionId: string, opts: KillPtyOptions = {}): void {
   // process started) is the session's end on the Services page now. A no-op
   // when the record already went with the process's end.
   if (!entry && opts.reason === 'close') getPtyIntegrityMonitor()?.endSession(sessionId)
-  // Deliberate close: NOW drop the end-target + persistence flag (see the maps'
-  // doc). A natural exit reaches cleanupSessionResources but not here, so the
-  // target survives a transient drop for a later End.
-  sshTargetBySession.delete(sessionId)
+  // NOW drop the persistence flag and the End record, and (see the maps' doc)
+  // the end-target unless it is kept below. A natural exit reaches
+  // cleanupSessionResources but not here, so the target survives a transient
+  // drop for a later End.
+  // A Restart or a spawn's own kill keeps the setup mark, and the session's
+  // target with it: the files stay on the host until a close or an End
+  // removes them, and a close before the next launch connects still reaches
+  // that host (a launch that connects replaces the target). A close drops
+  // both, and so do two other cases: a run left running in tmux (its remote
+  // session keeps running after the kill and still uses those files, so they
+  // are not a close's to remove) and a session whose End was dispatched
+  // (End's own command is the removal).
+  const keepSetupMark = opts.reason !== 'close' && !tmuxPersistent && !endDispatchedBySession.has(sessionId) && sshSetupWrittenBySession.has(sessionId)
+  if (!keepSetupMark) {
+    sshTargetBySession.delete(sessionId)
+    sshSetupWrittenBySession.delete(sessionId)
+  }
   sshTmuxWrappedBySession.delete(sessionId)
+  endDispatchedBySession.delete(sessionId)
 }
 
 export function killAllPty(): void {

@@ -153,9 +153,10 @@ describe('ensureHelpWorkspace stages the helper-skill files', () => {
 describe('AGENTS.md for an Ask session on Codex (P4.3)', () => {
   const KNOWLEDGE_MARK = '# AI Code Conductor: user guide'
 
-  it('is written beside CLAUDE.md, and the folder holds the five files and nothing else', () => {
+  it('is written beside CLAUDE.md, and the folder holds the six files and nothing else', () => {
     const dir = ensureHelpWorkspace(tmp, { appVersion: '9.9.9', platform: 'linux' })
-    expect(fs.readdirSync(dir).sort()).toEqual(['AGENTS.md', 'CLAUDE.md', 'app-knowledge.md', 'ask-conductor-skill-portable.md', 'ask-conductor-skill.md'])
+    // The empty `.git` file ends git's search there (help-workspace-git-stop.test.ts).
+    expect(fs.readdirSync(dir).sort()).toEqual(['.git', 'AGENTS.md', 'CLAUDE.md', 'app-knowledge.md', 'ask-conductor-skill-portable.md', 'ask-conductor-skill.md'])
     expect(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf-8')).toBe(askConductorAgentsMarkdown('linux'))
   })
 

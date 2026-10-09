@@ -108,6 +108,13 @@ describe('ssh:endRemote — rebuilding a DETACHED remote\'s target from the save
     await endRemote({}, { sessionId: SID, configId: 'cfgA' })
     expect((called()[1] as { port: unknown }).port).toBe(2222)
   })
+
+  // Mutation to prove this can fail: drop the remote OS from the rebuilt target.
+  it('carries the saved remote OS, so a Windows host is cleaned up the Windows way', async () => {
+    configsOnDisk = [sshCfg('cfgA', { remoteOs: 'windows' })]
+    await endRemote({}, { sessionId: SID, configId: 'cfgA' })
+    expect((called()[1] as { remoteOs?: unknown }).remoteOs).toBe('windows')
+  })
 })
 
 describe('ssh:endRemote — the payload names IDS and nothing else', () => {
@@ -141,7 +148,7 @@ describe('ssh:endRemote — the payload names IDS and nothing else', () => {
     configsOnDisk = [sshCfg('cfgA')]
     await endRemote({}, { sessionId: SID, configId: 'cfgA', tmuxTarget: 'ccc-someone-else', target: 'server' })
     expect(called()[0]).toBe(SID)
-    expect(Object.keys(called()[1] as object).sort()).toEqual(['host', 'password', 'port', 'runtime', 'sudoPassword', 'username'])
+    expect(Object.keys(called()[1] as object).sort()).toEqual(['host', 'password', 'port', 'remoteOs', 'runtime', 'sudoPassword', 'username'])
   })
 })
 

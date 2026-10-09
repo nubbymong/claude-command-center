@@ -678,6 +678,8 @@ function endTargetFromSavedConfig(configId: string, sessionId: string): SshEndTa
     password: loadCredential(configId) ?? undefined,
     runtime: s.runtime,
     sudoPassword: loadCredential(configId + '_sudo') ?? undefined,
+    // A Windows host is cleaned up with the Windows command (no tmux there).
+    remoteOs: s.remoteOs,
   }
 }
 
