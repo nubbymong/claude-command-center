@@ -833,6 +833,7 @@ describe('What\'s New (2.1.1-beta.2): the hardening it ships, as guarantees', ()
       /an account's sign-in is written only into folders the app has made readable by you alone and checked/,
       /A web sign-in you cancel or leave unfinished never stays signed in after a restart/,
       /only right after your own click, tap, Enter or Space in the view\./,
+      /Signing in to chatgpt\.com inside the app no longer stops at a sign-in page on another site that the window used to block\./,
       /Insights keeps its reports only in its own folder/,
       /Insights shows no report, rather than waiting, when a report cannot be read\./,
       /The cross-account roll-up's written analysis is shown as plain text\./,

@@ -303,7 +303,7 @@ describe('[host] the sign-in window navigation (pure)', () => {
     for (const host of CODEX_WEB_SERVICE.signInHosts) expect(allowed(`https://${host}/authorize?x=1`, true), host).toBe(true)
     for (const bad of [
       'https://evil.example/', 'https://chatgpt.com.evil.example/', 'http://chatgpt.com/', 'https://chatgpt.com:444/',
-      'javascript:alert(1)', 'file:///C:/x', 'data:text/html,x', 'https://login.microsoftonline.com/x',
+      'javascript:alert(1)', 'file:///C:/x', 'data:text/html,x', 'https://login.microsoftonline.com.example.net/x',
     ]) {
       expect(allowed(bad, true), bad).toBe(false)
     }
@@ -317,6 +317,53 @@ describe('[host] the sign-in window navigation (pure)', () => {
     expect(allowed('https://challenges.cloudflare.com/x', false)).toBe(true)
     expect(allowed('http://challenges.cloudflare.com/x', false)).toBe(false)
     expect(allowed('file:///C:/x', false)).toBe(false)
+  })
+})
+
+// The full off-site host list, pinned. A host joins it only with evidence of a
+// sign-in that needs it (Microsoft's two: a credential-free probe of its
+// main-frame hops), and the window's own predicate still refuses every other
+// host, a lookalike of a listed one included.
+describe('[host] the chatgpt.com sign-in hosts, pinned', () => {
+  it('are exactly these, Microsoft sign-in among them', () => {
+    expect([...CODEX_WEB_SERVICE.signInHosts]).toEqual([
+      'auth.openai.com',
+      'accounts.google.com',
+      'appleid.apple.com',
+      'login.microsoftonline.com',
+      'login.live.com',
+    ])
+    expect(Object.isFrozen(CODEX_WEB_SERVICE.signInHosts)).toBe(true)
+  })
+
+  it('the window lets the main frame follow the Microsoft sign-in hops', () => {
+    for (const url of [
+      'https://auth.openai.com/api/accounts/authorize?connection=windowslive',
+      'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=x',
+      'https://login.live.com/oauth20_authorize.srf?msproxy=1',
+      'https://login.live.com/ppsecure/post.srf',
+    ]) expect(signInNavAllowed(CODEX_WEB_SERVICE, url, true), url).toBe(true)
+  })
+
+  it('the window still refuses a lookalike, another host, http, another port, and the Microsoft hosts left out', () => {
+    for (const url of [
+      'https://login.microsoftonline.com.example.net/consumers/oauth2/v2.0/authorize',
+      'https://login.live.com.example.net/oauth20_authorize.srf',
+      'https://loginmicrosoftonline.com/x',
+      'https://evil-login.microsoftonline.com/x',
+      'https://x.login.live.com/',
+      'http://login.microsoftonline.com/consumers/oauth2/v2.0/authorize',
+      'http://login.live.com/oauth20_authorize.srf',
+      'https://login.microsoftonline.com:8443/x',
+      'https://login.live.com:444/x',
+      'https://login.microsoft.com/consumers/fido/get',
+      'https://account.live.com/ChangePassword',
+      'https://signup.live.com/',
+    ]) {
+      expect(signInNavAllowed(CODEX_WEB_SERVICE, url, true), url).toBe(false)
+      // An event that does not say it is a sub-frame is the main frame.
+      expect(signInNavAllowed(CODEX_WEB_SERVICE, url), url).toBe(false)
+    }
   })
 })
 

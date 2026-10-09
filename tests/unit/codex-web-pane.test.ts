@@ -158,7 +158,7 @@ describe('[host] codexPaneNavDecision (pure, tri-state)', () => {
 
   it('confirmed signed out: the listed sign-in hosts ONLY, never any other https host', () => {
     for (const host of CODEX_WEB_SERVICE.signInHosts) expect(codexPaneNavDecision(`https://${host}/x`, false), host).toBe('allow')
-    for (const bad of ['https://evil.example/', 'https://login.microsoftonline.com/x', 'https://chatgpt.com.evil.example/', `https://${CODEX_WEB_SERVICE.signInHosts[0]}:8443/`]) {
+    for (const bad of ['https://evil.example/', 'https://login.microsoftonline.com.example.net/x', 'https://chatgpt.com.evil.example/', `https://${CODEX_WEB_SERVICE.signInHosts[0]}:8443/`]) {
       expect(codexPaneNavDecision(bad, false), bad).toBe('block')
     }
   })

@@ -350,9 +350,27 @@ export const CODEX_WEB_SERVICE: WebServiceDescriptor = Object.freeze({
   identityPath: '/api/auth/session',
   // UNVERIFIED: the owner's sign-in run confirms where the email sits in it.
   identityEmailPath: Object.freeze(['user', 'email']),
-  // UNVERIFIED: the owner's sign-in run confirms each sign-in method's hosts
-  // (email and phone, Google, Apple: the methods PB7 saw offered).
-  signInHosts: Object.freeze(['auth.openai.com', 'accounts.google.com', 'appleid.apple.com']),
+  // The sign-in methods' hosts. Microsoft is a sign-in method too (chatgpt.com
+  // may hide its button). A credential-free probe (2026-10-09: an Electron
+  // window under the app's user agent, no address or password typed) verified
+  // its main-frame hops: auth.openai.com, then login.microsoftonline.com, then
+  // login.live.com, which asks for the email and, by its own page config, also
+  // takes the password and the stay-signed-in answer. OpenAI sends it to
+  // Microsoft's personal-account endpoint, so in the probe a work or school
+  // address was refused on login.live.com; a work account's own single sign-on
+  // was not probed. Verified up to the email page only, not a completed
+  // sign-in. UNVERIFIED: the other methods' hosts (email and phone, Google,
+  // Apple: the methods PB7 saw offered); the owner's sign-in run confirms
+  // them. Left out until a sign-in shows it needs them: login.microsoft.com
+  // (passkey sign-in) and account.live.com (password reset and security
+  // checks); a blocked host shows in the run's off-site hosts log line.
+  signInHosts: Object.freeze([
+    'auth.openai.com',
+    'accounts.google.com',
+    'appleid.apple.com',
+    'login.microsoftonline.com',
+    'login.live.com',
+  ]),
 })
 
 /**

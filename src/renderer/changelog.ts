@@ -125,6 +125,7 @@ export const changelog: ChangelogEntry[] = [
       { type: 'fix', description: 'On Windows, an account\'s sign-in is written only into folders the app has made readable by you alone and checked: the account\'s own folder, its Claude Code folder and its identity copy (see Known issues in the Feature Guide).' },
       { type: 'fix', description: 'A web sign-in you cancel or leave unfinished never stays signed in after a restart, for every account.' },
       { type: 'fix', description: 'The account view opens a link in your browser, or follows a popup, only right after your own click, tap, Enter or Space in the view.' },
+      { type: 'fix', description: 'Signing in to chatgpt.com inside the app no longer stops at a sign-in page on another site that the window used to block.' },
       { type: 'fix', description: 'Insights keeps its reports only in its own folder, and keeps Claude Code\'s report exactly as it was written (see Known issues in the Feature Guide).' },
       { type: 'fix', description: 'Insights shows no report, rather than waiting, when a report cannot be read.' },
       { type: 'fix', description: 'The cross-account roll-up\'s written analysis is shown as plain text.' },
