@@ -106,7 +106,12 @@ describe('the usage page refreshes a sign-in only in a folder that passed the ow
   it('just after start, before the folder is checked: no refresh is sent and nothing is written', async () => {
     let release!: () => void
     const gate = new Promise<void>((r) => { release = r })
-    const start = ap.startOwnerOnlyCredentialFolders(() => {}, async (dirs) => { await gate; return passing(dirs) })
+    const held = async (dirs: readonly string[]) => { await gate; return passing(dirs) }
+    // The rule through the test seam, so it applies on every platform (the
+    // app's own rule is on only on Windows); the start then checks with it.
+    ap._setCredentialFolderRuleForTest(held)
+    const start = ap.startOwnerOnlyCredentialFolders(() => {}, held)
+    expect(ap.startProfileStepsPending()).toBe(true)
     await fetchAccountUsage(P)
     expect(requests).not.toContain(REFRESH)
     expect(fs.readFileSync(cred, 'utf8')).toBe(LAPSED)
