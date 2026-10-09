@@ -1,0 +1,324 @@
+{
+ "sites": {
+  "scripts/codex-resume-picker.js :: spawnSync(target.file": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "Codex by the absolute path the app proved and handed the picker (CCC_CODEX_EXECUTABLE); an npm launcher (.cmd) through cmd.exe named in full by ComSpec or the system folder (launchTarget), or nothing."
+  },
+  "scripts/lib/codex-resume-picker-lib.js :: spawn(git": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "git by the full path findGit finds in PATH's fully qualified folders, each named as Windows names it; no git there lists the folder alone; the child gets NoDefaultCurrentDirectoryInExePath."
+  },
+  "scripts/resume-picker.js :: spawn(first.file": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "Claude Code: on Windows by the full path found in PATH's fully qualified folders (resolveClaudeCmd), an npm launcher through the system cmd.exe (buildSpawnTarget); elsewhere claude by name in the session's own login-shell PATH."
+  },
+  "scripts/resume-picker.js :: spawn(fresh.file": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "The fresh-conversation fallback: the same launch target as the first launch (launchSpec over resolveClaudeCmd), refused alike."
+  },
+  "scripts/resume-picker.js :: spawn(git": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "git by the full path findOnPath finds in PATH's fully qualified folders (named as Windows names them); none found lists the folder alone."
+  },
+  "src/main/account-profiles.ts :: execFileSync(ICACLS": {
+   "count": 2,
+   "how": "system-folder",
+   "reason": "icacls.exe by its full path under the Windows folder SystemRoot names (ICACLS), arguments as a list, no shell."
+  },
+  "src/main/account-web/claude-cli-auth.ts :: execFile handed to promisify(": {
+   "count": 1,
+   "how": "not-a-process",
+   "reason": "promisify makes the copy execFileAsync from it; every call of that copy is a listed site of its own (execFileAsync(run.file: the full path)."
+  },
+  "src/main/account-web/claude-cli-auth.ts :: execFileAsync(run.file": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "claude auth status: on Windows Claude Code by the full path found in PATH's fully qualified folders (claudeAuthStatusCommand, authStatusStart; a .cmd through the system cmd.exe); elsewhere claude through the user's shell."
+  },
+  "src/main/account-web/sign-in.ts :: spawn(bin.path": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "The sign-in browser at one of its known install paths that exists (resolveBrowserBinary); with none there, nothing is started."
+  },
+  "src/main/account-web/sign-in.ts :: spawnSync(taskkill": {
+   "count": 1,
+   "how": "system-folder",
+   "reason": "taskkill.exe by its full path in the system folder (systemTool); with no plain system folder to name it from, none is started."
+  },
+  "src/main/claude-cli-probe.ts :: execFile(bin": {
+   "count": 1,
+   "how": "not-windows",
+   "reason": "macOS and Linux only (Windows answers from the in-process PATH walk before this): the login shell asked `command -v claude`, then which."
+  },
+  "src/main/claude-cli-version.ts :: execFile(command.file": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "Claude Code's version by its resolved full path; an npm launcher (.cmd) through cmd.exe named by ComSpec or the system folder when either is a full path, cmd.exe by name only when the environment names neither (versionProbeCommand), with NoDefaultCurrentDirectoryInExePath set."
+  },
+  "src/main/claude-cli-version.ts :: execFile(path.win32.join(root, 'System32', 'taskkill.exe')": {
+   "count": 1,
+   "how": "system-folder",
+   "reason": "taskkill.exe by its full path under SystemRoot, only when SystemRoot is a full Windows path."
+  },
+  "src/main/claude-headless.ts :: spawn(start.file": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "A headless Claude Code run: on Windows the full path found in PATH's fully qualified folders, a .cmd through the system cmd.exe (windowsStartCommand), no shell; elsewhere the login shell's answer."
+  },
+  "src/main/claude-headless.ts :: spawnSync(taskkill": {
+   "count": 1,
+   "how": "system-folder",
+   "reason": "taskkill.exe by its full path in the system folder (systemTool); with no plain system folder to name it from, none is started."
+  },
+  "src/main/cloud-agent-manager.ts :: spawn(start.file": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "A cloud agent's Claude Code by its full path with no shell and the prompt on stdin; a .cmd through the system cmd.exe (windowsStartCommand); off Windows an argv, never sh -c."
+  },
+  "src/main/cloud-agent-manager.ts :: spawnSync(taskkill": {
+   "count": 1,
+   "how": "system-folder",
+   "reason": "taskkill.exe by its full path in the system folder (systemTool); with no plain system folder to name it from, none is started."
+  },
+  "src/main/github-update.ts :: execFile handed to promisify(": {
+   "count": 1,
+   "how": "not-a-process",
+   "reason": "promisify makes the copy execFileAsync from it; every call of that copy is a listed site of its own (execFileAsync('gh': by name)."
+  },
+  "src/main/github-update.ts :: execFileAsync('gh'": {
+   "count": 4,
+   "how": "by-name",
+   "reason": "The GitHub CLI by name (gh), as the user's own terminal runs it, for the update check's optional token and private-release fallback. Not one of the programs the full-path rule names (node, git, Claude Code and its helper tools)."
+  },
+  "src/main/github/auth/gh-cli-delegate.ts :: spawn(file": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "On Windows gh.exe by the full path found in PATH's fully qualified folders (findOnWindowsPathAsync); none found starts nothing. Elsewhere gh by name."
+  },
+  "src/main/github/session/repo-detector.ts :: spawn(git": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "git by the full path findGit finds in PATH's fully qualified folders, with NoDefaultCurrentDirectoryInExePath; no git there refuses."
+  },
+  "src/main/gui-exe-runner.ts :: execFile(taskkill": {
+   "count": 1,
+   "how": "system-folder",
+   "reason": "taskkill.exe by its full path in the system folder (systemTool); with no plain system folder to name it from, none is started."
+  },
+  "src/main/gui-exe-runner.ts :: spawn(exePath": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "The program the user's own command names, as resolveExecutable finds it the way the session's PowerShell would: a bare name in PATH's folders only, a path the user wrote against the working folder."
+  },
+  "src/main/host-ping.ts :: execFileImpl(pingBinary(platform)": {
+   "count": 1,
+   "how": "by-name",
+   "reason": "ping by name (ping.exe on Windows) for an SSH host's reachability check, argv only, no shell. A system program, not one of those the full-path rule names."
+  },
+  "src/main/insights-runner.ts :: pty.spawn(cmd": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "Claude Code for /insights by the full path resolveClaudeForPty finds (PATH's fully qualified folders on Windows); the terminal's environment keeps the lookup of what it starts to PATH's folders."
+  },
+  "src/main/ipc/cli-handlers.ts :: execFile handed to promisify(": {
+   "count": 1,
+   "how": "not-a-process",
+   "reason": "promisify makes the copy execFileAsync from it; every call of that copy is a listed site of its own (execFileAsync(shell: macOS and Linux only)."
+  },
+  "src/main/ipc/cli-handlers.ts :: execFileAsync(shell": {
+   "count": 1,
+   "how": "not-windows",
+   "reason": "macOS and Linux only: the user's sh-family login shell asked `which claude` for the CLI check."
+  },
+  "src/main/ipc/pty-handlers.ts :: preparation.spawn(resolvedOptions": {
+   "count": 1,
+   "how": "not-a-process",
+   "reason": "Runs the prepared pty spawn (spawnPty) in its place; no program is named here."
+  },
+  "src/main/ipc/setup-handlers.ts :: pty.spawn(cmd": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "Windows: the setup terminal starts Claude Code by the full path resolveClaudeForPty finds; its environment keeps the lookup of what it starts to PATH's folders."
+  },
+  "src/main/ipc/setup-handlers.ts :: pty.spawn(shell": {
+   "count": 1,
+   "how": "not-windows",
+   "reason": "macOS and Linux only: the user's login shell for the setup terminal, which types claude by name."
+  },
+  "src/main/ipc/update-handlers.ts :: spawn('open'": {
+   "count": 1,
+   "how": "not-windows",
+   "reason": "macOS only: the system's open shows the downloaded disk image in Finder."
+  },
+  "src/main/ipc/update-handlers.ts :: spawn(installerPath": {
+   "count": 1,
+   "how": "app-path",
+   "reason": "The installer the updater downloaded and checked, by its full path."
+  },
+  "src/main/ipc/update-handlers.ts :: spawn(linuxLaunchPath": {
+   "count": 1,
+   "how": "not-windows",
+   "reason": "Linux only: the updated AppImage by its full path."
+  },
+  "src/main/legacy-version-manager.ts :: execFile handed to promisify(": {
+   "count": 1,
+   "how": "not-a-process",
+   "reason": "promisify makes the copy execFileAsync from it; every call of that copy is a listed site of its own (execFileAsync(npm.file: the full path)."
+  },
+  "src/main/legacy-version-manager.ts :: execFileAsync(npm.file": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "npm for the version list: on Windows by the full path found in PATH's fully qualified folders (npmCommand; a .cmd through the system cmd.exe); elsewhere npm by name."
+  },
+  "src/main/legacy-version-manager.ts :: spawn(npm.file": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "npm for a pinned install: on Windows by the full path found in PATH's fully qualified folders (npmCommand; a .cmd through the system cmd.exe); elsewhere npm through sh."
+  },
+  "src/main/logging/fork-transcripts-worker.ts :: utilityProcess.fork(entry": {
+   "count": 1,
+   "how": "app-path",
+   "reason": "Electron's utility process running the app's own bundled script (transcripts-worker.js beside this module)."
+  },
+  "src/main/login-shell.ts :: execFile(run.file": {
+   "count": 1,
+   "how": "not-windows",
+   "reason": "macOS and Linux only: the user's login shell (outside the sh family) asked for the PATH it builds."
+  },
+  "src/main/login-shell.ts :: execFileSync(run.file": {
+   "count": 1,
+   "how": "not-windows",
+   "reason": "macOS and Linux only: the user's login shell (outside the sh family) asked for the PATH it builds, bounded."
+  },
+  "src/main/owner-only-folders.ts :: execFile(path.win32.join(systemFolder(), `${program}.exe`)": {
+   "count": 1,
+   "how": "system-folder",
+   "reason": "whoami.exe or icacls.exe (the only two names its type allows) by full path in the system folder (systemFolder, the validated SystemRoot), no shell: the owner-only folder rule where Windows PowerShell gives its script no read."
+  },
+  "src/main/owner-only-folders.ts :: execFile(powershellPath()": {
+   "count": 1,
+   "how": "system-folder",
+   "reason": "Windows PowerShell by its full path in the system folder (powershellPath), no profile."
+  },
+  "src/main/providers/codex/cli-runner.ts :: deps.spawn(cmd.file": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "The Codex CLI by the full path its discovery proved (a .cmd through the system cmd.exe), with no shell."
+  },
+  "src/main/providers/codex/cli-runner.ts :: exec(file": {
+   "count": 1,
+   "how": "system-folder",
+   "reason": "The process table: Windows PowerShell under an absolute SystemRoot; elsewhere /bin/ps or /usr/bin/ps (makeCodexProcessLister)."
+  },
+  "src/main/providers/codex/cli-runner.ts :: execFileSync(file": {
+   "count": 2,
+   "how": "system-folder",
+   "reason": "The quit's synchronous kills and table: taskkill.exe and Windows PowerShell by the full paths their callers build under an absolute SystemRoot."
+  },
+  "src/main/providers/codex/cli-runner.ts :: execSync(ps": {
+   "count": 1,
+   "how": "system-folder",
+   "reason": "Windows PowerShell under an absolute SystemRoot (makeCodexProcessListerSync); with none, no table is read."
+  },
+  "src/main/providers/codex/cli-runner.ts :: nodeSpawn handed to makeCodexKillTree(": {
+   "count": 1,
+   "how": "not-a-process",
+   "reason": "The kill tree's spawn (defaultCodexRunDeps); its calls are listed sites of their own (spawn(taskkill: by its full path under an absolute SystemRoot)."
+  },
+  "src/main/providers/codex/cli-runner.ts :: nodeSpawn kept as the spawn property": {
+   "count": 1,
+   "how": "not-a-process",
+   "reason": "The run's default spawn (defaultCodexRunDeps); its one call is a listed site of its own (deps.spawn(cmd.file: the full path its discovery proved)."
+  },
+  "src/main/providers/codex/cli-runner.ts :: spawn(taskkill": {
+   "count": 2,
+   "how": "system-folder",
+   "reason": "taskkill.exe by its full path under an absolute SystemRoot, run there; with none, the process is signalled directly."
+  },
+  "src/main/providers/codex/process-env.ts :: execFile(shell": {
+   "count": 1,
+   "how": "not-windows",
+   "reason": "macOS and Linux only: the user's login shell asked for its PATH (codexLoginShellPath answers null on Windows)."
+  },
+  "src/main/providers/codex/spawn.ts :: execSync(`${shell} -l -c 'which codex'`": {
+   "count": 1,
+   "how": "not-windows",
+   "reason": "macOS and Linux only (inside the non-Windows branch): the user's login shell asked where codex is."
+  },
+  "src/main/providers/codex/spawn.ts :: execSync(`${shell} -l -c 'which node'`": {
+   "count": 1,
+   "how": "not-windows",
+   "reason": "macOS and Linux only (inside the non-Windows branch): the user's login shell asked where node is."
+  },
+  "src/main/pty-manager.ts :: execFile(bin": {
+   "count": 2,
+   "how": "by-name",
+   "reason": "ssh by name (ssh.exe on Windows) for an SSH session's separate end and liveness execs, argv only, as the user's own terminal starts it: ssh keeps its own lookup by an owner decision."
+  },
+  "src/main/pty-manager.ts :: execFile(git": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "git for the picker's worktree list by the full path found in PATH's fully qualified folders (pickerGitLookup), with NoDefaultCurrentDirectoryInExePath; none found lists nothing."
+  },
+  "src/main/pty-manager.ts :: pty.spawn(bin": {
+   "count": 2,
+   "how": "by-name",
+   "reason": "ssh by name (ssh.exe on Windows) for the password route of an SSH session's end and liveness execs, as the user's own terminal starts it: ssh keeps its own lookup by an owner decision."
+  },
+  "src/main/pty-manager.ts :: pty.spawn(spawnCmd": {
+   "count": 3,
+   "how": "full-path",
+   "reason": "A session's own program as its provider builds it: on Windows PowerShell by its full path in the system folder for a Claude session or a terminal tab, gsudo by the full path found in PATH's folders for an elevated tab, Codex or its cmd.exe line by full paths."
+  },
+  "src/main/pty-manager.ts :: pty.spawn(sshBinary": {
+   "count": 1,
+   "how": "by-name",
+   "reason": "An SSH session's ssh by name (ssh.exe on Windows), as the user's own terminal starts it: ssh keeps its own lookup by an owner decision."
+  },
+  "src/main/registry.ts :: execFileSync(systemTool('reg.exe')": {
+   "count": 1,
+   "how": "system-folder",
+   "reason": "reg.exe by its full path in the system folder (systemTool), arguments as a list, no shell."
+  },
+  "src/main/review-diff.ts :: execFile(git": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "git for a review's diff by the full path findGit finds in PATH's fully qualified folders; none found reviews nothing."
+  },
+  "src/main/services/fork-hooks-child.ts :: utilityProcess.fork(entry": {
+   "count": 1,
+   "how": "app-path",
+   "reason": "Electron's utility process running the app's own bundled script (hooks-host.js beside this module)."
+  },
+  "src/main/tokenomics/fork-tokenomics-worker.ts :: utilityProcess.fork(entry": {
+   "count": 1,
+   "how": "app-path",
+   "reason": "Electron's utility process running the app's own bundled script (tokenomics-worker.js beside this module)."
+  },
+  "src/main/tokenomics/tk-supervisor.ts :: this.spawn(": {
+   "count": 2,
+   "how": "not-a-process",
+   "reason": "The supervisor's own method of that name; it forks the tokenomics worker through fork-tokenomics-worker.ts."
+  },
+  "src/main/vision-browser-owner.ts :: execFileSync(file": {
+   "count": 1,
+   "how": "system-folder",
+   "reason": "The browser-ownership checks' synchronous run: taskkill.exe and Windows PowerShell by full paths under an absolute SystemRoot; elsewhere ps by its full path (posixTool)."
+  },
+  "src/main/vision-browser-owner.ts :: spawn(file": {
+   "count": 1,
+   "how": "system-folder",
+   "reason": "The browser-ownership checks: Windows PowerShell by its full path under an absolute SystemRoot (powershellPath); elsewhere ps by its full path (posixTool)."
+  },
+  "src/main/vision-manager.ts :: spawn(executable": {
+   "count": 1,
+   "how": "by-name",
+   "reason": "The vision browser at a known install path that exists; with none there, the browser by its name (chrome or msedge on Windows), as the system finds it. Not one of the programs the full-path rule names."
+  }
+ }
+}
