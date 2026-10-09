@@ -320,13 +320,13 @@ describe('the checker itself (so a green run means something)', () => {
 })
 
 describe('the tmux launch line (typed into the remote login shell)', () => {
-  const cases: Array<{ staged: boolean; reconnect: boolean; innerCmd: string }> = []
+  const cases: Array<{ staged: boolean; reconnect: boolean; innerCmd: string; continueCmd: string }> = []
   for (const staged of [false, true]) {
     for (const reconnect of [false, true]) {
-      cases.push({ staged, reconnect, innerCmd: INNER })
+      cases.push({ staged, reconnect, innerCmd: INNER, continueCmd: `${INNER} --continue` })
       // A long inner command drops the wheel bindings (TMUX_LAUNCH_LINE_BUDGET);
       // the degraded shape must hold the same property.
-      cases.push({ staged, reconnect, innerCmd: `${INNER} ${'x'.repeat(512)}` })
+      cases.push({ staged, reconnect, innerCmd: `${INNER} ${'x'.repeat(512)}`, continueCmd: `${INNER} --continue ${'x'.repeat(512)}` })
     }
   }
 

@@ -63,7 +63,8 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../../src/main/watchdog/watchdog-manager', () => ({ getWatchdogManager: () => null }))
 
-const { spawnPty, killPty, getSshFlow, endSshRemoteDetailed, _getSshNonceForTest, _hasSshTargetForTest } = await import('../../src/main/pty-manager')
+const { spawnPty, killPty, getSshFlow, endSshRemoteDetailed, _getSshNonceForTest, _hasSshTargetForTest, _getSshEntryNonceForTest } = await import('../../src/main/pty-manager')
+const { entrySentinel } = await import('../../src/shared/container-command')
 const { registerProvider } = await import('../../src/main/providers')
 const { ClaudeProvider } = await import('../../src/main/providers/claude')
 const { buildWindowsRemoteSessionCleanupCommand } = await import('../../src/main/providers/claude/ssh-shim')
@@ -84,6 +85,21 @@ const setUp = (ssh: Record<string, unknown>): void => {
   getSshFlow(SID)!.launchClaude()
   vi.advanceTimersByTime(300)
   expect(typedIntoSession()).not.toBe('')
+}
+/** A session started over SSH whose Claude setup has been written INSIDE a
+ *  container on its host: the post-connect command enters the container, the
+ *  entry proves itself, and Launch writes the container's setup. */
+const setUpInContainer = (ssh: Record<string, unknown>): void => {
+  spawnPty(fakeWin, SID, { ssh } as never)
+  h.ptys[0].feed('dev@host:~$ ')
+  getSshFlow(SID)!.runPostCommand()
+  vi.advanceTimersByTime(201)
+  const nonce = _getSshEntryNonceForTest(SID)!
+  h.ptys[0].feed(`${entrySentinel(nonce, 'IN')}\r\nroot@0a1b2c3d4e5f:/# `)
+  getSshFlow(SID)!.launchClaude()
+  h.ptys[0].feed(`${entrySentinel(nonce, 'HERE')}\r\n`)
+  vi.advanceTimersByTime(301)
+  expect(typedIntoSession()).toContain('base64 -d | node')
 }
 /** A session whose launch was left running in tmux on its host. */
 const setUpLeftRunning = (): void => {
@@ -197,6 +213,92 @@ describe('closing a session that is not left running', () => {
     expect(typedIntoSession()).not.toContain('pw-3')
     // The close drops the session's host and its saved password.
     expect(_hasSshTargetForTest(SID)).toBe(false)
+  })
+
+  // The host a session's setup was written to is the one its End and its
+  // close reach, with that host's own password: a Restart whose next run
+  // names another host and never sets Claude up there changes neither, and
+  // a run that writes its setup on the new host makes that host the one.
+  // Mutation to prove this can fail: record the session's host when it spawns, not when its setup is written.
+  it('after a Restart whose next run names another host and never sets Claude up, End and a close reach the host that was set up', () => {
+    const hostA = { ...SSH, host: 'host-a.example.com' }
+    const hostB = { ...SSH, host: 'host-b.example.com' }
+    const next = (): void => { SID = `closecln${String(++seq).padStart(16, '0')}`; h.ptys = []; h.execs = [] }
+    // A close.
+    setUp(hostA)
+    killPty(SID, { reason: 'restart' })
+    spawnPty(fakeWin, SID, { ssh: hostB } as never)
+    killPty(SID, { reason: 'close' })
+    expect(h.execs).toHaveLength(1)
+    expect(h.execs[0].args).toContain('dev@host-a.example.com')
+    expect(h.execs[0].args).not.toContain('dev@host-b.example.com')
+    expect(last(h.execs[0].args)).toBe(posixRemoval(SID))
+    // An End, and the close after it opens no second connection.
+    next()
+    setUp(hostA)
+    killPty(SID, { reason: 'restart' })
+    spawnPty(fakeWin, SID, { ssh: hostB } as never)
+    void endSshRemoteDetailed(SID)
+    expect(h.execs).toHaveLength(1)
+    expect(h.execs[0].args).toContain('dev@host-a.example.com')
+    expect(last(h.execs[0].args)).toContain('kill-session')
+    killPty(SID, { reason: 'close' })
+    expect(h.execs).toHaveLength(1)
+    // Saved passwords: the removal reaches the host that was set up and answers its prompt with that host's password alone.
+    next()
+    setUp({ ...hostA, password: 'pw-a' })
+    killPty(SID, { reason: 'restart' })
+    spawnPty(fakeWin, SID, { ssh: { ...hostB, password: 'pw-b' } } as never)
+    killPty(SID, { reason: 'close' })
+    expect(h.execs).toEqual([])
+    expect(h.ptys).toHaveLength(3)
+    const removal = h.ptys[2]
+    expect(removal.args).toContain('dev@host-a.example.com')
+    expect(last(removal.args)).toBe(posixRemoval(SID))
+    removal.feed('dev@host-a.example.com\'s password: ')
+    expect(removal.writes).toEqual(['pw-a\r'])
+    // A run that writes its setup on the new host: that host is the one.
+    next()
+    setUp(hostA)
+    killPty(SID, { reason: 'restart' })
+    h.ptys = []
+    setUp(hostB)
+    killPty(SID, { reason: 'close' })
+    expect(h.execs).toHaveLength(1)
+    expect(h.execs[0].args).toContain('dev@host-b.example.com')
+    expect(last(h.execs[0].args)).toBe(posixRemoval(SID))
+  })
+
+  // The same for a session whose setup was written inside a container on its
+  // host: that host, and its container, is the one End and a close reach.
+  // Mutation to prove this can fail: do not record the host when the container's setup is written.
+  it('a container session: after a Restart whose next run names another host and never sets Claude up, End and a close reach the host whose container was set up', () => {
+    const container = { type: 'container', engine: 'docker', container: 'ccc-test' }
+    const hostA = { ...SSH, host: 'host-a.example.com', runtime: container }
+    const hostB = { ...SSH, host: 'host-b.example.com' }
+    // A close.
+    setUpInContainer(hostA)
+    killPty(SID, { reason: 'restart' })
+    h.ptys = []
+    spawnPty(fakeWin, SID, { ssh: hostB } as never)
+    killPty(SID, { reason: 'close' })
+    expect(h.execs).toHaveLength(1)
+    expect(h.execs[0].args).toContain('dev@host-a.example.com')
+    expect(h.execs[0].args).not.toContain('dev@host-b.example.com')
+    expect(last(h.execs[0].args)).toBe(posixRemoval(SID))
+    // An End, with its container step, and the close after it opens no second connection.
+    SID = `closecln${String(++seq).padStart(16, '0')}`
+    h.ptys = []; h.execs = []
+    setUpInContainer(hostA)
+    killPty(SID, { reason: 'restart' })
+    h.ptys = []
+    spawnPty(fakeWin, SID, { ssh: hostB } as never)
+    void endSshRemoteDetailed(SID)
+    expect(h.execs).toHaveLength(1)
+    expect(h.execs[0].args).toContain('dev@host-a.example.com')
+    expect(last(h.execs[0].args)).toContain('ccc-test')
+    killPty(SID, { reason: 'close' })
+    expect(h.execs).toHaveLength(1)
   })
 
   // Mutation to prove this can fail: remove the files at close only while the session's terminal is still there.

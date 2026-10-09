@@ -5,7 +5,9 @@
 // CLI arguments. The user's words come LAST, so an option among them that
 // takes a value (`--append-system-prompt`, `--fallback-model`, ...) can never
 // take one of the app's options as its value; left without one, Claude Code
-// stops and says so. An Ask Conductor launch carries no extra arguments: its
+// stops and says so. On Windows, where PowerShell reads the line, each of the
+// user's words is single-quoted, so PowerShell hands it to Claude Code as
+// written. An Ask Conductor launch carries no extra arguments: its
 // `-- <question>` stays the last thing on the line. The real spawnPty; the
 // per-session files are real temporary files; node-pty records the line.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -100,12 +102,16 @@ const launchLine = async (): Promise<string> => {
   while (!h.writes.some((w) => w.includes('--settings')) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10))
   return (h.writes.find((w) => w.includes('--settings')) ?? '').replace(/\r$/, '')
 }
+/** The user's words as this platform's launch line carries them: single-quoted
+ *  one by one where PowerShell reads the line (Windows), as typed elsewhere. */
+const onLine = (words: string): string =>
+  process.platform === 'win32' ? words.split(' ').map((w) => `'${w}'`).join(' ') : words
 /** Where each of the app's own options and the user's words sit on the line. */
 const positions = (line: string, words: string): { settings: number; mcp: number; plugin: number; words: number } => ({
   settings: line.indexOf(' --settings '),
   mcp: line.indexOf(' --mcp-config '),
   plugin: line.indexOf(' --plugin-dir '),
-  words: line.indexOf(` ${words}`),
+  words: line.indexOf(` ${onLine(words)}`),
 })
 
 describe('a local launch', () => {
@@ -118,7 +124,7 @@ describe('a local launch', () => {
     expect(at.mcp).toBeGreaterThan(at.settings)
     expect(at.plugin).toBeGreaterThan(at.mcp)
     expect(at.words).toBeGreaterThan(at.plugin)
-    expect(line.endsWith(' --append-system-prompt; exit')).toBe(true)
+    expect(line.endsWith(` ${onLine('--append-system-prompt')}; exit`)).toBe(true)
   })
 
   it('on an exact resume too', async () => {
@@ -128,7 +134,14 @@ describe('a local launch', () => {
     expect(line).toContain(`--resume ${UUID}`)
     const at = positions(line, '--fallback-model sonnet')
     expect(at.words).toBeGreaterThan(at.plugin)
-    expect(line.endsWith(' --fallback-model sonnet; exit')).toBe(true)
+    expect(line.endsWith(` ${onLine('--fallback-model sonnet')}; exit`)).toBe(true)
+  })
+
+  it("each of the user's words reaches the line as one word: single-quoted where PowerShell reads it", async () => {
+    spawnPty(fakeWin, SID, { cols: 100, rows: 30, cwd: tmp, extraArgs: '--allowedTools=Bash,Edit  --add-dir=docs' })
+    const line = await launchLine()
+    const want = process.platform === 'win32' ? " '--allowedTools=Bash,Edit' '--add-dir=docs'; exit" : ' --allowedTools=Bash,Edit --add-dir=docs; exit'
+    expect(line.endsWith(want), line).toBe(true)
   })
 
   // Mutation to prove this can fail: place the extra args on an Ask launch.

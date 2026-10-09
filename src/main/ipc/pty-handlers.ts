@@ -418,7 +418,7 @@ export const spawnOptionsSchema = z.object({
     // line continuation, which hangs the session on a `>` prompt waiting for
     // input that never comes.
     (v) => extraArgsRefineOk(v),
-    { message: 'extraArgs must not include an app-managed flag (--model/--effort/--permission-mode/--settings/--mcp-config/--agents/--resume), nor end in a backslash' },
+    { message: 'extraArgs must not include an option the app sets (or one that changes the conversation, where or how it runs, its permission mode or the settings it reads), a word Claude reads as a command or as a server address, or a word that starts or ends with a comma, nor end in a backslash' },
   ).optional(),
   disableAutoMemory: z.boolean().optional(),
   enableCodexReview: z.boolean().optional(),

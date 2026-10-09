@@ -140,10 +140,10 @@ export function _getSshEntryNonceForTest(sessionId: string): string | undefined 
  *  the lifecycle fix that the target must SURVIVE a natural PTY exit (a transient
  *  drop, so a later End can still reach the host) and be dropped only by
  *  killPty (a close; any other kill keeps it while the session's setup files
- *  are on that host, see sshSetupWrittenBySession) -- adversarial review
- *  2026-08-18. */
+ *  are on that host, see sshSetupTargetBySession) -- adversarial review
+ *  2026-08-18. Either target End would use counts (sshEndTargetOf). */
 export function _hasSshTargetForTest(sessionId: string): boolean {
-  return sshTargetBySession.has(sessionId)
+  return sshEndTargetOf(sessionId) !== undefined
 }
 
 /**
@@ -1279,10 +1279,14 @@ function clearLastResumeTarget(sessionId: string): void {
 // NOT on a natural PTY exit: after a transient drop the tab stays (Retry), and
 // a later "End remote" must still be able to reach the host to kill the
 // now-detached remote -- clearing it on every exit made End a silent no-op
-// after any wifi blip (adversarial review, 2026-08-18). A Restart or a
-// spawn's own kill keeps it while the session's setup files are on that host
-// (sshSetupWrittenBySession), so a close before the next launch connects can
-// still remove them; the next launch that connects replaces it.
+// after any wifi blip (adversarial review, 2026-08-18). The host a session's
+// Claude setup was written to is recorded apart, when the setup is written
+// (sshSetupTargetBySession), and End and a close's removal reach THAT host
+// first: a Restart whose next run names another host, or never connects,
+// leaves them reaching the host that was set up. This map serves a session
+// none of whose runs has set Claude up since its last close (End then reaches
+// the host this run connects to). A Restart or a spawn's own kill keeps it
+// while the session's setup files are on a host; the next spawn replaces it.
 // #572: the saved SSH password (when the session authed that way) rides along
 // so End can actually reach a password-only host -- see endSshRemote. It stays
 // in this main-process map exactly as long as the target itself (cleared on
@@ -1296,7 +1300,8 @@ function clearLastResumeTarget(sessionId: string): void {
 /**
  * Everything the End exec needs to reach a host and clean up after one session.
  *
- * Captured at spawn into `sshTargetBySession` for a LIVE session, and — since
+ * Captured at spawn into `sshTargetBySession` for a LIVE session (and into
+ * `sshSetupTargetBySession` when that run writes its Claude setup), and — since
  * Phase 3.5 — rebuildable from the SAVED config for a DETACHED one, which the
  * map cannot hold (see endSshRemote's `fallbackTarget`). Both producers are
  * main-process only: the renderer never supplies a field of this, it only names
@@ -1325,16 +1330,30 @@ const sshTargetBySession = new Map<string, SshEndTarget>()
 const endDispatchedBySession = new Set<string>()
 
 /** Sessions whose Claude setup was written to their host (or container) in
- *  this app run, by any of their runs, and not removed since. Only these have
- *  files there for a close to remove: closing a session that never set Claude
- *  up (a terminal over SSH) opens no second connection. A Restart or a spawn's
- *  own kill keeps the mark and the session's target (the files stay for the
- *  next launch, and a close before that launch sets Claude up removes them,
- *  also when it never started connecting), except for a run left running in
- *  tmux, whose files its remote session still uses until its next run writes
- *  its setup again, and a session whose End was dispatched. A close drops it,
- *  at the end of endLiveRun. */
-const sshSetupWrittenBySession = new Set<string>()
+ *  this app run, by any of their runs, and not removed since -- the setup
+ *  mark -- each with the target its setup was written to, recorded at the
+ *  moment the setup is written (the host, its password and runtime as that
+ *  run had them). Only these have files there for a close to remove: closing
+ *  a session that never set Claude up (a terminal over SSH) opens no second
+ *  connection. End and a close's removal reach this target before the one
+ *  the current run spawned with (endSshRemoteDetailed), so they reach the
+ *  host that was set up, with its own password, whatever host a later run
+ *  names; a run that writes its setup replaces it. A Restart or a spawn's own
+ *  kill keeps the mark (the files stay for the next launch, and a close
+ *  before that launch sets Claude up removes them, also when it never started
+ *  connecting or names another host), except for a run left running in tmux,
+ *  whose files its remote session still uses until its next run writes its
+ *  setup again, and a session whose End was dispatched. A close drops it, at
+ *  the end of endLiveRun. */
+const sshSetupTargetBySession = new Map<string, SshEndTarget>()
+
+/** The target End and a close's removal reach for a LIVE session: the one its
+ *  Claude setup was written to (sshSetupTargetBySession), else the one its
+ *  current run spawned with (sshTargetBySession); undefined when neither is
+ *  held (End then takes the caller's fallback, endSshRemoteDetailed). */
+function sshEndTargetOf(sessionId: string): SshEndTarget | undefined {
+  return sshSetupTargetBySession.get(sessionId) ?? sshTargetBySession.get(sessionId)
+}
 
 // SSH tmux enhancement (items 1/4): sessions whose launch actually wrapped in a
 // tmux persistence session (`tmuxWrapped` at writeClaudeCmd). The remote for
@@ -1501,10 +1520,14 @@ export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndT
   // the SSH_END_REMOTE handler), never from the renderer. A live target still
   // WINS: it carries the session's real runtime and the credentials it actually
   // authed with, which is strictly better evidence than the config on disk.
-  const target = sshTargetBySession.get(sessionId) ?? fallbackTarget
+  // Of the live targets, the host the session's Claude setup was written to
+  // comes first (sshEndTargetOf): that is where its files and its remote
+  // session are, whatever host a later run names.
+  const live = sshEndTargetOf(sessionId)
+  const target = live ?? fallbackTarget
   if (!target) return Promise.resolve({ outcome: 'no-target' })
   const filesOnly = opts?.filesOnly === true
-  if (!filesOnly && sshTargetBySession.get(sessionId) === target) endDispatchedBySession.add(sessionId)
+  if (!filesOnly && live) endDispatchedBySession.add(sessionId)
   // A Windows host has no tmux and takes no container step: End and a close
   // both remove the session's files there with the Windows command.
   const windowsHost = target.remoteOs === 'windows'
@@ -1790,9 +1813,10 @@ export function _setSshTargetForTest(
   sshTargetBySession.set(sessionId, target)
 }
 
-/** Test-only: read back what the spawn captured for End (runtime + secrets). */
+/** Test-only: read back the target End would reach for a live session, as the
+ *  spawn or the setup write captured it (runtime + secrets; sshEndTargetOf). */
 export function _getSshTargetForTest(sessionId: string): { username: string; host: string; port: number; password?: string; runtime?: SshRuntime; sudoPassword?: string; remoteOs?: 'auto' | 'unix' | 'windows' } | undefined {
-  return sshTargetBySession.get(sessionId)
+  return sshEndTargetOf(sessionId)
 }
 
 // === SSH OSC sentinel parser ===
@@ -1853,7 +1877,10 @@ function extractSshOscSentinels(sessionId: string, chunk: string): string {
 /**
  * Resolve the claude command for PTY usage.
  * If legacyVersion is provided and enabled, uses the managed install binary.
- * Otherwise checks for native CLI (claude.exe) first, then npm wrapper (claude.cmd).
+ * Otherwise, on Windows, the full path found in PATH's folders (claude.exe,
+ * then claude.cmd, then claude.bat); elsewhere, for a login shell outside the
+ * sh family that reports the PATH it builds, the full path found in that PATH,
+ * else `claude`.
  */
 export function resolveClaudeForPty(legacyVersion?: { enabled: boolean; version: string }): { cmd: string; args: string[] } {
   // Through the registered provider (WP2 PR 4), whose resolveBinary is
@@ -2873,16 +2900,21 @@ function spawnPtyResolved(
     // accessor and cleanupSessionResources' teardown can both reach it.
     const sshNonce = randomId()
     sshNonceBySession.set(sessionId, sshNonce)
-    // item 4: remember this session's connection target so a deliberate End can
-    // reach the host over a separate exec. Kept through a natural exit (for a
-    // later End or close); dropped at the end of endLiveRun unless that kill
+    // item 4: this run's connection target, so a deliberate End can reach the
+    // host over a separate exec. Recorded here as the run's own, and recorded
+    // again as the session's setup target at the moment its Claude setup is
+    // written (writeHostSetupCmd, writeContainerSetupCmd: sshSetupTargetBySession),
+    // which End and a close's removal reach first: after a Restart whose next
+    // run names another host, or never connects, they still reach the host
+    // that was set up, with its own password. Kept through a natural exit (for
+    // a later End or close); dropped at the end of endLiveRun unless that kill
     // keeps the session's setup mark (a Restart or a spawn's own kill), and
-    // replaced here by the next launch that connects.
+    // replaced here by the next spawn.
     // The structured runtime + sudo password ride along for the SAME reason the
     // ssh password does (#572, one hop deeper): for a container runtime the End
     // exec must also reach INSIDE the container to kill this session's claude,
     // and a rootful container needs sudo's prompt answered to get there.
-    sshTargetBySession.set(sessionId, {
+    const sshEndTarget: SshEndTarget = {
       username: ssh.username,
       host: ssh.host,
       port: ssh.port,
@@ -2895,7 +2927,8 @@ function spawnPtyResolved(
       // Which cleanup the host takes (End, and a close): the Windows one
       // for a Windows remote.
       remoteOs: ssh.remoteOs,
-    })
+    }
+    sshTargetBySession.set(sessionId, sshEndTarget)
     // #242 round-3 correction (I3): which entry of buildTmuxLaunchCommand's
     // fixed literal table to use, once a 'setup ok'/stage/push sentinel
     // reports a usable tmux -- never a wire-reported path. `null` means "not
@@ -3369,10 +3402,11 @@ function spawnPtyResolved(
       // Per-config permission mode. 'default'/'' => no flag (Claude's own default).
       options?.permissionMode && options.permissionMode !== 'default' ? `--permission-mode ${options.permissionMode}` : '',
     ].filter(Boolean).join(' ')
-    /** The claude launch line. `continueFlag` ('--continue' on a bare
-     *  reconnect, see writeClaudeCmd; '' otherwise) goes AHEAD of the user's
-     *  extra args, which stay the last options on the line: an option among
-     *  them that takes a value can never take the app's own flag as it. */
+    /** The claude launch line. `continueFlag` ('--continue' on a reconnect's
+     *  bare launch, and on the tmux wrapper's fresh create, see
+     *  writeClaudeCmd; '' otherwise) goes AHEAD of the user's extra args,
+     *  which stay the last options on the line: an option among them that
+     *  takes a value can never take the app's own flag as it. */
     const claudeCmdWith = (continueFlag: string): string => isWindowsRemote
       // item 3: cmd.exe launch (set X=Y&& claude --settings "%USERPROFILE%\.claude\..."). No
       // tmux wrap ever (Windows has none).
@@ -3525,7 +3559,9 @@ function spawnPtyResolved(
           const setupCmd = isWindowsRemote
             ? claudeProvider.windowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
             : claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, setupOpts, sshNonce)
-          sshSetupWrittenBySession.add(sessionId)
+          // The setup mark, with the host it is written to: the one End and
+          // a close's removal reach from now on (sshSetupTargetBySession).
+          sshSetupTargetBySession.set(sessionId, sshEndTarget)
           ptyProcess.write(setupCmd + '\r')
         } catch (err) {
           logError(`[ssh] ${sessionId}: host setup failed: ${(err as Error)?.message ?? err}`)
@@ -3723,7 +3759,8 @@ function spawnPtyResolved(
           const setupCmd = isWindowsRemote
             ? claudeProvider.windowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
             : claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, setupOpts, sshNonce)
-          sshSetupWrittenBySession.add(sessionId)
+          // The setup mark, with the host it is written to (writeHostSetupCmd).
+          sshSetupTargetBySession.set(sessionId, sshEndTarget)
           ptyProcess.write(setupCmd + '\r')
         } catch (err) {
           logError(`[ssh] ${sessionId}: container setup failed: ${(err as Error)?.message ?? err}`)
@@ -3809,8 +3846,11 @@ function spawnPtyResolved(
         // re-thrown by the global uncaughtException handler and crashes main
         // (adversarial review, #188, same shape documented on
         // assertNotOptionLike in ssh-args.ts).
+        // The fresh create runs `claudeCmd` on a first connect and, on a
+        // reconnect, the same line with --continue ahead of the user's extra
+        // args (claudeCmdWith), which stay the last words on every line.
         try {
-          cmdToWrite = buildTmuxLaunchCommand({ sessionId, innerCmd: claudeCmd, staged: detectedTmuxSource === 'staged', reconnect: !!ssh.reconnect })
+          cmdToWrite = buildTmuxLaunchCommand({ sessionId, innerCmd: claudeCmd, continueCmd: claudeCmdWith('--continue'), staged: detectedTmuxSource === 'staged', reconnect: !!ssh.reconnect })
           tmuxWrapped = true
         } catch (err) {
           logError(`[ssh] ${sessionId}: tmux launch command build failed, writing bare claudeCmd instead: ${(err as Error)?.message ?? err}`)
@@ -6281,16 +6321,19 @@ function spawnPtyResolved(
         }
       }
 
-      // Advanced escape hatch: extra CLI args verbatim (IPC-charset-guarded, no
-      // shell metacharacters, CCC-managed flags rejected at the IPC seam),
-      // placed AFTER every option of the app's own (--settings, --mcp-config,
-      // --plugin-dir): an option among them that takes a value can never take
-      // one of the app's options as that value, and one left without a value
-      // makes Claude Code stop and say so. An Ask Conductor launch carries
-      // none: its `-- <question>` stays the last thing on the line.
+      // Advanced escape hatch: extra CLI args (IPC-charset-guarded, no shell
+      // metacharacters, CCC-managed flags rejected at the IPC seam), placed by
+      // the launch builder AFTER every option of the app's own (--settings,
+      // --mcp-config, --plugin-dir): an option among them that takes a value
+      // can never take one of the app's options as that value, and one left
+      // without a value makes Claude Code stop and say so. On Windows each word
+      // is single-quoted there, so PowerShell hands each one to Claude Code as
+      // written (claudeUserArgsOnLine). An Ask Conductor launch carries none:
+      // its `-- <question>` stays the last thing on the line.
+      let userArgs: string | undefined
       if (options?.extraArgs && options.extraArgs.trim()) {
         if (options?.isAsk === true) logWarn(`[pty] ${sessionId}: an Ask Conductor launch carries no extra CLI arguments; they were not placed`)
-        else extraFlags += ` ${options.extraArgs.trim()}`
+        else userArgs = options.extraArgs.trim()
       }
 
       // Build --agents flag if agent templates are configured
@@ -6323,6 +6366,7 @@ function spawnPtyResolved(
         claudeBin: cmd,
         extraFlags,
         agentsFlag,
+        userArgs,
         useResumePicker: !!options?.useResumePicker,
         pickerScript: getResumePickerPath(),
         resumeUuid,
@@ -7217,16 +7261,17 @@ function endLiveRun(sessionId: string, opts: KillPtyOptions = {}): void {
   // session's terminal. Never on a Restart or a spawn's own kill: the next
   // launch of this id re-creates the same files, and a late removal would
   // take the new launch's (it replaces leftovers itself); both keep the setup
-  // mark and the target, so a close before the next launch sets Claude up
-  // removes the files the earlier run wrote, also when that launch never
-  // started connecting. Not after an End for this session either: End's own
+  // mark, with the host the setup was written to, so a close before the next
+  // launch sets Claude up removes the files the earlier run wrote, from that
+  // host, also when that launch never started connecting or names another
+  // host. Not after an End for this session either: End's own
   // command is the removal (the close does not wait for its outcome). A
   // tmux-persistent session writes and dispatches nothing, its connection
   // dropped or not: Leave running keeps its files, End removes them; after a
   // Restart or a new launch over it, that holds until its next run writes its
   // setup again. A session whose Claude setup was never written there (a
   // terminal over SSH) has no files to remove and opens no second connection.
-  const removeHostFilesAtClose = opts.reason === 'close' && !tmuxPersistent && !endDispatchedBySession.has(sessionId) && sshSetupWrittenBySession.has(sessionId) && sshTargetBySession.has(sessionId)
+  const removeHostFilesAtClose = opts.reason === 'close' && !tmuxPersistent && !endDispatchedBySession.has(sessionId) && sshSetupTargetBySession.has(sessionId)
   if (entry) {
     logInfo(`[pty] Killing PTY for session ${sessionId}${tmuxPersistent ? ' (tmux-persistent: detach only)' : ''}`)
   }
@@ -7256,18 +7301,19 @@ function endLiveRun(sessionId: string, opts: KillPtyOptions = {}): void {
   // the end-target unless it is kept below. A natural exit reaches
   // cleanupSessionResources but not here, so the target survives a transient
   // drop for a later End.
-  // A Restart or a spawn's own kill keeps the setup mark, and the session's
-  // target with it: the files stay on the host until a close or an End
-  // removes them, and a close before the next launch connects still reaches
-  // that host (a launch that connects replaces the target). A close drops
-  // both, and so do two other cases: a run left running in tmux (its remote
-  // session keeps running after the kill and still uses those files, so they
-  // are not a close's to remove) and a session whose End was dispatched
-  // (End's own command is the removal).
-  const keepSetupMark = opts.reason !== 'close' && !tmuxPersistent && !endDispatchedBySession.has(sessionId) && sshSetupWrittenBySession.has(sessionId)
+  // A Restart or a spawn's own kill keeps the setup mark, with the host the
+  // setup was written to, and the session's run target with it: the files
+  // stay on that host until a close or an End removes them, and a close or
+  // an End before the next launch writes its setup still reaches that host,
+  // whatever host the next launch names (a launch that writes its setup
+  // replaces it). A close drops both, and so do two other cases: a run left
+  // running in tmux (its remote session keeps running after the kill and
+  // still uses those files, so they are not a close's to remove) and a
+  // session whose End was dispatched (End's own command is the removal).
+  const keepSetupMark = opts.reason !== 'close' && !tmuxPersistent && !endDispatchedBySession.has(sessionId) && sshSetupTargetBySession.has(sessionId)
   if (!keepSetupMark) {
     sshTargetBySession.delete(sessionId)
-    sshSetupWrittenBySession.delete(sessionId)
+    sshSetupTargetBySession.delete(sessionId)
   }
   sshTmuxWrappedBySession.delete(sessionId)
   endDispatchedBySession.delete(sessionId)

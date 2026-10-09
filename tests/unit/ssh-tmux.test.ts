@@ -111,7 +111,7 @@ describe('buildTmuxLaunchCommand', () => {
   // claude would be wrong. Mutation to prove this can fail: append --continue to
   // innerCmd unconditionally, or to the attach op -- the assertions below fail.
   it('adds --continue to every fresh-create branch, never to a live attach, on a reconnect', () => {
-    const cmd = buildTmuxLaunchCommand({ ...base, reconnect: true })
+    const cmd = buildTmuxLaunchCommand({ ...base, continueCmd: `${base.innerCmd} --continue`, reconnect: true })
     expect(cmd).toContain("attach -t '=ccc-sid-1' || ")
     expect(cmd).not.toMatch(/attach -t '=ccc-sid-1' --continue/)
     const creates = cmd.split('new-session -s ccc-sid-1 ').slice(1)
@@ -125,8 +125,40 @@ describe('buildTmuxLaunchCommand', () => {
   })
 
   it('never adds --continue on a first connect (reconnect: false)', () => {
-    const cmd = buildTmuxLaunchCommand({ ...base, reconnect: false })
+    const cmd = buildTmuxLaunchCommand({ ...base, continueCmd: `${base.innerCmd} --continue`, reconnect: false })
     expect(cmd).not.toContain('--continue')
+  })
+
+  // The user's extra args stay the last words of the line the fresh create
+  // runs: on a reconnect it runs the launch line the caller built with
+  // --continue among the app's own options (pty-manager's claudeCmdWith), as
+  // given, and never adds the flag to a line itself, so an option among the
+  // user's words that takes a value can never take it as its value.
+  // Mutation to prove this can fail: append --continue to innerCmd on a reconnect again.
+  describe('the fresh create on a reconnect runs the caller\'s --continue line as given', () => {
+    const WORDS = '--append-system-prompt'
+    const appLine = 'CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 claude --settings ~/.claude/settings-sid-1.json'
+    const words = { ...base, innerCmd: `${appLine} ${WORDS}`, continueCmd: `${appLine} --continue ${WORDS}` }
+
+    it('both create branches run it, and the user\'s words stay last', () => {
+      const cmd = buildTmuxLaunchCommand({ ...words, reconnect: true })
+      const paneOpts = optsPane(ON_PATH_TMUX_BIN_EXPR)
+      const creates = cmd.split('new-session -s ccc-sid-1 ').slice(1)
+      expect(creates.length).toBe(2)
+      for (const c of creates) expect(c.startsWith(`'${paneOpts}; ${words.continueCmd}'`)).toBe(true)
+      expect(cmd).not.toContain(`${WORDS} --continue`)
+    })
+
+    it('a first connect runs the bare line', () => {
+      const cmd = buildTmuxLaunchCommand({ ...words, reconnect: false })
+      const paneOpts = optsPane(ON_PATH_TMUX_BIN_EXPR)
+      for (const c of cmd.split('new-session -s ccc-sid-1 ').slice(1)) expect(c.startsWith(`'${paneOpts}; ${words.innerCmd}'`)).toBe(true)
+      expect(cmd).not.toContain('--continue')
+    })
+
+    it('a reconnect with no --continue line is refused rather than given one at the end', () => {
+      expect(() => buildTmuxLaunchCommand({ ...base, innerCmd: words.innerCmd, reconnect: true })).toThrow()
+    })
   })
 
   // ── EXACTNESS: every `-t` operand, never the `-s` NAME ────────────────────
@@ -551,7 +583,7 @@ describe('buildTmuxLaunchCommand stays under the remote tty line limit (#85)', (
     '--mcp-config "$HOME"/.claude/mcp-1a2b3c4d5e6f7890.json --model opus --permission-mode acceptEdits'
 
   it('keeps the wheel bindings for an ordinary launch', () => {
-    const cmd = buildTmuxLaunchCommand({ sessionId: '1a2b3c4d5e6f7890', innerCmd: longInner, staged: false, reconnect: true })
+    const cmd = buildTmuxLaunchCommand({ sessionId: '1a2b3c4d5e6f7890', innerCmd: longInner, continueCmd: `${longInner} --continue`, staged: false, reconnect: true })
     expect(cmd).toContain(TMUX_WHEEL_UP_KEYNAME)
     expect(cmd.length).toBeLessThanOrEqual(TMUX_LAUNCH_LINE_BUDGET)
   })
@@ -561,6 +593,7 @@ describe('buildTmuxLaunchCommand stays under the remote tty line limit (#85)', (
     const cmd = buildTmuxLaunchCommand({
       sessionId: '1a2b3c4d5e6f7890',
       innerCmd: `${longInner} ${'x'.repeat(512)}`,
+      continueCmd: `${longInner} --continue ${'x'.repeat(512)}`,
       staged: true,
       reconnect: true,
     })
