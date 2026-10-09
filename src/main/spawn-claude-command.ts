@@ -12,7 +12,9 @@
  *     double-quoted. That is a deliberate security change, not drift: inside
  *     double quotes PowerShell expands `$(...)` and POSIX expands `$(...)` and
  *     backticks, and these values are PATHS whose contents a directory name
- *     decides. Byte-identity holds for every other part of the line.
+ *     decides. On Windows the user's extra CLI arguments are single-quoted
+ *     word by word too (claudeUserArgsOnLine), so PowerShell reads nothing
+ *     in them. Byte-identity holds for every other part of the line.
  *   - When `resumeUuid` is PRESENT the resume-picker branch is BYPASSED and the
  *     command launches Claude directly with `--resume <uuid>` FIRST, before
  *     --settings / --mcp-config / --agents etc. (mirrors the ordering in
@@ -40,6 +42,13 @@ export interface BuildClaudeLaunchCommandOptions {
   extraFlags: string
   /** Pre-built --agents flag string (empty when no agents). */
   agentsFlag: string
+  /**
+   * The user's own extra CLI arguments for this session, as the session's
+   * rule passed them (claudeExtraArgsProblem, src/shared/extra-args.ts).
+   * Placed after every option of the app's own (claudeUserArgsOnLine).
+   * Absent or blank: none.
+   */
+  userArgs?: string
   /** Whether the resume-picker branch would normally run (restored sessions). */
   useResumePicker: boolean
   /** Resolved resume-picker.js path, or null when not deployed. */
@@ -420,9 +429,26 @@ const CMD_EXE_NETWORK_FOLDER_RE = /^[\\/]{2}/
  *  refused (the resume picker says the same, scripts/resume-picker.js). */
 export const CLAUDE_NETWORK_FOLDER_REFUSAL = 'Cannot start Claude Code in a network folder through its npm launcher: open the folder from a mapped drive letter, or install the native Claude Code.'
 
+/**
+ * The user's extra CLI arguments as a launch line carries them: each word
+ * after a space, or '' when there are none. On Windows the line is read by
+ * PowerShell, and each word is single-quoted (quoteArgForShell), so PowerShell
+ * hands Claude Code each word exactly as written and reads nothing in it: no
+ * comma joining words into a list, no number, no operator. Elsewhere a POSIX
+ * shell reads the words as they are, as the rule that passed them expects
+ * (it matches each word with its backslashes removed).
+ */
+export function claudeUserArgsOnLine(userArgs: string | undefined, isWin32: boolean): string {
+  const words = (userArgs ?? '').split(' ').filter((w) => w !== '')
+  return words.map((w) => ` ${isWin32 ? quoteArgForShell(w, true) : w}`).join('')
+}
+
 export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions): string {
-  const { cwd, claudeBin, extraFlags, agentsFlag, useResumePicker, pickerScript, resumeUuid } = opts
+  const { cwd, claudeBin, agentsFlag, useResumePicker, pickerScript, resumeUuid } = opts
   const isWin32 = opts.platform === 'win32'
+  // The app's own options, then the user's words: an option among them that
+  // takes a value can never take one of the app's options as that value.
+  const extraFlags = `${opts.extraFlags}${claudeUserArgsOnLine(opts.userArgs, isWin32)}`
   // Every line below that starts Claude Code itself starts it in `cwd`: an
   // npm launcher there is refused, with the reason, when cmd.exe cannot start
   // in that folder. The picker line starts node, which can; the picker

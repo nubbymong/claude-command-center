@@ -156,9 +156,10 @@ describe('the refusal says which argument and why', () => {
   })
 })
 
-describe('Claude\'s field is unchanged', () => {
-  it('a Claude session keeps its own rule: a plain word passes, its own managed flags do not', () => {
-    expect(spawnOptionsSchema.safeParse({ extraArgs: '--add-dir docs' }).success).toBe(true)
+describe('Claude\'s field follows the same shape', () => {
+  it('a Claude session refuses a plain word and its own managed flags, and takes a folder given with =', () => {
+    expect(spawnOptionsSchema.safeParse({ extraArgs: '--add-dir docs' }).success).toBe(false)
+    expect(spawnOptionsSchema.safeParse({ extraArgs: '--add-dir=docs' }).success).toBe(true)
     expect(spawnOptionsSchema.safeParse({ extraArgs: '--settings x.json' }).success).toBe(false)
   })
   it('the Codex field refuses -c whole', () => {

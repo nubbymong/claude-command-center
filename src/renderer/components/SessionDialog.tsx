@@ -1338,9 +1338,13 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                       placeholder: sessionType === 'ssh' ? '--add-dir /srv/shared' : '--verbose --add-dir F:\\shared_libs',
                       hint: (
                         <>
-                          Advanced. Appended to the claude command exactly as typed. Shell characters are blocked
-                          and the app's own flags (--model, --effort, --permission-mode, --settings, --mcp-config,
-                          --agents, --resume) can't be overridden here.
+                          Advanced. Added to the claude command after the app's own options. Shell characters are
+                          blocked, and so is anything the app sets or that changes the conversation, where or how it
+                          runs, its permission mode or the settings it reads: --model, --effort, --permission-mode,
+                          --settings, --mcp-config, --agent and --agents, --plugin-dir, --resume, --continue,
+                          --session-id, --print, --worktree, --cloud, --bare and --safe-mode. A plain word such as mcp
+                          (or /logout), or a word that starts with an address (name://), is refused too: give a folder
+                          as --add-dir=docs, and an option's value after an = sign.
                         </>
                       ),
                     })}
