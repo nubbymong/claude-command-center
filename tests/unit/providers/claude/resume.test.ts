@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { putFakeClaudeOnPath } from '../../../helpers/fake-claude-on-path'
 
 // Deterministic fixture home. The old version of this test walked the REAL
 // ~/.claude/projects (gigabytes on dev machines — 7s+ standalone, timeout
@@ -51,10 +52,18 @@ describe('ClaudeProvider resume + history', () => {
   })
 
   it('resumeCommand returns claude --resume <id>', () => {
-    const p = new ClaudeProvider()
-    const r = p.resumeCommand('test-session-id')
-    expect(typeof r.cmd).toBe('string')
-    expect(r.cmd.length).toBeGreaterThan(0)
-    expect(r.args).toEqual(['--resume', 'test-session-id'])
+    // On Windows it names the Claude Code the PATH walk finds, by its full
+    // path, and starts nothing without one: a stand-in it finds (tests/helpers).
+    const fakeClaude = putFakeClaudeOnPath()
+    try {
+      const p = new ClaudeProvider()
+      const r = p.resumeCommand('test-session-id')
+      expect(typeof r.cmd).toBe('string')
+      expect(r.cmd.length).toBeGreaterThan(0)
+      if (fakeClaude.claude) expect(r.cmd).toBe(fakeClaude.claude)
+      expect(r.args).toEqual(['--resume', 'test-session-id'])
+    } finally {
+      fakeClaude.restore()
+    }
   })
 })

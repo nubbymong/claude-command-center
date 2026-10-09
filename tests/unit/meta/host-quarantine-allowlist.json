@@ -305,7 +305,7 @@
     },
     {
       "path": "tests/unit/main/pty-spawn-waits-for-refresh.test.ts",
-      "reason": "Through app code it makes, moves or repairs account folders, prepares a managed launch, which asks an installed Claude Code CLI for its version, writes a session's settings files and installs the canvas plugin; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (172), cmd.exe running the Claude Code CLI (1)."
+      "reason": "Through app code it makes, moves or repairs account folders, prepares a managed launch, which asks the Claude Code its PATH walk finds for its version (the suite names an empty stand-in first on PATH, which cannot start), writes a session's settings files and installs the canvas plugin; on Windows that runs icacls on folders under the test's temp root. One run on the test VM, with an installed Claude Code on PATH, started: icacls.exe (290); the version check named only the stand-in."
     },
     {
       "path": "tests/unit/main/session-hooks-writer-secret-mode.test.ts",
