@@ -28,9 +28,11 @@ keeps a 128px minimum, so "Confirm each launch" no longer runs into the state
 column. After review, a long name wraps to at most two lines and keeps its
 full text as its title, so it stays whole once a plan is recorded, and a long
 email in the state cell breaks inside its own cell instead of running under
-the "..." button. Still open: on cards narrower than about 640px the badge
-floor takes width from the other text tracks, so a blocked row's "This is
-still my account" button runs into the gap beside it.
+the "..." button. Still open: the badge floor takes width from the other text
+tracks on cards narrower than about 750px (a few px at the default 728px
+card); below about 640px a blocked row's "This is still my account" button
+runs into the gap beside it, and at 80% UI text about 11px into the menu
+column.
 
 Reviews wording (50b7c4ff). The Codex card said only "Reviews can't run on it
 right now." when code reviews would use this computer's own Codex sign-in,
@@ -52,9 +54,12 @@ identity, bounded at 13 s, never a gate, never for an SSH session, and ended
 at quit. The callers are discovery's --version run, the boot version probe,
 the setup and /insights terminals, the local launches the accounts service
 prepares and, after review, headless Claude Code runs, cloud agents and the
-Accounts panel's claude auth status. Synchronous starts on the main thread are
-now timed: one over 500 ms is logged by the program's base name only, and a
-[jank] line names the start in flight or says that no tracked operation was.
+Accounts panel's claude auth status. Five synchronous main-thread starts are
+now timed (the CLI runner's spawn, the boot version probe, the two setup
+terminal starts and the /insights terminal; session, headless and cloud agent
+starts are not): one over 500 ms is logged by the program's base name only,
+and a [jank] line names the timed start in flight or says that no tracked
+operation was.
 The review fixes also stop a kill of the setup terminal from being lost when
 it arrives while the terminal's start is being prepared (the terminal no
 longer starts hidden afterwards).
@@ -73,8 +78,9 @@ Each half is held by a mutant: a single tick again fails 3 of 3 runs, and
 removing the fake fails 3 of 3.
 
 Not addressed: the other four stalls in the laptop log came during the
-Microsoft sign-in inside the chatgpt.com window and line up with the native
-Windows Hello (passkey) step. They are not app JavaScript work; their cause is
-unconfirmed, most likely native OS or Chromium work, and they stay open. The
+Microsoft sign-in inside the chatgpt.com window; the log ties one of them to
+the native Windows Hello (passkey) step. They are not app JavaScript work;
+their cause is unconfirmed, most likely native OS or Chromium work, and they
+stay open. The
 new [jank] attribution should show whether a tracked start was in flight the
 next time one happens.

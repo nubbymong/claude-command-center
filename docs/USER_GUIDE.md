@@ -325,9 +325,11 @@ Claude account can be to claude.ai:
   in a Codex session's right-click menu, opens a sign-in window. It keeps the
   sign-in in that account's own browser storage in the app, apart from every
   other account, and nothing is copied from your own browser. The window
-  closes once the sign-in and your email are confirmed, and the row then
-  reads chatgpt.com: signed in as that email. A sign-in that does not finish
-  (the window closed, Cancel, or five minutes with no sign-in) is cleared.
+  closes by itself once the sign-in and your email are confirmed, and the row
+  then reads chatgpt.com: signed in as that email. If you close it yourself
+  once you are signed in, the app still checks for a few seconds and keeps
+  that sign-in. A sign-in that does not finish (the window closed before you
+  signed in, Cancel, or five minutes with no sign-in) is cleared.
 - A Codex session's browser pane offers **chatgpt.com** on its start page,
   as the account the session runs under; you can sign in there too.
 - **Sign out of chatgpt.com** in the account's menu clears that storage.
