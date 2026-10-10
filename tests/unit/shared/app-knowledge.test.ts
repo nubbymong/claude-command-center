@@ -848,6 +848,21 @@ describe('What\'s New (2.1.1-beta.2): the hardening it ships, as guarantees', ()
   })
 })
 
+// [host] On Windows the npm commands the app runs, or shows to copy, start
+// with npm.cmd: in PowerShell a plain npm runs npm.ps1, which the default
+// script policy refuses. What's New and the Feature Guide say so.
+describe('npm.cmd on Windows, in What\'s New (2.1.1-beta.2) and the Feature Guide', () => {
+  const top = changelog.find((e) => e.highlights?.startsWith('Codex becomes a full second assistant'))!
+  it('What\'s New says the Codex and Claude Code install commands start with npm.cmd on Windows', () => {
+    expect(top.changes.map((c) => c.description).join('\n')).toMatch(/On Windows the Codex install and update commands, whether the app runs them or shows them to copy, and the Claude Code install command it shows, start with npm\.cmd, so they work where PowerShell's script policy blocks npm\./)
+  })
+
+  it('the Feature Guide gives the Codex npm commands as npm.cmd on Windows', () => {
+    const s = APP_KNOWLEDGE_SECTIONS.find((x) => x.id === 'providers')!.body
+    expect(s).toMatch(/On Windows the npm commands start with npm\.cmd instead of npm \(npm\.cmd install -g @openai\/codex\), which runs in PowerShell even where its script policy blocks npm\./)
+  })
+})
+
 // [host] What the 2.1.1-beta.2 hardening adds where Ask Conductor and the
 // Feature Guide read it: the extra CLI arguments rule for Claude Code, a
 // session whose account is gone, and each known issue it ships with, with

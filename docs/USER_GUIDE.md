@@ -346,6 +346,11 @@ to copy:
 | npm (every platform) | `npm install -g @openai/codex` | `npm install -g @openai/codex@latest` |
 | Homebrew (macOS) | `brew install --cask codex` | `brew upgrade --cask codex` |
 
+On Windows the npm commands start with `npm.cmd` instead of `npm`
+(`npm.cmd install -g @openai/codex`): in PowerShell a plain `npm` runs
+npm.ps1, which the default script policy refuses to load, while `npm.cmd`
+runs there and in cmd.exe alike.
+
 OpenAI's script installers (`curl -fsSL https://chatgpt.com/codex/install.sh | sh`
 on macOS and Linux, and a PowerShell one on Windows) are shown for you to read
 and run yourself; CCC never runs them. When CCC can tell how the Codex it found

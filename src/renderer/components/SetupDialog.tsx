@@ -16,6 +16,7 @@ import {
 } from './ui/Dialog'
 import { noteClaudeMissingAtSetup, type FirstRunOutcome } from '../onboarding/provider-choice'
 import { launchRefusalOf } from '../../shared/providers'
+import { claudeCodeInstallCommand } from '../utils/claudeInstallCommand'
 
 interface Props {
   /** `{ codexOnly: true }` when the user continued without Claude Code
@@ -27,10 +28,6 @@ interface Props {
 /** The first-run screen replaces the whole app, so its backdrop is the opaque
  *  app base rather than the usual scrim — there is nothing behind it to dim. */
 const OPAQUE_BACKDROP: React.CSSProperties = { background: 'var(--surface-base)' }
-
-/** The one thing the user has to run. Kept as a constant so the notice, the
- *  copy button and the test all speak about the same string. */
-const INSTALL_COMMAND = 'npm install -g @anthropic-ai/claude-code'
 
 type CliProbe = { installed: boolean; path?: string; probe: string }
 
@@ -83,6 +80,9 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
   const [cliProbe, setCliProbe] = useState<CliProbe | null>(null)
   const [probing, setProbing] = useState(false)
   const [copied, setCopied] = useState(false)
+  // The one thing the user has to run, for this computer's terminal (npm.cmd
+  // on Windows): the notice and the copy button speak about the same string.
+  const installCommand = claudeCodeInstallCommand(window.electronPlatform)
   const termContainerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -321,12 +321,12 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
                   style={{ background: 'var(--surface-stage)', borderColor: 'var(--border-subtle)', color: 'var(--brand)' }}
                   data-testid="setup-cli-install-command"
                 >
-                  {INSTALL_COMMAND}
+                  {installCommand}
                 </code>
                 <DialogButton
                   variant="secondary"
                   onClick={() => {
-                    void navigator.clipboard?.writeText(INSTALL_COMMAND).then(() => {
+                    void navigator.clipboard?.writeText(installCommand).then(() => {
                       setCopied(true)
                       setTimeout(() => setCopied(false), 1500)
                     }).catch(() => { /* clipboard blocked — the text is select-all anyway */ })

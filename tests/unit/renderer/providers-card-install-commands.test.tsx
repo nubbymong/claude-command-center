@@ -6,8 +6,9 @@
  * beside "Check again":
  *
  *   - a CLI main did not find (or that did not run, or could not be checked)
- *     gets the provider's own install commands, verbatim, each with Copy,
- *     and where they come from;
+ *     gets the provider's own install commands, verbatim (on Windows npm is
+ *     named npm.cmd, which PowerShell's script policy does not block), each
+ *     with Copy, and where they come from;
  *   - a CLI found but too old (or unsupported) gets the update commands;
  *   - a ready, unchecked or switched-off provider gets none, and main is not
  *     asked for them;
@@ -78,7 +79,7 @@ describe('Providers card: install and update commands (the retired Codex tab ins
     await render(codex({ discoveryState: 'missing', version: undefined }))
     expect(pa.installRecipes).toHaveBeenCalledWith('codex')
     expect(commands('install')).toEqual([
-      'npm install -g @openai/codex',
+      'npm.cmd install -g @openai/codex',
       'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"',
     ])
     expect(commands('update')).toEqual([])
@@ -101,7 +102,7 @@ describe('Providers card: install and update commands (the retired Codex tab ins
       await render(codex({ version: '0.150.2', compatibility }))
       // Main's answer before it knows which install it found: every update.
       expect(commands('update'), compatibility).toEqual([
-        'npm install -g @openai/codex@latest',
+        'npm.cmd install -g @openai/codex@latest',
         'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"',
       ])
       expect(commands('install')).toEqual([])
@@ -143,7 +144,7 @@ describe('Providers card: install and update commands (the retired Codex tab ins
     expect(byTest('provider-recipe-note-codex-npm-install')!.textContent).toContain('Needs Node.js and npm')
     const copy = byTest('provider-recipe-copy-codex-npm-install')!
     await act(async () => { copy.click() })
-    expect(writeText).toHaveBeenCalledWith('npm install -g @openai/codex')
+    expect(writeText).toHaveBeenCalledWith('npm.cmd install -g @openai/codex')
     expect(copy.textContent).toBe('Copied')
   })
 

@@ -25,16 +25,29 @@ describe('the Codex recipe registry', () => {
     }
   })
 
-  it('recipes are the README commands verbatim, from the pinned commit', () => {
+  it('recipes are the README commands verbatim, from the pinned commit; on Windows npm is named npm.cmd', () => {
     expect(CODEX_README_COMMIT).toMatch(/^[0-9a-f]{40}$/)
     expect(CODEX_INSTALL_SOURCE_URL).toBe(`https://github.com/openai/codex/blob/${CODEX_README_COMMIT}/README.md`)
-    const shown = new Set(platforms.flatMap((p) => codexInstallRecipes(p).filter((r) => r.purpose === 'install').map((r) => r.displayCommand)))
-    expect([...shown].sort()).toEqual([
+    const shown = (on: readonly CapabilityPlatform[]) =>
+      [...new Set(on.flatMap((p) => codexInstallRecipes(p).filter((r) => r.purpose === 'install').map((r) => r.displayCommand)))].sort()
+    expect(shown(['darwin', 'linux'])).toEqual([
       'brew install --cask codex',
       'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
       'npm install -g @openai/codex',
+    ])
+    expect(shown(['win32'])).toEqual([
+      'npm.cmd install -g @openai/codex',
       'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"',
     ])
+  })
+
+  it('Windows shows the npm install and update as npm.cmd, so Copy gives a line PowerShell runs under its default script policy; macOS and Linux show npm', () => {
+    expect(byId('win32', 'codex-npm-install').displayCommand).toBe('npm.cmd install -g @openai/codex')
+    expect(byId('win32', 'codex-npm-update').displayCommand).toBe('npm.cmd install -g @openai/codex@latest')
+    for (const p of ['darwin', 'linux'] as const) {
+      expect(byId(p, 'codex-npm-install').displayCommand, p).toBe('npm install -g @openai/codex')
+      expect(byId(p, 'codex-npm-update').displayCommand, p).toBe('npm install -g @openai/codex@latest')
+    }
   })
 
   it('a pipe-to-shell script is shown and copied, never run by the app: it carries no argv at all', () => {
@@ -47,13 +60,15 @@ describe('the Codex recipe registry', () => {
     }
   })
 
-  it('what may run is a package manager, as argv with no shell and no interpolation: the displayed text split exactly', () => {
+  it('what may run is a package manager, as argv with no shell and no interpolation: the displayed text split exactly, npm named npm.cmd on Windows', () => {
     for (const p of platforms) {
       for (const r of codexInstallRecipes(p)) {
         expect(r.autoRunAllowed, r.id).toBe(r.command !== null)
         if (!r.command) continue
         expect(['npm', 'brew'], r.id).toContain(r.command[0])
-        expect(r.command.join(' '), r.id).toBe(r.displayCommand)
+        const [program, ...args] = r.command
+        const named = p === 'win32' && program === 'npm' ? 'npm.cmd' : program
+        expect([named, ...args].join(' '), `${p} ${r.id}`).toBe(r.displayCommand)
         expect(r.command.every((a) => /^[A-Za-z0-9@./:_-]+$/.test(a)), r.id).toBe(true)
       }
     }

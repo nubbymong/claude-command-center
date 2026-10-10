@@ -111,7 +111,7 @@ On-demand reports over your own usage, Claude Code's and Codex's, runnable acros
 | | |
 |---|---|
 | **Claude Code** | The [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), installed and authenticated, unless you run Codex only |
-| **Codex** (optional) | OpenAI's Codex CLI, version 0.153.4 or newer (`npm install -g @openai/codex`). Sign in to Codex accounts from Settings → Accounts. Codex runs on this computer only in this release |
+| **Codex** (optional) | OpenAI's Codex CLI, version 0.153.4 or newer (`npm install -g @openai/codex`; in PowerShell on Windows, `npm.cmd install -g @openai/codex`). Sign in to Codex accounts from Settings → Accounts. Codex runs on this computer only in this release |
 | **Node.js** | 20+ (a Claude Code dependency) |
 | **Windows** | 10 or 11, x64. Installers are code-signed (SSL.com, publisher "Nicholas Moger"); SmartScreen may still prompt on a brand-new release — More info → Run anyway |
 | **macOS** | 13 (Ventura) or later on Apple Silicon. Builds are signed and notarised |

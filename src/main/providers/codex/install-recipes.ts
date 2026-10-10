@@ -1,6 +1,9 @@
 // How the Codex CLI is installed and updated (WP2, plan A9; design 8.4).
 // Code-defined, never scraped: every install command is copied verbatim from
-// the openai/codex README at the pinned commit below. The update commands are
+// the openai/codex README at the pinned commit below, except that on Windows
+// the npm commands name npm.cmd (shared/shell-program.ts): in PowerShell a
+// bare `npm` runs npm.ps1, which the default execution policy refuses to
+// load, so the README's line would fail as copied. The update commands are
 // the same package managers' own update of that documented package, and, for
 // a Codex OpenAI's own installer put there, that installer run again (as
 // Claude Code's own setup says: re-run the native installer). An update is
@@ -15,6 +18,7 @@
 // bypasses the PowerShell execution policy, which the design forbids the app
 // itself to do.
 import type { CapabilityPlatform } from '../../../shared/providers'
+import { shellProgram } from '../../../shared/shell-program'
 import type { InstallRecipe, InstalledCli } from '../core'
 
 export const CODEX_README_COMMIT = '39a2438d16514d0d6f88105d17b0f747994af487'
@@ -22,8 +26,10 @@ export const CODEX_INSTALL_SOURCE_URL = `https://github.com/openai/codex/blob/${
 const PUBLISHER = 'OpenAI'
 const ALL: readonly CapabilityPlatform[] = ['win32', 'darwin', 'linux']
 
-type Draft = Omit<InstallRecipe, 'providerId' | 'platform' | 'publisher' | 'sourceUrl' | 'mayElevate'> & {
+type Draft = Omit<InstallRecipe, 'providerId' | 'platform' | 'publisher' | 'sourceUrl' | 'mayElevate' | 'displayCommand'> & {
   platforms: readonly CapabilityPlatform[]
+  /** What is shown and copied there. */
+  displayCommand: string | ((p: CapabilityPlatform) => string)
   /** Whether the provider's own tooling may ask for administrator rights there. */
   mayElevate: boolean | ((p: CapabilityPlatform) => boolean)
   /** An update: the kind of install it updates. */
@@ -66,7 +72,7 @@ const npmMayElevate = (p: CapabilityPlatform) => p !== 'win32'
 const DRAFTS: readonly Draft[] = [
   {
     id: 'codex-npm-install', purpose: 'install', platforms: ALL, method: 'package-manager',
-    command: ['npm', 'install', '-g', '@openai/codex'], displayCommand: 'npm install -g @openai/codex',
+    command: ['npm', 'install', '-g', '@openai/codex'], displayCommand: (p) => `${shellProgram('npm', p)} install -g @openai/codex`,
     needsNetwork: true, mayElevate: npmMayElevate, autoRunAllowed: true,
     note: 'Needs Node.js and npm. A system-wide npm prefix may ask for administrator rights; the app never elevates on its own.',
   },
@@ -89,7 +95,7 @@ const DRAFTS: readonly Draft[] = [
   },
   {
     id: 'codex-npm-update', purpose: 'update', platforms: ALL, method: 'package-manager', updates: 'npm',
-    command: ['npm', 'install', '-g', '@openai/codex@latest'], displayCommand: 'npm install -g @openai/codex@latest',
+    command: ['npm', 'install', '-g', '@openai/codex@latest'], displayCommand: (p) => `${shellProgram('npm', p)} install -g @openai/codex@latest`,
     needsNetwork: true, mayElevate: npmMayElevate, autoRunAllowed: true,
     note: 'Updates an npm installation. The version is checked against the tested range afterwards.',
   },
@@ -120,8 +126,9 @@ const DRAFTS: readonly Draft[] = [
 export function codexInstallRecipes(platform: CapabilityPlatform, installed?: InstalledCli): readonly InstallRecipe[] {
   const kind = codexInstallKind(installed?.executable)
   const offered = (d: Draft) => d.purpose !== 'update' || kind === 'unknown' || d.updates === kind
-  return DRAFTS.filter((d) => d.platforms.includes(platform) && offered(d)).map(({ platforms: _p, mayElevate, updates: _u, ...d }) => ({
+  return DRAFTS.filter((d) => d.platforms.includes(platform) && offered(d)).map(({ platforms: _p, mayElevate, displayCommand, updates: _u, ...d }) => ({
     ...d, providerId: 'codex' as const, platform, publisher: PUBLISHER, sourceUrl: CODEX_INSTALL_SOURCE_URL,
+    displayCommand: typeof displayCommand === 'function' ? displayCommand(platform) : displayCommand,
     mayElevate: typeof mayElevate === 'function' ? mayElevate(platform) : mayElevate,
   }))
 }

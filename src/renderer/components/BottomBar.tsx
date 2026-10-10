@@ -8,6 +8,7 @@ import MultiAccountStatusline from './MultiAccountStatusline'
 import { useRegionTypography } from '../hooks/useTypography'
 import { formatInstalledVersion } from '../utils/versionLabel'
 import { useClaudeOff } from '../lib/claudeOff'
+import { claudeCodeInstallCommand } from '../utils/claudeInstallCommand'
 
 declare const __BUILD_TIME__: string
 declare const __APP_VERSION__: string
@@ -199,8 +200,8 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
 
                 <div className="rounded p-3" style={{ background: 'var(--surface-overlay)' }}>
                   <div className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Option 2: npm</div>
-                  <code className="block rounded px-2 py-1 font-mono text-xs select-all" style={{ background: 'var(--surface-base)', color: 'var(--brand)' }}>
-                    npm install -g @anthropic-ai/claude-code
+                  <code className="block rounded px-2 py-1 font-mono text-xs select-all" style={{ background: 'var(--surface-base)', color: 'var(--brand)' }} data-testid="bottombar-cli-npm-install-command">
+                    {claudeCodeInstallCommand(window.electronPlatform)}
                   </code>
                 </div>
 

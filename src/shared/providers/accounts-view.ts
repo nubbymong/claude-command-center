@@ -300,7 +300,8 @@ export interface InstallRecipeView {
    *  Windows it names npm.cmd, which PowerShell's execution policy does not
    *  block). Present only for a package-manager recipe main allows to run;
    *  absent means show and copy only. Not what the user is shown: that is
-   *  `displayCommand`, verbatim. */
+   *  `displayCommand`, verbatim (the documented command, with npm named
+   *  npm.cmd on Windows too). */
   runLine?: string
 }
 

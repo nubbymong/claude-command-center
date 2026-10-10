@@ -14,7 +14,8 @@
 //   - On Windows, PowerShell resolves `npm` to npm.ps1, which the default
 //     execution policy (Restricted) refuses to load: the install would fail
 //     for most Windows users. The line names npm.cmd, the batch shim installed
-//     beside it, which the execution policy does not govern. The app never
+//     beside it, which the execution policy does not govern (shellProgram,
+//     the one rule the commands the app shows follow too). The app never
 //     changes or bypasses the execution policy itself.
 //   - The program is typed bare (PowerShell reads a quoted first word as a
 //     string, not a command) and must be a plain word; every argument is
@@ -23,14 +24,11 @@
 //     splatting.
 import type { CapabilityPlatform } from '../../../shared/providers'
 import { quoteArgForShell } from '../../../shared/shell-quote'
+import { shellProgram } from '../../../shared/shell-program'
 import type { InstallRecipe } from './package'
 
 /** A program name that can be typed bare at the start of the line. */
 const PLAIN_PROGRAM = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
-
-/** On Windows: the batch shim for a program whose PowerShell resolution is a
- *  script the default execution policy refuses to load. */
-const WINDOWS_BATCH_SHIM: ReadonlyMap<string, string> = new Map([['npm', 'npm.cmd']])
 
 /** The line a terminal tab types to run `recipe` on `platform`, or undefined
  *  when the app must not run it (show and copy only). */
@@ -45,6 +43,5 @@ export function recipeRunLine(
   if (typeof program !== 'string' || !PLAIN_PROGRAM.test(program)) return undefined
   if (!args.every((a) => typeof a === 'string')) return undefined
   const isWin32 = platform === 'win32'
-  const typed = isWin32 ? (WINDOWS_BATCH_SHIM.get(program) ?? program) : program
-  return [typed, ...args.map((a) => quoteArgForShell(a, isWin32))].join(' ')
+  return [shellProgram(program, platform), ...args.map((a) => quoteArgForShell(a, isWin32))].join(' ')
 }

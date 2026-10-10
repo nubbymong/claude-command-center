@@ -175,3 +175,32 @@ describe('BottomBar with Claude Code switched off', () => {
     }
   })
 })
+
+// PowerShell runs npm.ps1 for a bare `npm`, and its default script policy
+// refuses to load it; npm.cmd is not subject to that policy.
+describe('BottomBar: the Claude CLI help', () => {
+  it('on Windows its npm option names npm.cmd; on macOS and Linux it names npm', async () => {
+    const api = (globalThis as any).window.electronAPI
+    const before = api.cli
+    api.cli = { check: vi.fn(() => Promise.resolve(false)) }
+    const w = window as unknown as { electronPlatform?: string }
+    const platformBefore = w.electronPlatform
+    try {
+      for (const [platform, command] of [
+        ['win32', 'npm.cmd install -g @anthropic-ai/claude-code'],
+        ['darwin', 'npm install -g @anthropic-ai/claude-code'],
+        ['linux', 'npm install -g @anthropic-ai/claude-code'],
+      ] as const) {
+        w.electronPlatform = platform
+        await render()
+        await act(async () => { (container.querySelector('[data-testid="bottom-bar-cli"]') as HTMLElement).click() })
+        expect(document.querySelector('[data-testid="bottombar-cli-npm-install-command"]')?.textContent, platform).toBe(command)
+        act(() => { root.unmount() })
+        root = createRoot(container)
+      }
+    } finally {
+      w.electronPlatform = platformBefore
+      api.cli = before
+    }
+  })
+})
