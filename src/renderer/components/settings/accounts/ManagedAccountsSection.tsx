@@ -267,12 +267,14 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
           testId={`account-linked-${id}-${a.id}`}
         />
       ))}
-      planCell={(
+      // Neither a plan nor a method (this computer's own sign-in before a
+      // usage read names its plan): no plan cell, so the name takes its track.
+      planCell={account.planLabel || method ? (
         <div className="flex flex-col items-start gap-0.5 min-w-0" data-testid={`account-plan-cell-${id}`}>
           {account.planLabel && <span className="truncate max-w-full" style={{ color: 'var(--text-primary)' }} data-testid={`account-plan-${id}`}>{account.planLabel}</span>}
           {method && <MutedLine testId={`account-method-${id}`}>{method}</MutedLine>}
         </div>
-      )}
+      ) : null}
       badges={(
         <>
           {account.isProviderDefault && <Pill tone="default" testId={`account-badge-default-${id}`}>Default</Pill>}

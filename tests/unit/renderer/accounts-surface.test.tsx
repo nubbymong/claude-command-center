@@ -455,7 +455,11 @@ describe('Codex rows', () => {
     expect(q('account-name-acc-local')?.textContent).toBe("This computer's Codex")
     act(() => { useProviderAccountsStore.setState({ snapshot: snapshot() }) })
     expect(q('account-method-acc-local')).toBeNull()
-    expect(q('account-plan-cell-acc-local')?.textContent).toBe('')
+    // Neither a plan nor a method: no plan cell, and the name takes its track.
+    expect(q('account-plan-cell-acc-local')).toBeNull()
+    expect(q('account-name-acc-local')!.parentElement!.classList.contains('col-span-2')).toBe(true)
+    expect(q('account-plan-cell-acc-work')).not.toBeNull()
+    expect(q('account-name-acc-work')!.parentElement!.classList.contains('col-span-2')).toBe(false)
     expect(q('provider-account-row-acc-local')?.textContent).toContain('alex@example.com')
     expect(document.body.textContent).not.toContain('account unverified')
   })

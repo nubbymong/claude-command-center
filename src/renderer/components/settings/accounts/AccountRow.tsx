@@ -114,6 +114,8 @@ export function AccountRow({ testId, chip, name, nameMuted, nameTestId, secondar
   /** Under the name: the provider's label (an email), or a note. */
   secondary?: React.ReactNode
   linked?: React.ReactNode
+  /** Plan and sign-in method. Absent (null) when the row has neither: the
+   *  name then takes the plan track. */
   planCell?: React.ReactNode
   badges?: React.ReactNode
   stateCell?: React.ReactNode
@@ -121,16 +123,24 @@ export function AccountRow({ testId, chip, name, nameMuted, nameTestId, secondar
   /** Below the row, aligned with the name. */
   children?: React.ReactNode
 }) {
+  // Every cell sits on the first line of text (baseline), level with the
+  // chip's initial, however far the cells below it run; centring each cell on
+  // its own height scattered them. The tracks never depend on what a row
+  // holds, so columns line up from row to row; a row with no plan gives that
+  // track to its name instead of truncating the name beside an empty one. The
+  // badge track keeps 128px, in px like the pills it holds, so a pill never
+  // runs into the state column; on a narrow card that floor comes out of the
+  // name and state tracks.
   return (
     <div className="py-3" style={{ borderTop: '1px solid var(--border-subtle)' }} data-testid={testId}>
-      <div className="grid items-center gap-3 text-[13px] grid-cols-[26px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.5fr)_28px]">
+      <div className="grid items-baseline gap-3 text-[13px] grid-cols-[26px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(128px,1.1fr)_minmax(0,1.5fr)_28px]">
         {chip}
-        <div className="flex flex-col items-start gap-0.5 min-w-0">
+        <div className={`flex flex-col items-start gap-0.5 min-w-0${planCell ? '' : ' col-span-2'}`}>
           <span className="font-semibold truncate max-w-full" style={{ color: nameMuted ? 'var(--text-muted)' : 'var(--text-primary)' }} title={name} data-testid={nameTestId}>{name}</span>
           {secondary}
           {linked}
         </div>
-        <div className="flex flex-col items-start gap-0.5 min-w-0">{planCell}</div>
+        {planCell ? <div className="flex flex-col items-start gap-0.5 min-w-0">{planCell}</div> : null}
         <div className="flex flex-col items-start gap-1 min-w-0">{badges}</div>
         <div className="flex flex-col items-start gap-1 min-w-0">{stateCell}</div>
         {menu}

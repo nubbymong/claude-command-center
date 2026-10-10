@@ -210,6 +210,27 @@ describe('one row for both providers (rows 8, 24)', () => {
     render(s)
     expect(q('account-chip-acc-work')!.tagName).toBe('SPAN')
   })
+
+  it('a row with neither a plan nor a sign-in method gives the name the plan track, on both providers', () => {
+    render(snapshot())
+    const nameCell = (id: string) => q(id)!.parentElement!
+    const spans = (id: string) => nameCell(id).classList.contains('col-span-2')
+    const cellCount = (id: string) => nameCell(id).parentElement!.children.length
+    // This computer's own sign-in: no method, and no plan before a usage read names one.
+    expect(q('account-plan-cell-acc-local')).toBeNull()
+    expect(spans('account-name-acc-local')).toBe(true)
+    expect(cellCount('account-name-acc-local')).toBe(5)
+    // A sign-in method alone keeps the plan cell.
+    expect(q('account-method-acc-work')?.textContent).toBe('ChatGPT sign-in')
+    expect(spans('account-name-acc-work')).toBe(false)
+    expect(cellCount('account-name-acc-work')).toBe(6)
+    // Claude: the primary account's "Primary" is its plan cell; another account has none.
+    expect(q('primary-badge-profile-primary')?.textContent).toBe('Primary')
+    expect(spans('profile-name-profile-primary')).toBe(false)
+    expect(cellCount('profile-name-profile-primary')).toBe(6)
+    expect(spans('profile-name-profile-work')).toBe(true)
+    expect(cellCount('profile-name-profile-work')).toBe(5)
+  })
 })
 
 describe('the identity editor (row 7)', () => {
