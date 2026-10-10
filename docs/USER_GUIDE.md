@@ -12,8 +12,10 @@ next to your install see [`dev-alongside-prod.md`](./dev-alongside-prod.md).
    directory and checks that the `claude` CLI is on your PATH. If it is not
    there, the screen lists Claude Code's install commands with **Run it for me**
    and **Copy** (see [Installing from setup](#installing-from-setup)), and has
-   **Check again**; or choose **Use Codex only** if you only use Codex. Every
-   setup screen has **Exit**, which closes CCC.
+   **Check again**; or choose **Use Codex only** if you only use Codex. The
+   screens where you choose CCC's folders and install and set up Claude Code
+   have **Exit**, which closes the window (and quits CCC on Windows and
+   Linux); the pages after them do not.
 2. A fresh install asks **Which assistants will you use?**: Claude Code, Codex,
    or both. Choosing Codex adds a **Set up Codex** page (see
    [Installing or updating Codex](#installing-or-updating-codex) and
