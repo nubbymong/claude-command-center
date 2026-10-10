@@ -13,7 +13,8 @@
  *
  * The REAL cloud-agent manager and the REAL launch gate; the accounts
  * service's answer is scripted (its rule is proven against real settings in
- * provider-launch-gate.test.ts), and child_process is faked, so nothing runs.
+ * provider-launch-gate.test.ts), and child_process and the first-start
+ * warm-up are faked, so nothing runs.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 // On Windows, programs are found in PATH's folders (windows-programs.ts); stubbed here,
@@ -47,7 +48,7 @@ vi.mock('../../../src/main/config-manager', () => ({
   ensureConfigDir: vi.fn(),
 }))
 // Held when a test says so: the dispatch then waits here, as a real one does.
-const h = vi.hoisted(() => ({ install: null as null | Promise<void>, refresh: null as null | Promise<void>, scan: null as null | Promise<void>, profileDir: '', writeThrows: false, acquireThrows: false }))
+const h = vi.hoisted(() => ({ install: null as null | Promise<void>, refresh: null as null | Promise<void>, scan: null as null | Promise<void>, profileDir: '', writeThrows: false, acquireThrows: false, warmMs: 0 }))
 // The prompt file's write, made to fail when a test says so (everything else
 // in fs is the real one).
 vi.mock('fs', async (orig) => {
@@ -79,6 +80,19 @@ const waitForProfileRefresh = vi.fn(async () => { if (h.refresh) await h.refresh
 vi.mock('../../../src/main/profile-consumers', () => ({
   acquireProfileConsumer: () => { if (h.acquireThrows) throw new Error('hold refused'); return () => {} },
   waitForProfileRefresh: (...a: unknown[]) => waitForProfileRefresh(...(a as [])),
+}))
+// ADR-025: on Windows a dispatch awaits the first-start warm-up of the program
+// it found, before the account refresh wait. Faked here: the real one checks
+// the file on the thread pool and starts the program in a worker through its
+// own child_process, which the fake above does not reach. It takes h.warmMs,
+// as a real one takes time (first-start-cloud-agent.test.ts covers the call).
+const warmFirstStart = vi.fn(async (_program: string, _env: unknown) => {
+  if (h.warmMs > 0) await new Promise<void>((r) => setTimeout(r, h.warmMs))
+  return { outcome: 'ran' as const, exitCode: 0, timedOut: false }
+})
+vi.mock('../../../src/main/first-start-warmup', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/first-start-warmup')>()),
+  warmFirstStart: (...a: unknown[]) => warmFirstStart(...(a as [string, unknown])),
 }))
 const gateManagedLaunch = vi.fn(async () => { if (h.scan) await h.scan; return null })
 vi.mock('../../../src/main/managed-launch-diagnostics', async (importOriginal) => ({
@@ -113,6 +127,8 @@ beforeEach(() => {
   installVersion.mockClear()
   gateManagedLaunch.mockClear()
   waitForProfileRefresh.mockClear()
+  warmFirstStart.mockClear()
+  h.warmMs = 0
   h.install = null
   h.refresh = null
   h.scan = null
@@ -179,9 +195,12 @@ describe('switched off while a dispatch waits: the agent is failed with the reas
   it("during its account's refresh wait", async () => {
     const refresh = deferred()
     h.refresh = refresh.promise
+    // On Windows the warm-up comes before this wait and takes time, so the
+    // test waits until the dispatch reaches the wait, not for a set number of ticks.
+    h.warmMs = 20
     const pending = dispatchAgent({ ...PARAMS, legacyVersion: undefined, profileId: 'prof-a' })
-    await tick()
-    expect(waitForProfileRefresh).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(waitForProfileRefresh).toHaveBeenCalledTimes(1))
+    if (process.platform === 'win32') expect(warmFirstStart).toHaveBeenCalledWith('C:\\Tools\\claude.exe', expect.any(Function))
     acct.claude = 'off'
     refresh.resolve()
     const agent = await pending as { status: string; error?: string }
