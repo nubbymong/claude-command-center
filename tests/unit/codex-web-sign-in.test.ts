@@ -320,10 +320,10 @@ describe('[host] the sign-in window navigation (pure)', () => {
   })
 })
 
-// The full off-site host list, pinned. A host joins it only with evidence of a
-// sign-in that needs it (Microsoft's two: a credential-free probe of its
-// main-frame hops), and the window's own predicate still refuses every other
-// host, a lookalike of a listed one included.
+// The full off-site host list, pinned. A host joins it only when a sign-in
+// needs it (Microsoft's sign-in pages, its passkey sign-in page among them),
+// and the window's own predicate still refuses every other host, a lookalike
+// of a listed one included.
 describe('[host] the chatgpt.com sign-in hosts, pinned', () => {
   it('are exactly these, Microsoft sign-in among them', () => {
     expect([...CODEX_WEB_SERVICE.signInHosts]).toEqual([
@@ -332,6 +332,7 @@ describe('[host] the chatgpt.com sign-in hosts, pinned', () => {
       'appleid.apple.com',
       'login.microsoftonline.com',
       'login.live.com',
+      'login.microsoft.com',
     ])
     expect(Object.isFrozen(CODEX_WEB_SERVICE.signInHosts)).toBe(true)
   })
@@ -345,6 +346,20 @@ describe('[host] the chatgpt.com sign-in hosts, pinned', () => {
     ]) expect(signInNavAllowed(CODEX_WEB_SERVICE, url, true), url).toBe(true)
   })
 
+  it('the window lets the main frame go to the Microsoft passkey sign-in page', () => {
+    for (const url of [
+      'https://login.microsoft.com/consumers/fido/get',
+      'https://login.microsoft.com/consumers/fido/get?mkt=en-US',
+      'https://Login.Microsoft.com/consumers/fido/get',
+      'https://login.microsoft.com:443/consumers/fido/get',
+    ]) {
+      expect(signInNavAllowed(CODEX_WEB_SERVICE, url, true), url).toBe(true)
+      // An event that does not say it is a sub-frame is the main frame.
+      expect(signInNavAllowed(CODEX_WEB_SERVICE, url), url).toBe(true)
+      expect(isWebServiceSignInHop(CODEX_WEB_SERVICE, url), url).toBe(true)
+    }
+  })
+
   it('the window still refuses a lookalike, another host, http, another port, and the Microsoft hosts left out', () => {
     for (const url of [
       'https://login.microsoftonline.com.example.net/consumers/oauth2/v2.0/authorize',
@@ -356,7 +371,12 @@ describe('[host] the chatgpt.com sign-in hosts, pinned', () => {
       'http://login.live.com/oauth20_authorize.srf',
       'https://login.microsoftonline.com:8443/x',
       'https://login.live.com:444/x',
-      'https://login.microsoft.com/consumers/fido/get',
+      'https://login.microsoft.com.example.net/consumers/fido/get',
+      'https://loginmicrosoft.com/x',
+      'https://evil-login.microsoft.com/x',
+      'https://x.login.microsoft.com/',
+      'http://login.microsoft.com/consumers/fido/get',
+      'https://login.microsoft.com:8443/consumers/fido/get',
       'https://account.live.com/ChangePassword',
       'https://signup.live.com/',
     ]) {
@@ -486,6 +506,32 @@ describe('[host] the sign-in window', () => {
       expect(badSub.preventDefault, ev).toHaveBeenCalled()
     }
     await p
+  })
+
+  it('lets the main frame reach the Microsoft passkey sign-in page on both events, and logs it allowed', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    const p = runServiceSignIn(RUN({ timeoutMs: 60 }))
+    await tick(5)
+    const w = created[0]
+    try {
+      for (const ev of ['will-navigate', 'will-redirect']) {
+        const passkey = { preventDefault: vi.fn(), isMainFrame: true }
+        w.handlers[ev](passkey, 'https://login.microsoft.com/consumers/fido/get')
+        expect(passkey.preventDefault, ev).not.toHaveBeenCalled()
+        const lookalike = { preventDefault: vi.fn(), isMainFrame: true }
+        w.handlers[ev](lookalike, 'https://login.microsoft.com.example.net/consumers/fido/get')
+        expect(lookalike.preventDefault, ev).toHaveBeenCalled()
+      }
+    } finally {
+      // The run always settles here, so its log never reaches the next test.
+      await p
+    }
+    const res = await p
+    expect(res.ok).toBe(false)
+    const line = logs.filter((l) => /did not complete/.test(l))[0] ?? ''
+    expect(line).toContain('login.microsoft.com (allowed)')
+    expect(line).not.toContain('login.microsoft.com (blocked)')
+    expect(line).toContain('login.microsoft.com.example.net (blocked)')
   })
 
   it('a run that does not complete logs cookie NAMES and off-site HOSTS, never values or query strings', async () => {

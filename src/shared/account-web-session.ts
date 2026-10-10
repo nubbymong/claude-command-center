@@ -356,18 +356,21 @@ export const CODEX_WEB_SERVICE: WebServiceDescriptor = Object.freeze({
   // A credential-free probe verified Microsoft's main-frame hops up to its email
   // page, not a completed sign-in: auth.openai.com, then
   // login.microsoftonline.com, then login.live.com, whose page config also takes
-  // the password and the stay-signed-in answer there. UNVERIFIED: the other
-  // methods' hosts (email and phone, Google, Apple); the owner's sign-in run
-  // confirms them. Left out until a sign-in shows it needs them:
-  // login.microsoft.com (passkey sign-in) and account.live.com (password reset
-  // and security checks); a blocked host shows in the run's off-site hosts log
-  // line.
+  // the password and the stay-signed-in answer there. A real sign-in showed that
+  // a personal account that signs in with a passkey goes on to
+  // login.microsoft.com; the whole host is allowed, as for the others. UNVERIFIED:
+  // whether the passkey step then completes in this window, and the other
+  // methods' hosts (email and phone, Google, Apple);
+  // the owner's sign-in run confirms them. Left out until a sign-in shows it
+  // needs it: account.live.com (password reset and security checks); a blocked
+  // host shows in the run's off-site hosts log line.
   signInHosts: Object.freeze([
     'auth.openai.com',
     'accounts.google.com',
     'appleid.apple.com',
     'login.microsoftonline.com',
     'login.live.com',
+    'login.microsoft.com',
   ]),
 })
 

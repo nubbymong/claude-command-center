@@ -163,6 +163,24 @@ describe('[host] codexPaneNavDecision (pure, tri-state)', () => {
     }
   })
 
+  it('the Microsoft passkey sign-in page: allowed signed out, its lookalikes never; real browser signed in; unknown blocks', () => {
+    const PASSKEY = 'https://login.microsoft.com/consumers/fido/get'
+    expect(codexPaneNavDecision(PASSKEY, false)).toBe('allow')
+    expect(codexPaneNavDecision('https://Login.Microsoft.com/consumers/fido/get?mkt=en-US', false)).toBe('allow')
+    for (const bad of [
+      'https://login.microsoft.com.example.net/consumers/fido/get',
+      'https://loginmicrosoft.com/x',
+      'https://evil-login.microsoft.com/x',
+      'https://x.login.microsoft.com/',
+      'http://login.microsoft.com/consumers/fido/get',
+      'https://login.microsoft.com:8443/consumers/fido/get',
+    ]) {
+      expect(codexPaneNavDecision(bad, false), bad).toBe('block')
+    }
+    expect(codexPaneNavDecision(PASSKEY, true)).toBe('external')
+    expect(codexPaneNavDecision(PASSKEY, null)).toBe('block')
+  })
+
   it('unknown: every off-site host is blocked, the sign-in hosts included', () => {
     expect(codexPaneNavDecision(IDP, null)).toBe('block')
     expect(codexPaneNavDecision('https://evil.example/', null)).toBe('block')
