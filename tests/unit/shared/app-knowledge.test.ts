@@ -853,8 +853,11 @@ describe('What\'s New (2.1.1-beta.2): the hardening it ships, as guarantees', ()
 // script policy refuses. What's New and the Feature Guide say so.
 describe('npm.cmd on Windows, in What\'s New (2.1.1-beta.2) and the Feature Guide', () => {
   const top = changelog.find((e) => e.highlights?.startsWith('Codex becomes a full second assistant'))!
-  it('What\'s New says the Codex and Claude Code install commands start with npm.cmd on Windows', () => {
-    expect(top.changes.map((c) => c.description).join('\n')).toMatch(/On Windows the Codex install and update commands, whether the app runs them or shows them to copy, and the Claude Code install command it shows, start with npm\.cmd, so they work where PowerShell's script policy blocks npm\./)
+  it('What\'s New says only the npm install and update commands, Claude Code\'s and Codex\'s alike, start with npm.cmd on Windows', () => {
+    const said = top.changes.map((c) => c.description).join('\n')
+    expect(said).toMatch(/On Windows the npm install and update commands, for Claude Code and Codex alike, whether the app runs them or shows them to copy, start with npm\.cmd, so they work where PowerShell's script policy blocks npm\./)
+    // The publishers' own installers come first and are not npm commands.
+    expect(said).not.toMatch(/the Codex install and update commands[^.]*start with npm\.cmd/)
   })
 
   it('the Feature Guide gives the Codex npm commands as npm.cmd on Windows', () => {
@@ -938,7 +941,8 @@ describe('installing from setup, in What\'s New (2.1.1-beta.2) and the Feature G
     expect(said).toMatch(/Claude Code and Codex can both be installed from setup\. Every install or update command has Run it for me, which runs it in a visible terminal once you confirm it, and Copy\./)
     expect(said).toMatch(/The tool's own installer comes first \(Anthropic's from claude\.ai, OpenAI's from chatgpt\.com\), and its confirmation says it downloads a script from there and runs it; npm comes second, and says so when Node\.js is not found\./)
     expect(said).toMatch(/Setup checks again when the command ends, also when it fails or you press Ctrl\+C on Windows, and finds the new install without restarting the app\./)
-    expect(said).toMatch(/Settings, Accounts and the CLI help at the foot of the window offer the same\. Every setup screen has Exit\./)
+    expect(said).toMatch(/Settings, Accounts and the CLI help at the foot of the window offer the same\. The first-run setup screens that check for Claude Code have Exit\./)
+    expect(said).not.toMatch(/Every setup screen has Exit/)
   })
 
   it('the Feature Guide says how the install commands run, in order, and when the app looks again', () => {
@@ -955,7 +959,8 @@ describe('installing from setup, in What\'s New (2.1.1-beta.2) and the Feature G
     expect(body('providers')).toMatch(/If Claude Code is not installed, the first setup screen says so and lists its install commands, Anthropic's native installer first and npm second, each with Run it for me and Copy: Run it for me runs the command in a terminal on that screen once you confirm it, and setup checks again when it ends and carries on as soon as Claude Code is found\./)
     const t = body('troubleshooting')
     expect(t).toMatch(/The page lists the install commands, each with Run it for me and Copy, says which check it ran, and has Check again; setup checks again by itself when a command it ran ends, and carries on once Claude Code is found\./)
-    expect(t).toMatch(/Every setup screen has Exit, which closes the app\./)
+    expect(t).toMatch(/The first-run setup screens that check for Claude Code have Exit, which closes the app\./)
+    expect(t).not.toMatch(/Every setup screen has Exit/)
     expect(t).not.toMatch(/restart the app so it picks up the new PATH/)
     expect(t).not.toMatch(/gives you the install command to copy/)
   })

@@ -11,7 +11,7 @@
 // for its worker_threads port; the thread itself, the message plumbing and the
 // quit's stop are first-start-worker-thread.test.ts's.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, existsSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -74,7 +74,12 @@ describe('the first-start worker (ADR-025)', () => {
     expect(r.spawnError).toBeUndefined()
     expect(typeof r.startMs).toBe('number')
     const seen = JSON.parse(r.stdout ?? '') as { argv: string[]; cwd: string; mark: string | null; leak: string | null }
-    expect({ ...seen, cwd: seen.cwd.toLowerCase() }).toEqual({ argv: ['one'], cwd: dir.toLowerCase(), mark: 'given', leak: null })
+    const { cwd, ...rest } = seen
+    expect(rest).toEqual({ argv: ['one'], mark: 'given', leak: null })
+    // The folder it was given, named as given or as the OS resolves it: on
+    // macOS the temp folder's /var/... is a link the child reports as
+    // /private/var/..., and on Windows an 8.3 short name may come back long.
+    expect([dir, realpathSync.native(dir)].map((p) => p.toLowerCase())).toContain(cwd.toLowerCase())
     await new Promise((res) => setTimeout(res, 700))
     expect(run.answers).toHaveLength(1)
     expect(run.closed()).toBe(true)

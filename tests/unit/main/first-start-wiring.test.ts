@@ -7,7 +7,7 @@
 // Codex CLI run are faked; the only file is an empty codex.exe in a temp
 // folder, which nothing runs.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync, existsSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
 
@@ -73,7 +73,10 @@ describe.runIf(process.platform === 'win32')('the Codex package (ADR-025)', () =
   it('its own discovery warms the executable it resolved before the --version run, with that run\'s environment', async () => {
     const pkg = createCodexPackage({ hostHome: { env: {}, homeDir: dir } })
     expect(await pkg.setup!.discover()).toMatchObject({ state: 'found' })
-    expect(h.order.map((o) => o.toLowerCase())).toEqual([`warm ${h.exe}`, `run ${h.exe} --version`].map((o) => o.toLowerCase()))
+    // Discovery resolves the file it found (realpathSync.native), which
+    // names a temp folder's 8.3 short name, as on CI, by its long form.
+    const exe = realpathSync.native(h.exe)
+    expect(h.order.map((o) => o.toLowerCase())).toEqual([`warm ${exe}`, `run ${exe} --version`].map((o) => o.toLowerCase()))
     const warmEnv = (await (h.warm[0].env as () => Promise<{ env: unknown }> | { env: unknown })()).env
     expect(warmEnv).toBe(h.runs[0].env)
   })
