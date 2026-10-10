@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // resolveHeadlessProfileHome picks the home for headless `claude` spawns
 // (Sentinel analysis, insights). Bug: when account profiles exist but none is
 // the captured primary and no analysis account is chosen, it fell through to

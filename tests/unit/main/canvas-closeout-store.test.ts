@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // Close-out (#365) in the review store: the agent's `canvas_verdict` write, the
 // user's own 'stale' verdict, Reopen, and the library's per-canvas bulk.
 //

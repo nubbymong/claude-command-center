@@ -10,6 +10,14 @@ export function spentCommand(opts: TerminalOptions | undefined): TerminalOptions
   return rest
 }
 
+/** How an install or update line main built runs: typed into a plain shell,
+ *  never elevated, with none of the command-button secrets in its
+ *  environment. The install tab and the first-run screen's own install
+ *  terminal both start it this way. */
+export function installTerminalOptions(command: string): TerminalOptions {
+  return { command, elevated: false, noCommandSecrets: true }
+}
+
 /**
  * Open a terminal tab that runs one command, in plain sight.
  *
@@ -28,7 +36,10 @@ export function spentCommand(opts: TerminalOptions | undefined): TerminalOptions
  * third party's install script, so the secrets are left out of the
  * environment it inherits. That keeps them out of its way; it is not a
  * boundary against a script running as the same user. It stays on the tab's
- * options, so a Restart's plain shell goes without them too.
+ * options, so a Restart's plain shell goes without them too. On Windows the
+ * same mark keeps the tab's program lookup to the folders PATH names in full
+ * (pty-manager passes it to the spawn builder as fullyQualifiedLookup), so
+ * leaving it out also drops that.
  *
  * Returns the new session id.
  */
@@ -49,7 +60,7 @@ export function openCommandTerminal(opts: { label: string; command: string }): s
     transient: true,
     // The stored shape of a terminal-only session (see SessionDialog).
     provider: 'claude',
-    terminalOptions: { command: opts.command, elevated: false, noCommandSecrets: true },
+    terminalOptions: installTerminalOptions(opts.command),
   })
   return id
 }

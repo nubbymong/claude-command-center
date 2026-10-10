@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 // Canvas deletion must never escape the canvas store — verified on the runtime
 // that SHIPS, which is the whole point of this file living in the native suite.
 //

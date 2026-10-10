@@ -3,11 +3,9 @@ import { homedir } from 'os'
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
   writeFileSync,
   renameSync,
   unlinkSync,
-  copyFileSync,
   readdirSync,
   statSync,
   lstatSync,
@@ -15,7 +13,6 @@ import {
   realpathSync,
   rmdirSync,
   rmSync,
-  fchmodSync,
   openSync,
   fstatSync,
   readSync,
@@ -34,7 +31,7 @@ import { spawnClaudeHeadless } from './claude-headless'
 import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
 import { providerLaunchRefusal, providerProbeRefusal } from './provider-launch-gate'
 import type { ProviderLaunchRefused } from '../shared/providers'
-import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
+import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId, startProfileStepsPending, startProfileStepsSettled, profileCredentialFoldersChecked, checkProfileCredentialFolders } from './account-profiles'
 import { claudeSettingsTransportEnv } from './sentinel/sentinel-analysis'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
@@ -45,7 +42,11 @@ import { redactSecrets } from './hooks/hook-payload-redactor'
 import { atomicWriteFileSync } from './atomic-write'
 import type { InsightsCatalogue, InsightsData, InsightsRun, InsightsRunMember } from '../shared/types'
 import { getAccountsService } from './provider-accounts'
-import { sweepStaleFolders } from './stale-folder-sweep'
+import { ownerOnlyThroughHandle, sweepStaleFolders } from './stale-folder-sweep'
+import { withFullyQualifiedProgramLookup } from './windows-programs'
+import { warmFirstStart } from './first-start-warmup'
+import { timedStart } from './main-thread-ops'
+import { claudeVersionRunEnv } from './providers/review-support'
 import { isOpaqueId } from '../shared/providers'
 import type { AccountsSnapshot, ProviderId } from '../shared/providers'
 import { tryGetProviderPackage } from './providers/core'
@@ -124,6 +125,26 @@ function resolveInsightsAccount(profileId?: string): { home: string | null; prof
   return { home: getProfileConfigDir(resolved), profileId: resolved, accountEmail }
 }
 
+type InsightsAccount = ReturnType<typeof resolveInsightsAccount>
+
+/**
+ * resolveInsightsAccount as a launch must use it, the way a local launch
+ * does: while the start's profile steps are still to run (they may be making
+ * the primary account from the user's own sign-in) it waits for them first,
+ * and then for the resolved account's sign-in folders to have their
+ * owner-only verdict in this run, so the run reads a verdict instead of being
+ * refused for want of one. Each wait only when pending: with nothing pending
+ * it answers at once, not as a promise, so a run that needs no wait still
+ * takes its lock in the same step it was asked for.
+ */
+function resolveInsightsAccountReady(profileId?: string): InsightsAccount | Promise<InsightsAccount> {
+  if (startProfileStepsPending()) return startProfileStepsSettled().then(() => resolveInsightsAccountReady(profileId))
+  const account = resolveInsightsAccount(profileId)
+  const id = account.profileId
+  if (id && !profileCredentialFoldersChecked(id)) return checkProfileCredentialFolders(id).then(() => account)
+  return account
+}
+
 // Per-account in-flight lock: keyed by resolved profileId so two DIFFERENT
 // accounts can run concurrently, while the same account can't double-run.
 // Catalogue integrity across concurrent runs is preserved by upsertRun's
@@ -150,8 +171,149 @@ const codexUnleased = new Set<string>()
 // counts as each one's in use for its whole length, as Claude's roll-up always has.
 let crossAccountProviders: ReadonlySet<ProviderId> = new Set()
 
-function ensureDir(dir: string): void {
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+/** Why nothing was written when the insights folder is not Insights' own. */
+const INSIGHTS_FOLDER_REFUSED = "Nothing was written: the insights folder in the app's resources folder could not be checked as Insights' own folder. It must be a real folder, not a link or junction, and on macOS and Linux one only you can write to (a drive without file permissions cannot hold one)."
+/** Why nothing was written when a run's own folder could not be made new and checked. */
+const RUN_FOLDER_REFUSED = "Nothing was written: this run's own folder in the insights folder could not be made and checked."
+
+/** Every refusal insightsFolderRefused raises (and logs where it does). */
+const FOLDER_REFUSALS: ReadonlySet<string> = new Set([INSIGHTS_FOLDER_REFUSED, RUN_FOLDER_REFUSED])
+
+/** The refusal last logged, until the current turn ends. */
+let refusalLoggedThisTurn: string | null = null
+
+/** The refusal, logged where it is raised: once, when the same refusal is
+ *  raised again in the same turn (a refused run's own failure record meets
+ *  the same folder). */
+function insightsFolderRefused(message: string = INSIGHTS_FOLDER_REFUSED): Error {
+  if (refusalLoggedThisTurn !== message) {
+    logWarn(`[insights] ${message}`)
+    refusalLoggedThisTurn = message
+    queueMicrotask(() => { refusalLoggedThisTurn = null })
+  }
+  return new Error(message)
+}
+
+/**
+ * Whether `insights` is Insights' own folder: a real folder (never a link or
+ * a junction), its real path `<real resources>/insights`, and on POSIX this
+ * user's and writable by no one else. Reports, the catalogue and the runs
+ * folders are written only into a folder that holds at that check. Never
+ * throws.
+ */
+function insightsFolderHolds(insights: string = getInsightsDir()): boolean {
+  try {
+    const st = lstatSync(insights)
+    if (st.isSymbolicLink() || !st.isDirectory()) return false
+    if (typeof process.getuid === 'function' && (st.uid !== process.getuid() || (st.mode & 0o022) !== 0)) return false
+    const expected = join(realpathSync.native(dirname(insights)), basename(insights))
+    return samePath(realpathSync.native(insights), expected)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The insights folder, for a write. Made owner-only (0700) when it is not
+ * there yet, never through a link (a make of that one folder alone). On POSIX
+ * one of this user's that others can write to (made under a group-writable
+ * umask) is first made owner-only through a handle on the folder its lstat
+ * saw (ownerOnlyThroughHandle). Then it must hold (insightsFolderHolds).
+ * Null, having written nothing into it, when it does not. Never throws.
+ */
+function insightsDirForWrite(): string | null {
+  const insights = getInsightsDir()
+  try {
+    let st: BigIntStats | null = null
+    try { st = lstatSync(insights, { bigint: true }) } catch (e) { if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') return null }
+    if (!st) {
+      try { mkdirSync(insights, { mode: 0o700 }) } catch (e) { if ((e as NodeJS.ErrnoException)?.code !== 'EEXIST') return null }
+    } else if (!st.isSymbolicLink() && st.isDirectory() && typeof process.getuid === 'function' && Number(st.uid) === process.getuid() && (Number(st.mode) & 0o022) !== 0) {
+      if (!ownerOnlyThroughHandle(insights, st)) return null
+    }
+    return insightsFolderHolds(insights) ? insights : null
+  } catch {
+    return null
+  }
+}
+
+/** Whether `dir` is still a run's own folder: directly in an insights
+ *  folder that holds (insightsFolderHolds), named as a run, a real folder
+ *  (never a link), on POSIX this user's, and its real path
+ *  `<real insights>/<its name>`. Never throws. */
+function archiveDirHolds(dir: string): boolean {
+  try {
+    const insights = getInsightsDir()
+    if (!samePath(resolve(dirname(dir)), resolve(insights)) || !isValidRunId(basename(dir))) return false
+    if (!insightsFolderHolds(insights)) return false
+    const st = lstatSync(dir)
+    if (st.isSymbolicLink() || !st.isDirectory()) return false
+    if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return false
+    const expected = join(realpathSync.native(dirname(insights)), basename(insights), basename(dir))
+    return samePath(realpathSync.native(dir), expected)
+  } catch {
+    return false
+  }
+}
+
+/** A run's own folder, made for it in the insights folder: insights first
+ *  (insightsDirForWrite), then the folder alone, owner-only (0700), so an
+ *  entry already at its name (a folder or a link put there) refuses the run,
+ *  and then checked (archiveDirHolds); one made that does not hold is
+ *  removed again (it is empty). Throws, with the plain reason, when any of
+ *  that fails. */
+function makeArchiveDir(dir: string): void {
+  if (!insightsDirForWrite()) throw insightsFolderRefused()
+  try { mkdirSync(dir, { mode: 0o700 }) } catch { throw insightsFolderRefused(RUN_FOLDER_REFUSED) }
+  if (!archiveDirHolds(dir)) {
+    try { rmdirSync(dir) } catch { /* not empty, or gone: leave it */ }
+    throw insightsFolderRefused(RUN_FOLDER_REFUSED)
+  }
+}
+
+/** Whether `sub` in a run's own folder is still the folder made there for
+ *  it (makeArchiveSubDir): a real folder (never a link), on POSIX this
+ *  user's, and its real path `<real insights>/<run>/<sub>`. Asked after the
+ *  run's own folder is (archiveDirHolds). Never throws. */
+function archiveSubDirHolds(archiveDir: string, sub: string): boolean {
+  try {
+    const dir = join(archiveDir, sub)
+    const st = lstatSync(dir)
+    if (st.isSymbolicLink() || !st.isDirectory()) return false
+    if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return false
+    const insights = getInsightsDir()
+    const expected = join(realpathSync.native(dirname(insights)), basename(insights), basename(archiveDir), sub)
+    return samePath(realpathSync.native(dir), expected)
+  } catch {
+    return false
+  }
+}
+
+/** A folder made new in a run's own folder (Claude Code's facets): the run's
+ *  folder checked first (archiveDirHolds), then the folder alone, owner-only
+ *  (0700), so an entry already at its name (a folder or a link put there)
+ *  refuses it, and then checked (archiveSubDirHolds); one made that does not
+ *  hold is removed again (it is empty). Throws, with the plain reason, when
+ *  any of that fails. */
+function makeArchiveSubDir(archiveDir: string, sub: string): void {
+  if (!archiveDirHolds(archiveDir)) throw insightsFolderRefused(RUN_FOLDER_REFUSED)
+  try { mkdirSync(join(archiveDir, sub), { mode: 0o700 }) } catch { throw insightsFolderRefused(RUN_FOLDER_REFUSED) }
+  if (!archiveSubDirHolds(archiveDir, sub)) {
+    try { rmdirSync(join(archiveDir, sub)) } catch { /* not empty, or gone: leave it */ }
+    throw insightsFolderRefused(RUN_FOLDER_REFUSED)
+  }
+}
+
+/** Writes `name` in a run's own folder (or in `sub`, a folder made in it by
+ *  makeArchiveSubDir), owner-only (0600) and atomically, only while that
+ *  folder still holds (archiveDirHolds, then archiveSubDirHolds). The one
+ *  writer of every file of a run. Throws, writing nothing, when it does not
+ *  hold. */
+function writeArchiveFile(archiveDir: string, name: string, text: string | Uint8Array, sub: string | null = null): void {
+  if (!archiveDirHolds(archiveDir)) throw insightsFolderRefused(RUN_FOLDER_REFUSED)
+  if (sub !== null && !archiveSubDirHolds(archiveDir, sub)) throw insightsFolderRefused(RUN_FOLDER_REFUSED)
+  const dir = sub === null ? archiveDir : join(archiveDir, sub)
+  atomicWriteFileSync(join(dir, name), text, { mode: 0o600 })
 }
 
 let runCounter = 0
@@ -167,16 +329,27 @@ function generateRunId(): string {
 
 function loadCatalogue(): InsightsCatalogue {
   try {
-    const catalogueFile = getCatalogueFile()
-    if (existsSync(catalogueFile)) {
-      return JSON.parse(readFileSync(catalogueFile, 'utf-8'))
+    // Only as the regular file it is (readInsightsFile): one that is not
+    // (a FIFO, a folder, a link) reads as no runs, never a wait.
+    const text = readInsightsFile(getCatalogueFile(), INSIGHTS_CATALOGUE_MAX_BYTES)
+    if (text !== null) {
+      // One that is not a list of runs (a hand edit, a damaged disk) reads as
+      // no runs, and an entry that is not a run is left out: neither fails
+      // start-up or a read of the catalogue.
+      const parsed: unknown = JSON.parse(text)
+      const runs = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as { runs?: unknown }).runs : undefined
+      if (Array.isArray(runs)) {
+        return { ...(parsed as object), runs: runs.filter((r): r is InsightsRun => r !== null && typeof r === 'object' && !Array.isArray(r)) }
+      }
     }
   } catch { /* ignore */ }
   return { runs: [] }
 }
 
 function saveCatalogue(catalogue: InsightsCatalogue): void {
-  ensureDir(getInsightsDir())
+  // Only into Insights' own folder (insightsDirForWrite): refused, and the
+  // run that asked fails with the reason, when it is not.
+  if (!insightsDirForWrite()) throw insightsFolderRefused()
   // Atomic, and retried past the Windows rename race this file was the first to
   // hit (#213). Staging, exclusive create, retry and cleanup now live in
   // atomic-write.ts (#233) -- this was the prototype, not a special case.
@@ -202,25 +375,40 @@ function notifyRenderer(getWindow: () => BrowserWindow | null, run: InsightsRun)
   }
 }
 
+/** The folder in a run's own folder that Claude Code's facets are copied into. */
+const FACETS_DIRNAME = 'facets'
+/** The largest facet copied with a report; a larger one is left out. */
+const INSIGHTS_FACET_MAX_BYTES = 2 * 1024 * 1024
+
+/**
+ * Copies Claude Code's report of this run (its report.html, and the facets
+ * beside it when there are any) from the account's usage data into the
+ * run's own folder, as the bytes it holds. Each is read only as the regular
+ * file it is, within its size limit (readInsightsBytes), never waited on: a
+ * report that cannot be read so is no copy, a facet that cannot is left out
+ * (and logged). Each is written by
+ * the run's one writer (writeArchiveFile), the facets into a folder made new
+ * in the run's folder (makeArchiveSubDir), each folder checked again before
+ * each file. False, with the reason logged, when the report is not copied.
+ */
 function copyReportToArchive(archiveDir: string, home: string | null): boolean {
   try {
     const report = claudeReportPath(home)
     const facets = claudeFacetsDir(home)
-    if (!existsSync(report)) {
-      logError('[insights] report.html not found at ' + report)
+    const bytes = readInsightsBytes(report, INSIGHTS_REPORT_MAX_BYTES)
+    if (bytes === null) {
+      logError('[insights] report.html not found, or not a regular file within its size limit, at ' + report)
       return false
     }
-    copyFileSync(report, join(archiveDir, 'report.html'))
+    writeArchiveFile(archiveDir, 'report.html', bytes)
 
-    // Copy facets if they exist
     if (existsSync(facets)) {
-      const facetsTarget = join(archiveDir, 'facets')
-      ensureDir(facetsTarget)
-      const files = readdirSync(facets)
-      for (const file of files) {
-        if (file.endsWith('.json')) {
-          copyFileSync(join(facets, file), join(facetsTarget, file))
-        }
+      makeArchiveSubDir(archiveDir, FACETS_DIRNAME)
+      for (const file of readdirSync(facets)) {
+        if (!file.endsWith('.json')) continue
+        const facet = readInsightsBytes(join(facets, file), INSIGHTS_FACET_MAX_BYTES)
+        if (facet !== null) writeArchiveFile(archiveDir, file, facet, FACETS_DIRNAME)
+        else logWarn(`[insights] A facet was left out of the copy (not a regular file within its size limit): ${file}`)
       }
     }
     return true
@@ -281,6 +469,19 @@ function findTrustedCwd(): string {
 }
 
 /**
+ * The environment the /insights terminal runs under: `env`, and on Windows
+ * with the child's own program lookup kept to the folders PATH names in full
+ * (withFullyQualifiedProgramLookup: only fully qualified PATH folders, and the
+ * lookup setting in one spelling). There Claude Code is often an npm command
+ * shim, which starts `node` by a bare name; that name is looked for only in
+ * those folders, never in the terminal's working folder nor in one named
+ * relative to it. `env` itself is not changed.
+ */
+export function insightsTerminalEnv(env: Record<string, string>, platform: NodeJS.Platform = process.platform): Record<string, string> {
+  return platform === 'win32' ? withFullyQualifiedProgramLookup(env) : env
+}
+
+/**
  * Spawn Claude interactively via node-pty, type /insights, wait for report.html to update, then /exit.
  * This is needed because /insights is a TUI slash command, not a CLI argument.
  */
@@ -291,17 +492,23 @@ async function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Pro
   // own settings files are gated like any other launch's. A refusal throws
   // from withProfileHome below and rejects this promise.
   const projectGate = home ? await gateManagedLaunch(cwd) : null
+  // ADR-025: this can be the first start of a Claude Code that updated
+  // itself, which on Windows holds the start call while the OS checks the new
+  // program. That first start runs off the main thread first (a direct
+  // claude.exe only), with Claude's --version environment. Never a gate.
+  await warmFirstStart(cmd, () => ({ env: claudeVersionRunEnv(process.env, process.platform) }))
   return new Promise((resolve) => {
     const reportPath = claudeReportPath(home)
     logInfo(`[insights] Spawning Claude PTY for /insights: ${cmd} in ${cwd} (home=${home ?? 'default'})`)
 
-    const proc = pty.spawn(cmd, [], {
+    // The start holds the main thread: timed, a slow one logged by name only.
+    const proc = timedStart(cmd, () => pty.spawn(cmd, [], {
       name: 'xterm-256color',
       cols: 120,
       rows: 30,
       cwd,
-      env: withProfileHome(process.env as Record<string, string>, home, { launchId: 'insights', cwd, probe: false, projectGate })
-    })
+      env: insightsTerminalEnv(withProfileHome(process.env as Record<string, string>, home, { launchId: 'insights', cwd, probe: false, projectGate }))
+    }))
     // P3.15 round 4 (P2): an error on this PTY's input (the app types
     // /insights into it) or output never quits the app; the run settles on its
     // exit or its time limit.
@@ -526,9 +733,13 @@ export function loadPreviousKpis(currentRunId: string): string | null {
     // Aggregates are excluded explicitly: a cross-account roll-up has no
     // profileId, so `(r.profileId ?? null) === currentAccount` would otherwise
     // match it against every DEFAULT-account run and hand a roll-up to a single
-    // account as its "previous run".
+    // account as its "previous run". An entry whose id is not a run's own name
+    // (isValidRunId) is never one either: left out BEFORE the last is picked,
+    // so the previous run is always one of the runs inside the insights
+    // folder, and the newest good one.
     const completeRuns = catalogue.runs.filter(
       r =>
+        isValidRunId(r.id) &&
         r.status === 'complete' &&
         r.kind !== 'aggregate' &&
         r.id !== currentRunId &&
@@ -538,10 +749,8 @@ export function loadPreviousKpis(currentRunId: string): string | null {
     if (completeRuns.length === 0) return null
 
     const prevRun = completeRuns[completeRuns.length - 1]
-    const prevKpiPath = join(getInsightsDir(), prevRun.id, 'kpis.json')
-    if (!existsSync(prevKpiPath)) return null
-
-    return readFileSync(prevKpiPath, 'utf-8')
+    // Read only as the regular file it is, within its size limit.
+    return readInsightsFile(join(getInsightsDir(), prevRun.id, 'kpis.json'), INSIGHTS_KPIS_MAX_BYTES)
   } catch {
     return null
   }
@@ -571,10 +780,11 @@ export function loadPreviousKpis(currentRunId: string): string | null {
  * DEFINITIONS enter context, so both are needed and they do different jobs.
  *
  * Neither value contains a space or is empty, which is why they can be passed at
- * all: spawnClaudeHeadless runs with `shell: true`, which concatenates argv
- * without quoting, so an empty or spaced argument would vanish and let the
- * preceding flag swallow the next one. `--tools ""` for the no-tools case and
- * `--settings '{...}'` for the skills/CLAUDE.md overhead are blocked on that.
+ * all: spawnClaudeHeadless refuses an argument a shell or a batch file would
+ * re-read or drop (assertSafeArgv; on Windows an npm claude.cmd gets only plain
+ * arguments), so an empty or spaced argument is refused, not passed.
+ * `--tools ""` for the no-tools case and `--settings '{...}'` for the
+ * skills/CLAUDE.md overhead are blocked on that.
  */
 export function buildKpiSpawnArgs(): string[] {
   return ['-p', '--strict-mcp-config', '--tools', 'Read', '--allowedTools', 'Read', '--output-format', 'json']
@@ -897,8 +1107,9 @@ async function extractKpis(
 
   try {
     // kpis.json holds the account's analysed usage data; write it owner-only
-    // through the shared atomic helper (0600), not a bare 0644 writeFileSync.
-    atomicWriteFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(kpiData, null, 2), { mode: 0o600 })
+    // through the shared atomic helper (0600), not a bare 0644 writeFileSync,
+    // and only into the run's own folder (writeArchiveFile).
+    writeArchiveFile(archiveDir, 'kpis.json', JSON.stringify(kpiData, null, 2))
     logInfo('[insights] KPIs extracted and saved')
     return { ok: true }
   } catch (err) {
@@ -951,9 +1162,11 @@ function saveExtractionFailure(
     // applies only on CREATE, so writing into an existing inode inherited its
     // permissions, and the compensating chmod followed a link to harden someone
     // else's file. Exclusive create means the file is always new, so the mode
-    // always applies and the re-assert is no longer needed.
-    atomicWriteFileSync(
-      target,
+    // always applies and the re-assert is no longer needed. Only into the
+    // run's own folder (writeArchiveFile).
+    writeArchiveFile(
+      archiveDir,
+      basename(target),
       JSON.stringify(
         {
           at: new Date().toISOString(),
@@ -966,8 +1179,7 @@ function saveExtractionFailure(
         },
         null,
         2
-      ),
-      { mode: 0o600 }
+      )
     )
     logError(`[insights] Full failed reply saved to ${target}`)
   } catch (err) {
@@ -983,7 +1195,8 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
   // mid-run stops the run at its next step instead of starting it anyway).
   const refused = providerLaunchRefusal('claude')
   if (refused) return { refused }
-  const account = resolveInsightsAccount(opts?.profileId)
+  const ready = resolveInsightsAccountReady(opts?.profileId)
+  const account = ready instanceof Promise ? await ready : ready
   const key = accountKey(account.profileId)
   if (inFlight.has(key)) throw new Error('Insights already running for this account')
   inFlight.add(key)
@@ -1000,7 +1213,7 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
   // for that account reported "Insights already running" with nothing running.
   let releaseAccount: (() => void) | null = null
   try {
-    ensureDir(archiveDir)
+    makeArchiveDir(archiveDir)
     upsertRun(run)
     notifyRenderer(getWindow, run)
     logInfo(`[insights] Run ${id} account=${account.accountEmail ?? '(default)'} home=${account.home ?? 'global'}`)
@@ -1124,24 +1337,22 @@ const CLAUDE_SYNTHESIS_FOLDERS: RunFolders = { dirname: '.insights-claude-runs',
 
 /**
  * Whether `parent` is still the runs folder it was checked to be: `insights`
- * and it real folders (never links), its real path
- * `<real resources>/insights/<runs folder>`, and on POSIX both this user's
- * and both writable by no one else. Asked before any launch, again just
- * before the stale sweep, and again just before a run's folder is removed:
- * the sweep and the removal go ahead only on a runs folder that holds at
- * that check. Never throws.
+ * Insights' own folder (insightsFolderHolds), the runs folder a real folder
+ * (never a link), its real path `<real resources>/insights/<runs folder>`,
+ * and on POSIX this user's and writable by no one else. Asked before any
+ * launch, again just before the stale sweep (and by the sweep before its
+ * listing and before each folder it removes), and again just before a run's
+ * folder is removed: the sweep and the removal go ahead only on a runs
+ * folder that holds at that check. Never throws.
  */
 function runsFolderHolds(parent: string, kind: RunFolders): boolean {
   try {
     const insights = getInsightsDir()
     if (!samePath(resolve(parent), resolve(insights, kind.dirname))) return false
-    const posix = typeof process.getuid === 'function'
-    for (const dir of [insights, parent]) {
-      const st = lstatSync(dir)
-      if (st.isSymbolicLink() || !st.isDirectory()) return false
-      if (posix && st.uid !== process.getuid!()) return false
-      if (posix && (st.mode & 0o022) !== 0) return false
-    }
+    if (!insightsFolderHolds(insights)) return false
+    const st = lstatSync(parent)
+    if (st.isSymbolicLink() || !st.isDirectory()) return false
+    if (typeof process.getuid === 'function' && (st.uid !== process.getuid() || (st.mode & 0o022) !== 0)) return false
     const expected = join(realpathSync.native(dirname(insights)), basename(insights), kind.dirname)
     return samePath(realpathSync.native(parent), expected)
   } catch {
@@ -1151,48 +1362,18 @@ function runsFolderHolds(parent: string, kind: RunFolders): boolean {
 
 /** The runs folder of `kind`, made owner-only (0700) when it is not there
  *  yet; null when it cannot be, or does not hold (runsFolderHolds). The
- *  insights folder is checked before anything is made in it: a link there
- *  is refused, never made through. On POSIX an insights folder of this
- *  user's that others can write to (one made under a group-writable umask)
- *  is first made owner-only (0700), as the app's other owner-only folders
- *  are, through the folder its lstat saw (ownerOnlyThroughHandle); one that
- *  cannot be, or stays writable by others, is refused. */
+ *  insights folder is checked (and on POSIX made owner-only) before anything
+ *  is made in it (insightsDirForWrite): a link there is refused, never made
+ *  through. */
 function runsParentFor(kind: RunFolders): string | null {
-  const insights = getInsightsDir()
+  const insights = insightsDirForWrite()
+  if (!insights) return null
   const parent = join(insights, kind.dirname)
   try {
-    let st: BigIntStats | null = null
-    try { st = lstatSync(insights, { bigint: true }) } catch (e) { if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') return null }
-    if (st && (st.isSymbolicLink() || !st.isDirectory())) return null
-    if (st && typeof process.getuid === 'function' && Number(st.uid) === process.getuid() && (Number(st.mode) & 0o022) !== 0) {
-      if (!ownerOnlyThroughHandle(insights, st)) return null
-    }
     mkdirSync(parent, { recursive: true, mode: 0o700 })
     return runsFolderHolds(parent, kind) ? parent : null
   } catch {
     return null
-  }
-}
-
-/** POSIX: makes `dir` owner-only (0700) through a handle on the folder
- *  `seen` (its lstat) describes, so the change never lands on anything put
- *  in its place after that lstat. The handle is opened without following a
- *  link, and the change is made only when it is a folder, this user's, and
- *  that same folder (device and inode); false, changing nothing, when it is
- *  not or cannot be opened. A change the system refuses is left to the
- *  checks after it (runsFolderHolds). */
-function ownerOnlyThroughHandle(dir: string, seen: BigIntStats): boolean {
-  let fd: number | null = null
-  try {
-    fd = openSync(dir, fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0) | (fsConstants.O_NOFOLLOW ?? 0))
-    const open = fstatSync(fd, { bigint: true })
-    if (!open.isDirectory() || open.uid !== BigInt(process.getuid!()) || open.dev !== seen.dev || open.ino !== seen.ino) return false
-    try { fchmodSync(fd, 0o700) } catch { /* checked after either way */ }
-    return true
-  } catch {
-    return false
-  } finally {
-    if (fd !== null) try { closeSync(fd) } catch { /* already closed */ }
   }
 }
 
@@ -1212,7 +1393,7 @@ function codexRunsParent(): string | null {
  *  its own, so nothing above it is read. */
 function makeRunFolder(parent: string, kind: RunFolders): string {
   if (!runsFolderHolds(parent, kind)) throw new Error('the runs folder is not the one checked')
-  sweepStaleFolders(parent, kind.prefix, { maxAgeMs: STALE_CODEX_RUN_FOLDER_MS })
+  sweepStaleFolders(parent, kind.prefix, { maxAgeMs: STALE_CODEX_RUN_FOLDER_MS, parentHolds: () => runsFolderHolds(parent, kind) })
   const dir = mkdtempSync(join(parent, kind.prefix))
   let ok = false
   try {
@@ -1343,7 +1524,9 @@ async function codexModelRun(launch: { executable: string; env: Record<string, s
     // prompts, and takes no optional lock (Sentinel's analysis, round 2).
     const env = { ...launch.env, GIT_CEILING_DIRECTORIES: parent, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }
     const out = await port.run({ executable: launch.executable, env, cwd: folder, prompt })
-    if (!out.ok && out.killSettled instanceof Promise) await out.killSettled
+    // Whatever the outcome, the lease and the folder are held until what is
+    // left of the run has ended (within the runner's worst case).
+    if (out.killSettled instanceof Promise) await out.killSettled
     return out.ok ? { ok: true, text: out.text } : { ok: false, message: out.message }
   } finally {
     removeCodexRunFolder(folder, parent)
@@ -1409,7 +1592,7 @@ export async function runCodexInsights(
     logError(`[insights] Codex run ${id} failed: ${why}`)
   }
   try {
-    ensureDir(archiveDir)
+    makeArchiveDir(archiveDir)
     const info = codexAccountInfo(accountsSnapshot(), accountId)
     if (info.email) run.accountEmail = info.email
     run.statusMessage = 'Step 1/3: Reading the sessions...'
@@ -1471,9 +1654,10 @@ export async function runCodexInsights(
       failRun(r.failed)
       return id
     }
-    // Owner-only atomic writes (0600): both hold the account's analysed usage.
-    atomicWriteFileSync(join(archiveDir, 'report.json'), JSON.stringify(r.stored, null, 2), { mode: 0o600 })
-    atomicWriteFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(r.kpis, null, 2), { mode: 0o600 })
+    // Owner-only atomic writes (0600): both hold the account's analysed usage;
+    // only into the run's own folder (writeArchiveFile).
+    writeArchiveFile(archiveDir, 'report.json', JSON.stringify(r.stored, null, 2))
+    writeArchiveFile(archiveDir, 'kpis.json', JSON.stringify(r.kpis, null, 2))
     run.status = 'complete'
     run.statusMessage = undefined
     publish()
@@ -1642,7 +1826,7 @@ export async function runCrossAccountInsights(
   // inside the try, or a transient disk failure there strands CROSS_ACCOUNT_KEY
   // in `inFlight` and every later roll-up reports "already being generated".
   try {
-    ensureDir(archiveDir)
+    makeArchiveDir(archiveDir)
     publish()
     logInfo(`[insights] Cross-account run ${id} over ${targets.length} accounts`)
 
@@ -1755,7 +1939,7 @@ export async function runCrossAccountInsights(
     if (prompt === null) {
       // No marker could fence the comparison: nothing is sent, numbers only.
       run.error = CROSS_ACCOUNT_UNFENCED
-      atomicWriteFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(withNarrative(baseline, null), null, 2), { mode: 0o600 })
+      writeArchiveFile(archiveDir, 'kpis.json', JSON.stringify(withNarrative(baseline, null), null, 2))
       run.status = 'complete'
       run.statusMessage = undefined
       run.memberRunIds = members.map(m => m.runId)
@@ -1791,7 +1975,7 @@ export async function runCrossAccountInsights(
         if (!written.ok && written.signedOut) run.authFailed = true
       }
       const data = withNarrative(baseline, narrative)
-      atomicWriteFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(data, null, 2), { mode: 0o600 })
+      writeArchiveFile(archiveDir, 'kpis.json', JSON.stringify(data, null, 2))
       run.status = 'complete'
       run.statusMessage = undefined
       run.memberRunIds = members.map(m => m.runId)
@@ -1799,9 +1983,13 @@ export async function runCrossAccountInsights(
       logInfo(`[insights] Cross-account run ${id} complete: ${members.length} accounts, ${data.comparison.length} shared metrics, synthesis=${data.synthesis} (Codex)`)
       return id
     }
-    const home = synthesisMember.profileId
-      ? getProfileConfigDir(synthesisMember.profileId)
-      : resolveInsightsAccount(undefined).home
+    // The account it runs on, its sign-in folders with their owner-only
+    // verdict in this run first (resolveInsightsAccountReady, as a launch).
+    const synthesisAccount = synthesisMember.profileId
+      ? { home: getProfileConfigDir(synthesisMember.profileId), profileId: synthesisMember.profileId }
+      : await resolveInsightsAccountReady(undefined)
+    if (synthesisAccount.profileId && !profileCredentialFoldersChecked(synthesisAccount.profileId)) await checkProfileCredentialFolders(synthesisAccount.profileId)
+    const home = synthesisAccount.home
     // The synthesis is another Claude Code run: not started once Claude Code
     // has been switched off since the roll-up began (numbers only, and why).
     // It holds no tools and loads no settings file, memory file or MCP
@@ -1846,13 +2034,15 @@ export async function runCrossAccountInsights(
       // Record WHY there is no written analysis. Degrading silently to
       // numbers-only left a real run looking like the model had nothing to say,
       // when in fact the synthesis account's sign-in had expired.
-      const synthesisReason = describeClaudeError(result.stdout)
-      const authFailed = isAuthFailure(readClaudeFailureFacts(result.stdout, synthesisReason))
+      const described = describeClaudeError(result.stdout)
+      const authFailed = isAuthFailure(readClaudeFailureFacts(result.stdout, described))
+      // Plain prose before it is kept or logged, as the Codex synthesis's is.
+      const synthesisReason = described === null ? null : stripSpoofableText(described, 500)
       logError(
         `[insights] Cross-account synthesis unusable (code ${result.code}): ` +
         `${synthesisReason ?? 'no reason reported'}; falling back to a numbers-only roll-up`
       )
-      logError('[insights] Raw synthesis output:', result.stdout.slice(0, 500))
+      logError('[insights] Raw synthesis output:', stripSpoofableText(result.stdout.slice(0, 500), 500))
       run.error = authFailed
         ? `No written analysis: ${synthesisMember.label} needs to sign in again (${synthesisReason ?? 'authentication failed'})`
         : `No written analysis: ${synthesisReason ?? 'the synthesis pass did not return usable output'}`
@@ -1861,7 +2051,7 @@ export async function runCrossAccountInsights(
 
     const data = withNarrative(baseline, narrative)
     // Owner-only atomic write (0600): this kpis.json carries cross-account usage.
-    atomicWriteFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(data, null, 2), { mode: 0o600 })
+    writeArchiveFile(archiveDir, 'kpis.json', JSON.stringify(data, null, 2))
 
     run.status = 'complete'
     run.statusMessage = undefined
@@ -1900,24 +2090,40 @@ export function isValidRunId(id: unknown): id is string {
   return typeof id === 'string' && id.length > 0 && id.length <= 128 && RUN_ID_RE.test(id)
 }
 
-/** A Codex run's report.json, as main hands it to the page: a regular file
- *  (never a link or a folder; on POSIX opened without following one and
- *  without waiting on a FIFO's writer, and the open file the same one lstat
- *  saw, device and inode compared whole), at most the page's own cap
- *  (CODEX_REPORT_MAX_BYTES); anything else is no report. Never throws. */
-function readCodexReportFile(file: string): string | null {
+/** The largest report.html main hands the page (Claude Code's own report,
+ *  copied at the run); a larger one is no report. */
+export const INSIGHTS_REPORT_MAX_BYTES = 8 * 1024 * 1024
+/** The largest kpis.json main reads (a run's figures, a roll-up's table). */
+export const INSIGHTS_KPIS_MAX_BYTES = 2 * 1024 * 1024
+/** The largest catalogue main reads; far past any real one. */
+const INSIGHTS_CATALOGUE_MAX_BYTES = 64 * 1024 * 1024
+
+/** A file Insights keeps (a report, a run's figures, the catalogue), as
+ *  main reads it: a regular file (never a link or a folder; on POSIX opened
+ *  without following one and without waiting on a FIFO's writer, and the
+ *  open file the same one lstat saw, device and inode compared whole), at
+ *  most `maxBytes`, as text; anything else, a file that grew since lstat
+ *  included, is null. Never throws. */
+function readInsightsFile(file: string, maxBytes: number): string | null {
+  const bytes = readInsightsBytes(file, maxBytes)
+  return bytes === null ? null : bytes.toString('utf-8')
+}
+
+/** readInsightsFile's read, as the bytes the file holds. Never throws. */
+function readInsightsBytes(file: string, maxBytes: number): Buffer | null {
   try {
     const st = lstatSync(file, { bigint: true })
-    if (!st.isFile() || st.size > BigInt(CODEX_REPORT_MAX_BYTES)) return null
+    if (!st.isFile() || st.size > BigInt(maxBytes)) return null
     const fd = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0))
     try {
       const open = fstatSync(fd, { bigint: true })
       if (!open.isFile() || open.dev !== st.dev || open.ino !== st.ino) return null
-      // One byte past the cap tells a file that grew since from one that fits.
-      const buf = Buffer.alloc(CODEX_REPORT_MAX_BYTES + 1)
+      // One byte past the size lstat saw tells a file that grew since.
+      const size = Number(st.size)
+      const buf = Buffer.alloc(size + 1)
       let got = 0
       for (let n = 1; n > 0 && got < buf.length; got += n) n = readSync(fd, buf, got, buf.length - got, got)
-      return got > CODEX_REPORT_MAX_BYTES ? null : buf.subarray(0, got).toString('utf-8')
+      return got > size ? null : buf.subarray(0, got)
     } finally {
       closeSync(fd)
     }
@@ -1930,21 +2136,20 @@ export function getInsightsReport(runId: string): string | null {
   if (!isValidRunId(runId)) return null
   // P4.7: a Codex run keeps its report as data (report.json), which the page
   // checks and draws as text (shared/insights-codex-report.ts); it never has
-  // a report.html, and its report.json is never handed over as one.
+  // a report.html, and its report.json is never handed over as one. Either
+  // is read only as the regular file it is, within its cap (readInsightsFile).
   if (loadCatalogue().runs.find((r) => r.id === runId)?.provider === 'codex') {
-    return readCodexReportFile(join(getInsightsDir(), runId, 'report.json'))
+    return readInsightsFile(join(getInsightsDir(), runId, 'report.json'), CODEX_REPORT_MAX_BYTES)
   }
-  const reportPath = join(getInsightsDir(), runId, 'report.html')
-  if (!existsSync(reportPath)) return null
-  return readFileSync(reportPath, 'utf-8')
+  return readInsightsFile(join(getInsightsDir(), runId, 'report.html'), INSIGHTS_REPORT_MAX_BYTES)
 }
 
 export function getInsightsKpis(runId: string): unknown | null {
   if (!isValidRunId(runId)) return null
-  const kpiPath = join(getInsightsDir(), runId, 'kpis.json')
-  if (!existsSync(kpiPath)) return null
+  const text = readInsightsFile(join(getInsightsDir(), runId, 'kpis.json'), INSIGHTS_KPIS_MAX_BYTES)
+  if (text === null) return null
   try {
-    return JSON.parse(readFileSync(kpiPath, 'utf-8'))
+    return JSON.parse(text)
   } catch {
     return null
   }
@@ -1999,6 +2204,15 @@ export function cleanupStuckRuns(): void {
     }
   }
   if (changed) {
-    saveCatalogue(catalogue)
+    // At start-up a catalogue that cannot be written (in a folder that is not
+    // Insights' own, which saveCatalogue refuses; a full disk) is left as it
+    // is, logged, and never a start-up failure.
+    try {
+      saveCatalogue(catalogue)
+    } catch (err) {
+      // A refusal was logged where it was raised: only that the catalogue was left.
+      const reason = err instanceof Error ? err.message : String(err)
+      logWarn(FOLDER_REFUSALS.has(reason) ? '[insights] The catalogue was left as it is at start-up.' : `[insights] The catalogue was left as it is at start-up: ${reason}`)
+    }
   }
 }

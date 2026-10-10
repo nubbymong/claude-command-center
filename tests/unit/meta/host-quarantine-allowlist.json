@@ -1,0 +1,355 @@
+{
+  "$comment": "Exceptions for host-quarantine-headers.test.ts. hostSafe: suites the rules flag that are safe on the owner's machine by design. headerRequired: suites the rules cannot see that stay off the host anyway, most of them because they reach icacls, a real CLI or reg.exe through app code (each reason says what a run on the test VM recorded). Every entry needs a reason. A path may use * for part of one path segment, and must then match exactly one file.",
+  "hostSafe": [
+    {
+      "path": "tests/unit/account-usage-folder-verdict.test.ts",
+      "reason": "Names icacls only in its fake child_process, whose execFile and execFileSync answer the only program starts the code it drives makes (the account store's rights tool and the owner-only rule); the network is faked and the account folders are its own temp ones. No process starts, no ACL is changed and no link is made."
+    },
+    {
+      "path": "tests/unit/cloud-agent-start-steps-wait.test.ts",
+      "reason": "Names icacls only in its fake child_process, which answers or refuses every program start the code it drives makes (the agent's own start is a recorded fake); the owner-only rule is a test rule and the shared-folder links are stubbed. No process starts, no ACL is changed and no link is made."
+    },
+    {
+      "path": "tests/unit/insights-start-steps-wait.test.ts",
+      "reason": "Names icacls only in its fake child_process, which answers or refuses every program start the code it drives makes; the terminal and the headless runs are fakes, the owner-only rule is a test rule and the shared-folder links are stubbed. No process starts, no ACL is changed and no link is made."
+    },
+    {
+      "path": "tests/unit/main/owner-only-folders-default-rule.test.ts",
+      "reason": "Names icacls only as a program its fake execFile answers from an in-memory record of each folder's owner and rights; every other child_process call refuses. Real temp folders are made, but no process starts, no ACL is changed and no link is made."
+    },
+    {
+      "path": "tests/unit/main/owner-only-folders-native.test.ts",
+      "reason": "Names icacls only in its in-memory Windows (the programs, the file system and PowerShell are all fakes) and in prose; every child_process call refuses. No process starts and no real folder is touched."
+    },
+    {
+      "path": "tests/unit/main/sentinel-start-steps-wait.test.ts",
+      "reason": "Names icacls only in its fake child_process, which answers or refuses every program start the code it drives makes; the headless runner is a recording fake, the owner-only rule is a test rule and the account resolver links nothing. No process starts, no ACL is changed and no link is made."
+    },
+    {
+      "path": "tests/unit/main/spawn-site-inventory.test.ts",
+      "reason": "Reads and parses source files only: the process calls the rules see are text inside its self-test strings, never run. No process starts."
+    },
+    {
+      "path": "tests/unit/scripts/mjs-eol.test.ts",
+      "reason": "Runs read-only git (ls-files, check-attr) against this checkout; changes nothing."
+    },
+    {
+      "path": "tests/unit/shared/app-knowledge.test.ts",
+      "reason": "Names icacls only inside the Feature Guide words it pins (what to let run when the sign-in folder check gets no answer); it only reads the app's text, its documents and recorded fixtures. No process starts, no ACL is changed and no link is made."
+    },
+    {
+      "path": "tests/unit/test-isolation/home-guard.test.ts",
+      "reason": "Tests the home guard itself and must run on the host; every real-home link, write and spawn target it names is built to fail harmlessly (a source that does not exist, a folder that does not exist, node -e 0)."
+    },
+    {
+      "path": "tests/wp1/legacy-*-gate.test.ts",
+      "reason": "The WP1 legacy-name gate: runs read-only git (cat-file, ls-tree) against this checkout. Named by pattern so this list adds no line to the WP1 legacy-name manifest."
+    },
+    {
+      "path": "tests/wp1/traceability.test.ts",
+      "reason": "Runs read-only git (merge-base, rev-parse, diff) against this checkout; the cases that would fetch are given a fake git."
+    }
+  ],
+  "headerRequired": [
+    {
+      "path": "tests/unit/account-profiles-canonical.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders and writes an account's identity copy; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (7)."
+    },
+    {
+      "path": "tests/unit/account-profiles-capture.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (14)."
+    },
+    {
+      "path": "tests/unit/account-profiles-global-credential-sync.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (31)."
+    },
+    {
+      "path": "tests/unit/account-profiles-headless-home.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (45)."
+    },
+    {
+      "path": "tests/unit/account-profiles-heal-names.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (17)."
+    },
+    {
+      "path": "tests/unit/account-profiles-migrate-canonical.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (11)."
+    },
+    {
+      "path": "tests/unit/account-profiles-orphan-repair.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (23)."
+    },
+    {
+      "path": "tests/unit/account-profiles-primary.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (17)."
+    },
+    {
+      "path": "tests/unit/claude-backup-copy-flags.test.ts",
+      "reason": "Through app code it backs up the Claude folder; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (15)."
+    },
+    {
+      "path": "tests/unit/config-manager-atomic.test.ts",
+      "reason": "Through app code it saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (17)."
+    },
+    {
+      "path": "tests/unit/config-manager-unlistable-dir.test.ts",
+      "reason": "Through app code it saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (5)."
+    },
+    {
+      "path": "tests/unit/config-renderer-boundary.test.ts",
+      "reason": "Through app code it saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (8)."
+    },
+    {
+      "path": "tests/unit/config-save-ssh-credential-invalidation.test.ts",
+      "reason": "Through app code it saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (32)."
+    },
+    {
+      "path": "tests/unit/config-secret-permissions.test.ts",
+      "reason": "Through app code it saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (9)."
+    },
+    {
+      "path": "tests/unit/credential-file-mode-hardening.test.ts",
+      "reason": "Through app code it saves the app's config and writes an account's identity copy; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (4)."
+    },
+    {
+      "path": "tests/unit/credential-writer-fail-closed.test.ts",
+      "reason": "Through app code it writes a session's settings files and writes the session hooks file; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (12)."
+    },
+    {
+      "path": "tests/unit/first-run-accounts.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders and writes an account's identity copy; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (27)."
+    },
+    {
+      "path": "tests/unit/hooks/boot-cleanup.test.ts",
+      "reason": "Through app code it writes the session hooks file; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/hooks/session-hooks-writer.test.ts",
+      "reason": "Through app code it writes the session hooks file; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (18)."
+    },
+    {
+      "path": "tests/unit/main/canvas-adoption.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-audit-stamps.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-binding-survives-account-switch.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-c1-state-machine.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-chat-pick.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-closeout-store.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-completion.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-content-egress.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-distroot-confinement.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-draft-ready.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-evidence-ipc.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-library-banding.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-library-open-own.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-library-rows.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-note-variants.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-plan-mode.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-plugin-link-safety.test.ts",
+      "reason": "Through app code it installs the canvas plugin; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (37)."
+    },
+    {
+      "path": "tests/unit/main/canvas-record-provenance.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-resume-debt-r10.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-review-after-completion.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-review-counts-readonly.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-review-store.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-root-provenance.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-root-scoping.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-session-link.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-settled-machine.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-show-intent.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-store-fail-closed.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/canvas-subject.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/claude-account-identity-only-restore-r4.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders and writes an account's identity copy; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (49)."
+    },
+    {
+      "path": "tests/unit/main/claude-account-rotation-r2.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders and writes an account's identity copy; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (27)."
+    },
+    {
+      "path": "tests/unit/main/claude-account-rotation-restore-e2e.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders and writes an account's identity copy; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (9)."
+    },
+    {
+      "path": "tests/unit/main/conductor-mcp-auth-redos.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/conductor-mcp-auth.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/conductor-mcp-session-binding.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/config-manager-read-failures.test.ts",
+      "reason": "Through app code it saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (10)."
+    },
+    {
+      "path": "tests/unit/main/github-update-repo-rename.test.ts",
+      "reason": "Through app code it reads the app's registry key with reg.exe (a read of the current user's real registry). One run on the test VM started: reg.exe (6)."
+    },
+    {
+      "path": "tests/unit/main/per-session-mcp-secret-mode.test.ts",
+      "reason": "Through app code it writes a session's settings files; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (4)."
+    },
+    {
+      "path": "tests/unit/main/per-session-settings-canvas-allow.test.ts",
+      "reason": "Through app code it writes a session's settings files; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (12)."
+    },
+    {
+      "path": "tests/unit/main/per-session-settings-mcp-rewrite.test.ts",
+      "reason": "Through app code it writes a session's settings files; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (21)."
+    },
+    {
+      "path": "tests/unit/main/per-session-settings-statusline.test.ts",
+      "reason": "Through app code it writes a session's settings files; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (27)."
+    },
+    {
+      "path": "tests/unit/main/persist-latch.test.ts",
+      "reason": "Through app code it saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (15)."
+    },
+    {
+      "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (43)."
+    },
+    {
+      "path": "tests/unit/main/pty-mcp-provider-revive.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/main/pty-spawn-waits-for-refresh.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders, prepares a managed launch, which asks the Claude Code its PATH walk finds for its version (on Windows the suite names an empty stand-in first on PATH, which cannot start; on Linux and macOS a login shell and the claude it finds start), writes a session's settings files and installs the canvas plugin; on Windows that runs icacls on folders under the test's temp root. One run on the test VM, with an installed Claude Code on PATH, started: icacls.exe (290); the version check named only the stand-in."
+    },
+    {
+      "path": "tests/unit/main/session-hooks-writer-secret-mode.test.ts",
+      "reason": "Through app code it writes the session hooks file; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/pr600-r10-force-ui.test.tsx",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    },
+    {
+      "path": "tests/unit/pr600-r3-fresh-wait.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders and prepares a managed launch, which asks an installed Claude Code CLI for its version; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (53), cmd.exe running the Claude Code CLI (1)."
+    },
+    {
+      "path": "tests/unit/providers/provider-entry-routing.test.ts",
+      "reason": "Through app code it writes a session's settings files; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (5)."
+    },
+    {
+      "path": "tests/unit/pty-buffered-write-ordering.test.ts",
+      "reason": "Drives the real session start-up path (node-pty mocked) and is a standing host exclusion; nothing in its text shows that, so the rules cannot flag it."
+    },
+    {
+      "path": "tests/unit/pty-session-home-spawn.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders and writes an account's identity copy; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (23)."
+    },
+    {
+      "path": "tests/unit/pty-shell-only-profile-hold.test.ts",
+      "reason": "Through app code it makes, moves or repairs account folders; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (23)."
+    },
+    {
+      "path": "tests/unit/pty-stale-exit-notification.test.ts",
+      "reason": "Through app code it writes a session's settings files and installs the canvas plugin; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (21)."
+    },
+    {
+      "path": "tests/unit/session-state-github.test.ts",
+      "reason": "Through app code it saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (6)."
+    },
+    {
+      "path": "tests/unit/session-state-read-failure.test.ts",
+      "reason": "Through app code it saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (9)."
+    },
+    {
+      "path": "tests/unit/ssh-spawn-records-mcp-credential.test.ts",
+      "reason": "Through app code it makes the app's install secret on its first canvas or record write, which saves the app's config; on Windows that runs icacls on folders under the test's temp root. One run on the test VM started: icacls.exe (2)."
+    }
+  ]
+}

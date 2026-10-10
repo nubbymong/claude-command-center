@@ -1,3 +1,4 @@
+// HOST QUARANTINE: runs the real session start-up path, which writes session files. [CI] [VM] only -- never run on the owner's machine.
 // A PTY exists ~300ms before its launch line is written, so for that window the
 // terminal is a bare interactive shell that has not yet become Claude. A write
 // landing there went straight to that shell, and its trailing `\r` submitted it
@@ -8,6 +9,7 @@
 // killPty(sessionId) on entry, which drops any pre-spawn `pendingWrites`, so a
 // write buffered before the spawn is discarded rather than replayed.
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
+import { putFakeClaudeOnPath } from '../helpers/fake-claude-on-path'
 
 const writeMock = vi.fn()
 const spawnMock = vi.fn(() => ({
@@ -35,6 +37,9 @@ const { spawnPty, writePty, killPty } = await import('../../src/main/pty-manager
 const { registerProvider } = await import('../../src/main/providers')
 const { ClaudeProvider } = await import('../../src/main/providers/claude')
 registerProvider(new ClaudeProvider())
+// On Windows the launch names Claude Code by the full path its PATH walk finds,
+// and starts nothing without one: a stand-in it finds (tests/helpers).
+const fakeClaude = putFakeClaudeOnPath()
 
 const fakeWin = { webContents: { send: () => {} }, isDestroyed: () => false } as never
 
@@ -58,6 +63,7 @@ afterEach(() => {
 afterAll(async () => {
   const settings = await import('../../src/main/hooks/per-session-settings') as unknown as { dispose: () => void }
   settings.dispose()
+  fakeClaude.restore()
 })
 
 describe('a write that lands while the launch line is still queued', () => {
@@ -80,6 +86,8 @@ describe('a write that lands while the launch line is still queued', () => {
     expect(launch).toBeGreaterThanOrEqual(0)
     expect(question).toBeGreaterThanOrEqual(0) // delivered, not dropped
     expect(question).toBeGreaterThan(launch) // and only once claude is running
+    // On Windows the launch line names the Claude Code the PATH walk found, by its full path.
+    if (fakeClaude.claude) expect(String(writeMock.mock.calls[launch][0])).toContain(fakeClaude.claude)
 
     killPty(id)
   })

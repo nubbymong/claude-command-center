@@ -1179,6 +1179,8 @@
         "--json",
         "--ephemeral",
         "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--ignore-rules",
         "--sandbox",
         "read-only",
         "-m",

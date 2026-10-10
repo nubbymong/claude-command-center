@@ -131,6 +131,109 @@ export function askPromptEnvValue(question: string, isWindows: boolean): string 
   return `${clean.replace(/"/g, '\u201d')} `
 }
 
+/** The variable a Windows Claude session's agent templates ride in. The
+ *  launch line carries only {@link agentsRef} after `--agents`, never the
+ *  templates; the value is {@link agentsEnvValue}'s. App-owned: one inherited
+ *  from the app's own environment is removed before every local session
+ *  starts (buildClaudeLocalSpawn). */
+export const AGENTS_ENV = 'CCC_AGENTS'
+
+/** The reference to {@link AGENTS_ENV} a Windows launch line carries after
+ *  `--agents`. Braced, so it ends where the name ends whatever follows it. */
+export function agentsRef(): string {
+  return '${env:CCC_AGENTS}'
+}
+
+/** The statement a Windows launch line that carries {@link agentsRef} starts
+ *  with. Windows PowerShell 5.1, the session shell (localSessionShell),
+ *  always passes a program's arguments this way and reads the line as an
+ *  ordinary variable nothing uses. PowerShell 7.3 and later pass an `.exe`'s
+ *  arguments their own way by default, which would hand Claude Code the
+ *  escapes of {@link agentsEnvValue} as text; with this the same line hands
+ *  the templates over unchanged there too. */
+export const PS_LEGACY_ARGUMENT_PASSING = "$PSNativeCommandArgumentPassing = 'Legacy'"
+
+/** Whether Windows starts `program` itself, as an `.exe` file (a trailing dot
+ *  or space aside, which Windows drops), rather than through cmd.exe or by a
+ *  name PowerShell looks up. */
+function startsAsExe(program: string): boolean {
+  return /\.exe[. ]*$/i.test(program)
+}
+
+/** The longest command line cmd.exe reads, in characters. */
+export const CMD_EXE_LINE_LIMIT = 8_191
+
+/** The longest command line Windows lets `program`, the program a launch line
+ *  starts, be handed, in characters: 32766 for an `.exe` started directly
+ *  (CreateProcess's 32767, its terminating null included), and cmd.exe's
+ *  (CMD_EXE_LINE_LIMIT) for anything else: a `.cmd` or `.bat` launcher, which
+ *  cmd.exe runs, and `node`, whose resume picker may start one through
+ *  cmd.exe. */
+export function windowsCommandLineLimit(program: string): number {
+  return startsAsExe(program) ? 32_766 : CMD_EXE_LINE_LIMIT
+}
+
+/**
+ * The value {@link agentsRef} must expand to on Windows, for `program`, the
+ * program the launch line starts: Claude Code's path, or `node`, which runs
+ * the resume picker (claudeLaunchProgram). `agents` is the JSON value Claude
+ * Code's `--agents` takes (claudeAgentsObject); Claude Code must get it as ONE
+ * argument that parses to exactly that value.
+ *
+ * WHY. PowerShell does not hand a program an argument array: it writes the
+ * arguments into one command line that the program's own parser splits again,
+ * and for a program it starts through cmd.exe (npm's claude.cmd) cmd.exe reads
+ * that line first. The value is written so that every one of those readers
+ * gives Claude Code the same JSON.
+ *
+ * THE RULE. First, inside the JSON's strings, every `"`, `%`, `!` and control
+ * character, and a `\` that ends a string, is written as a `\u` escape,
+ * which JSON.parse reads as the same character: then no `"` follows a `\`,
+ * and cmd.exe finds nothing to expand. Then:
+ *  - a program started as an `.exe` file: every `"` as `\"`, and a space at
+ *    the end. The space makes PowerShell wrap the value in quotes whichever way
+ *    its version counts a `\"`, and inside quotes `\"` is one literal quote to
+ *    every parser in use (the C runtime's, CommandLineToArgvW). Claude Code gets
+ *    the JSON and a trailing space, which JSON.parse ignores.
+ *  - any other program (a `.cmd` or `.bat` file, which Windows hands to
+ *    cmd.exe, or `node`, which PowerShell finds by name and may find as a batch
+ *    file): the JSON in one pair of quotes, every `"` inside it doubled. Its
+ *    whitespace is all at an odd quote count, so PowerShell never wraps it
+ *    again; cmd.exe's quote state turns twice at every pair, so every other
+ *    character stays inside quotes, where `& | < > ^ ( )` are text; and node
+ *    (the C runtime rule) reads a doubled quote inside quotes as one quote.
+ *    Never for an `.exe` started directly: CommandLineToArgvW reads a doubled
+ *    quote another way (the measured line split into 11 arguments), and the
+ *    native Claude Code's own parser is not this function's to assume.
+ *
+ * Measured with Windows PowerShell 5.1 and PowerShell 7.6 (the latter with
+ * PS_LEGACY_ARGUMENT_PASSING, as the line sets it), to npm's claude.cmd, a
+ * `.bat` launcher running node, the resume picker and a .NET program: the
+ * argument parsed to the templates every time. The `\u` escapes keep the
+ * doubled form whole under PowerShell 7, whose quote count skips a `"` after a
+ * `\`; the doubled form keeps every character inside cmd.exe's quotes.
+ *
+ * A value whose strings hold no `"`, `%`, `!` or control character, and none
+ * that ends in a `\`, reaches Claude Code exactly as JSON.stringify wrote it
+ * (with the trailing space for an `.exe`).
+ */
+export function agentsEnvValue(agents: unknown, program: string): string {
+  const plain = JSON.stringify(agents)
+    // Every backslash in JSON text starts an escape of two characters (or six,
+    // `\uXXXX`, whose last five are never a backslash); read left to right, a
+    // `\"` or `\\` matched here is always one whole escape, and a `"` right
+    // after a `\\` is the end of its string. Every other `\\` stays as it
+    // is: no `"` follows it.
+    .replace(/\\(["\\])/g, (escape: string, c: string, at: number, json: string) => {
+      if (c === '"') return '\\u0022'
+      return json[at + 2] === '"' ? '\\u005c' : escape
+    })
+    // Outside its strings JSON text holds none of these.
+    .replace(/[%!\p{Cc}]/gu, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+  if (startsAsExe(program)) return `${plain.replace(/"/g, '\\"')} `
+  return `"${plain.replace(/"/g, '""')}"`
+}
+
 /**
  * Returns the command line to run, or '' when nothing should be run.
  * With no secret stored, `{secret}` collapses to an empty string rather than

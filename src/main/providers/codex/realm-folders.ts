@@ -23,10 +23,11 @@
 //   directory; a link, junction or other reparse point anywhere there is
 //   refused (mkdirSecure's walk, then lstat and realpath here). POSIX: both are
 //   owner-only (0700), and a folder that cannot be made so is refused.
-//   Windows ACL hardening is deliberately NOT applied: the shared ACL
-//   primitive has an open, unexplained empty-DACL failure (aicc_planning
-//   #103), so these folders inherit the resources directory's ACL like the
-//   registry does.
+//   Windows: before a home is used, the managed root and then the home are
+//   made this user's and owner-only (owner the user; rights exactly the user
+//   and SYSTEM, passed to what is inside; nothing inherited from above) and
+//   read back, by the app's owner-only folder rule (secureFolders); a folder
+//   that does not read back so is refused, and a home just made is taken back.
 // - Contained removal. Only the home of a setup still `pending` is removed,
 //   never an external home. Before anything is deleted the target is proved to
 //   be a real directory whose canonical path is `<canonical root>/<realmId>`
@@ -349,6 +350,11 @@ export interface CodexRealmFolderDeps {
    *  wrote it cannot let that account's later events count. Absent: the
    *  carry's own time. */
   newestStamp?: (sessionsDir: string, id: string) => number | null
+  /** Windows: the app's owner-only folder rule (owner-only-folders.ts):
+   *  the folders, in order, made this user's and owner-only and read back,
+   *  one answer per folder. Absent on Windows: no home is prepared
+   *  (permissions). Not used on POSIX, where the folders are made 0700. */
+  secureFolders?: (dirs: readonly string[]) => Promise<ReadonlyArray<{ dir: string; ok: boolean; detail?: string }>>
 }
 
 /** Bounds on a tree the removal will walk: an abandoned setup's home holds a
@@ -378,7 +384,7 @@ const MSG: Readonly<Record<RealmFolderFailureCode, string>> = {
   'resources-unavailable': "The app's data folder is not available.",
   'overlaps-external': "Your own Codex folder setting (CODEX_HOME, else ~/.codex) overlaps the app's Codex account folders, or cannot be checked. Set CODEX_HOME to a full path outside the app's data folder, or unset it, then try again.",
   'unsafe-path': 'The Codex account folder is a link or not where the app put it, so the app did not use it.',
-  'permissions': 'The Codex account folder could not be made private to you. Move the app data folder to a disk that supports file permissions.',
+  'permissions': "The Codex account folder could not be made private to you. Move AI Code Conductor's resources folder (the folder chosen for its data when it was set up) to a disk that supports file permissions.",
   'busy': 'A sign-in or sign-out is running for this Codex account.',
   'credentials-present': 'The Codex account folder still holds a sign-in. Sign out of it first.',
   'not-empty': 'The Codex account folder is not empty, so it was kept.',
@@ -484,13 +490,34 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
     return e
   }
 
-  /** POSIX: owner-only, verified. Windows: nothing (ACL hardening deferred, #103). */
+  /** POSIX: owner-only (0700), verified. Windows: nothing here; a home and
+   *  its root are made owner-only by secureOnWindows, and what is made
+   *  inside a home takes the home's rights. */
   function makePrivate(dir: string): Failure | null {
     if (!isPosix(platform)) return null
     try { fs.chmod(dir, OWNER_ONLY) } catch { return fail('permissions') }
     let e: CodexFsEntry
     try { e = fs.lstat(dir) } catch { return fail('io-failed') }
     return e && e.kind === 'dir' && typeof e.mode === 'number' && (e.mode & 0o077) === 0 ? null : fail('permissions')
+  }
+
+  /** Windows: the folders, in order, made this user's and owner-only and
+   *  read back by the owner-only folder rule. Every folder must come back
+   *  ok, under its own name, in its place; anything else -- no rule, a
+   *  throw, a missing or extra answer -- is permissions. POSIX: nothing
+   *  (makePrivate's 0700). */
+  async function secureOnWindows(dirs: readonly string[]): Promise<Failure | null> {
+    if (isPosix(platform)) return null
+    const rule = deps.secureFolders
+    if (typeof rule !== 'function') return fail('permissions')
+    let out: unknown
+    try { out = await rule(dirs) } catch { return fail('permissions') }
+    if (!Array.isArray(out) || out.length !== dirs.length) return fail('permissions')
+    for (let i = 0; i < dirs.length; i++) {
+      const r = out[i] as { dir?: unknown; ok?: unknown } | null
+      if (!r || typeof r !== 'object' || r.ok !== true || r.dir !== dirs[i]) return fail('permissions')
+    }
+    return null
   }
 
   /** Absent is not a failure; anything else odd is. */
@@ -553,17 +580,11 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
       if (isFailure(homeId)) return undo(homeId)
       const priv = makePrivate(at.home)
       if (priv) return undo(priv)
-      // The external home once more, now the folders exist: an alias of a
-      // folder that did not exist a moment ago shows only by identity once it
-      // does.
-      const again = await locate(ref, ['pending'])
-      if (isFailure(again) || !samePath(again.home, at.home)) {
-        // After an await, a sign-in may have started in the folder this call
-        // made, or the folder may have been removed and made again by
-        // another call: take it back only when it is still the one made
-        // here and nothing holds it. Otherwise it stays, empty, for the next
-        // attempt.
-        const failure = isFailure(again) ? again : fail('changed')
+      // After an await, a sign-in may have started in the folder this call
+      // made, or the folder may have been removed and made again by another
+      // call: take it back only when it is still the one made here and
+      // nothing holds it. Otherwise it stays, empty, for the next attempt.
+      const takeBack = (failure: Failure): RealmFolderResult => {
         let release: (() => void) | null = null
         try {
           if (created && unchanged(at.home, homeId)) release = deps.locks.holdRemoval(codexRealmLockKey(fs.realpath(at.home), homeId.dev, homeId.ino))
@@ -571,6 +592,15 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
         if (!release) return failure
         try { return undo(failure) } finally { release() }
       }
+      // Windows: the root first (a refused root refuses the home below it),
+      // then the home, made owner-only and read back before it is used.
+      const secured = await secureOnWindows([at.root, at.home])
+      if (secured) return takeBack(secured)
+      // The external home once more, now the folders exist: an alias of a
+      // folder that did not exist a moment ago shows only by identity once it
+      // does.
+      const again = await locate(ref, ['pending'])
+      if (isFailure(again) || !samePath(again.home, at.home)) return takeBack(isFailure(again) ? again : fail('changed'))
       return { ok: true, created }
     })
   }

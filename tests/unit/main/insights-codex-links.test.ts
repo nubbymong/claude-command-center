@@ -7,7 +7,12 @@
  *    and a sessions folder that is itself one reads as no sessions;
  *  - a runs folder (`<insights>/.insights-codex-runs`) that is a link, or became one
  *    between the check and the make, is refused: no model run, nothing
- *    written through it.
+ *    written through it;
+ *  - `insights` itself a link or junction: a run is refused with the reason
+ *    and nothing is made through it;
+ *  - a report, its figures and the catalogue are read only as the regular
+ *    files they are: a FIFO or a link there is no report and no runs, never
+ *    a wait.
  * The REAL reader and runner; the accounts service and the model run are
  * fakes, so no process starts. Every folder is under this suite's own temp
  * folder.
@@ -16,6 +21,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import { execFileSync } from 'child_process'
 
 const ACCT = `acct-${'a'.repeat(16)}`
 const LINK_TYPE = process.platform === 'win32' ? 'junction' : 'dir'
@@ -66,7 +72,12 @@ vi.mock('../../../src/main/provider-accounts', () => ({
 }))
 
 const { listCodexRolloutFiles } = await import('../../../src/main/insights-codex')
-const { runCodexInsights, getCatalogue } = await import('../../../src/main/insights-runner')
+const { runCodexInsights, getCatalogue, getInsightsReport, getInsightsKpis } = await import('../../../src/main/insights-runner')
+const INSIGHTS_REFUSED = "Nothing was written: the insights folder in the app's resources folder could not be checked as Insights' own folder. It must be a real folder, not a link or junction, and on macOS and Linux one only you can write to (a drive without file permissions cannot hold one)."
+/** A run's own folder in insights, made for a read case. */
+const runDir = (id: string) => { const d = path.join(h.resourcesDir, 'insights', id); fs.mkdirSync(d, { recursive: true }); return d }
+/** A FIFO at `p` (POSIX), made by the system's own mkfifo with a minimal environment. */
+const mkfifo = (p: string) => execFileSync('mkfifo', [p], { env: { PATH: '/usr/bin:/bin' } })
 const win = () => null
 let tmpRoot = ''
 
@@ -118,6 +129,46 @@ describe('the sessions walk never follows a link [CI] [VM]', () => {
     try { fs.symlinkSync(target, path.join(h.sessionsDir, '2026', '10', '01', 'rollout-link.jsonl'), 'file') } catch { ctx.skip(); return }
     const files = await listCodexRolloutFiles(h.sessionsDir, 0)
     expect(files.map((f) => path.basename(f.file))).toEqual(['rollout-own.jsonl'])
+  })
+})
+
+describe('Insights keeps its reports only in its own folder [CI] [VM]', () => {
+  it('an `insights` folder that is a link or a junction: a report is refused with the reason; nothing is made through it [CI] [VM]', async () => {
+    const outside = path.join(tmpRoot, 'outside-insights')
+    fs.mkdirSync(outside, { recursive: true })
+    fs.symlinkSync(outside, path.join(h.resourcesDir, 'insights'), LINK_TYPE)
+    await expect(runCodexInsights(win, { accountId: ACCT })).rejects.toThrow(INSIGHTS_REFUSED)
+    expect(fs.readdirSync(outside)).toEqual([])
+    expect(h.execCalls).toBe(0)
+  })
+
+  it('a report.html, a kpis.json and a catalogue that are FIFOs: no report, no figures, no runs, and never a wait [CI]', async (ctx) => {
+    if (process.platform === 'win32') { ctx.skip(); return }
+    const id = '2026-10-01-120000-000001'
+    const dir = runDir(id)
+    mkfifo(path.join(dir, 'report.html'))
+    mkfifo(path.join(dir, 'kpis.json'))
+    mkfifo(path.join(h.resourcesDir, 'insights', 'catalogue.json'))
+    const started = Date.now()
+    expect(getInsightsReport(id)).toBeNull()
+    expect(getInsightsKpis(id)).toBeNull()
+    expect(getCatalogue()).toEqual({ runs: [] })
+    expect(Date.now() - started).toBeLessThan(5000)
+  }, 15_000)
+
+  it('a report.html or a kpis.json that is a symbolic link to a file elsewhere is not read (where file links can be made) [CI] [VM]', async (ctx) => {
+    const id = '2026-10-01-120000-000002'
+    const dir = runDir(id)
+    const html = path.join(tmpRoot, 'elsewhere-report.html')
+    const kpis = path.join(tmpRoot, 'elsewhere-kpis.json')
+    fs.writeFileSync(html, '<html>NOT-THIS-RUN</html>')
+    fs.writeFileSync(kpis, '{"mark":"NOT-THIS-RUN"}')
+    try {
+      fs.symlinkSync(html, path.join(dir, 'report.html'), 'file')
+      fs.symlinkSync(kpis, path.join(dir, 'kpis.json'), 'file')
+    } catch { ctx.skip(); return }
+    expect(getInsightsReport(id)).toBeNull()
+    expect(getInsightsKpis(id)).toBeNull()
   })
 })
 

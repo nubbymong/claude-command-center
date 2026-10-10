@@ -20,13 +20,26 @@
 // reads the log after an incident sees them rendered (adversarial review,
 // MINOR). One regex, every sink.
 //
-// The re-attack extended the class: the bidi MARKS (U+200E/200F/061C) reorder
-// rendering like the overrides, scoped to a run; the zero-width and invisible
-// formatters (U+200B-200D, U+00AD, U+180E, U+2060-2064, U+FEFF, U+FFF9-FFFB)
-// hide characters or split a word a reader is matching by eye; and the TAG
-// block (U+E0000-E007F) is invisible in most renderers and has been used to
-// smuggle text past a human. All replaced by a space.
-const SPOOFABLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]/gu
+// The class is every character a reader cannot see, named by Unicode rather
+// than listed by hand: \p{Cc} (the C0 and C1 controls) and
+// \p{Default_Ignorable_Code_Point}, which holds the bidi marks, overrides and
+// isolates, the zero-width and invisible formatters, the soft hyphen, the
+// fillers that render as nothing (U+034F, the Hangul fillers), the variation
+// selectors (both blocks), the Khmer and Mongolian invisibles and the TAG
+// block. Hidden characters split a word a reader is matching by eye, and
+// invisible ones carry text past a human. Named one by one, because Unicode
+// does not count them ignorable: the line and paragraph separators, the braille
+// blank (U+2800, drawn as nothing), the interlinear annotation marks
+// (U+FFF9-FFFB), and a lone surrogate (half of a character, which a sink may
+// draw as anything; a whole pair is one code point and is kept). All replaced
+// by a space, a variation selector included: an emoji written with one shows
+// as its base character and a space, as a joined emoji already showed its
+// parts with spaces between them, and so does a CJK or Mongolian character
+// written with one of its variant selectors.
+//
+// Two scripts the app ships cannot import this module and keep their own copy
+// of the same expression; a parity test holds the three to one answer.
+const SPOOFABLE = /[\p{Cc}\p{Default_Ignorable_Code_Point}\u2028\u2029\u2800\ufff9-\ufffb\ud800-\udfff]/gu
 
 /** `raw` with every control and spoofing character replaced by a space, cut
  *  to `max` characters. The result is prose-safe for a terminal, a log line or

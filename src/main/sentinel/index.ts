@@ -13,7 +13,7 @@
 // built). A provider that is off is never checked, probed or analysed.
 import * as fs from 'fs'
 import * as path from 'path'
-import { sweepStaleFolders } from '../stale-folder-sweep'
+import { ownerOnlyThroughHandle, sweepStaleFolders } from '../stale-folder-sweep'
 import { SentinelState } from './sentinel-state'
 import { makeObserver, type Observation } from './sentinel-observe'
 import { parseClaudeVersion, minVersionFindings, type ManifestEntry } from './sentinel-version'
@@ -147,14 +147,25 @@ async function savedSettings(): Promise<Record<string, unknown> | null> {
  * installs). Never bare-global when profiles exist: the frozen global login
  * hangs at auth / carries stale rate-limit state (live repro: both analysis
  * attempts timed out at 180s on 2026-06-12).
+ *
+ * As a local launch does, it waits for the start's profile steps when they are
+ * still to run (they may be making the primary account from the user's own
+ * sign-in), and then for the chosen account's sign-in folders to have their
+ * owner-only verdict in this run, so the headless run reads a verdict instead
+ * of being refused for want of one. Each wait only when pending.
  */
 async function analysisHome(): Promise<{ home: string | null; accountLabel: string | null }> {
   try {
     const { readConfig } = await import('../config-manager')
-    const { resolveHeadlessProfileHome, listProfiles } = await import('../account-profiles')
+    const {
+      resolveHeadlessProfileHome, listProfiles,
+      startProfileStepsPending, startProfileStepsSettled, profileCredentialFoldersChecked, checkProfileCredentialFolders,
+    } = await import('../account-profiles')
+    if (startProfileStepsPending()) await startProfileStepsSettled()
     const settings = readConfig<{ sentinelAccountProfileId?: string | null }>('settings')
     const chosen = settings?.sentinelAccountProfileId ?? null
     const { home, profileId } = resolveHeadlessProfileHome(chosen)
+    if (profileId && !profileCredentialFoldersChecked(profileId)) await checkProfileCredentialFolders(profileId)
     // Name the account the analysis actually ran under, so a failure message can
     // say WHICH account to change (#430). When the chosen account no longer
     // resolves and we fell back to another, say so — otherwise the user sees a
@@ -344,8 +355,9 @@ async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner
       },
       accountLabel,
       end: () => {
-        // Only the folder this run made: its own prefix, in the runs folder.
-        try { if (isAnalysisFolder(cwd, parent!, CLAUDE_ANALYSIS_DIR_PREFIX)) fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* a leftover is swept by a later run */ }
+        // Only the folder this run made: its own prefix, in the runs folder,
+        // and only while the runs folder is still the one checked.
+        try { if (isAnalysisFolder(cwd, parent!, CLAUDE_ANALYSIS_DIR_PREFIX) && runsFolderHolds(parent!)) fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* a leftover is swept by a later run */ }
         begun.end()
       },
     }
@@ -383,21 +395,81 @@ export const STALE_ANALYSIS_FOLDER_MS = 60 * 60 * 1000
 
 /** P3.9 round 1: the parent of every analysis folder, the app's own and this
  *  user's: Sentinel's folder in the resources folder, its `runs` folder made
- *  there, each a real folder (never a link) and, on POSIX, this user's, not a
- *  shared temp folder another user can write into. Null when it cannot be. */
+ *  there, each a real folder (never a link) and, on POSIX, this user's and
+ *  writable by no one else, not a shared temp folder another user can write
+ *  into (runsFolderHolds). Sentinel's folder is readied first
+ *  (sentinelDirReady), made alone when it is not there yet and readied
+ *  again; then `runs` is made alone, and one made that does not hold is
+ *  removed again (it is empty). Null when it cannot be. */
 function analysisParent(): string | null {
   if (!sentinelDir) return null
   const parent = path.join(sentinelDir, SENTINEL_RUNS_DIRNAME)
   try {
-    fs.mkdirSync(parent, { recursive: true, mode: 0o700 })
-    for (const dir of [sentinelDir, parent]) {
-      const st = fs.lstatSync(dir)
-      if (st.isSymbolicLink() || !st.isDirectory()) return null
-      if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return null
-    }
-    return parent
+    if (!sentinelDirReady(sentinelDir)) return null
+    makeFolderAlone(sentinelDir)
+    if (!sentinelDirReady(sentinelDir)) return null
+    const made = makeFolderAlone(parent)
+    if (runsFolderHolds(parent)) return parent
+    if (made) { try { fs.rmdirSync(parent) } catch { /* not empty, or gone: leave it */ } }
+    return null
   } catch {
     return null
+  }
+}
+
+/** Makes `dir` alone (never its parents, never through what is at its
+ *  name), owner-only (0700): true when it made it, false when something is
+ *  there already. Throws on any other failure. */
+function makeFolderAlone(dir: string): boolean {
+  try {
+    fs.mkdirSync(dir, { mode: 0o700 })
+    return true
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code === 'EEXIST') return false
+    throw e
+  }
+}
+
+/** Sentinel's own folder, readied for its runs folder: one not there yet is
+ *  left to the make after this (owner-only, 0700); a link, or not a folder,
+ *  or on POSIX another user's, is refused before anything is made through
+ *  it; on POSIX one of this user's that others can write to (made under a
+ *  group-writable umask) is first made owner-only through a handle on the
+ *  folder its lstat saw (ownerOnlyThroughHandle). runsFolderHolds checks the
+ *  result. Never throws. */
+function sentinelDirReady(dir: string): boolean {
+  let st: fs.BigIntStats
+  try { st = fs.lstatSync(dir, { bigint: true }) } catch (e) { return (e as NodeJS.ErrnoException)?.code === 'ENOENT' }
+  if (st.isSymbolicLink() || !st.isDirectory()) return false
+  if (typeof process.getuid === 'function') {
+    if (Number(st.uid) !== process.getuid()) return false
+    if ((Number(st.mode) & 0o022) !== 0) return ownerOnlyThroughHandle(dir, st)
+  }
+  return true
+}
+
+/** Whether `parent` is still Sentinel's runs folder as it was checked:
+ *  `sentinel` and `runs` real folders (never links), on POSIX both this
+ *  user's and both writable by no one else, and the real path of `runs`
+ *  `<real resources>/sentinel/runs`. Asked when the runs folder is chosen,
+ *  before the stale sweep lists it, before each folder that sweep removes,
+ *  and before a run's own folder is removed: nothing is swept or removed
+ *  through a runs folder that does not hold. Never throws. */
+function runsFolderHolds(parent: string): boolean {
+  try {
+    if (!sentinelDir) return false
+    if (!samePath(path.resolve(parent), path.resolve(sentinelDir, SENTINEL_RUNS_DIRNAME))) return false
+    const posix = typeof process.getuid === 'function'
+    for (const dir of [sentinelDir, parent]) {
+      const st = fs.lstatSync(dir)
+      if (st.isSymbolicLink() || !st.isDirectory()) return false
+      if (posix && st.uid !== process.getuid!()) return false
+      if (posix && (st.mode & 0o022) !== 0) return false
+    }
+    const expected = path.join(fs.realpathSync.native(path.dirname(sentinelDir)), path.basename(sentinelDir), SENTINEL_RUNS_DIRNAME)
+    return samePath(fs.realpathSync.native(parent), expected)
+  } catch {
+    return false
   }
 }
 
@@ -421,7 +493,7 @@ function samePath(a: string, b: string): boolean {
  *  git's own search, which an empty `.git` file ends at once with an
  *  error). */
 function makeAnalysisFolder(parent: string, prefix: string = CODEX_ANALYSIS_DIR_PREFIX, marker = true): string {
-  sweepStaleFolders(parent, prefix, { maxAgeMs: STALE_ANALYSIS_FOLDER_MS })
+  sweepStaleFolders(parent, prefix, { maxAgeMs: STALE_ANALYSIS_FOLDER_MS, parentHolds: () => runsFolderHolds(parent) })
   const dir = fs.mkdtempSync(path.join(parent, prefix))
   let where: string | null = null
   try {
@@ -498,7 +570,9 @@ async function codexAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner 
         // prompts, and takes no optional lock.
         const env = { ...launch.env, GIT_CEILING_DIRECTORIES: parent!, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }
         const out = await review.run({ executable: launch.executable, env, cwd, prompt: stdin ?? '', timeoutMs, signal, purpose: 'analysis' })
-        if (!out.ok && out.killSettled instanceof Promise) kills.push(out.killSettled)
+        // Whatever the outcome: the lease and the folder are held until what
+        // is left of the run has ended (within the runner's worst case).
+        if (out.killSettled instanceof Promise) kills.push(out.killSettled)
         if (out.ok) return { code: 0, stdout: out.text, stderr: '' }
         if (out.code === 'timed-out') return { code: 1, stdout: '', stderr: `Timed out after ${Math.round(timeoutMs / 1000)}s` }
         // The reviewer's own message (already redacted), read as Claude's
@@ -508,8 +582,9 @@ async function codexAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner 
       end: () => {
         const letGo = () => {
           try { launch.lease.release() } catch { /* a release never throws the analysis away */ }
-          // Only the folder this run made: its own prefix, in the runs folder.
-          try { if (isAnalysisFolder(cwd, parent!)) fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* a leftover is swept by a later run */ }
+          // Only the folder this run made: its own prefix, in the runs folder,
+          // and only while the runs folder is still the one checked.
+          try { if (isAnalysisFolder(cwd, parent!) && runsFolderHolds(parent!)) fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* a leftover is swept by a later run */ }
           begun.end()
         }
         if (kills.length) void Promise.all(kills).then(letGo, letGo)

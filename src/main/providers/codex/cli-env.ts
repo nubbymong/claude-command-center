@@ -24,6 +24,8 @@
 // prototype: Node's spawn walks inherited keys, so a polluted
 // Object.prototype must have nothing to contribute.
 
+import { windowsPathFolderIsFullyQualified } from '../windows-path-names'
+
 const ALLOWED: ReadonlySet<string> = new Set([
   // search path and executable resolution
   'PATH', 'PATHEXT',
@@ -56,13 +58,25 @@ function valueAllowed(key: string, value: string): boolean {
 }
 
 /** Only absolute PATH entries: a relative or empty entry names a folder
- *  relative to wherever the process runs. Windows entries are a drive or a
- *  share (optionally quoted); POSIX entries start with `/`. Null when none
- *  is left. (The reviewer's environment keeps the same rule.) */
+ *  relative to wherever the process runs. Windows entries are fully
+ *  qualified folders, a drive or a share (never a device path), read as the
+ *  PATH walks read them -- trimmed, and without the quotes around a quoted
+ *  one -- and kept in that form (windowsPathFolderIsFullyQualified, one rule
+ *  for every Windows PATH filter: a Codex session's own environment,
+ *  process-env.ts, uses this one). POSIX entries start with `/`. Null when
+ *  none is left. */
 export function absolutePathValue(value: string, win: boolean): string | null {
-  const sep = win ? ';' : ':'
-  const kept = value.split(sep).filter((p) => (win ? /^"?([A-Za-z]:[\\/]|[\\/]{2}[^\\/])/.test(p) : p.startsWith('/')))
-  return kept.length ? kept.join(sep) : null
+  if (!win) {
+    const kept = value.split(':').filter((p) => p.startsWith('/'))
+    return kept.length ? kept.join(':') : null
+  }
+  const kept: string[] = []
+  for (const raw of value.split(';')) {
+    let dir = raw.trim()
+    if (dir.length >= 2 && dir.startsWith('"') && dir.endsWith('"')) dir = dir.slice(1, -1).trim()
+    if (windowsPathFolderIsFullyQualified(dir)) kept.push(dir)
+  }
+  return kept.length ? kept.join(';') : null
 }
 
 /** A clean environment for one Codex CLI operation in one realm. */

@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // rc.14 review F8 (aicc_planning): a stale exit from a REPLACED PTY must not
 // reach the renderer.
 //
@@ -8,7 +9,8 @@
 // TerminalView marked the healthy replacement as exited (ptyExited + spawn
 // tracker cleared), Ask Conductor treated it as dead and respawned again, and a
 // remount spawned yet again. The event now goes only for the current process.
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
+import { putFakeClaudeOnPath } from '../helpers/fake-claude-on-path'
 
 type ExitCb = (e: { exitCode: number; signal?: number }) => void
 // Every onExit listener is kept and fired, because pty-manager registers MORE
@@ -44,6 +46,10 @@ const { spawnPty, killPty } = await import('../../src/main/pty-manager')
 const { registerProvider } = await import('../../src/main/providers')
 const { ClaudeProvider } = await import('../../src/main/providers/claude')
 registerProvider(new ClaudeProvider())
+// On Windows the launch names Claude Code by the full path its PATH walk finds,
+// and starts nothing without one: a stand-in it finds (tests/helpers).
+const fakeClaude = putFakeClaudeOnPath()
+afterAll(() => fakeClaude.restore())
 
 const send = vi.fn()
 const fakeWin = { webContents: { send }, isDestroyed: () => false } as never

@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // BLOCKER 1 (adversarial review, 2026-08-15) — the canvas served-root
 // allowlist. The finding was proven end to end against the real modules: a
 // prompt-injected agent read SSH private keys and Claude OAuth tokens through

@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 // P3.12 (rows 31, 32, 65): what pty-manager does with a local Codex session's
 // logs and GitHub Session Context. A local Codex launch records a run, as a
 // local Claude launch does (same gates: per-config and global logging, not a

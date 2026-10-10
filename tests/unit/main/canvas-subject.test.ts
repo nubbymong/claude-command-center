@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // A canvas holds ONE subject.
 //
 // Before this, a session had exactly one canvas forever: every render appended

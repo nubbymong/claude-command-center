@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 // P3.5 fix round 1, item B: what a Codex status-line watcher reads. It used
 // to read the whole rollout every half second before comparing sizes, and a
 // resumed conversation's rollout can be many megabytes. Now: the size first,

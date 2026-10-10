@@ -29,11 +29,25 @@ vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>()
   return { ...actual, execSync: vi.fn(() => (process.platform === 'win32' ? 'C:\\node\\node.exe\r\n' : '/usr/local/bin/node\n')) }
 })
+// The disk, for the picker route's node lookup on Windows: one fixed node.exe
+// (named in the picker launches' PATH below) answers as a file; every other
+// path as the real disk answers.
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return {
+    ...actual,
+    statSync: vi.fn((p: unknown, o?: unknown) => {
+      if (p === 'C:\\ccc-test-only\\nodejs\\node.exe') return { isFile: () => true } as import('fs').Stats
+      return (actual.statSync as (a: unknown, b?: unknown) => import('fs').Stats)(p, o)
+    }),
+  }
+})
 vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => (globalThis as any).__mockMcpPort ?? 0,
   issueMcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
 }))
-vi.mock('../../../../src/main/config-manager', () => ({ readConfig: () => ({}), getConfigDir: () => '/cfg' }))
+// The built-in tools switches' checked read answers as a fresh install does.
+vi.mock('../../../../src/main/config-manager', () => ({ readConfig: () => ({}), readConfigChecked: () => ({ outcome: 'absent', value: null }), getConfigDir: () => '/cfg' }))
 vi.mock('../../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
 
 const { buildCodexSpawn, ASK_PROJECT_DOC_MAX_BYTES_CEILING, nodePtyWindowsCommandLine, splitWindowsCommandLine } = await import('../../../../src/main/providers/codex/spawn')
@@ -47,6 +61,9 @@ const EXE = 'C:\\Users\\someone\\AppData\\Roaming\\npm\\node_modules\\@openai\\c
 const SHIM = 'C:\\Users\\someone\\AppData\\Roaming\\npm\\codex.cmd'
 const STANDARD = { model: 'gpt-5.5', permissionsPreset: 'standard' as const }
 const EMOJI = String.fromCodePoint(0x1f680)
+/** The help folder an Ask launch starts in, as this platform spells it (git
+ *  is kept inside it: spawn-ask-git-ceiling.test.ts). */
+const HELP = process.platform === 'win32' ? 'C:\\res\\help' : '/res/help'
 
 function withWin32<T>(fn: () => T): T {
   const orig = Object.getOwnPropertyDescriptor(process, 'platform')
@@ -62,7 +79,7 @@ afterEach(() => { delete (globalThis as any).__mockMcpPort })
 describe('the help folder\'s AGENTS.md, on every Ask launch', () => {
   it('[host] the direct route carries the byte bound and no root markers, as plain words', () => {
     const n = askConductorProjectDocMaxBytes('win32')
-    const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: STANDARD, askProjectDocMaxBytes: n })
+    const out = buildCodexSpawn({ sessionId: 'sid', cwd: HELP, realmLaunch: linuxLaunch, codexOptions: STANDARD, askProjectDocMaxBytes: n })
     expect(cValues(out.args)).toContain(`project_doc_max_bytes=${n}`)
     expect(cValues(out.args)).toContain('project_root_markers=[]')
   })
@@ -70,7 +87,7 @@ describe('the help folder\'s AGENTS.md, on every Ask launch', () => {
   it('[host] the npm .cmd route takes them too (no whitespace, nothing cmd.exe reads)', () => {
     withWin32(() => {
       const n = askConductorProjectDocMaxBytes('win32')
-      const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: { ...linuxLaunch, executable: SHIM, env: winEnv }, codexOptions: STANDARD, askProjectDocMaxBytes: n })
+      const out = buildCodexSpawn({ sessionId: 'sid', cwd: 'C:\\res\\help', realmLaunch: { ...linuxLaunch, executable: SHIM, env: winEnv }, codexOptions: STANDARD, askProjectDocMaxBytes: n })
       expect(out.commandLine).toContain(` -c project_doc_max_bytes=${n} `)
       expect(out.commandLine).toContain(' -c project_root_markers=[]')
     })
@@ -199,7 +216,8 @@ describe('where the question never rides argv', () => {
       fs.writeFileSync(script, '// staged for the test\n')
       ;(globalThis as any).__askResDir = res
       const q = 'how do I add an account?'
-      const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: STANDARD, useResumePicker: true, askPrompt: q, askProjectDocMaxBytes: askConductorProjectDocMaxBytes('linux') })
+      const pickerLaunch = { ...linuxLaunch, env: { ...linuxLaunch.env, PATH: process.platform === 'win32' ? 'C:\\ccc-test-only\\nodejs' : '/usr/bin' } }
+      const out = buildCodexSpawn({ sessionId: 'sid', cwd: HELP, realmLaunch: pickerLaunch, codexOptions: STANDARD, useResumePicker: true, askPrompt: q, askProjectDocMaxBytes: askConductorProjectDocMaxBytes('linux') })
       pickDir = out.pickFile ? path.dirname(out.pickFile) : null
       expect(out.args[0]).toBe(script)
       expect(out.args).not.toContain(q)

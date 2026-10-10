@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions, symbolic links and hard links. [CI] [VM] only -- never run on the owner's machine.
 /**
  * Usage track MP9: the one-off attribution of stored Codex history to its
  * accounts, end to end in the worker. A database indexed before accounts were

@@ -32,10 +32,14 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError, logInfo, logWarn } from '../debug-logger'
 import { gateManagedLaunch, peekGateVerdict } from '../managed-launch-diagnostics'
-import { getProfileConfigDir, getProfilesRoot, getPrimaryProfileId, withProfileHome, readProfilesStrict, removeProfileIdentityCredentials, MANAGED_LAUNCH_REFUSAL } from '../account-profiles'
+import { getProfileConfigDir, getProfilesRoot, getPrimaryProfileId, withProfileHome, readProfilesStrict, removeProfileIdentityCredentials, checkProfileCredentialFolders, profileCredentialFoldersChecked, MANAGED_LAUNCH_REFUSAL } from '../account-profiles'
 import { acquireProfileConsumer, holdProfileForRun, pendingProfileRefresh } from '../profile-consumers'
 import { isProfileInUseByLiveSession, sessionsOnProfile } from '../claude-account-identity'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
+import { windowsStartCommand } from '../windows-programs'
+import { CLAUDE_NOT_ON_PATH, findClaudeOnWindowsAsync, recentClaudeOnWindows } from '../claude-cli-probe'
+import { warmFirstStart } from '../first-start-warmup'
+import { claudeVersionRunEnv } from '../providers/review-support'
 
 /** promisify(execFile), made when a CLI runs rather than when this module
  *  loads: the composition root imports it at start (WP2 PR 4, the Claude
@@ -43,6 +47,40 @@ import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMe
  *  to the spawn, as before. */
 type ExecFileAsync = (file: string, args: readonly string[], options: ExecFileOptions & { encoding: 'utf-8' }) => Promise<{ stdout: string; stderr: string }>
 const execFileAsync: ExecFileAsync = (file, args, options) => (promisify(execFile) as unknown as ExecFileAsync)(file, args, options)
+
+type AuthStatusStart = { file: string; args: string[]; options: ExecFileOptions & { encoding: 'utf-8' } }
+
+/** How `claude auth status` starts when no runner is given. Windows: Claude
+ *  Code by the full path found in PATH's folders (claude-cli-probe.ts
+ *  CLAUDE_WINDOWS_NAMES, in that order: a recent answer of that walk, else the
+ *  walk one stat at a time off the event loop), with no shell -- an npm
+ *  claude.cmd through the system cmd.exe -- and the child looks for programs
+ *  it starts by name only in PATH's folders; it REJECTS when Claude Code is in
+ *  none of them or cannot be started that way, which the caller reads as "CLI
+ *  absent" (it then reads the credential file). Elsewhere `claude` through
+ *  `sh`, as before. Exported for the test. */
+export async function claudeAuthStatusCommand(
+  env: Record<string, string>,
+  platform: NodeJS.Platform = process.platform,
+): Promise<AuthStatusStart> {
+  return authStatusStart(env, platform, platform === 'win32' ? recentClaudeOnWindows(env) ?? await findClaudeOnWindowsAsync(env) : null)
+}
+
+/** claudeAuthStatusCommand's start once Claude Code is known (`bin`, Windows
+ *  only), synchronously: the probe below takes this path while the PATH
+ *  walk's answer is recent, so the lookup adds no wait of its own. */
+function authStatusStart(env: Record<string, string>, platform: NodeJS.Platform, bin: string | null): AuthStatusStart {
+  const base = { encoding: 'utf-8' as const, timeout: STATUS_TIMEOUT_MS, windowsHide: true }
+  if (platform !== 'win32') return { file: 'claude', args: ['auth', 'status'], options: { ...base, shell: true, env } }
+  if (!bin) throw new Error(CLAUDE_NOT_ON_PATH)
+  const how = windowsStartCommand(bin, ['auth', 'status'], env)
+  if ('refused' in how) throw new Error(`Claude Code could not be started: ${how.refused}`)
+  return {
+    file: how.file,
+    args: how.args,
+    options: { ...base, env: how.env, ...(how.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) },
+  }
+}
 
 export interface ClaudeCliAuthStatus {
   /** True when this account is signed in to the CLI. */
@@ -231,11 +269,14 @@ async function readClaudeCliAuthUncached(profileId: string, runner?: ClaudeCliAu
   //    can start), then wait for the in-flight one to land, then spawn. The
   //    other order left a microtask between the wait settling and the acquire
   //    in which a fresh rotation could begin (adversarial pass on #598).
-  //    Awaited ONLY when a rotation is actually in flight, or when the project
+  //    Awaited ONLY when a rotation is actually in flight, when the project
   //    gate has no recent verdict for this process's directory (the first
-  //    probe, and once per reuse window after): the common path stays
-  //    synchronous up to the spawn, which is what lets overlapping probes for
-  //    one profile share a single subprocess.
+  //    probe, and once per reuse window after), or when the account's
+  //    sign-in folders have no verdict yet this run (Windows), and behind the
+  //    first-start warm-up of a claude.exe started directly (Windows,
+  //    ADR-025); otherwise the path stays synchronous up to the spawn.
+  //    Overlapping probes for one profile share a single subprocess either
+  //    way (authProbesInFlight).
   //
   //    Through a runner (the provider-neutral check, WP2 PR 4) the profile is
   //    held for the runner's own time limit plus a grace, and let go only once
@@ -263,6 +304,10 @@ async function readClaudeCliAuthUncached(profileId: string, runner?: ClaudeCliAu
       // built its own env is exactly how it would have kept inheriting an
       // ambient ANTHROPIC_API_KEY and reported the wrong account as signed
       // in. For HOME, see the note on the CLI auth environment above.
+      // Windows: the account's sign-in folders are checked owner-only (once a
+      // run, asynchronously) before the CLI first runs in its home, and the
+      // environment below reads their verdict.
+      if (!profileCredentialFoldersChecked(profileId)) await checkProfileCredentialFolders(profileId)
       const env = Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-status', cwd: probeCwd, probe: true, projectGate }), process.platform === 'darwin' ? {} : { HOME: home })
       if (runner) {
         const r = await runner.run(['auth', 'status'], env, STATUS_TIMEOUT_MS)
@@ -271,13 +316,20 @@ async function readClaudeCliAuthUncached(profileId: string, runner?: ClaudeCliAu
         const parsed = r.refused !== undefined || r.spawnError !== undefined || r.timedOut ? null : parseAuthStatus(r.stdout)
         if (parsed) return parsed
       } else {
-        const { stdout } = await execFileAsync('claude', ['auth', 'status'], {
-          encoding: 'utf-8',
-          timeout: STATUS_TIMEOUT_MS,
-          windowsHide: true,
-          shell: true,          // resolves claude.cmd on Windows, as elsewhere in the app
-          env,
-        })
+        // A recent answer of Windows' PATH walk is used at once (see above);
+        // without one the walk runs off the event loop.
+        const recent = process.platform === 'win32' ? recentClaudeOnWindows(env) : null
+        const run = process.platform === 'win32' && !recent ? await claudeAuthStatusCommand(env) : authStatusStart(env, process.platform, recent)
+        // ADR-025: a claude.exe started directly (not an npm claude.cmd, which
+        // cmd.exe starts) may be a new file this run has not started yet, whose
+        // first start holds the start call while the OS checks it. That first
+        // start runs off the main thread first: the program found above in
+        // PATH's folders, with Claude's --version environment (never this
+        // account's home). A pre-start, never a gate.
+        if (process.platform === 'win32' && /\\claude\.exe$/i.test(run.file)) {
+          await warmFirstStart(run.file, () => ({ env: claudeVersionRunEnv(process.env, 'win32') }))
+        }
+        const { stdout } = await execFileAsync(run.file, run.args, run.options)
         const parsed = parseAuthStatus(stdout)
         if (parsed) return parsed
       }
@@ -427,6 +479,9 @@ async function runLogout(profileId: string, runner: ClaudeCliAuthRunner): Promis
     const projectGate = peekGateVerdict(runner.cwd) ?? await gateManagedLaunch(runner.cwd)
     const home = join(getProfilesRoot(), profileId)
     if (!existsSync(home)) return refusedLogout('no-home')
+    // Windows: as for the check, the account's sign-in folders have a
+    // verdict before the sign-out runs in its home (account-profiles).
+    if (!profileCredentialFoldersChecked(profileId)) await checkProfileCredentialFolders(profileId)
     let env: Record<string, string>
     try {
       env = Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-logout', cwd: runner.cwd, probe: true, projectGate }), process.platform === 'darwin' ? {} : { HOME: home })

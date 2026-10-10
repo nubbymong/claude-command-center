@@ -10,8 +10,12 @@ next to your install see [`dev-alongside-prod.md`](./dev-alongside-prod.md).
 
 1. Install (see README → Getting started) and launch. On first run, CCC picks a data
    directory and checks that the `claude` CLI is on your PATH. If it is not
-   there, install it and press Retry, or choose **Use Codex only** if you only
-   use Codex.
+   there, the screen lists Claude Code's install commands with **Run it for me**
+   and **Copy** (see [Installing from setup](#installing-from-setup)), and has
+   **Check again**; or choose **Use Codex only** if you only use Codex. The
+   screens where you choose CCC's folders and install and set up Claude Code
+   have **Exit**, which closes the window (and quits CCC on Windows and
+   Linux); the pages after them do not.
 2. A fresh install asks **Which assistants will you use?**: Claude Code, Codex,
    or both. Choosing Codex adds a **Set up Codex** page (see
    [Installing or updating Codex](#installing-or-updating-codex) and
@@ -323,9 +327,11 @@ Claude account can be to claude.ai:
   in a Codex session's right-click menu, opens a sign-in window. It keeps the
   sign-in in that account's own browser storage in the app, apart from every
   other account, and nothing is copied from your own browser. The window
-  closes once the sign-in and your email are confirmed, and the row then
-  reads chatgpt.com: signed in as that email. A sign-in that does not finish
-  (the window closed, Cancel, or five minutes with no sign-in) is cleared.
+  closes by itself once the sign-in and your email are confirmed, and the row
+  then reads chatgpt.com: signed in as that email. If you close it yourself
+  once you are signed in, the app still checks for a few seconds and keeps
+  that sign-in. A sign-in that does not finish (the window closed before you
+  signed in, Cancel, or five minutes with no sign-in) is cleared.
 - A Codex session's browser pane offers **chatgpt.com** on its start page,
   as the account the session runs under; you can sign in there too.
 - **Sign out of chatgpt.com** in the account's menu clears that storage.
@@ -339,27 +345,66 @@ Claude account can be to claude.ai:
 CCC needs Codex 0.153.4 or newer. A version newer than CCC was tested with
 (0.156.1) still runs, with a note saying so. When the Providers card finds
 Codex missing or too old, its row shows the commands from OpenAI's own README,
-to copy:
+OpenAI's installer first, each with **Run it for me** and **Copy**:
 
 | | Install | Update |
 |---|---|---|
+| OpenAI's installer (macOS, Linux) | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` | the same, run again |
+| OpenAI's installer (Windows) | `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"` | the same, run again |
 | npm (every platform) | `npm install -g @openai/codex` | `npm install -g @openai/codex@latest` |
 | Homebrew (macOS) | `brew install --cask codex` | `brew upgrade --cask codex` |
 
-OpenAI's script installers (`curl -fsSL https://chatgpt.com/codex/install.sh | sh`
-on macOS and Linux, and a PowerShell one on Windows) are shown for you to read
-and run yourself; CCC never runs them. When CCC can tell how the Codex it found
-(the one your sessions run) was installed, it shows the update for that way: an
-npm install gets the npm update, a Homebrew cask the Homebrew upgrade, and one
-that OpenAI's script installer put there gets that installer again. When it
-cannot tell (another package manager, or a Homebrew formula rather than the
-cask), it shows every update, each saying which install it updates. After installing or updating, press **Check again**.
+On Windows the npm commands start with `npm.cmd` instead of `npm`
+(`npm.cmd install -g @openai/codex`): in PowerShell a plain `npm` runs
+npm.ps1, which the default script policy refuses to load, while `npm.cmd`
+runs there and in cmd.exe alike.
 
-During setup, the **Set up Codex** page can also run the npm or Homebrew
-command for you: **Run in a terminal** asks *Run this command?* and then types
-it into a visible terminal tab, one install at a time, in a tab that is never
-saved or restored. On Windows it runs `npm.cmd`. A system-wide npm on macOS or
-Linux may ask for administrator rights; CCC never elevates on its own.
+When CCC can tell how the Codex it found (the one your sessions run) was
+installed, it shows the update for that way: an npm install gets the npm
+update, a Homebrew cask the Homebrew upgrade, and one that OpenAI's script
+installer put there gets that installer again. When it cannot tell (another
+package manager, or a Homebrew formula rather than the cask), it shows every
+update, each saying which install it updates.
+
+### Installing from setup
+
+The same commands, run the same way, are on the **Set up Codex** page, on the
+first setup screen for Claude Code when it is not installed, and in the CLI
+help at the foot of the window. Claude Code's come from Anthropic's setup page:
+the native installer first (`irm https://claude.ai/install.ps1 | iex` in
+PowerShell, `curl -fsSL https://claude.ai/install.sh | bash` on macOS and
+Linux), then `npm install -g @anthropic-ai/claude-code`.
+
+- **Run it for me** asks first. It shows the exact line it will type and, for
+  an installer, names the site the script comes from (claude.ai or
+  chatgpt.com) and says it downloads and runs it. Only **Run it** starts
+  anything. The line runs in a visible terminal: a tab that is never saved or
+  restored, or, on the first setup screen, a terminal on that screen. Each
+  page runs one install at a time. CCC never runs it on its own and never
+  with administrator rights; a system-wide npm on macOS or Linux may ask for
+  them itself.
+- The line ends its terminal when the command ends, also when it fails (and,
+  on Windows, when you press Ctrl+C), and CCC checks again then: once the tool
+  is found, setup carries on. **Check again** works while the command runs
+  too. On Windows each check first reads the PATH Windows now gives new
+  programs, so a tool installed while CCC was open is found without
+  restarting it.
+- Anthropic's installer puts Claude Code in `%USERPROFILE%\.local\bin` on
+  Windows (`~/.local/bin` on macOS and Linux) and does not add that folder
+  to your PATH. When a check finds it there and the folder is not on PATH,
+  CCC says so. On Windows, **Add it to PATH for me** adds that one folder to
+  the end of your PATH for your Windows account (nothing else in it changes)
+  and checks again; **Not now** leaves PATH as it is and says how to add the
+  folder yourself. On macOS and Linux CCC shows the line to add to the shell
+  file your login shell reads (`~/.zprofile` for zsh), with **Copy**; it
+  never edits that file. Codex gets the same on macOS and Linux. CCC advises
+  quitting and starting it again only when that would help.
+- An npm command needs Node.js. When CCC does not find Node.js, the npm
+  command says so, and only **Copy** works for it.
+- On Windows the npm commands run as `npm.cmd`. After a command you copied
+  and ran yourself, press **Check again**.
+- When OpenAI's installer asks whether to start Codex now, answer N: CCC
+  checks again when it ends.
 
 ## Code review between Claude and Codex
 
@@ -560,8 +605,10 @@ covered above.
 
 ## Troubleshooting
 
-- **CLI not found:** ensure `claude` is on your PATH (Onboarding → *Find Claude*),
-  or choose **Use Codex only** if you do not use Claude Code. For Codex, see
+- **CLI not found:** click the CLI indicator at the foot of the window to install
+  Claude Code (see [Installing from setup](#installing-from-setup)), ensure
+  `claude` is on your PATH (Onboarding → *Find Claude*), or choose
+  **Use Codex only** if you do not use Claude Code. For Codex, see
   [Installing or updating Codex](#installing-or-updating-codex).
 - **A tab reads "Not started" and names a provider:** that provider is off. Turn
   it on in Settings → Accounts, then Restart the tab.

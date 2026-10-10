@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // Cross-platform proof that the owned-FILE check refuses a LINK.
 //
 // `OWNED_FILES` was verified with `statSync().isFile()`, which follows links, so

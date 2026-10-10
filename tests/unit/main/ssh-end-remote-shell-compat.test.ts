@@ -1,3 +1,4 @@
+// HOST QUARANTINE: starts real processes. [CI] [VM] only -- never run on the owner's machine.
 // WP2 T24 fix round: the End remote line, run LITERALLY through real shells.
 //
 // endSshRemoteDetailed (pty-manager.ts) sends one line over a separate ssh

@@ -14,13 +14,34 @@ import { BrowserWindow } from 'electron'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
 import { isValidLegacyVersion } from '../shared/legacy-version'
+import { findOnWindowsPathAsync, windowsStartCommand } from './windows-programs'
 
 const execFileAsync = promisify(execFile)
 
-// On Windows the npm CLI is a .cmd shim, which execFile (no shell) cannot launch
-// directly; resolve it per platform. Mirrors the install path's reliance on the
-// shell to map `npm` -> `npm.cmd` (doInstall uses spawn with shell:true).
-const NPM_BIN = os.platform() === 'win32' ? 'npm.cmd' : 'npm'
+/** How npm starts with `args`. Windows: npm by the full path found in PATH's
+ *  folders (npm.exe, else npm.cmd, in each folder as Windows tries them; the
+ *  walk one stat at a time off the event loop), with no shell -- the npm.cmd
+ *  shim through the system cmd.exe -- and the child looks for programs it
+ *  starts by name (its `node`) only in PATH's folders. When npm is in none of
+ *  them, or is found but cannot be started that way, the answer says which
+ *  (`refused`). Elsewhere `npm` (`viaShell` says whether that start goes
+ *  through `sh`, as the install always has). Exported for the test. */
+export async function npmCommand(
+  args: string[],
+  viaShell: boolean,
+  platform: NodeJS.Platform = os.platform(),
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ file: string; args: string[]; options: { shell?: boolean; windowsVerbatimArguments?: boolean; env?: NodeJS.ProcessEnv } } | { refused: string }> {
+  if (platform !== 'win32') return { file: 'npm', args, options: viaShell ? { shell: true } : {} }
+  const npm = await findOnWindowsPathAsync(['npm.exe', 'npm.cmd'], env)
+  if (!npm) return { refused: NPM_NOT_FOUND }
+  const how = windowsStartCommand(npm, args, env)
+  if ('refused' in how) return { refused: `npm was found but could not be started: ${how.refused}` }
+  return { file: how.file, args: how.args, options: { env: how.env, ...(how.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) } }
+}
+
+/** What an install or a version list says when npm cannot be started. */
+const NPM_NOT_FOUND = 'npm was not found in a folder PATH names (npm.exe, npm.cmd)'
 
 // Cache fetched versions for 10 minutes
 let cachedVersions: string[] | null = null
@@ -70,13 +91,14 @@ export async function fetchAvailableVersions(): Promise<string[]> {
   try {
     // execFile (async) instead of execSync so the network round-trip to the npm
     // registry never blocks the main thread. The handler is already async.
-    // shell on win32: Node's CVE-2024-27980 hardening makes execFile of a
-    // .cmd shim throw EINVAL without it. Args are literal constants, so the
-    // shell adds no injection surface here.
+    // No shell: on Windows npm is started by its full path (npmCommand; the
+    // npm.cmd shim through the system cmd.exe, which Node requires for a .cmd).
+    const npm = await npmCommand(['view', '@anthropic-ai/claude-code', 'versions', '--json'], false)
+    if ('refused' in npm) throw new Error(npm.refused)
     const { stdout } = await execFileAsync(
-      NPM_BIN,
-      ['view', '@anthropic-ai/claude-code', 'versions', '--json'],
-      { encoding: 'utf-8', timeout: 15000, windowsHide: true, shell: process.platform === 'win32' },
+      npm.file,
+      npm.args,
+      { encoding: 'utf-8', timeout: 15000, windowsHide: true, ...npm.options },
     )
 
     const versions: string[] = JSON.parse(stdout)
@@ -172,13 +194,16 @@ async function doInstall(version: string): Promise<{ ok: boolean; error?: string
       }, null, 2))
     }
 
-    // Run npm install
+    // Run npm install. Windows: npm by its full path with no shell (npmCommand);
+    // elsewhere through `sh`, as before.
+    const npm = await npmCommand(['install', `@anthropic-ai/claude-code@${version}`, '--no-save'], true)
+    if ('refused' in npm) throw new Error(npm.refused)
     await new Promise<void>((resolve, reject) => {
-      const child = spawn('npm', ['install', `@anthropic-ai/claude-code@${version}`, '--no-save'], {
+      const child = spawn(npm.file, npm.args, {
         cwd: versionDir,
-        shell: true,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
+        ...npm.options,
       })
 
       child.stdout?.on('data', (data: Buffer) => {

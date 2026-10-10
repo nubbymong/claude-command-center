@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 /**
  * #48 (rc.14 review F4): a shell-only session pinned to a profile -- a plain
  * shell, or the add-account /login shell -- runs in that profile's credential

@@ -14,6 +14,7 @@ import {
   signInAgainMethods, canOfferMakeInactive, canOfferMakeActive, canOfferArchive,
   PROVIDER_ENABLED_SETTING, PROVIDER_ANSWERED_SETTING, savedOff, canOfferCheckSignIn, signInCheckText, externalSignInHint,
   providerNotSetUp, providerUnanswered, providerAnsweredOn, externalHomeFolder, externalHomeWhere,
+  reviewerBlockKind, confirmEachLaunchWhy,
 } from '../../../src/renderer/stores/providerAccountsStore'
 // Main's own record of where Codex's on/off is saved (type-only imports: no
 // main-process code runs here).
@@ -174,6 +175,60 @@ describe('canOfferMakeReviewer', () => {
     const noReview = snapshot()
     noReview.providers[1] = { ...noReview.providers[1], review: undefined }
     expect(canOfferMakeReviewer(noReview, work)).toBe(false)
+  })
+})
+
+describe('reviewerBlockKind', () => {
+  // Why reviews cannot run on the account they would use. Each surface words
+  // it for itself, so the kind is the shared fact.
+  const unvManaged = account({ id: 'acc-unv', providerId: 'codex', identityId: 'id-work', unverified: true, identityAssurance: 'realm-only' })
+  const spare = { ...work, isProviderDefault: false }
+  const withClaude = (accounts: AccountView[]) => snapshot({ accounts: [...accounts, claudeMain] })
+
+  it("is external-only for this computer's own sign-in when no other account offers Make reviewer", () => {
+    expect(reviewerBlockKind(withClaude([local]), local)).toBe('external-only')
+    // Blocked, inactive, archived and unverified accounts offer no Make reviewer.
+    expect(reviewerBlockKind(withClaude([local, old, parked, gone, unvManaged]), local)).toBe('external-only')
+  })
+
+  it('is external-another once another account of the same provider offers Make reviewer', () => {
+    const s = withClaude([local, spare])
+    expect(canOfferMakeReviewer(s, spare)).toBe(true)
+    expect(reviewerBlockKind(s, local)).toBe('external-another')
+  })
+
+  it('counts another account exactly as the rows offer Make reviewer: never a refused one, nor one of another provider', () => {
+    const refusedSpare = { ...spare, reviewRefusal: { reason: 'unknown' as const, message: 'm' } }
+    const s = withClaude([local, refusedSpare])
+    expect(canOfferMakeReviewer(s, refusedSpare)).toBe(false)
+    expect(reviewerBlockKind(s, local)).toBe('external-only')
+    // The Claude account could be the Claude reviewer, never the Codex one.
+    expect(canOfferMakeReviewer(s, claudeMain)).toBe(true)
+  })
+
+  it('is unverified-only or unverified-another for an unverified sign-in', () => {
+    const unvClaude = account({ id: 'acc-claude-unv', providerId: 'claude', identityId: 'id-claude', unverified: true, identityAssurance: 'realm-only' })
+    expect(reviewerBlockKind(snapshot({ accounts: [spare, unvClaude] }), unvClaude)).toBe('unverified-only')
+    expect(reviewerBlockKind(snapshot({ accounts: [spare, unvClaude, claudeMain] }), unvClaude)).toBe('unverified-another')
+  })
+
+  it('is refusal when the platform will not let the account review, after the external and unverified kinds', () => {
+    const platform = { reason: 'platform' as const, message: 'm' }
+    const refusedWork = { ...work, reviewRefusal: platform }
+    expect(reviewerBlockKind(withClaude([refusedWork]), refusedWork)).toBe('refusal')
+    const refusedLocal = { ...local, reviewRefusal: platform }
+    expect(reviewerBlockKind(withClaude([refusedLocal]), refusedLocal)).toBe('external-only')
+  })
+
+  it('is other for anything else that holds a managed account back', () => {
+    for (const a of [old, parked, { ...work, lastKnownAuthState: 'signed-out' as const }, { ...work, signingIn: true as const }]) {
+      expect(reviewerBlockKind(withClaude([a]), a), a.id).toBe('other')
+    }
+  })
+
+  it('says why a sign-in confirmed at each launch cannot review, naming which kind it is', () => {
+    expect(confirmEachLaunchWhy(local)).toBe("you confirm each launch on this computer's own sign-in, and a review has no one to confirm it")
+    expect(confirmEachLaunchWhy(unvManaged)).toBe('you confirm each launch on an unverified sign-in, and a review has no one to confirm it')
   })
 })
 

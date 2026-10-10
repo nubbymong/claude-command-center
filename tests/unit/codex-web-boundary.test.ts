@@ -199,7 +199,7 @@ beforeEach(() => {
   // As index.ts wires them.
   // Through the wiring index.ts calls, with this test's PTY sessions and leases.
   wireCodexWebSession({ getWindow: () => S.mainWin, isCodexPtySession, leases: () => S.L.leases })
-  registerAccountWebHandlers()
+  registerAccountWebHandlers(() => S.mainWin)
   S.reg.accounts = [{ id: ACCT, providerId: 'codex', lifecycle: 'inactive' }, { id: OTHER, providerId: 'codex', lifecycle: 'active' }]
 })
 

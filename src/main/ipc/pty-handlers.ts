@@ -47,6 +47,7 @@ import {
   CODEX_EFFORTS,
   CODEX_PRESETS,
 } from '../sanitize-restored-spawn-options'
+import { startProfileStepsPending, startProfileStepsSettled } from '../account-profiles'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
 interface RendererSSHOptions {
@@ -292,7 +293,9 @@ export const spawnOptionsSchema = z.object({
     // install script inherits. That keeps them out of the script's way; it is
     // not a boundary against a script running as the same user. A renderer
     // can only ask for fewer secrets with it, never more, so honouring what it
-    // sends is safe.
+    // sends is safe. On Windows the mark also keeps a shell-only tab's program
+    // lookup to the folders PATH names in full; that too can only narrow what
+    // the tab finds, so honouring it as sent is still safe.
     noCommandSecrets: z.boolean().optional(),
   }).optional(),
   configId: z.string().optional(),
@@ -417,7 +420,7 @@ export const spawnOptionsSchema = z.object({
     // line continuation, which hangs the session on a `>` prompt waiting for
     // input that never comes.
     (v) => extraArgsRefineOk(v),
-    { message: 'extraArgs must not include an app-managed flag (--model/--effort/--permission-mode/--settings/--mcp-config/--agents/--resume), nor end in a backslash' },
+    { message: 'extraArgs must not include an option the app sets (or one that changes the conversation, where or how it runs, its permission mode or the settings it reads), a word Claude reads as a command or as a server address, or a word that starts or ends with a comma, nor end in a backslash' },
   ).optional(),
   disableAutoMemory: z.boolean().optional(),
   enableCodexReview: z.boolean().optional(),
@@ -678,6 +681,8 @@ function endTargetFromSavedConfig(configId: string, sessionId: string): SshEndTa
     password: loadCredential(configId) ?? undefined,
     runtime: s.runtime,
     sudoPassword: loadCredential(configId + '_sudo') ?? undefined,
+    // A Windows host is cleaned up with the Windows command (no tmux there).
+    remoteOs: s.remoteOs,
   }
 }
 
@@ -863,7 +868,13 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // the tab's own previous run is this spawn's to supersede, as a prepared
     // Codex spawn's is.
     const askSpawn = options?.isAsk === true && !options.shellOnly
-    const preparation = codexSession || legacyInstall || askSpawn ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
+    // A local Claude session that names no account runs on the primary
+    // account (pty-manager). While the start's profile steps, which make the
+    // first one from the user's own sign-in, are still to run, it waits for
+    // them as a prepared spawn (a close or a newer spawn of the tab
+    // supersedes it meanwhile), so it starts on that account.
+    const holdForStartSteps = launchProvider === 'claude' && !options?.ssh && !options?.profileId && startProfileStepsPending()
+    const preparation = codexSession || legacyInstall || askSpawn || holdForStartSteps ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
     // PR-level ADR-009 round 1 (B1): once that preparation is cancelled or
     // superseded, this spawn's ticket stops counting as one under way.
     if (preparation) noteConfigLaunchPreparation(configClaim.ticket, () => preparation.current)
@@ -1015,6 +1026,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         // launch gets no hooks whatever the folders).
         if (!options?.ssh && getGateway()?.status()?.listening === true) await awaitCodexHookFolders()
       }
+
+      // The start's profile steps (holdForStartSteps above), waited for before
+      // the check below, so nothing starts for a tab closed meanwhile.
+      if (holdForStartSteps) await startProfileStepsSettled()
 
       // Closed, swept or superseded while it was prepared: start nothing, and
       // SAY so. The renderer holds any pty:exit that arrives while its own

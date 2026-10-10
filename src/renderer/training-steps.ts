@@ -85,7 +85,6 @@ export const trainingSteps: TrainingStep[] = [
     bullets: [
       'Create **saved configs** with custom working directories and models',
       'Effort is **live** -- run `/effort` in Claude to change it; the level shows on the card and in the statusline',
-      '**Bundle agent templates** from your Library into the spawned session',
       'Connect to remote machines via **SSH** with full Claude support -- same statusline, account and usage as a local session',
     ],
     withoutClaude: {
@@ -166,7 +165,7 @@ export const trainingSteps: TrainingStep[] = [
       'Turn **Claude Code** or **Codex** on or off; at least one stays on, and a provider cannot be turned off while anything of it is running',
       'Click an account\'s round **chip** to edit its name, colour and group, or to link it to another of your accounts, Claude or Codex; a row says how many sessions run on it',
       'A provider that is off starts nowhere: its configs say why, and a tab restored for it reads **Not started** until you turn it back on and Restart the tab',
-      'Codex missing or too old? Its row shows the install or update commands to copy, then **Check again**',
+      'Claude Code or Codex missing, or Codex too old? Its row lists the install or update commands, the publisher\'s own installer first, each with **Run it for me** and **Copy**',
       '**Add Codex account**: sign in with ChatGPT or an API key, then give it a name, or say it is the same person as an account you already have',
       'Each Codex account has a menu: **Make default**, **Make reviewer**, **Sign in again** (signed in or not), **Check sign-in**, **Sign out**, **Make inactive**, **Archive**; archived accounts wait under **Archived**, each with **Restore**',
       'A row reading **Needs attention: signed in a different way than before** has a new kind of sign-in (say, an API key where it had a ChatGPT sign-in); **This is still my account** checks it again and confirms it',

@@ -12,7 +12,9 @@
  *     double-quoted. That is a deliberate security change, not drift: inside
  *     double quotes PowerShell expands `$(...)` and POSIX expands `$(...)` and
  *     backticks, and these values are PATHS whose contents a directory name
- *     decides. Byte-identity holds for every other part of the line.
+ *     decides. On Windows the user's extra CLI arguments are single-quoted
+ *     word by word too (claudeUserArgsOnLine), so PowerShell reads nothing
+ *     in them. Byte-identity holds for every other part of the line.
  *   - When `resumeUuid` is PRESENT the resume-picker branch is BYPASSED and the
  *     command launches Claude directly with `--resume <uuid>` FIRST, before
  *     --settings / --mcp-config / --agents etc. (mirrors the ordering in
@@ -26,7 +28,7 @@
 import * as nodePath from 'node:path'
 import * as nodeOs from 'node:os'
 import { UUID_RE, claudeProjectDirName, type ClaudeLaunchFolderOptions } from './logging/transcript-discovery'
-import { askPromptRef } from './terminal-launch-line'
+import { CMD_EXE_LINE_LIMIT, PS_LEGACY_ARGUMENT_PASSING, agentsRef, askPromptRef, windowsCommandLineLimit } from './terminal-launch-line'
 import { escapeForCwdQuote, quoteArgForShell } from '../shared/shell-quote'
 
 export interface BuildClaudeLaunchCommandOptions {
@@ -38,8 +40,32 @@ export interface BuildClaudeLaunchCommandOptions {
   claudeBin: string
   /** Pre-built extra flag string (e.g. ` --effort high --settings '...' --mcp-config '...'`). */
   extraFlags: string
-  /** Pre-built --agents flag string (empty when no agents). */
+  /** Pre-built --agents flag string (empty when no agents, and always empty
+   *  when `agentsFromEnv` is set). */
   agentsFlag: string
+  /**
+   * Windows: the agent templates ride the session's environment (AGENTS_ENV,
+   * set to agentsEnvValue for claudeLaunchProgram's program before the spawn)
+   * and the line carries only `--agents ${env:CCC_AGENTS}`, in the place
+   * `agentsFlag` takes, after PS_LEGACY_ARGUMENT_PASSING at its start. A
+   * boolean, as `askPrompt` is: the templates never reach this builder as
+   * text. Elsewhere it is ignored and `agentsFlag` carries them.
+   */
+  agentsFromEnv?: boolean
+  /**
+   * Windows, with `agentsFromEnv`: the length of AGENTS_ENV's value. The line
+   * is refused, with the reason, when the command line its program would be
+   * handed is longer than Windows lets that program have
+   * (windowsCommandLineLimit): such a launch would start nothing.
+   */
+  agentsValueLength?: number
+  /**
+   * The user's own extra CLI arguments for this session, as the session's
+   * rule passed them (claudeExtraArgsProblem, src/shared/extra-args.ts).
+   * Placed after every option of the app's own (claudeUserArgsOnLine).
+   * Absent or blank: none.
+   */
+  userArgs?: string
   /** Whether the resume-picker branch would normally run (restored sessions). */
   useResumePicker: boolean
   /** Resolved resume-picker.js path, or null when not deployed. */
@@ -412,9 +438,119 @@ export function buildResumeTranscriptPath(
   return nodePath.join(homedir(), '.claude', 'projects', claudeProjectDirName(launchCwd, launchFolder), `${uuid}.jsonl`)
 }
 
+/** A folder cmd.exe cannot start in: a share or a device path (two leading
+ *  slashes of either kind). Claude Code's npm launcher (claude.cmd) runs
+ *  under cmd.exe, so it is never started there. */
+const CMD_EXE_NETWORK_FOLDER_RE = /^[\\/]{2}/
+/** Why a launch through Claude Code's npm launcher in such a folder is
+ *  refused (the resume picker says the same, scripts/resume-picker.js). */
+export const CLAUDE_NETWORK_FOLDER_REFUSAL = 'Cannot start Claude Code in a network folder through its npm launcher: open the folder from a mapped drive letter, or install the native Claude Code.'
+
+/**
+ * The user's extra CLI arguments as a launch line carries them: each word
+ * after a space, or '' when there are none. On Windows the line is read by
+ * PowerShell, and each word is single-quoted (quoteArgForShell), so PowerShell
+ * hands Claude Code each word exactly as written and reads nothing in it: no
+ * comma joining words into a list, no number, no operator. Elsewhere a POSIX
+ * shell reads the words as they are, as the rule that passed them expects
+ * (it matches each word with its backslashes removed).
+ */
+export function claudeUserArgsOnLine(userArgs: string | undefined, isWin32: boolean): string {
+  const words = (userArgs ?? '').split(' ').filter((w) => w !== '')
+  return words.map((w) => ` ${isWin32 ? quoteArgForShell(w, true) : w}`).join('')
+}
+
+/** Whether the launch line starts the resume picker (by `node`) rather than
+ *  Claude Code itself. One answer for the builder and for the program whose
+ *  agent templates' value is chosen before the spawn (claudeLaunchProgram). */
+export function launchStartsPicker(opts: Pick<BuildClaudeLaunchCommandOptions, 'useResumePicker' | 'pickerScript' | 'resumeUuid'>): boolean {
+  return !opts.resumeUuid && opts.useResumePicker && !!opts.pickerScript
+}
+
+/** The program a Claude launch line starts: `node`, by name, when it runs the
+ *  resume picker, otherwise Claude Code (`claudeBin`). On Windows the agent
+ *  templates' value is written for this program (agentsEnvValue). */
+export function claudeLaunchProgram(opts: Pick<BuildClaudeLaunchCommandOptions, 'claudeBin' | 'useResumePicker' | 'pickerScript' | 'resumeUuid'>): string {
+  return launchStartsPicker(opts) ? 'node' : opts.claudeBin
+}
+
+/** One agent template, as a session's options carry it (pty:spawn's schema). */
+export interface ClaudeAgentTemplate {
+  name: string
+  description: string
+  prompt: string
+  model?: string
+  tools?: string[]
+}
+
+/** How every refusal of a session's agent templates starts. */
+const AGENTS_REFUSAL = 'Cannot start Claude Code with these agent templates'
+
+/**
+ * The value Claude Code's `--agents` takes, from a session's templates: ONE
+ * JSON object keyed by agent name, each name holding its description and
+ * prompt, and its model and tools when given; nothing else
+ * (`{"reviewer": {"description": "...", "prompt": "..."}}`, as
+ * `claude --help` gives it). Claude Code checks the whole set when it starts,
+ * and one template it does not take costs every template: it stops with an
+ * error, or starts with none of them. So such a set is refused here, before
+ * anything starts, naming the template by its place in the list: one with no
+ * name, a name that starts with `-`, a name an earlier template has, no
+ * description, or a blank model.
+ */
+export function claudeAgentsObject(templates: readonly ClaudeAgentTemplate[]): Record<string, Omit<ClaudeAgentTemplate, 'name'>> {
+  const seen = new Map<string, number>()
+  const entries: Array<[string, Omit<ClaudeAgentTemplate, 'name'>]> = []
+  templates.forEach(({ name, description, prompt, model, tools }, i) => {
+    const n = i + 1
+    if (typeof name !== 'string' || name === '') throw new Error(`${AGENTS_REFUSAL}: template ${n} has no name.`)
+    if (name.startsWith('-')) throw new Error(`${AGENTS_REFUSAL}: the name of template ${n} starts with a hyphen.`)
+    const first = seen.get(name)
+    if (first !== undefined) throw new Error(`${AGENTS_REFUSAL}: templates ${first} and ${n} have the same name.`)
+    seen.set(name, n)
+    if (typeof description !== 'string' || description === '') throw new Error(`${AGENTS_REFUSAL}: template ${n} has no description.`)
+    if (model !== undefined && model.trim() === '') throw new Error(`${AGENTS_REFUSAL}: template ${n} names a blank model.`)
+    entries.push([name, { description, prompt, ...(model !== undefined ? { model } : {}), ...(tools !== undefined ? { tools } : {}) }])
+  })
+  // Every name becomes the object's own key, `__proto__` included.
+  return Object.fromEntries(entries)
+}
+
+/** Room on a Windows program's command line for what comes before its
+ *  arguments besides its own path: how cmd.exe starts, and, on a line cmd.exe
+ *  reads, what npm's launcher writes in place of its own name (node, and
+ *  Claude Code's script under the launcher's folder, for which the length
+ *  also counts Claude Code's path once more). */
+export const AGENTS_LAUNCHER_ROOM = 256
+
+/** Why a launch whose agent templates make the program's command line longer
+ *  than Windows allows is refused (`length` and `limit` in characters). */
+export function agentsTooLongRefusal(length: number, limit: number, program: string): string {
+  const npm = /\.(cmd|bat)$/i.test(program) ? ', or install the native Claude Code' : ''
+  return `${AGENTS_REFUSAL}: they make Claude Code's command line about ${length} characters long, and Windows allows ${limit} there. Shorten the templates${npm}.`
+}
+
 export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions): string {
-  const { cwd, claudeBin, extraFlags, agentsFlag, useResumePicker, pickerScript, resumeUuid } = opts
+  const { cwd, claudeBin, useResumePicker, pickerScript, resumeUuid } = opts
   const isWin32 = opts.platform === 'win32'
+  // Windows, templates in the environment: the line names the variable, and
+  // starts by having PowerShell pass arguments the one way agentsEnvValue
+  // writes them for (PS_LEGACY_ARGUMENT_PASSING).
+  const agentsFromEnv = isWin32 && opts.agentsFromEnv === true
+  if (agentsFromEnv && opts.agentsFlag) throw new Error('buildClaudeLaunchCommand: agentsFlag and agentsFromEnv are exclusive')
+  const agentsFlag = agentsFromEnv ? ` --agents ${agentsRef()}` : opts.agentsFlag
+  const lead = agentsFromEnv ? `${PS_LEGACY_ARGUMENT_PASSING}; ` : ''
+  // The app's own options, then the user's words: an option among them that
+  // takes a value can never take one of the app's options as that value.
+  const extraFlags = `${opts.extraFlags}${claudeUserArgsOnLine(opts.userArgs, isWin32)}`
+  // Every line below that starts Claude Code itself starts it in `cwd`: an
+  // npm launcher there is refused, with the reason, when cmd.exe cannot start
+  // in that folder. The picker line starts node, which can; the picker
+  // refuses its own launch there.
+  const startsPicker = launchStartsPicker(opts)
+  if (isWin32 && !startsPicker && /\.(cmd|bat)$/i.test(claudeBin) && typeof cwd === 'string' && CMD_EXE_NETWORK_FOLDER_RE.test(cwd)) {
+    throw new Error(CLAUDE_NETWORK_FOLDER_REFUSAL)
+  }
   // Positional opening prompt, by env reference — never the text itself.
   // Trailing position: `claude [options] [prompt]`.
   //
@@ -443,6 +579,22 @@ export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions):
   // precisely how it would have kept the old behaviour after the helper was
   // fixed. One helper, one call site each.
   const quotedPicker = pickerScript ? `'${escapeForCwdQuote(pickerScript, isWin32)}'` : null
+  // Every Windows line: `run` is the program and its arguments. With the
+  // templates in the environment, the command line the program is handed
+  // (`run` with the reference expanded, and room for what cmd.exe and npm's
+  // launcher add) must fit what Windows lets that program have; otherwise the
+  // launch would start nothing, so it is refused with the reason.
+  const windowsLine = (run: string): string => {
+    if (agentsFromEnv && opts.agentsValueLength !== undefined) {
+      const program = claudeLaunchProgram(opts)
+      const limit = windowsCommandLineLimit(program)
+      // A line cmd.exe reads may name the launcher's folder once more.
+      const again = limit === CMD_EXE_LINE_LIMIT ? claudeBin.length : 0
+      const length = run.length - agentsRef().length + opts.agentsValueLength + AGENTS_LAUNCHER_ROOM + again
+      if (length > limit) throw new Error(agentsTooLongRefusal(length, limit, program))
+    }
+    return `${lead}Set-Location '${escapedCwd}'; ${run}; exit`
+  }
 
   // RESUME path: bypass the picker, launch claude directly with --resume first.
   // The --resume verb must precede every other flag (resume-picker.js:299), so
@@ -456,7 +608,7 @@ export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions):
     if (!UUID_RE.test(resumeUuid)) throw new Error('buildClaudeLaunchCommand: resumeUuid is not a uuid')
     const resumeFlag = ` --resume ${resumeUuid}`
     return isWin32
-      ? `Set-Location '${escapedCwd}'; & ${quotedBin}${resumeFlag}${agentsFlag}${extraFlags}; exit`
+      ? windowsLine(`& ${quotedBin}${resumeFlag}${agentsFlag}${extraFlags}`)
       : `cd '${escapedCwd}' && ${quotedBin}${resumeFlag}${agentsFlag}${extraFlags}; exit`
   }
 
@@ -467,16 +619,16 @@ export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions):
   if (useResumePicker) {
     if (quotedPicker) {
       return isWin32
-        ? `Set-Location '${escapedCwd}'; node ${quotedPicker}${agentsFlag}${extraFlags}; exit`
+        ? windowsLine(`node ${quotedPicker}${agentsFlag}${extraFlags}`)
         : `cd '${escapedCwd}' && node ${quotedPicker}${agentsFlag}${extraFlags}; exit`
     }
     // Fallback: no picker script found, launch Claude directly.
     return isWin32
-      ? `Set-Location '${escapedCwd}'; & ${quotedBin}${agentsFlag}${extraFlags}; exit`
+      ? windowsLine(`& ${quotedBin}${agentsFlag}${extraFlags}`)
       : `cd '${escapedCwd}' && ${quotedBin}${agentsFlag}${extraFlags}; exit`
   }
 
   return isWin32
-    ? `Set-Location '${escapedCwd}'; & ${quotedBin}${agentsFlag}${extraFlags}${promptArg}; exit`
+    ? windowsLine(`& ${quotedBin}${agentsFlag}${extraFlags}${promptArg}`)
     : `cd '${escapedCwd}' && ${quotedBin}${agentsFlag}${extraFlags}${promptArg}; exit`
 }

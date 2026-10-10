@@ -34,7 +34,7 @@
 import * as fs from 'fs'
 import { z } from 'zod'
 import type { AccountLogFolderKind, AccountLogFolderOpenResult, AccountLogFolders, ProviderId } from '../shared/types'
-import { localPathFormProblem, samePathForm } from './utils/path-validator'
+import { isOwnRealPath, localPathFormProblem } from './utils/path-validator'
 import type { FolderCheckFs } from './utils/path-validator'
 
 /** One live account's own folders: paths, main only, never sent to a
@@ -85,12 +85,28 @@ export class CheckedReadRefused extends Error {
   }
 }
 
+/** A file number of all ones, as an unsigned read gives it (Node's bigint
+ *  stats read it signed, as -1). */
+const FILE_ID_ALL_ONES = (1n << 64n) - 1n
+
+/** Whether a device and file id can tell two files apart: a volume that
+ *  reports no device number (0), or no file number (0, or all ones), gives
+ *  every file the same one, so it cannot. */
+function idTellsFilesApart(id: { dev: bigint; ino: bigint }): boolean {
+  if (id.dev === 0n) return false
+  if (id.ino === 0n) return false
+  if (id.ino === -1n || id.ino === FILE_ID_ALL_ONES) return false
+  return true
+}
+
 /**
  * Read a file main has just checked (with lstat: a plain file), without
  * following a link where the platform can (O_NOFOLLOW; O_NONBLOCK so a FIFO
  * put in its place never blocks), and only when what was opened is that same
- * file: the device and file id the check saw (`expect`). More than `max`
- * bytes: refused (`whole`) or cut at `max`.
+ * file: the device and file id the check saw (`expect`), and only on a volume
+ * whose ids tell files apart (a device number and a file number that are not
+ * 0, the file number not all ones). More than `max` bytes: refused (`whole`)
+ * or cut at `max`.
  */
 export async function readCheckedFile(
   p: string,
@@ -103,6 +119,7 @@ export async function readCheckedFile(
   const h = await files.open(p, flags)
   try {
     const st = await h.stat({ bigint: true })
+    if (!idTellsFilesApart(st)) throw new CheckedReadRefused('the file cannot be told apart from another on its volume')
     if (st.dev !== opts.expect.dev || st.ino !== opts.expect.ino) throw new CheckedReadRefused('the file changed')
     if (opts.whole && st.size > BigInt(max)) throw new CheckedReadRefused('too large')
     const len = Number(st.size < BigInt(max) ? st.size : BigInt(max))
@@ -426,7 +443,7 @@ export async function openAccountLogFolder(input: unknown, source: AccountFolder
   }
   // Its real path is its own: no link on the way (a mapped network drive's
   // real path is a share, so it is refused here too).
-  if (!samePathForm(real, target, deps.platform)) {
+  if (!(await isOwnRealPath(real, target, deps.platform, deps.fs))) {
     log(`${folder} refused: reached through a link`)
     return refused('refused')
   }

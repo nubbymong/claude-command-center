@@ -32,6 +32,19 @@ vi.mock('../../../src/main/ipc/setup-handlers', () => {
   return { getResourcesDirectory: () => dir }
 })
 
+// The canvas records' signing key, fixed for this file. The real one comes
+// from the install secret, which the first canvas write creates in the config
+// folder, and on Windows that folder is then made owner-only by the system
+// ACL tool: real processes in this suite's setup that the files under test
+// never depend on. Here the setup starts no process.
+vi.mock('../../../src/main/install-secret', async (importOriginal) => {
+  const { createHmac } = await import('node:crypto')
+  return {
+    ...(await importOriginal<typeof import('../../../src/main/install-secret')>()),
+    deriveInstallKey: (purpose: string) => createHmac('sha256', 'canvas-readonly-boundary').update(`ccc:${purpose}`, 'utf8').digest(),
+  }
+})
+
 const handlers = new Map<string, (...a: unknown[]) => unknown>()
 const listeners = new Map<string, (...a: unknown[]) => unknown>()
 vi.mock('electron', () => ({
@@ -68,14 +81,16 @@ const OWNER = 'aaaa1111aaaa1111aaaa1111'
 const FOREIGN = 'bbbb2222bbbb2222bbbb2222'
 const PROJECT = path.join(getResourcesDirectory(), 'project')
 
-registerCanvasHandlers(
-  () => ({ isDestroyed: () => false, webContents: { send: () => {} } }) as never,
-)
+/** The app window and its main frame: the only sender these handlers answer. */
+const APP_FRAME = {}
+const APP_WIN = { isDestroyed: () => false, webContents: { mainFrame: APP_FRAME, send: () => {} } }
+const APP_EVENT = { sender: APP_WIN.webContents, senderFrame: APP_FRAME }
+registerCanvasHandlers(() => APP_WIN as never)
 
 const invoke = async (channel: string, args: unknown): Promise<unknown> => {
   const handler = handlers.get(channel)
   if (!handler) throw new Error(`no handler registered for ${channel}`)
-  return handler({ sender: {} } as never, args)
+  return handler(APP_EVENT as never, args)
 }
 
 let targetCanvasId: string

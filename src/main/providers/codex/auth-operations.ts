@@ -29,8 +29,9 @@
 //   CODEX_HOME/.env, which could carry OPENAI_API_KEY past the allowlist;
 // - one sign-in or sign-out at a time per realm, and one browser sign-in at a
 //   time overall (the CLI's local callback port is machine-wide); a hold, the
-//   browser one included, lasts until any kill its stopped runs left under
-//   way has finished (CodexRunResult.killSettled);
+//   browser one included, lasts until whatever its runs left still being
+//   ended -- a stopped run's kill, or what a run whose own process had exited
+//   left behind -- has ended (CodexRunResult.killSettled);
 // - sign-in and logout succeed only when a status run in the same realm
 //   agrees afterwards; after a failed or cancelled sign-in the realm's state
 //   is read again and reported, because the user may have finished in the
@@ -52,7 +53,8 @@ import type {
 } from '../core'
 import { redactSecrets } from '../../hooks/hook-payload-redactor'
 import { redactTokens } from '../../github/security/token-redactor'
-import { foldPathCase } from '../../utils/path-validator'
+import { isOwnRealPath, realFolderCheckFs } from '../../utils/path-validator'
+import type { FolderCheckFs } from '../../utils/path-validator'
 import { parseCodexLoginStatus, classifyCodexVersion } from './cli-contract'
 import {
   createAppServerUsageClient, APP_SERVER_READ_DEADLINE_MS, APP_SERVER_INITIALIZE_TIMEOUT_MS, APP_SERVER_EXIT_GRACE_MS, APP_SERVER_MAX_LINE,
@@ -84,6 +86,10 @@ export interface CodexAuthDeps {
   /** The canonical path and file identity of a realm home. Throws when it
    *  cannot be read (a missing folder included). */
   realmIdentity(home: string): CodexRealmIdentity
+  /** The file calls the real-path test makes (each name looked at itself,
+   *  never through a link) when a home's real path differs from it only in
+   *  case. Absent: the file system's own. */
+  folderFs?: FolderCheckFs
   /** The executable setup last proved, or null when it has not. */
   proven(): CodexDiscovery | null
   /** How to re-resolve and re-read it now (the discovery ports). */
@@ -153,9 +159,10 @@ const refuse = (code: AuthFailureCode, message: string = MSG[code]): Refusal => 
 const isRefusal = (x: unknown): x is Refusal => !!x && typeof x === 'object' && (x as { ok?: unknown }).ok === false
 
 type Env = Readonly<Record<string, string | undefined>>
-/** `kills`: the kills this operation's stopped runs left under way
+/** `kills`: what this operation's runs left still being ended -- a stopped
+ *  run's kill, or what a run whose own process had exited left behind
  *  (CodexRunResult.killSettled); its realm hold outlasts them. */
-interface Ready { ok: true; home: string; ownership: RealmOwnership; lock: string; base: Env; kills: Promise<void>[] }
+interface Ready { ok: true; home: string; canonical: string; ownership: RealmOwnership; lock: string; base: Env; kills: Promise<void>[] }
 type Observed = { state: 'signed-in'; via?: CodexLoginVia } | { state: 'signed-out' } | Refusal & { state: 'error' }
 
 const credentialOf = (via: CodexLoginVia | undefined): AuthCredentialKind => (via === 'chatgpt' ? 'account' : via === 'api-key' ? 'api-key' : 'unknown')
@@ -200,14 +207,13 @@ export type CodexAuthOperations = ProviderAuthOperations & {
 export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperations {
   const platform = deps.executablePorts.platform
   const pathApi = platform === 'win32' ? path.win32 : path.posix
-  const caseless = platform === 'win32' || platform === 'darwin'
-  // Case folded as the account-folder checks fold it (foldPathCase: how
-  // Windows compares names), so the realm home this accepts and the folders
+  const folderFs = deps.folderFs ?? realFolderCheckFs
+  // The account-folder checks' real-path test (isOwnRealPath): the home's
+  // real path is the home itself, spelled exactly, or in another case only
+  // where each folder holding a name spelled differently reads both
+  // spellings as one entry. So the realm home this accepts and the folders
   // named in it are held to one rule.
-  const samePath = (a: string, b: string) => {
-    const norm = (p: string) => { const s = p.replace(/[\\/]+$/, ''); return caseless ? foldPathCase(s) : s }
-    return norm(a) === norm(b)
-  }
+  const ownRealPath = (real: string, home: string) => isOwnRealPath(real, home, platform, folderFs)
   const locks = deps.locks ?? createCodexRealmLocks()
   let browserRunning = false
   // Usage track MP7 (ADR-022, bound 4): one app-server helper at a time.
@@ -252,7 +258,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
     const ownership = where.ownership
     let fsid: CodexRealmIdentity
     try { fsid = deps.realmIdentity(where.home) } catch { return refuse('realm-unavailable') }
-    if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !samePath(fsid.canonical, where.home)) return refuse('realm-unavailable')
+    if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !(await ownRealPath(fsid.canonical, where.home))) return refuse('realm-unavailable')
     const exe = currentExecutable()
     if (!exe.ok) return exe
     // Every run in a managed folder, a sign-out included (review round 2):
@@ -265,7 +271,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
     let base: Env
     try { base = await deps.baseEnv() } catch { return refuse('not-started') }
     if (!base || typeof base !== 'object') return refuse('not-started')
-    return { ok: true, home: where.home, ownership, lock: codexRealmLockKey(fsid.canonical, fsid.dev, fsid.ino), base, kills: [] }
+    return { ok: true, home: where.home, canonical: fsid.canonical, ownership, lock: codexRealmLockKey(fsid.canonical, fsid.dev, fsid.ino), base, kills: [] }
   }
 
   /** One run, from the executable re-verified for THIS run. */
@@ -304,14 +310,15 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
    *  keyed on: prepare() awaited (the environment -- a login shell) after it
    *  read the folder's identity, and a folder removed and re-made in that gap
    *  would otherwise run under a dead key, beside a removal or a second
-   *  sign-in. Nothing awaits between the hold and the re-read. */
+   *  sign-in. Nothing awaits between the hold and the re-read, so the real
+   *  path read now must be exactly the one prepare() proved its own. */
   function holdRealm(r: Ready, mode: 'exclusive' | 'reader' = 'exclusive'): (() => void) | Refusal {
     const release = mode === 'reader' ? locks.holdReader(r.lock) : locks.hold(r.lock)
     if (!release) return refuse('busy')
     let same = false
     try {
       const now = deps.realmIdentity(r.home)
-      same = !!now && now.isDirectory === true && typeof now.canonical === 'string' && samePath(now.canonical, r.home)
+      same = !!now && now.isDirectory === true && typeof now.canonical === 'string' && now.canonical === r.canonical
         && codexRealmLockKey(now.canonical, now.dev, now.ino) === r.lock
     } catch {
       same = false
@@ -432,7 +439,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         if (isRefusal(where)) return null
         let fsid: CodexRealmIdentity
         try { fsid = deps.realmIdentity(where.home) } catch { return null }
-        if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !samePath(fsid.canonical, where.home)) return null
+        if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !(await ownRealPath(fsid.canonical, where.home))) return null
         return pathApi.join(where.home, 'sessions')
       } catch {
         return null
@@ -455,7 +462,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         if (isRefusal(where)) return null
         let fsid: CodexRealmIdentity
         try { fsid = deps.realmIdentity(where.home) } catch { return null }
-        if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !samePath(fsid.canonical, where.home)) return null
+        if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !(await ownRealPath(fsid.canonical, where.home))) return null
         return {
           logDir: pathApi.join(where.home, 'log'),
           memoriesDir: pathApi.join(where.home, 'memories'),

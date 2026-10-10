@@ -225,6 +225,20 @@ describe('a Codex agent', () => {
     expect(s.released).toEqual([`cloud-agent:${a.id}`])
   })
 
+  it('a run that completed while what it left is still being ended: completed at once, and the account goes only once that has ended', async () => {
+    const a = await dispatchAgent(PARAMS)
+    if (!('id' in a)) throw new Error('refused')
+    await tick()
+    const kill = deferred<void>()
+    s.runs[0].finish({ ok: true, usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 2 }, killSettled: kill.promise })
+    await tick()
+    expect(agentOf(a.id).status).toBe('completed')
+    expect(s.released).toEqual([])
+    kill.resolve()
+    await tick()
+    expect(s.released).toEqual([`cloud-agent:${a.id}`])
+  })
+
   it('cancelled while its launch is prepared: nothing runs and the lease is released', async () => {
     const gate = deferred<void>()
     s.prepareGate = gate.promise

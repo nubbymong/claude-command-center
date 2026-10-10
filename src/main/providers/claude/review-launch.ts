@@ -10,7 +10,7 @@
 // profile home's variables), handed in by the composition root, because this
 // package imports no shared main module that reaches the Codex package (R2).
 import type { ProviderSetupOperations, ProviderLaunchOperations, ProviderReviewOperations, RealmRef, LaunchPreparation, AuthFailureCode } from '../core'
-import { reviewerEnv } from '../review-support'
+import { claudeVersionRunEnv } from '../review-support'
 import type { AuthRealm, RealmEnvPatch } from '../../../shared/providers'
 import { CLAUDE_PROFILE_PATH_REF_PREFIX } from '../../../shared/providers'
 import { isValidProfileId } from '../../../shared/profile-id'
@@ -19,6 +19,7 @@ import type { ClaudeDiscovery, ClaudeDiscoveryDeps, ClaudeFileStat } from './dis
 import { createClaudeReviewOperations } from './review'
 import type { ClaudeCliPorts } from './review'
 import { CLAUDE_MIN_MANAGED_CLI_VERSION } from './managed-launch'
+import { claudeInstallRecipes } from './install-recipes'
 import fs from 'node:fs'
 
 /** What the composition root hands the Claude package for reviews. */
@@ -39,6 +40,11 @@ export interface ClaudeReviewPorts extends ClaudeCliPorts {
   recordPreflight(profileId: string, env: Readonly<Record<string, string>>): void
   /** The executable the version probe would run (absolute), or null. */
   resolveExecutable(): Promise<string | null>
+  /** ADR-025: the first start of `executable` this app run, off the main
+   *  thread, with the environment its `--version` run gets. Awaited before
+   *  that run and before a prepared review's start; never a gate (its
+   *  outcome is ignored, and a throw too). Absent: nothing is warmed. */
+  warmFirstStart?(executable: string, env: Readonly<Record<string, string>>): Promise<unknown>
   /** Replaces the real filesystem reads of discovery, for a test. */
   fileStat?: { realpath(p: string): string; stat(p: string): ClaudeFileStat }
   platform?: NodeJS.Platform
@@ -81,16 +87,25 @@ export function createClaudeReviewLaunch(ports: ClaudeReviewPorts): {
 } {
   const platform = ports.platform ?? process.platform
   const files = ports.fileStat ?? realFileStat()
+  /** ADR-025: a pre-start, never a gate; what it answers or throws is ignored. */
+  const warm = async (executable: string, env: Readonly<Record<string, string>>): Promise<void> => {
+    if (!ports.warmFirstStart) return
+    try { await ports.warmFirstStart(executable, env) } catch { /* the caller's own start goes ahead */ }
+  }
   const discoveryDeps: ClaudeDiscoveryDeps = {
     resolve: () => ports.resolveExecutable(),
     realpath: (p) => files.realpath(p),
     stat: (p) => files.stat(p),
     // `--version` through the runner with the reviewer's own hygiene: no
-    // Conductor variable, absolute PATH entries only, no shell.
+    // Conductor variable, absolute PATH entries only, no shell. Often the
+    // first start of a Claude Code just installed or updated (at start, Check
+    // again, after Add it to PATH, a launch's re-proof): that first start
+    // runs off the main thread first, with this same environment (ADR-025).
     runVersion: async (executable) => {
-      const env = reviewerEnv(Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === 'string')), platform)
+      const env = claudeVersionRunEnv(process.env, platform)
       const cmd = ports.commandLine(executable, ['--version'], platform, ports.shellEnv(env, platform))
       if ('refused' in cmd) return cmd
+      await warm(executable, env)
       return ports.run(cmd, { env, timeoutMs: VERSION_TIMEOUT_MS })
     },
     platform,
@@ -138,8 +153,8 @@ export function createClaudeReviewLaunch(ports: ClaudeReviewPorts): {
 
   return {
     executable: currentExecutable,
-    // Nothing to install through the app yet: the capability stays unknown.
-    setup: { discover, installRecipes: () => [] },
+    // Anthropic's own install commands (ADR-024): the native installer, then npm.
+    setup: { discover, installRecipes: claudeInstallRecipes },
     launch: {
       kinds: ['review'],
       async prepare(realm: RealmRef): Promise<LaunchPreparation | Refusal> {
@@ -167,6 +182,10 @@ export function createClaudeReviewLaunch(ports: ClaudeReviewPorts): {
       // A reviewer persists no transcript (--no-session-persistence), and
       // Claude sessions do not launch here: nothing for the usage index.
       async sessionsDir(): Promise<string | null> { return null },
+      // ADR-025: before a local review's start, with --version's environment.
+      async warmFirstStart(executable: string): Promise<void> {
+        await warm(executable, claudeVersionRunEnv(process.env, platform))
+      },
     },
     review: createClaudeReviewOperations({
       platform,

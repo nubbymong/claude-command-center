@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // Per-note variants (#373): the agent addressing a note may attach up to four
 // labelled alternatives; the user's Approve names the winner. This file covers
 // the store's half — minting, replacement, clearing, the approve-with-key

@@ -270,6 +270,9 @@ export const IPC = {
   PROVIDER_ACCOUNTS_CHANGED: 'providerAccounts:changed', // main -> renderer: AccountsSnapshot
   PROVIDER_ACCOUNTS_DISCOVER: 'providerAccounts:discover',
   PROVIDER_ACCOUNTS_INSTALL_RECIPES: 'providerAccounts:installRecipes',
+  // Add it to PATH for me (ADR-024): the provider id only; main computes the
+  // one folder it appends.
+  PROVIDER_ACCOUNTS_ADD_TO_PATH: 'providerAccounts:addToPath',
   PROVIDER_ACCOUNTS_SET_ENABLED: 'providerAccounts:setEnabled',
   PROVIDER_ACCOUNTS_BEGIN_SETUP: 'providerAccounts:beginSetup',
   PROVIDER_ACCOUNTS_ISSUE_SECRET_HANDLE: 'providerAccounts:issueSecretHandle',

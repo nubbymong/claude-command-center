@@ -319,21 +319,45 @@ function parseWorktrees(porcelainText) {
 }
 
 // P3.5 fix round 1: git is never resolved from the project folder. It is
-// named by an absolute path found on PATH's absolute entries (findGit, as
-// the reviewer's src/main/review-diff.ts findGit), never spawned by bare
-// name, never through a shell; on Windows the child also gets
-// NoDefaultCurrentDirectoryInExePath=1 (one spelling), as the reviewer's
-// environment does. The command line keeps the repository's own settings
+// named by an absolute path found in PATH's fully qualified folders
+// (findGit), never spawned by bare name, never through a shell; on Windows
+// the child also gets NoDefaultCurrentDirectoryInExePath=1 (one spelling),
+// as the reviewer's environment does. The command line keeps the repository's own settings
 // from running anything (no pager, no fsmonitor hook). Only absolute worktree
 // paths with no control character are kept. `deps` (spawn, env, isFile) is
 // injected by tests; nothing else passes it.
 const GIT_WORKTREE_ARGS = Object.freeze(['--no-pager', '-c', 'core.fsmonitor=false', 'worktree', 'list', '--porcelain'])
+// A Windows PATH folder is read as every PATH walk of the app reads it
+// (src/main/providers/windows-path-names.ts windowsPathFolderIsFullyQualified,
+// which this CJS lib cannot import; spawn.ts codexWindowsPathFolders):
+// trimmed, a quoted entry without its quotes, and only a drive folder or a
+// share named in full (two leading slashes of either kind), never a device
+// path.
+const WINDOWS_PATH_FOLDER_RE = /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/?.][^\\/]*[\\/][^\\/]+)/
+function windowsPathEntry(raw) {
+  let dir = raw.trim()
+  if (dir.length >= 2 && dir.startsWith('"') && dir.endsWith('"')) dir = dir.slice(1, -1).trim()
+  return dir
+}
+// Each kept folder is named as Windows names it when it starts a program from
+// it (src/main/providers/windows-path-names.ts windowsFolderAsRun; the Claude
+// picker's folderAsRun, scripts/resume-picker.js): in a path that goes on
+// below it, a name ending in one dot after another character loses that dot,
+// a name ending in a space or in two dots is kept, and a share's own two names
+// are kept. The file a lookup reads is then the file that runs.
+function windowsFolderAsRun(dir) {
+  const parts = dir.split(/([\\/])/)
+  // A share keeps `\\server\share` as it is: parts '', sep, '', sep, server, sep, share.
+  const root = /^[\\/]{2}/.test(dir) ? 7 : 1
+  return parts.map((part, i) => (i < root || i % 2 === 1 ? part : part.replace(/([^.])\.$/, '$1'))).join('')
+}
 function findGit(pathVar, platform, isFile) {
   const win = platform === 'win32'
   const api = win ? path.win32 : path.posix
   const dirs = String(pathVar || '').split(win ? ';' : ':')
-    .map((d) => d.trim().replace(/^"(.*)"$/, '$1'))
-    .filter((d) => d !== '' && !d.includes('%') && (win ? /^([A-Za-z]:[\\/]|\\\\[^\\?.])/.test(d) : d.startsWith('/')))
+    .map((d) => (win ? windowsPathEntry(d) : d.trim().replace(/^"(.*)"$/, '$1')))
+    .filter((d) => d !== '' && !d.includes('%') && (win ? WINDOWS_PATH_FOLDER_RE.test(d) : d.startsWith('/')))
+    .map((d) => (win ? windowsFolderAsRun(d) : d))
   for (const dir of dirs) {
     const candidate = api.join(dir, win ? 'git.exe' : 'git')
     try { if (isFile(candidate)) return candidate } catch { /* not there */ }
@@ -377,13 +401,18 @@ function worktreeLabelFor(worktree) {
 // -- Display text ---------------------------------------------------
 // Everything the picker shows that it did not write itself -- a first
 // prompt, a model or effort label, a session name, a worktree's name, the
-// directory -- is shown as plain text: every control character (C0, DEL,
-// C1), the bidi overrides, marks and isolates, the zero-width and
-// invisible formatters, the line and paragraph separators and the TAG
-// block become a space, and the text is cut at `max` code points, never
-// inside a surrogate pair. The same class as src/shared/safe-text.ts,
-// which this CJS lib cannot import (and Claude's picker's displayPath).
-const NOT_PLAIN_TEXT = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]/gu
+// directory -- is shown as plain text: every character a reader cannot see
+// becomes a space, and the text is cut at `max` code points, never inside a
+// surrogate pair. That is every control character (\p{Cc}) and every
+// default-ignorable code point Unicode names (the bidi marks, overrides and
+// isolates, the zero-width and invisible formatters, the fillers, the
+// variation selectors, the Khmer and Mongolian invisibles, the TAG block),
+// plus, named one by one, the line and paragraph separators, the braille
+// blank, the interlinear annotation marks and a lone surrogate half (a whole
+// pair is one code point and is kept). The same expression as
+// src/shared/safe-text.ts, which this CJS lib cannot import, and Claude's
+// picker's copy; a parity test holds the three to one answer.
+const NOT_PLAIN_TEXT = /[\p{Cc}\p{Default_Ignorable_Code_Point}\u2028\u2029\u2800\ufff9-\ufffb\ud800-\udfff]/gu
 function displayText(raw, max) {
   const limit = typeof max === 'number' && max > 0 ? max : 500
   const clean = (raw === undefined || raw === null ? '' : String(raw)).replace(NOT_PLAIN_TEXT, ' ')
@@ -708,7 +737,12 @@ function shouldUseShell(cmd, platform) {
 // libuv's per-argument quoting would escape the inner quotes. cmd.exe still
 // parses the line, so a path or an argument carrying one of its
 // metacharacters is refused rather than quoted. Null = refused. Mirrors
-// codexCmdExeTarget in src/main/providers/codex/spawn.ts.
+// codexCmdExeTarget in src/main/providers/codex/spawn.ts. `cwd`: the folder
+// it starts in. cmd.exe cannot start in a share or a device path (two
+// leading slashes of either kind), so the shim is never started there, nor
+// where that folder is not given (launchRefusal says why).
+const CMD_EXE_NETWORK_FOLDER_RE = /^[\\/]{2}/
+const NETWORK_FOLDER_REFUSAL = 'Cannot start Codex in a network folder through its npm launcher: open the folder from a mapped drive letter, or install the standalone Codex.'
 const CMD_UNSAFE_PATH_RE = /["%&^]/
 const CMD_UNSAFE_ARG_RE = /["%&^|<>!()\s]/
 const WIN_ABSOLUTE_RE = /^([A-Za-z]:\\|\\\\[^\\?.][^\\]*\\[^\\]+\\)/
@@ -721,8 +755,9 @@ function envValue(env, name) {
   }
   return values.size === 1 ? [...values][0] : undefined
 }
-function launchTarget(cmd, args, platform, env) {
+function launchTarget(cmd, args, platform, env, cwd) {
   if (!shouldUseShell(cmd, platform)) return { file: cmd, args, verbatim: false }
+  if (typeof cwd !== 'string' || cwd === '' || CMD_EXE_NETWORK_FOLDER_RE.test(cwd)) return null
   const usable = (p) => typeof p === 'string' && WIN_ABSOLUTE_RE.test(p) && /[\\/]cmd\.exe$/i.test(p) && !CMD_UNSAFE_PATH_RE.test(p) && !hasControl(p)
   const comSpec = envValue(env, 'ComSpec')
   const root = envValue(env, 'SystemRoot')
@@ -733,6 +768,16 @@ function launchTarget(cmd, args, platform, env) {
   if (args.some((a) => typeof a !== 'string' || a === '' || CMD_UNSAFE_ARG_RE.test(a) || hasControl(a))) return null
   return { file: shell, args: ['/d', '/v:off', '/s', '/c', `"${[`"${cmd}"`, ...args].join(' ')}"`], verbatim: true }
 }
+// Why launchTarget refused: the network folder sentence (the app's own
+// launch says the same), that no folder to start the shim in was given, or
+// that cmd.exe would reinterpret the line.
+function launchRefusal(cmd, platform, cwd) {
+  if (shouldUseShell(cmd, platform)) {
+    if (typeof cwd !== 'string' || cwd === '') return 'Cannot start Codex through its npm launcher without a folder to start it in.'
+    if (CMD_EXE_NETWORK_FOLDER_RE.test(cwd)) return NETWORK_FOLDER_REFUSAL
+  }
+  return 'Failed to launch codex: its path or arguments cannot be passed to cmd.exe safely.'
+}
 
 // -- isResumeId -----------------------------------------------------
 // A conversation id read from a transcript is used only when it is a UUID:
@@ -742,7 +787,7 @@ function isResumeId(id) {
 }
 
 module.exports = {
-  parseRollout, walkRollouts, buildResumeArgs, shouldFallback, shouldUseShell, launchTarget, isResumeId,
+  parseRollout, walkRollouts, buildResumeArgs, shouldFallback, shouldUseShell, launchTarget, launchRefusal, isResumeId,
   samePath, parseWorktrees, listWorktrees, worktreeLabelFor, displayText, buildPickerRows, loadWorkNames, readRolloutName, pickDecision, writePick, recordPick, folderIdOf, childEnv, isDirectory, resolveRetargetCwd, timeAgo,
   openElsewhereIds, fallbackNotice,
 }

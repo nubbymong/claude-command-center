@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 // Agent Canvas serves the session's DESIGNATED worktree (ADR-016).
 //
 // Session isolation puts every agent in `<parent>/ccc-wt/<id>` and blocks

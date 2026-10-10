@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // Show-and-tell renders (owner call, 2026-08-27): `intent: 'show'` marks a
 // ready, surfaced version that owes NO review — the lane for "just show me
 // something". The properties held shut here:

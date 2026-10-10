@@ -12,14 +12,17 @@
  * No default export (project convention).
  */
 
-import { BrowserWindow, ipcMain } from 'electron'
+import { ipcMain } from 'electron'
+import type { BrowserWindow } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import { PROFILE_ID_RE } from '../../shared/account-web-session'
-import { logError } from '../debug-logger'
+import { logError, logWarn } from '../debug-logger'
+import { appWindowSender } from './trusted-sender'
 import { getDataDirectory } from '../data-paths'
-import { cancelSignIn, clearWebSession, detectAuthBrowsers, getSignInState, runSignIn } from '../account-web/sign-in'
+import { cancelSignIn, clearWebSession, detectAuthBrowsers, discardSignInRun, getSignInState, runSignIn } from '../account-web/sign-in'
 import {
+  claudeWebStoreIsNewer,
   getAuthBrowser,
   getAuthMethod,
   getWebSignInMode,
@@ -29,6 +32,7 @@ import {
   setAuthMethod,
   setWebSignInMode,
   viewFor,
+  NEWER_WEB_STORE_REASON,
 } from '../account-web/session-store'
 import { readClaudeCliAuth, claudeAuthCommand } from '../account-web/claude-cli-auth'
 import type { ClaudeCliAuthStatus } from '../account-web/claude-cli-auth'
@@ -69,7 +73,19 @@ function isKnownProfile(profileId: string): boolean {
   }
 }
 
-export function registerAccountWebHandlers(): void {
+/** What a request from anywhere but the app window is answered. */
+const NOT_APP_WINDOW: Err = { ok: false, error: 'refused: not the app window' }
+
+export function registerAccountWebHandlers(getWindow: () => BrowserWindow | null): void {
+  // Every handler here answers only the app's own window, its main frame
+  // (trusted-sender.ts), checked first; a refusal is answered, logged once
+  // without the request, and does nothing else.
+  const trusted = appWindowSender(getWindow)
+  const refused = (scope: string): Err => {
+    logWarn(`[account-web] ${scope} refused: not the app window`)
+    return NOT_APP_WINDOW
+  }
+
   /** Both halves of an account's auth in one payload — the UI shows them together. */
   // Web-session status on its own.
   //
@@ -81,7 +97,8 @@ export function registerAccountWebHandlers(): void {
   // until the answer arrives, so on an account whose status was not already
   // cached the item was dead at the moment the user clicked it, with no window
   // and no log line. Split so the cheap question gets a cheap answer.
-  ipcMain.handle(IPC.ACCOUNT_WEB_WEB_STATUS, async (_e, profileId: unknown) => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_WEB_STATUS, async (e, profileId: unknown) => {
+    if (!trusted(e)) return refused('webStatus')
     try {
       const id = profileIdSchema.parse(profileId)
       return { ok: true, web: viewFor(id) }
@@ -90,7 +107,8 @@ export function registerAccountWebHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_WEB_STATUS, async (_e, profileId: unknown) => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_STATUS, async (e, profileId: unknown) => {
+    if (!trusted(e)) return refused('status')
     try {
       const id = profileIdSchema.parse(profileId)
       // WP2: `claude auth status` runs the Claude CLI (and can rotate the
@@ -118,9 +136,13 @@ export function registerAccountWebHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_WEB_SIGN_IN, async (_e, profileId: unknown) => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_SIGN_IN, async (e, profileId: unknown) => {
+    if (!trusted(e)) return refused('signIn')
     try {
       const id = profileIdSchema.parse(profileId)
+      // A record store written by a newer build cannot take this sign-in's
+      // record: refused up front, with the reason, before any window opens.
+      if (claudeWebStoreIsNewer()) return { ok: false, error: NEWER_WEB_STORE_REASON }
       const state = await runSignIn({
         profileId: id,
         dataDir: getDataDirectory(),
@@ -131,7 +153,14 @@ export function registerAccountWebHandlers(): void {
         method: getAuthMethod(id),
         browser: getAuthBrowser(id),
       })
-      if (state.phase === 'done' && state.session) saveWebSession(state.session)
+      if (state.phase === 'done' && state.session && !saveWebSession(state.session)) {
+        // A finished sign-in is kept only with its record: one whose record
+        // cannot be written is cleared, and the run reads failed.
+        const error = 'The sign-in finished, but it could not be recorded, so it was cleared. Try again.'
+        discardSignInRun(id, error)
+        try { await clearWebSession(id) } catch (err) { logError(`[account-web] could not clear an unrecorded sign-in for ${id}: ${(err as Error)?.message ?? err}`) }
+        return { ok: true, state: { phase: 'failed', profileId: id, error } }
+      }
       return { ok: true, state }
     } catch (err) {
       return fail('signIn', err)
@@ -139,7 +168,8 @@ export function registerAccountWebHandlers(): void {
   })
 
   /** Polled by the UI while a sign-in is in flight — it is a human-paced flow. */
-  ipcMain.handle(IPC.ACCOUNT_WEB_SIGN_IN_STATE, async () => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_SIGN_IN_STATE, async (e) => {
+    if (!trusted(e)) return refused('signInState')
     try {
       return { ok: true, state: getSignInState() }
     } catch (err) {
@@ -147,7 +177,8 @@ export function registerAccountWebHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_WEB_CANCEL, async (_e, profileId: unknown) => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_CANCEL, async (e, profileId: unknown) => {
+    if (!trusted(e)) return refused('cancel')
     try {
       // SCOPED, AND THE ID IS REQUIRED HERE. The cancel flag is module-global,
       // so an unscoped cancel from one account's row aborted whichever sign-in
@@ -163,7 +194,8 @@ export function registerAccountWebHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_WEB_SIGN_OUT, async (_e, profileId: unknown) => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_SIGN_OUT, async (e, profileId: unknown) => {
+    if (!trusted(e)) return refused('signOut')
     try {
       const id = profileIdSchema.parse(profileId)
       // Close the window FIRST: it is holding the session being revoked, and if
@@ -181,7 +213,8 @@ export function registerAccountWebHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_WEB_SET_AUTH_METHOD, async (_e, args: unknown) => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_SET_AUTH_METHOD, async (e, args: unknown) => {
+    if (!trusted(e)) return refused('setAuthMethod')
     try {
       // The method is validated against the CLI's actual choices, not accepted
       // as a string: it becomes a `--flag` on a command shown to a human.
@@ -196,7 +229,8 @@ export function registerAccountWebHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_WEB_SET_AUTH_BROWSER, async (_e, args: unknown) => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_SET_AUTH_BROWSER, async (e, args: unknown) => {
+    if (!trusted(e)) return refused('setAuthBrowser')
     try {
       // Enumerated, not accepted as a string: this value picks which executable
       // the sign-in spawns, so the boundary refuses anything else outright rather
@@ -213,16 +247,19 @@ export function registerAccountWebHandlers(): void {
   })
 
   ipcMain.handle(IPC.ACCOUNT_WEB_OPEN_ARTIFACTS, async (e, profileId: unknown) => {
+    if (!trusted(e)) return refused('openArtifacts')
     try {
       const id = profileIdSchema.parse(profileId)
-      const res = openArtifacts(id, BrowserWindow.fromWebContents(e.sender) ?? undefined)
+      // Parented on the app window itself, never on the window a request came from.
+      const res = openArtifacts(id, getWindow() ?? undefined)
       return res.ok ? { ok: true } : { ok: false, error: res.error ?? 'could not open artifacts' }
     } catch (err) {
       return fail('openArtifacts', err)
     }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_WEB_SET_SIGN_IN_MODE, async (_e, args: unknown) => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_SET_SIGN_IN_MODE, async (e, args: unknown) => {
+    if (!trusted(e)) return refused('setSignInMode')
     try {
       // Enumerated at the boundary like the sibling settings: this value routes
       // a credential flow, so it does not get to be arbitrary.
@@ -252,6 +289,7 @@ export function registerAccountWebHandlers(): void {
   })
 
   ipcMain.handle(IPC.ACCOUNT_WEB_PANE_OPEN, async (e, args: unknown) => {
+    if (!trusted(e)) return refused('paneOpen')
     try {
       const { sessionId, profileId, bounds } = z
         .object({ sessionId: sessionIdSchema, profileId: profileIdSchema, bounds: boundsSchema })
@@ -259,8 +297,9 @@ export function registerAccountWebHandlers(): void {
       // A real account only: opening the surface for an unknown id would
       // materialise a partition with no owner and no cleanup path (#439).
       if (!isKnownProfile(profileId)) return { ok: false, error: 'unknown account' }
-      const win = BrowserWindow.fromWebContents(e.sender)
-      if (!win) return { ok: false, error: 'no window' }
+      // Attached to the app window itself, never to the window a request came from.
+      const win = getWindow()
+      if (!win || win.isDestroyed()) return { ok: false, error: 'no window' }
       // MUTUAL EXCLUSION: the ordinary pane view and the account view share one
       // rectangle and must never both be attached (#439). The ordinary view is
       // an arbitrary-URL surface; it goes first.
@@ -271,7 +310,8 @@ export function registerAccountWebHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_CLOSE, async (_e, sessionId: unknown) => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_CLOSE, async (e, sessionId: unknown) => {
+    if (!trusted(e)) return refused('paneClose')
     try {
       return { ok: true, closed: closeAccountPane(sessionIdSchema.parse(sessionId)) }
     } catch (err) {
@@ -279,7 +319,8 @@ export function registerAccountWebHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_BOUNDS, async (_e, args: unknown) => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_BOUNDS, async (e, args: unknown) => {
+    if (!trusted(e)) return refused('paneBounds')
     try {
       const { sessionId, bounds } = z.object({ sessionId: sessionIdSchema, bounds: boundsSchema }).parse(args)
       setAccountPaneBounds(sessionId, bounds)
@@ -289,7 +330,8 @@ export function registerAccountWebHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_VISIBLE, async (_e, args: unknown) => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_VISIBLE, async (e, args: unknown) => {
+    if (!trusted(e)) return refused('paneVisible')
     try {
       const { sessionId, visible } = z.object({ sessionId: sessionIdSchema, visible: z.boolean() }).parse(args)
       setAccountPaneVisible(sessionId, visible)
@@ -299,7 +341,8 @@ export function registerAccountWebHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_RELOAD, async (_e, sessionId: unknown) => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_RELOAD, async (e, sessionId: unknown) => {
+    if (!trusted(e)) return refused('paneReload')
     try {
       reloadAccountPane(sessionIdSchema.parse(sessionId))
       return { ok: true }
@@ -308,7 +351,8 @@ export function registerAccountWebHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_GET_STATE, async (_e, sessionId: unknown) => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_GET_STATE, async (e, sessionId: unknown) => {
+    if (!trusted(e)) return refused('paneGetState')
     try {
       return { ok: true, state: getAccountPaneState(sessionIdSchema.parse(sessionId)) }
     } catch (err) {

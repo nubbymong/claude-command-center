@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // canvas_pick, store half (#373 follow-on): the user names the winning variant
 // in CHAT and the agent records it. What this file pins:
 //

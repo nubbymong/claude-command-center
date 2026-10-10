@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // A canvas.json must be one CCC WROTE (adversarial review, 2026-08-15).
 //
 // Shape validation was the only thing in front of the reload path, and shape is

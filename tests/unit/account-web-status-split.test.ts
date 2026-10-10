@@ -34,7 +34,7 @@ vi.mock('electron', () => ({
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
 vi.mock('../../src/main/data-paths', () => ({ getDataDirectory: () => 'C:/fake/data' }))
 vi.mock('../../src/main/account-web/sign-in', () => ({
-  cancelSignIn: vi.fn(), clearWebSession: vi.fn(), getSignInState: vi.fn(), runSignIn: vi.fn(),
+  cancelSignIn: vi.fn(), clearWebSession: vi.fn(), getSignInState: vi.fn(), runSignIn: vi.fn(), discardSignInRun: vi.fn(),
 }))
 vi.mock('../../src/main/account-web/artifacts', () => ({ closeArtifacts: vi.fn(), openArtifacts: vi.fn() }))
 vi.mock('../../src/main/account-web/claude-cli-auth', () => ({
@@ -50,27 +50,32 @@ vi.mock('../../src/main/account-web/session-store', () => ({
   getAuthBrowser: vi.fn(() => 'chrome'),
   getAuthMethod: vi.fn(() => 'claudeai'),
   removeWebSession: vi.fn(),
-  saveWebSession: vi.fn(),
+  saveWebSession: vi.fn(() => true),
   setAuthBrowser: vi.fn(),
   setAuthMethod: vi.fn(),
   viewFor: vi.fn((profileId: string) => ({ profileId, status: 'active', expiresAt: 4102444800000 })),
+  claudeWebStoreIsNewer: () => false, NEWER_WEB_STORE_REASON: 'written by a newer version of the app',
 }))
 
 const { registerAccountWebHandlers } = await import('../../src/main/ipc/account-web-handlers')
+/** The app window and its main frame: the only sender these handlers answer. */
+const APP_FRAME = {}
+const APP_WIN = { isDestroyed: () => false, webContents: { mainFrame: APP_FRAME, send: () => {} } }
+const APP_EVENT = { sender: APP_WIN.webContents, senderFrame: APP_FRAME }
 const { IPC } = await import('../../src/shared/ipc-channels')
 
 beforeEach(() => {
   cliProbeCalls = 0
   releaseCliProbe = null
   for (const k of Object.keys(handlers)) delete handlers[k]
-  registerAccountWebHandlers()
+  registerAccountWebHandlers(() => APP_WIN as never)
 })
 
 const PROFILE = 'profile-msf97sgf-eb8d26'
 
 describe('accountWeb:webStatus', () => {
   it('answers while the CLI probe is still hanging', async () => {
-    const res = (await handlers[IPC.ACCOUNT_WEB_WEB_STATUS]({}, PROFILE)) as {
+    const res = (await handlers[IPC.ACCOUNT_WEB_WEB_STATUS](APP_EVENT, PROFILE)) as {
       ok: boolean
       web?: { status: string }
     }
@@ -79,14 +84,14 @@ describe('accountWeb:webStatus', () => {
   })
 
   it('never invokes the CLI probe at all', async () => {
-    await handlers[IPC.ACCOUNT_WEB_WEB_STATUS]({}, PROFILE)
+    await handlers[IPC.ACCOUNT_WEB_WEB_STATUS](APP_EVENT, PROFILE)
     // Not merely "fast" — it must not start the subprocess, or every context
     // menu would still pay for one even once the answer was already back.
     expect(cliProbeCalls).toBe(0)
   })
 
   it('still validates the profile id at the boundary', async () => {
-    const res = (await handlers[IPC.ACCOUNT_WEB_WEB_STATUS]({}, '../escape')) as { ok: boolean }
+    const res = (await handlers[IPC.ACCOUNT_WEB_WEB_STATUS](APP_EVENT, '../escape')) as { ok: boolean }
     expect(res.ok).toBe(false)
     expect(cliProbeCalls).toBe(0)
   })
@@ -96,7 +101,7 @@ describe('accountWeb:webStatus', () => {
     // still awaiting the hung probe here, so it must not have settled — this is
     // what the context menu used to be waiting on.
     let settled = false
-    void (handlers[IPC.ACCOUNT_WEB_STATUS]({}, PROFILE) as Promise<unknown>).then(() => { settled = true })
+    void (handlers[IPC.ACCOUNT_WEB_STATUS](APP_EVENT, PROFILE) as Promise<unknown>).then(() => { settled = true })
     await Promise.resolve()
     await Promise.resolve()
     expect(cliProbeCalls).toBe(1)

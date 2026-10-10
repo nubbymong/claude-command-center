@@ -4,6 +4,14 @@
 // run, and a run without one is unchanged. The spawn is faked: no process
 // starts. [host]
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+// On Windows, programs are found in PATH's folders (windows-programs.ts); stubbed here,
+// so no real PATH is read: the first name asked for, in one fully qualified folder
+// (the walk on the event loop and the one off it alike).
+vi.mock('../../src/main/windows-programs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/windows-programs')>()),
+  findOnWindowsPath: (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+  findOnWindowsPathAsync: async (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+}))
 
 type Handler = (data: unknown) => void
 const child = vi.hoisted(() => ({ stdout: [] as Handler[], close: null as null | ((code: number) => void), chunks: [] as Array<string | Buffer> }))

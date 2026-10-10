@@ -335,9 +335,24 @@ describe('Code review switches: off and cannot run', () => {
     renderTools()
     expect(message('claudeReview')).toBe('Make another Claude account the reviewer in Accounts (an unverified sign-in cannot review).')
 
+    // With no other Claude account to make the reviewer, it says why and what
+    // to do, as the Codex row does.
     setup({ snap: snapshot({ accounts: [personal, unverifiedClaude] }, { claude: { review: { ready: false, accountId: unverifiedClaude.id, source: 'reviewer-default' } } }) })
     renderTools()
-    expect(message('claudeReview')).toBe('No Claude account can run reviews right now.')
+    expect(message('claudeReview')).toBe('No Claude account can run reviews. Add a Claude account (an unverified sign-in cannot review).')
+  })
+
+  it('asks to make another account the reviewer only when a row offers Make reviewer: never for a refused one', () => {
+    const refusedWork = { ...work, reviewRefusal: { reason: 'unknown' as const, message: 'm' } }
+    setup({ snap: snapshot({ accounts: [local, refusedWork, claudeMain] }, { codex: { review: { ready: false, accountId: local.id, source: 'provider-default' } } }) })
+    renderTools()
+    expect(message('codexReview')).toBe('No Codex account can run reviews. Add a Codex account (a sign-in from ~/.codex cannot review).')
+
+    const unverifiedClaude = { ...claudeHome, unverified: true, identityAssurance: 'realm-only' as const }
+    const refusedMain = { ...claudeMain, reviewRefusal: { reason: 'platform' as const, message: 'm' } }
+    setup({ snap: snapshot({ accounts: [personal, refusedMain, unverifiedClaude] }, { claude: { review: { ready: false, accountId: unverifiedClaude.id, source: 'reviewer-default' } } }) })
+    renderTools()
+    expect(message('claudeReview')).toBe('No Claude account can run reviews. Add a Claude account (an unverified sign-in cannot review).')
   })
 })
 

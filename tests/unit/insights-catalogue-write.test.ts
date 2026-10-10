@@ -14,7 +14,9 @@ const h = vi.hoisted(() => ({
   /** Error codes renameSync should throw, one per call, before it succeeds. */
   failCodes: [] as string[],
   /** Every `from` path rename was asked to move, in order. */
-  renameFrom: [] as string[]
+  renameFrom: [] as string[],
+  /** Warnings the app logged. */
+  warns: [] as string[]
 }))
 
 vi.mock('../../src/main/ipc/setup-handlers', () => ({
@@ -25,6 +27,10 @@ vi.mock('../../src/main/update-watcher', () => ({ getInstallPath: () => '', getP
 vi.mock('../../src/main/pty-manager', () => ({ resolveClaudeForPty: () => ({ cmd: 'claude' }), withProfileHome: (e: unknown) => e }))
 vi.mock('../../src/main/claude-headless', () => ({ spawnClaudeHeadless: async () => ({ code: 0, stdout: '', stderr: '' }) }))
 vi.mock('node-pty', () => ({ spawn: () => ({ onData: () => {}, onExit: () => {}, write: () => {}, kill: () => {} }) }))
+vi.mock('../../src/main/debug-logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/debug-logger')>()),
+  logWarn: (...a: unknown[]) => { h.warns.push(a.map(String).join(' ')) }
+}))
 
 vi.mock('fs', async (importOriginal) => {
   const real = await importOriginal<typeof import('fs')>()
@@ -69,6 +75,7 @@ describe('catalogue persistence survives a transient Windows rename failure', ()
     mkdirSync(insightsDir, { recursive: true })
     h.failCodes = []
     h.renameFrom = []
+    h.warns = []
   })
   afterEach(() => {
     try { rmSync(tmpRoot, { recursive: true, force: true }) } catch { /* ignore */ }
@@ -97,24 +104,30 @@ describe('catalogue persistence survives a transient Windows rename failure', ()
     expect(stagingFiles()).toEqual([])
   })
 
-  it('gives up on a persistent failure instead of retrying forever', () => {
+  it('gives up on a persistent failure instead of retrying forever, and start-up goes on', () => {
     seedStuckCatalogue()
+    const before = readFileSync(join(insightsDir, 'catalogue.json'), 'utf-8')
     // Longer than the retry budget, so the last attempt still fails. EBUSY for
     // the same cross-platform reason as above.
     h.failCodes = ['EBUSY', 'EBUSY', 'EBUSY', 'EBUSY', 'EBUSY', 'EBUSY', 'EBUSY']
 
-    expect(() => cleanupStuckRuns()).toThrow(/EBUSY/)
+    // Start-up never fails on the catalogue: the write that gave up is logged
+    // with its reason, and the catalogue is left as it was.
+    expect(() => cleanupStuckRuns()).not.toThrow()
+    expect(h.warns.some((w) => /catalogue/.test(w) && /EBUSY/.test(w))).toBe(true)
+    expect(readFileSync(join(insightsDir, 'catalogue.json'), 'utf-8')).toBe(before)
     // Five delays plus the first try = six attempts, then it stops.
     expect(h.renameFrom).toHaveLength(6)
     // A failed write must not leave its staging file for the next writer.
     expect(stagingFiles()).toEqual([])
   })
 
-  it('does not retry an error that a retry cannot fix', () => {
+  it('does not retry an error that a retry cannot fix, and start-up goes on', () => {
     seedStuckCatalogue()
     h.failCodes = ['ENOSPC', 'ENOSPC']
 
-    expect(() => cleanupStuckRuns()).toThrow(/ENOSPC/)
+    expect(() => cleanupStuckRuns()).not.toThrow()
+    expect(h.warns.some((w) => /catalogue/.test(w) && /ENOSPC/.test(w))).toBe(true)
     expect(h.renameFrom).toHaveLength(1)
     expect(stagingFiles()).toEqual([])
   })

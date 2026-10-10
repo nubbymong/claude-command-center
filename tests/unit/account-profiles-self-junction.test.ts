@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links; changes ACLs on temp folders. [CI] [VM] only -- never run on the owner's machine.
 // tests/unit/account-profiles-self-junction.test.ts
 //
 // A per-profile shared junction that points at ITSELF (target === link) is an

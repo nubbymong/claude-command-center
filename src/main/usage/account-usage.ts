@@ -14,7 +14,7 @@
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { listProfiles, getProfileConfigDir, readProfileAccountEmail, atomicWriteSecure, hardenCredentialFile } from '../account-profiles'
+import { listProfiles, getProfileConfigDir, readProfileAccountEmail, atomicWriteSecure, hardenCredentialFile, credentialFoldersVerdict } from '../account-profiles'
 import { isAccountActive } from '../../shared/account-types'
 import type { AccountProfile } from '../../shared/account-types'
 import { isProfileInUseByLiveSession, getClaudeProfileId } from '../claude-account-identity'
@@ -232,13 +232,21 @@ export function parseRefreshResponse(
  *  writer (a /login completing in a login shell, or Claude's own refresh) rotated
  *  the lineage mid-flight, and theirs is NEWER; overwriting would destroy a live
  *  sign-in. Transient write errors are retried: the server-side rotation already
- *  happened, so giving up too easily would strand the account on a dead token. */
+ *  happened, so giving up too easily would strand the account on a dead token.
+ *
+ *  Written only while the folder that holds the file still has a passing
+ *  owner-only verdict in this run (the one checked before the refresh began):
+ *  a folder replaced meanwhile is not written into. */
 async function writeRefreshedCreds(
   credsPath: string,
   spentRefreshToken: string,
   t: { accessToken: string; refreshToken: string; expiresAt: number },
 ): Promise<boolean> {
   for (let attempt = 0; attempt < 3; attempt++) {
+    if (!credentialFoldersVerdict([path.dirname(credsPath)]).ok) {
+      logWarn('[account-usage] the sign-in folder no longer has a passing owner-only check; the refreshed token was not written')
+      return false
+    }
     try {
       const raw = fs.readFileSync(credsPath, 'utf8')
       const c = JSON.parse(raw) as { claudeAiOauth?: Record<string, unknown> }
@@ -607,7 +615,13 @@ export async function fetchAccountUsage(profileId: string, opts?: { noRefresh?: 
   //    its in-flight promise (noteProfileRefreshInFlight) and a consumer that
   //    starts mid-rotation waits for it (waitForProfileRefresh) before reading
   //    the credential file.
-  if (!opts?.noRefresh && !tokenUsable && creds.signedIn && creds.refreshToken && creds.credsPath && !isPrimary && !isProfileInUseByLiveSession(profileId)) {
+  //  - The refresh rewrites the account's sign-in, so it runs only when the
+  //    folder that holds it has passed the app's owner-only check in this run
+  //    (credentialFoldersVerdict, which only reads the verdict; with none yet it
+  //    starts the check, so a later fetch may refresh). Refused or not yet
+  //    checked: no token is spent and nothing is written; the card falls back
+  //    as with noRefresh.
+  if (!opts?.noRefresh && !tokenUsable && creds.signedIn && creds.refreshToken && creds.credsPath && !isPrimary && !isProfileInUseByLiveSession(profileId) && credentialFoldersVerdict([path.dirname(creds.credsPath)]).ok) {
     const refreshed = await refreshProfileToken(profileId, creds.refreshToken, creds.credsPath)
     if (refreshed) {
       token = refreshed.accessToken

@@ -381,8 +381,9 @@ async function runReview(
     const prepared = await accounts.prepareLaunch({ kind: 'review', providerId: spec.providerId, ownerId: `review:${cccSessionId}:${++reviewSeq}`, sessionId: cccSessionId, remote: false })
     if (!prepared.ok) return { isError: true, text: spec.refusal(prepared.code, prepared.message) }
     if (stop.signal.aborted) { prepared.lease.release(); return { isError: true, text: `${name} review was cancelled.` } }
-    // A stopped run whose kill was still under way when it settled (a slow
-    // process table): the lease is held until that kill has finished.
+    // A run whose processes were still being ended when it settled (a stop's
+    // kill reading a slow process table, or what a run that had exited left):
+    // the lease is held until that has finished, whatever the outcome.
     let kill: Promise<void> | undefined
     try {
       // 5. One isolated reviewer invocation, in the project, prompt on stdin.
@@ -394,7 +395,7 @@ async function runReview(
         executable: prepared.executable, env: prepared.env, cwd: resolvedCwd, prompt: spec.prompt(args, diff), timeoutMs, signal: stop.signal,
         realm: { authRealmId: prepared.binding.authRealmId },
       })
-      if (out && !out.ok && out.killSettled instanceof Promise) kill = out.killSettled
+      if (out && out.killSettled instanceof Promise) kill = out.killSettled
 
       // 6. Usage, whatever the outcome (a failed turn still used quota).
       if (out.usage && spec.onUsage) spec.onUsage(cccSessionId, out.usage)
@@ -412,10 +413,11 @@ async function runReview(
       return { isError: false, text: review + formatFooter(out.usage, name) }
     } finally {
       // The run has settled: it exited, or a stop killed its chain, or the
-      // kill's bound (CODEX_KILL_SETTLE_MS) passed with the kill still under
-      // way -- then the lease goes once that kill has finished (bounded by
-      // CODEX_KILL_WORST_MS), not before: the reviewer may live until then. A
-      // command the reviewer left behind does not hold the account.
+      // bound (CODEX_KILL_SETTLE_MS) passed with its processes still being
+      // ended (a stop's kill, or what a run that had exited left) -- then the
+      // lease goes once that has finished (within the runner's worst case),
+      // not before, whatever the outcome: the reviewer, or what it left, may
+      // live until then.
       const letGo = () => { try { prepared.lease.release() } catch { /* a release never replaces the result */ } }
       if (kill) void kill.then(letGo, letGo)
       else letGo()

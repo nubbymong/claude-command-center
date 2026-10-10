@@ -4,6 +4,21 @@
 // account, and an agent could start mid-rotation and read the old file. The
 // manager now holds the profile for the child's life and waits out a rotation.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
+// On Windows a start with a recent answer of the PATH walk (claude-cli-probe.ts) is synchronous, and the
+// cases here are about that path (the hold, the release, the waits), not about the lookup, which
+// windows-program-lookup.test.ts covers: the answer is always recent here.
+vi.mock('../../src/main/claude-cli-probe', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/claude-cli-probe')>()),
+  recentClaudeOnWindows: () => 'C:\\Tools\\claude.exe',
+}))
+// On Windows, programs are found in PATH's folders (windows-programs.ts); stubbed here,
+// so no real PATH is read: the first name asked for, in one fully qualified folder
+// (the walk on the event loop and the one off it alike).
+vi.mock('../../src/main/windows-programs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/windows-programs')>()),
+  findOnWindowsPath: (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+  findOnWindowsPathAsync: async (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+}))
 // Every provider is on here: main's launch rule has its own suites
 // (tests/unit/main/provider-launch-gate.test.ts and the provider-off tests).
 vi.mock('../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal: () => null, providerProbeRefusal: () => null }))
@@ -65,7 +80,7 @@ function makeChild() {
     pid: 12345,
     stdout: { on: vi.fn() },
     stderr: { on: vi.fn() },
-    stdin: { write: vi.fn(), end: vi.fn() },
+    stdin: { write: vi.fn(), end: vi.fn(), on: vi.fn() },
     on: (ev: string, cb: (...a: any[]) => void) => { handlers[ev] = cb },
     kill: vi.fn(),
     handlers,

@@ -10,7 +10,28 @@
 // refused and Remove hiding the row. Dispatch now re-reads the record after
 // EVERY pre-spawn await and, if it was cancelled or removed, releases the hold,
 // deletes the prompt file, broadcasts and returns without spawning.
+//
+// On Windows, dispatch awaits the first-start warm-up (ADR-025) before it writes the
+// prompt file. Here that is the setup file's default fake (tests/unit/setup.ts), which
+// answers at once: by the timer tick that sees the record published, the dispatch has
+// written the prompt file and is parked on the refresh wait. The real warm-up read the
+// program's path on the thread pool first, and raced that tick on Windows CI.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+// On Windows a start with a recent answer of the PATH walk (claude-cli-probe.ts) is synchronous, and the
+// cases here are about that path (the hold, the release, the waits), not about the lookup, which
+// windows-program-lookup.test.ts covers: the answer is always recent here.
+vi.mock('../../src/main/claude-cli-probe', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/claude-cli-probe')>()),
+  recentClaudeOnWindows: () => 'C:\\Tools\\claude.exe',
+}))
+// On Windows, programs are found in PATH's folders (windows-programs.ts); stubbed here,
+// so no real PATH is read: the first name asked for, in one fully qualified folder
+// (the walk on the event loop and the one off it alike).
+vi.mock('../../src/main/windows-programs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/windows-programs')>()),
+  findOnWindowsPath: (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+  findOnWindowsPathAsync: async (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+}))
 // Every provider is on here: main's launch rule has its own suites
 // (tests/unit/main/provider-launch-gate.test.ts and the provider-off tests).
 vi.mock('../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal: () => null, providerProbeRefusal: () => null }))

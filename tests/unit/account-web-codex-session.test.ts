@@ -55,7 +55,7 @@ const acted = {
   runSignIn: vi.fn(), cancelSignIn: vi.fn(), clearWebSession: vi.fn(), getSignInState: vi.fn(),
   openArtifacts: vi.fn(() => ({ ok: true })), closeArtifacts: vi.fn(),
   readClaudeCliAuth: vi.fn(async () => ({ authenticated: false })),
-  viewFor: vi.fn(), saveWebSession: vi.fn(), removeWebSession: vi.fn(),
+  viewFor: vi.fn(), saveWebSession: vi.fn(() => true), removeWebSession: vi.fn(),
   setAuthMethod: vi.fn(), setAuthBrowser: vi.fn(), setWebSignInMode: vi.fn(),
   getAuthMethod: vi.fn(() => 'claudeai'), getAuthBrowser: vi.fn(() => 'edge'), getWebSignInMode: vi.fn(() => 'auto'),
   openAccountPane: vi.fn(() => ({ ok: true })), closeAccountPanesForProfile: vi.fn(), closeWebview: vi.fn(),
@@ -63,7 +63,7 @@ const acted = {
 }
 vi.mock('../../src/main/account-web/sign-in', () => ({
   runSignIn: acted.runSignIn, cancelSignIn: acted.cancelSignIn, clearWebSession: acted.clearWebSession,
-  getSignInState: acted.getSignInState, detectAuthBrowsers: () => [],
+  getSignInState: acted.getSignInState, detectAuthBrowsers: () => [], discardSignInRun: vi.fn(),
 }))
 vi.mock('../../src/main/account-web/artifacts', () => ({ openArtifacts: acted.openArtifacts, closeArtifacts: acted.closeArtifacts }))
 vi.mock('../../src/main/account-web/claude-cli-auth', () => ({ readClaudeCliAuth: acted.readClaudeCliAuth, claudeAuthCommand: () => 'claude auth login' }))
@@ -71,6 +71,7 @@ vi.mock('../../src/main/account-web/session-store', () => ({
   viewFor: acted.viewFor, saveWebSession: acted.saveWebSession, removeWebSession: acted.removeWebSession,
   setAuthMethod: acted.setAuthMethod, setAuthBrowser: acted.setAuthBrowser, setWebSignInMode: acted.setWebSignInMode,
   getAuthMethod: acted.getAuthMethod, getAuthBrowser: acted.getAuthBrowser, getWebSignInMode: acted.getWebSignInMode,
+  claudeWebStoreIsNewer: () => false, NEWER_WEB_STORE_REASON: 'written by a newer version of the app',
 }))
 vi.mock('../../src/main/account-web/account-pane', () => ({
   openAccountPane: acted.openAccountPane, closeAccountPanesForProfile: acted.closeAccountPanesForProfile,
@@ -86,6 +87,10 @@ const {
 } = await import('../../src/shared/account-web-session')
 const { listOrphanedSharedWebPartitions, warnAboutOrphanedSharedPartitions } = await import('../../src/main/account-web/orphan-partitions')
 const { registerAccountWebHandlers } = await import('../../src/main/ipc/account-web-handlers')
+/** The app window and its main frame: the only sender these handlers answer. */
+const APP_FRAME = {}
+const APP_WIN = { isDestroyed: () => false, webContents: { mainFrame: APP_FRAME, send: () => {} } }
+const APP_EVENT = { sender: APP_WIN.webContents, senderFrame: APP_FRAME }
 const { IPC } = await import('../../src/shared/ipc-channels')
 
 const ACCT_A = 'acct-0123456789abcdef'
@@ -251,7 +256,7 @@ describe('every profile-keyed accountWeb:* channel refuses an account id (nothin
   beforeEach(() => {
     for (const k of Object.keys(handlers)) delete handlers[k]
     for (const f of Object.values(acted)) f.mockClear()
-    registerAccountWebHandlers()
+    registerAccountWebHandlers(() => APP_WIN as never)
   })
 
   const BOUNDS = { x: 0, y: 0, width: 100, height: 100 }
@@ -270,7 +275,7 @@ describe('every profile-keyed accountWeb:* channel refuses an account id (nothin
 
   it.each(calls)('%s refuses it before acting', async (channel, arg) => {
     expect(typeof handlers[channel], channel).toBe('function')
-    const res = (await handlers[channel]({ sender: {} }, arg)) as { ok: boolean }
+    const res = (await handlers[channel](APP_EVENT, arg)) as { ok: boolean }
     expect(res.ok).toBe(false)
     // Refused at the boundary: not even a read of the account's settings or
     // the profile list happens for an id of the other class.
@@ -289,10 +294,10 @@ describe('every profile-keyed accountWeb:* channel refuses an account id (nothin
   })
 
   it('the same channels still serve a Claude profile id (the control: the refusal is about the class)', async () => {
-    const res = (await handlers[IPC.ACCOUNT_WEB_OPEN_ARTIFACTS]({ sender: {} }, 'profile-known1')) as { ok: boolean }
+    const res = (await handlers[IPC.ACCOUNT_WEB_OPEN_ARTIFACTS](APP_EVENT, 'profile-known1')) as { ok: boolean }
     expect(res.ok).toBe(true)
     expect(acted.openArtifacts).toHaveBeenCalledWith('profile-known1', expect.anything())
-    const pane = (await handlers[IPC.ACCOUNT_WEB_PANE_OPEN]({ sender: {} }, { sessionId: 's1', profileId: 'profile-known1', bounds: BOUNDS })) as { ok: boolean }
+    const pane = (await handlers[IPC.ACCOUNT_WEB_PANE_OPEN](APP_EVENT, { sessionId: 's1', profileId: 'profile-known1', bounds: BOUNDS })) as { ok: boolean }
     expect(pane.ok).toBe(true)
     expect(acted.openAccountPane).toHaveBeenCalledTimes(1)
   })

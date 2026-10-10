@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants hard links. [CI] [VM] only -- never run on the owner's machine.
 /**
  * P3.3 review round 3 (C5): a staged sign in again carries an account's Codex
  * history into its new folder (a hard link of each rollout, else a byte

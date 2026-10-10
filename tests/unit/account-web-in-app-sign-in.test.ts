@@ -13,12 +13,15 @@ let cookiesGetCalls = 0
 let onCookiesGet: ((call: number) => void) | null = null
 let throwOnPartition = false
 const cookiesGet = vi.fn(async () => { cookiesGetCalls++; onCookiesGet?.(cookiesGetCalls); return cookieResponse })
+/** The partition session's own events (a download, say), by name. */
+let sessionEvents: Record<string, Function> = {}
 const fromPartition = vi.fn(() => {
   if (throwOnPartition) throw new Error('simulated Electron failure')
   return {
     getUserAgent: () => uaValue,
     setUserAgent: setUA,
     cookies: { get: cookiesGet },
+    on: (ev: string, fn: Function) => { sessionEvents[ev] = fn },
   }
 })
 
@@ -58,6 +61,7 @@ vi.mock('electron', () => ({
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
 
 const { runInAppSignIn, toChromeUserAgent, closeInAppSignInWindow } = await import('../../src/main/account-web/in-app-sign-in')
+const { logError } = await import('../../src/main/debug-logger')
 const { webSessionFromElectronCookies } = await import('../../src/main/account-web/cookie-harvest')
 
 const SK = (over: Record<string, unknown> = {}) => ({ name: 'sessionKey', value: 'sk', ...over })
@@ -74,6 +78,8 @@ beforeEach(() => {
   cookiesGetCalls = 0
   onCookiesGet = null
   throwOnPartition = false
+  sessionEvents = {}
+  vi.mocked(logError).mockClear()
   uaValue = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) AI Code Conductor/2.1.0 Chrome/128.0.0.0 Electron/33.0.0 Safari/537.36'
   closeInAppSignInWindow()
 })
@@ -232,6 +238,23 @@ describe('runInAppSignIn — window flow', () => {
     expect(res.ok).toBe(false)
     expect(res.error).toMatch(/Timed out/)
     expect(created[0].destroyed).toBe(true)
+  })
+})
+
+describe("Claude's sign-in window blocks downloads", () => {
+  it('a download in the sign-in window is prevented and logged by host only', async () => {
+    cookieResponse = [SK({ expirationDate: 1_800_000_000 })]
+    evalResult = 'me@example.com'
+    await runInAppSignIn({ ...RUN, shouldCancel: () => false })
+    const download = sessionEvents['will-download']
+    expect(typeof download).toBe('function')
+    const ev = { preventDefault: vi.fn() }
+    download(ev, { getURL: () => 'https://files.example/export/report.zip?sig=DOWNLOAD-VALUE#part' })
+    expect(ev.preventDefault).toHaveBeenCalledTimes(1)
+    const lines = vi.mocked(logError).mock.calls.map((c) => c.map(String).join(' ')).filter((l) => /download/.test(l))
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('files.example')
+    expect(lines[0]).not.toMatch(/DOWNLOAD-VALUE|report\.zip|\/export|\?|#/)
   })
 })
 

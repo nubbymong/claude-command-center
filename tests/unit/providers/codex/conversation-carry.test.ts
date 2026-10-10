@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions, symbolic links and hard links. [CI] [VM] only -- never run on the owner's machine.
 // P3.6 (row 22): a Codex conversation's rollout carried into another
 // account's folder for a switched session. Real folders under the system temp
 // folder (no Codex, no process): the source is P3.5's lookup in its own realm

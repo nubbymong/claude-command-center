@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // BLOCKER 1, second pass (adversarial review, 2026-08-15) — WHERE THE SERVED
 // ROOT COMES FROM.
 //

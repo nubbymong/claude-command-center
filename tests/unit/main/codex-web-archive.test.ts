@@ -118,46 +118,91 @@ describe('[host] the accounts service archive', () => {
 })
 
 describe('[host] an archive commits only through a path that ran the hook', () => {
-  it('managed: inactivate and archive together on an active account never archive without the hook', async () => {
+  type Result = Awaited<ReturnType<Awaited<ReturnType<typeof harness>>['service']['setLifecycle']>>
+  /** The two changes in a fixed order: the registry lock is held while both
+   *  read the account (still active) and queue their writes, `first` before
+   *  `second`; then the lock goes and the writes land in that order. */
+  async function inOrder(h: Awaited<ReturnType<typeof harness>>, first: () => Promise<Result>, second: () => Promise<Result>): Promise<[Result, Result]> {
+    let open!: () => void
+    const held = h.store.exclusive(() => new Promise<void>((r) => { open = r }))
+    const one = first()
+    await new Promise((r) => setTimeout(r, 20))
+    const two = second()
+    await new Promise((r) => setTimeout(r, 20))
+    open()
+    await held
+    return [await one, await two]
+  }
+  const CHANGED = /changed while it was being archived/
+
+  it('managed: an archive that read the account active and lands after an inactivate is refused without the hook, then archives through it', async () => {
     const h = await harness()
     const a = await addCodexAccount(h, 'A')
     let ran = 0
     onBeforeAccountArchive(async () => { ran++ })
-    const [r1, r2] = await Promise.all([
-      h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' }),
-      h.service.setLifecycle({ accountId: a, lifecycle: 'archived' }),
-    ])
-    expect(r1.ok).toBe(true)
-    const acct = h.doc().accounts.find((x) => x.id === a)!
-    // Either the archive was refused (and asked again), or it ran the hook.
-    if (acct.lifecycle === 'archived') expect(ran).toBe(1)
-    else {
-      expect(r2).toMatchObject({ ok: false, code: 'lifecycle' })
-      expect(acct.lifecycle).toBe('inactive')
-      expect(ran).toBe(0)
-    }
+    const [r1, r2] = await inOrder(h,
+      () => h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' }),
+      () => h.service.setLifecycle({ accountId: a, lifecycle: 'archived' }))
+    expect(r1).toEqual({ ok: true })
+    // The archive's write met an inactive account it had not cleared.
+    expect(r2).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect((r2 as { message?: string }).message).toMatch(CHANGED)
+    expect(ran).toBe(0)
+    expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'inactive' })
     // Asked again, it archives through the hook.
-    if (acct.lifecycle !== 'archived') {
-      expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'archived' })).toEqual({ ok: true })
-      expect(ran).toBe(1)
-    }
+    expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'archived' })).toEqual({ ok: true })
+    expect(ran).toBe(1)
   })
 
-  it('external: inactivate and archive (acknowledged) together never archive without the hook', async () => {
+  it('managed: an archive that lands before the inactivate is refused by the rules, without the hook', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    let ran = 0
+    onBeforeAccountArchive(async () => { ran++ })
+    const [r2, r1] = await inOrder(h,
+      () => h.service.setLifecycle({ accountId: a, lifecycle: 'archived' }),
+      () => h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' }))
+    expect(r1).toEqual({ ok: true })
+    expect(r2).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect((r2 as { message?: string }).message).not.toMatch(CHANGED)
+    expect(ran).toBe(0)
+    expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'inactive' })
+  })
+
+  it('external: an archive (acknowledged) that read the account active and lands after an inactivate is refused without the hook', async () => {
     const h = await harness()
     h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
     expect((await h.service.adoptExternalDefault({ providerId: 'codex' })).ok).toBe(true)
     const ext = h.doc().accounts.find((x) => x.providerId === 'codex')!.id
     let ran = 0
     onBeforeAccountArchive(async () => { ran++ })
-    await Promise.all([
-      h.service.setLifecycle({ accountId: ext, lifecycle: 'inactive' }),
-      h.service.setLifecycle({ accountId: ext, lifecycle: 'archived', acknowledgeExternal: true }),
-    ])
-    const acct = h.doc().accounts.find((x) => x.id === ext)!
-    if (acct.lifecycle === 'archived') expect(ran).toBe(1)
-    else expect(ran).toBe(0)
-    expect(acct.lifecycle === 'archived' && ran === 0).toBe(false)
+    const [r1, r2] = await inOrder(h,
+      () => h.service.setLifecycle({ accountId: ext, lifecycle: 'inactive' }),
+      () => h.service.setLifecycle({ accountId: ext, lifecycle: 'archived', acknowledgeExternal: true }))
+    expect(r1).toEqual({ ok: true })
+    expect(r2).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect((r2 as { message?: string }).message).toMatch(CHANGED)
+    expect(ran).toBe(0)
+    expect(h.doc().accounts.find((x) => x.id === ext)).toMatchObject({ lifecycle: 'inactive' })
+    expect(await h.service.setLifecycle({ accountId: ext, lifecycle: 'archived', acknowledgeExternal: true })).toEqual({ ok: true })
+    expect(ran).toBe(1)
+  })
+
+  it('external: an archive (acknowledged) that lands before the inactivate is refused by the rules, without the hook', async () => {
+    const h = await harness()
+    h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
+    expect((await h.service.adoptExternalDefault({ providerId: 'codex' })).ok).toBe(true)
+    const ext = h.doc().accounts.find((x) => x.providerId === 'codex')!.id
+    let ran = 0
+    onBeforeAccountArchive(async () => { ran++ })
+    const [r2, r1] = await inOrder(h,
+      () => h.service.setLifecycle({ accountId: ext, lifecycle: 'archived', acknowledgeExternal: true }),
+      () => h.service.setLifecycle({ accountId: ext, lifecycle: 'inactive' }))
+    expect(r1).toEqual({ ok: true })
+    expect(r2).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect((r2 as { message?: string }).message).not.toMatch(CHANGED)
+    expect(ran).toBe(0)
+    expect(h.doc().accounts.find((x) => x.id === ext)).toMatchObject({ lifecycle: 'inactive' })
   })
 
   it('the sequential control still archives through the hook', async () => {

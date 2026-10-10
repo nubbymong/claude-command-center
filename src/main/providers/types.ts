@@ -10,6 +10,12 @@ export interface SpawnOptions {
   ssh?: SshConfig
   shellOnly?: boolean
   elevated?: boolean
+  /** A tab the app opens to run one line it built (the install or update tab,
+   *  terminalOptions.noCommandSecrets). On Windows its shell, and what that line
+   *  starts by a bare name (npm.cmd's node), finds programs only in the folders
+   *  PATH names in full (withFullyQualifiedProgramLookup). Any other terminal
+   *  tab keeps the user's own lookup. */
+  fullyQualifiedLookup?: boolean
   /** Terminal-only secret argument, resolved from the OS keychain in main. Placed
    *  in the spawn ENV (never interpolated into the command text) so it cannot land
    *  in the shell's on-disk history. See buildSpawnCommand + the shell-only write. */
@@ -225,8 +231,10 @@ export interface SessionProvider {
   deliverStatusline?(data: StatuslineData): void
   /** Optional -- Claude only: the `statusLine` value of a local session's
    *  settings file, running the bundled bridge script with the session id and
-   *  the path of its status-URL file. */
-  statuslineSetting?(resourcesDir: string, sessionId?: string, statusUrlFile?: string): { type: 'command'; command: string }
+   *  the path of its status-URL file; null when a path the command would
+   *  carry is one the shell would read as more than a path (the app sets up
+   *  no status line). */
+  statuslineSetting?(resourcesDir: string, sessionId?: string, statusUrlFile?: string): { type: 'command'; command: string } | null
   /** Optional -- Claude only: the session's statusline POST URL on the
    *  conductor MCP server ('' while the server is not bound or the MCP is off;
    *  throws rather than build a URL that fails its charset guard). */
@@ -334,9 +342,12 @@ export interface SshCapableProvider extends SessionProvider {
   ): string
   /** The launch line on a Windows remote, every variable set cmd.exe's way. */
   windowsLaunchCommand(input: { sessionId: string; envPrefixVars: string[]; extraFlags: string; continueFlag: string }): string
-  /** The line written down a non-persistent session's own PTY at teardown
-   *  that removes the per-session files it planted on the remote. */
+  /** The POSIX command that removes the per-session files a session planted
+   *  on the remote; run over its own ssh exec when the session is closed. */
   remoteSessionCleanupCommand(sessionId: string): string
+  /** The same removal on a Windows remote (cmd.exe or PowerShell); run over
+   *  its own ssh exec on End and on a close. */
+  windowsRemoteSessionCleanupCommand(sessionId: string): string
   /** The line a persistent (tmux) session writes before its launch to point
    *  the remote statusline at the staged tmux binary. */
   tmuxBinPatchCommand(sessionId: string): string

@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // tests/unit/account-profiles-orphan-repair.test.ts
 // #131: a profile whose `.claude/projects` became a REAL dir (the junction never
 // established, e.g. Claude wrote transcripts there first) orphans those sessions

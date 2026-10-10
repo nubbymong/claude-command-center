@@ -77,6 +77,13 @@ vi.mock('child_process', () => ({
   spawn: vi.fn(),
   spawnSync: vi.fn(),
 }))
+// Which gh starts is github-update-gh-lookup.test.ts's (on Windows: the full
+// path found in PATH's folders named in full; that walk would read the fs
+// mocked below). Here every gh start is `gh`, on every platform, so these
+// cases check the fallback cascade alone.
+vi.mock('../../src/main/github/gh-program', () => ({
+  ghStartCommand: async (args: readonly string[]) => ({ file: 'gh', args: [...args], windowsVerbatimArguments: false }),
+}))
 
 // promisify(execFile) returns a promise; we shim by having execFile call back synchronously.
 // vitest hoists vi.mock so we need util.promisify to honor the standard call signature.

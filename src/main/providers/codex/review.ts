@@ -188,24 +188,25 @@ export function createCodexReviewOperations(deps: { platform?: NodeJS.Platform; 
       if (unreachable) unreachable.streaming = false
       const out = reader.end()
       const usage = out.usage ? { usage: out.usage } : {}
-      // Only a stopped run can carry one: the lease is held until it ends.
+      // Carried whatever the outcome: a run whose processes were still being
+      // ended when it settled holds its lease until that has finished.
       const kill = r.killSettled ? { killSettled: r.killSettled } : {}
       if (unreachable?.message != null && !input.signal?.aborted) {
         return { ok: false, code: 'failed', message: `${CODEX_UNREACHABLE_PREFIX}: ${clip(redactHead(unreachable.message, redact))}.`, ...usage, ...kill }
       }
       if (r.stopped === 'cancel' || input.signal?.aborted) return { ok: false, code: 'cancelled', message: 'The review was cancelled.', ...usage, ...kill }
       if (r.timedOut || r.stopped === 'deadline') return { ok: false, code: 'timed-out', message: 'The review timed out.', ...usage, ...kill }
-      if (r.spawnError) return { ok: false, code: 'not-started', message: `Codex could not be started: ${clip(redactHead(r.spawnError, redact))}.` }
+      if (r.spawnError) return { ok: false, code: 'not-started', message: `Codex could not be started: ${clip(redactHead(r.spawnError, redact))}.`, ...kill }
       if (r.exitCode !== 0) {
         const stderr = (errCut ? redact(errTail).slice(MARGIN) : redact(errTail)).trim()
         const detail = out.error !== undefined ? clip(redactHead(out.error, redact)) : stderr.slice(-MAX_MESSAGE)
-        return { ok: false, code: 'failed', message: `Codex exited with code ${r.exitCode}${detail ? `: ${detail}` : ''}.`, ...usage }
+        return { ok: false, code: 'failed', message: `Codex exited with code ${r.exitCode}${detail ? `: ${detail}` : ''}.`, ...usage, ...kill }
       }
       if (out.text === null || !out.text.trim()) {
         const why = out.error !== undefined ? clip(redactHead(out.error, redact)) : out.dropped ? 'Codex printed an event larger than this app reads, and no review after it.' : 'Codex returned no review.'
-        return { ok: false, code: 'no-output', message: why, ...usage }
+        return { ok: false, code: 'no-output', message: why, ...usage, ...kill }
       }
-      return { ok: true, text: finishReview(out.text), ...usage }
+      return { ok: true, text: finishReview(out.text), ...usage, ...kill }
     },
   }
 }

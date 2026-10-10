@@ -19,7 +19,15 @@
  * This is a pure unit test — buildClaudeLocalSpawn has no Electron deps and
  * returns a plain { cmd, args, env } object.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+// On Windows, programs are found in PATH's folders (windows-programs.ts); stubbed here,
+// so no real PATH is read: the first name asked for, in one fully qualified folder
+// (the walk on the event loop and the one off it alike).
+vi.mock('../../../src/main/windows-programs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/windows-programs')>()),
+  findOnWindowsPath: (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+  findOnWindowsPathAsync: async (names: readonly string[]) => `C:\\Tools\\${names[0]}`,
+}))
 import { buildClaudeLocalSpawn } from '../../../src/main/providers/claude/spawn'
 import type { SpawnOptions } from '../../../src/main/providers/types'
 

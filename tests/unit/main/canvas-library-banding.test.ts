@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // The canvas list, made usable at scale and honest about ownership.
 //
 // The list was a flat recency wall with one ownership hint ("some open tile owns

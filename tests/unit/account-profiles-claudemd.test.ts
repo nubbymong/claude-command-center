@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants hard links; changes ACLs on temp folders. [CI] [VM] only -- never run on the owner's machine.
 // #170 — per-account user-scope CLAUDE.md.
 //
 // A CCC session runs with USERPROFILE=<profileDir>, so Claude Code looks for

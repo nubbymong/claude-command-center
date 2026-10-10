@@ -8,7 +8,7 @@ import type { ProviderPackage } from '../core'
 import { resolveClaudeBinary, buildClaudeLocalSpawn } from './spawn'
 import {
   getRemoteSetupCommand, remoteSessionSettingsPath, remoteSessionMcpConfigPath,
-  buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand,
+  buildRemoteSessionCleanupCommand, buildWindowsRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand,
   parseEndSudoSentinel, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand, statusPostUrl,
 } from './ssh-shim'
 import { detectClaudeUi, lastPromptLineForClaude, looksLikeShellPromptTail } from './ui-detection'
@@ -45,6 +45,8 @@ export type { ClaudeLegacyAccountsIo } from './legacy-store'
 
 // The reviewer for Codex sessions (WP2 commit 5b): its launch, discovery and
 // adapter, and the ports the composition root hands it.
+// Claude Code's install commands, from Anthropic's setup page (ADR-024).
+export { claudeInstallRecipes, CLAUDE_INSTALL_SOURCE_URL } from './install-recipes'
 export { createClaudeReviewLaunch } from './review-launch'
 export type { ClaudeReviewPorts } from './review-launch'
 export { createClaudeReviewOperations, parseClaudeResult, CLAUDE_REVIEW_ARGS, CLAUDE_REVIEW_MAX_STDOUT, CLAUDE_REVIEW_HOLD_GRACE_MS } from './review'
@@ -137,7 +139,7 @@ export class ClaudeProvider implements SshCapableProvider {
   deliverStatusline(data: StatuslineData): void {
     notifyClaudeTelemetry(data)
   }
-  statuslineSetting(resourcesDir: string, sessionId?: string, statusUrlFile?: string): { type: 'command'; command: string } {
+  statuslineSetting(resourcesDir: string, sessionId?: string, statusUrlFile?: string): { type: 'command'; command: string } | null {
     return buildStatuslineSetting(resourcesDir, sessionId, statusUrlFile)
   }
   statusPostUrl(sessionId: string, remoteMcpPort: number | undefined, mcpPort: number, includeConductorMcp: boolean): string {
@@ -145,6 +147,9 @@ export class ClaudeProvider implements SshCapableProvider {
   }
   remoteSessionCleanupCommand(sessionId: string): string {
     return buildRemoteSessionCleanupCommand(sessionId)
+  }
+  windowsRemoteSessionCleanupCommand(sessionId: string): string {
+    return buildWindowsRemoteSessionCleanupCommand(sessionId)
   }
   tmuxBinPatchCommand(sessionId: string): string {
     return buildTmuxBinPatchCommand(sessionId)
@@ -187,7 +192,7 @@ export class ClaudeProvider implements SshCapableProvider {
  *  D7 conformance evidence (dev host: Claude Code 2.1.278). */
 export const claudeCapabilities: ProviderCapabilities = {
   'cli.discovery': { state: 'unknown', note: 'claude --version through setup.discover, which exists once the composition root hands the package its CLI ports; this package has none' },
-  'install.recipes': { state: 'unknown', note: 'the official native installer, shown and copied, never scraped; not wired through this package yet' },
+  'install.recipes': { state: 'unknown', note: 'the install commands from Anthropic\'s setup page, through setup.installRecipes, which exists once the composition root hands the package its CLI ports; this package has none' },
   'auth.browser': { state: 'unknown', note: 'the genuine CLI login in a Conductor terminal (the Accounts panel); not wired through this package yet' },
   'auth.device': { state: 'unsupported', note: 'Claude Code has no device-code sign-in' },
   'auth.apiKey': { state: 'unsupported', note: 'managed accounts use the CLI sign-in; an API key is never collected' },
@@ -216,6 +221,7 @@ export const claudeCapabilities: ProviderCapabilities = {
 export const claudeWiredCapabilities: ProviderCapabilities = {
   ...claudeCapabilities,
   'cli.discovery': { state: 'supported', note: 'claude --version on the executable the app resolves, through its runner with no Conductor variable, absolute PATH entries only and no shell (setup.discover); run at start while Claude Code is on, by Check again in Settings, Accounts, and again before a reviewer launch when the proven file changed' },
+  'install.recipes': { state: 'supported', note: 'the commands from Anthropic\'s setup page, copied verbatim (npm named npm.cmd on Windows), never scraped: the native installer first, then npm; each runs only in a visible terminal after the user confirms its line (for the installer, a confirmation that names claude.ai, the host its script comes from), never on its own and never elevated (setup.installRecipes)' },
   'auth.status': { state: 'supported', note: 'claude auth status in the account\'s own profile home, run from the executable discovery proved with no shell, by the probe the Accounts panel uses (the profile held as a credential consumer, the project gate, the hardened profile-home environment; one check per profile at a time, so a check that finds the panel\'s own probe of the profile running shares its answer); signed out only on the CLI\'s own answer; on macOS it reads the Mac\'s one Claude Code sign-in, which every profile runs on there (D2)' },
   'auth.logout': { state: 'supported', note: 'claude auth logout in the account\'s own profile home, run from the executable discovery proved with no shell (its process tree stopped at the time limit), with the status probe\'s hold, gate and environment, refused while a session or a check uses the profile, confirmed by the profile\'s state read afresh; the CLI also revokes the token. Signing out this computer\'s own sign-in (the primary profile; every profile on macOS, D2) needs the user\'s acknowledgement' },
 }
@@ -226,7 +232,7 @@ export const claudeWiredCapabilities: ProviderCapabilities = {
 function claudeCapabilitiesFor(wired: { setup: boolean; auth: boolean }): ProviderCapabilities {
   if (wired.setup && wired.auth) return claudeWiredCapabilities
   if (!wired.setup) return claudeCapabilities
-  return { ...claudeCapabilities, 'cli.discovery': claudeWiredCapabilities['cli.discovery'] }
+  return { ...claudeCapabilities, 'cli.discovery': claudeWiredCapabilities['cli.discovery'], 'install.recipes': claudeWiredCapabilities['install.recipes'] }
 }
 
 /** Ambient variables that could override a bound Claude realm (D3).

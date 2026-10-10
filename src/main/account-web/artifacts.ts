@@ -18,6 +18,16 @@ import { BrowserWindow, shell } from 'electron'
 import { logError, logInfo } from '../debug-logger'
 import { webPartitionForProfile } from '../../shared/account-web-session'
 import { safeExternalHttpsHref } from '../../shared/safe-url'
+import { blockPartitionDownloads, diagHost } from './in-app-sign-in'
+import { isClaudeWebClearing, WEB_SESSION_CLEARING_REASON } from './sign-in'
+
+/** An Electron load error's code (`ERR_ABORTED -3`), never its message. */
+function loadErrorCode(err: unknown): string {
+  const code = (err as { code?: unknown })?.code
+  const errno = (err as { errno?: unknown })?.errno
+  const c = typeof code === 'string' && /^[A-Z0-9_]{1,40}$/.test(code) ? code : 'error'
+  return typeof errno === 'number' && Number.isInteger(errno) ? `${c} ${errno}` : c
+}
 
 /**
  * Hand a URL to the OS, but only if it survives the repo's existing control.
@@ -69,6 +79,9 @@ export function openArtifacts(profileId: string, parent?: BrowserWindow): { ok: 
   } catch (err) {
     return { ok: false, error: (err as Error)?.message ?? 'invalid account' }
   }
+  // Not while the account's web session is being cleared, until that clear
+  // has itself ended, so nothing on the partition writes to it mid-clear.
+  if (isClaudeWebClearing(profileId)) return { ok: false, error: WEB_SESSION_CLEARING_REASON }
 
   const existing = windows.get(profileId)
   if (existing && !existing.isDestroyed()) {
@@ -117,12 +130,24 @@ export function openArtifacts(profileId: string, parent?: BrowserWindow): { ok: 
   // holding a live claude.ai session has no business reaching a camera, a
   // microphone, or the clipboard on a page's say-so.
   win.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
+  // And no download: every window on an account's partition blocks them, so a
+  // page here never hands the OS an unmediated Save-As. Installed by this
+  // window itself, whichever surface opened the partition first; the log
+  // names the host only.
+  blockPartitionDownloads(win.webContents.session, 'artifacts')
   win.on('closed', () => windows.delete(profileId))
 
   windows.set(profileId, win)
-  void win.loadURL(ARTIFACTS_URL).catch((err) => {
-    logError(`[account-web] artifacts window failed to load: ${(err as Error)?.message ?? err}`)
-  })
+  // A failure is logged by host and error code, never the message: it carries
+  // the whole URL, and a URL's query can carry a credential.
+  const loadFailed = (err: unknown): void => {
+    logError(`[account-web] artifacts window could not load ${diagHost(ARTIFACTS_URL)} (${loadErrorCode(err)})`)
+  }
+  try {
+    void Promise.resolve(win.loadURL(ARTIFACTS_URL)).catch(loadFailed)
+  } catch (err) {
+    loadFailed(err)
+  }
   logInfo(`[account-web] opened artifacts for ${profileId}`)
   return { ok: true }
 }

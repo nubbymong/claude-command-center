@@ -1,3 +1,4 @@
+// HOST QUARANTINE: starts real processes. [CI] [VM] only -- never run on the owner's machine.
 // rc.15 review R1 (aicc_planning#45), plan 1.2 "shell compatibility": the
 // EXACT command the SSH flow types is run LITERALLY through real shells.
 //

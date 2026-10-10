@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // THE OWNERSHIP LEASE, at the seam that decides it (M4).
 //
 // canvas-session-link answers "is this session live", and everything the user

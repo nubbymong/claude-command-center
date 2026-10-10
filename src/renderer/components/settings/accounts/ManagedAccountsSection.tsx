@@ -16,6 +16,7 @@ import {
   externalHomeLabelInSentence, accountNameInSentence,
   canOfferMakeInactive, canOfferMakeActive, canOfferArchive, externalAdoption, canOfferCheckSignIn, signInCheckText, externalSignInHint,
   selectArchivedAccounts, canOfferRestore, linkedAccounts, linkedAccountLabel, blockerSessions, sessionTitle, unnamedHolders, oldSignInText,
+  confirmEachLaunchWhy,
 } from '../../../stores/providerAccountsStore'
 import { useSessionStore } from '../../../stores/sessionStore'
 import { useResolvedTheme } from '../../../hooks/useThemeController'
@@ -267,17 +268,19 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
           testId={`account-linked-${id}-${a.id}`}
         />
       ))}
-      planCell={(
+      // Neither a plan nor a method (this computer's own sign-in before a
+      // usage read names its plan): no plan cell, so the name takes its track.
+      planCell={account.planLabel || method ? (
         <div className="flex flex-col items-start gap-0.5 min-w-0" data-testid={`account-plan-cell-${id}`}>
           {account.planLabel && <span className="truncate max-w-full" style={{ color: 'var(--text-primary)' }} data-testid={`account-plan-${id}`}>{account.planLabel}</span>}
           {method && <MutedLine testId={`account-method-${id}`}>{method}</MutedLine>}
         </div>
-      )}
+      ) : null}
       badges={(
         <>
           {account.isProviderDefault && <Pill tone="default" testId={`account-badge-default-${id}`}>Default</Pill>}
           {showsReviewerBadge(account) && <Pill tone="reviewer" testId={`account-badge-reviewer-${id}`}>Reviewer</Pill>}
-          {cannotReview && <Pill tone="warn" testId={`account-badge-confirm-${id}`}>Confirm each launch</Pill>}
+          {cannotReview && <Pill tone="warn" testId={`account-badge-confirm-${id}`} title={`Cannot run reviews: ${confirmEachLaunchWhy(account)}.`}>Confirm each launch</Pill>}
           {cannotReview && <MutedLine testId={`account-no-reviews-${id}`}>Cannot run reviews</MutedLine>}
           {account.lifecycle === 'inactive' && <Pill tone="muted" testId={`account-badge-inactive-${id}`}>Inactive</Pill>}
         </>
@@ -291,7 +294,7 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
           {account.signingIn && <MutedLine testId={`account-signing-in-${id}`}>Signing in now</MutedLine>}
           {webApplies && webSigningIn && (
             <MutedLine testId={`account-web-${id}`}>
-              chatgpt.com: finish the sign-in in its window.{' '}
+              chatgpt.com: finish the sign-in in its window. It closes by itself once you are signed in.{' '}
               <RowButton onClick={() => { void useCodexWebStore.getState().cancel(id) }} testId={`account-web-cancel-${id}`}>Cancel</RowButton>
             </MutedLine>
           )}

@@ -1,3 +1,4 @@
+// HOST QUARANTINE: starts real processes. [CI] [VM] only -- never run on the owner's machine.
 // rc.15 review R8 (Codex, 2026-09-06; aicc_planning#55 adjacent): the reviewer's
 // characterization ("F11 residual: FOUND is emitted before execution, so a tmux
 // operational failure still parses as verified empty") flipped into the desired

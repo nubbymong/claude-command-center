@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants hard links. [CI] [VM] only -- never run on the owner's machine.
 // readCheckedFile — the read primitive behind every canvas file read
 // (BLOCKER 1 item 7, adversarial review 2026-08-15).
 //

@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // Draft / ready (#366): the agent's self-review loop is invisible.
 //
 // A render with `ready: false` is a DRAFT — it supersedes the previous draft in

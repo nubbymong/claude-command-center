@@ -583,23 +583,21 @@
 @media (max-width: 760px) { .ob-root .as-cards.as-cards-2 { grid-template-columns: 1fr; } }
 
 /* Set up Codex (WP2 commit 6e, canvas F2) */
-.ob-root .cx-muted { color: var(--text-muted); font-size: 12px; line-height: 1.5; margin: 0 0 10px; }
-.ob-root .cx-recipes { display: grid; gap: 10px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface-raised); padding: 12px; margin-bottom: 10px; }
-.ob-root .cx-recipes .cx-muted { margin: 0; }
-.ob-root .cx-recipes-h { display: flex; align-items: baseline; gap: 10px; font-size: 13px; }
-.ob-root .cx-recipe { border: 1px solid var(--border-subtle); border-radius: 9px; padding: 9px 10px; background: var(--surface-base); }
-.ob-root .cx-cmd { display: flex; align-items: center; gap: 10px; }
-.ob-root .cx-cmd code { flex: 1; min-width: 0; font: 11.5px/1.4 'JetBrains Mono', ui-monospace, monospace; background: var(--surface-sunken); border: 1px solid var(--border-subtle);
+/* The install commands (InstallRecipeList.tsx) look the same wherever they are shown: here,
+   and inside .install-recipes on the first-run screen, in Settings and in the CLI help. */
+:is(.ob-root, .install-recipes) .cx-muted { color: var(--text-muted); font-size: 12px; line-height: 1.5; margin: 0 0 10px; }
+:is(.ob-root, .install-recipes) .cx-recipes { display: grid; gap: 10px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface-raised); padding: 12px; margin-bottom: 10px; }
+:is(.ob-root, .install-recipes) .cx-recipes .cx-muted { margin: 0; }
+:is(.ob-root, .install-recipes) .cx-recipes-h { display: flex; align-items: baseline; gap: 10px; font-size: 13px; }
+:is(.ob-root, .install-recipes) .cx-recipe { border: 1px solid var(--border-subtle); border-radius: 9px; padding: 9px 10px; background: var(--surface-base); }
+:is(.ob-root, .install-recipes) .cx-cmd { display: flex; align-items: center; gap: 8px; }
+:is(.ob-root, .install-recipes) .cx-cmd code { flex: 1; min-width: 0; font: 11.5px/1.4 'JetBrains Mono', ui-monospace, monospace; background: var(--surface-sunken); border: 1px solid var(--border-subtle);
   border-radius: 6px; padding: 6px 9px; color: var(--text-primary); overflow-wrap: anywhere; }
-.ob-root .cx-btn { flex: none; font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; border-radius: 7px; padding: 5px 11px;
-  border: 1px solid var(--border-strong); background: transparent; color: var(--text-secondary); }
-.ob-root .cx-btn.primary { background: var(--ob); border-color: var(--ob); color: var(--ob-on, var(--text-on-brand)); }
-.ob-root .cx-btn:disabled { opacity: .5; cursor: default; }
-.ob-root .cx-note { margin-top: 6px; font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
-.ob-root .cx-confirm { margin-top: 8px; display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-radius: 8px; font-size: 12px; line-height: 1.45;
+:is(.ob-root, .install-recipes) .cx-note { margin-top: 6px; font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
+:is(.ob-root, .install-recipes) .cx-confirm { margin-top: 8px; display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-radius: 8px; font-size: 12px; line-height: 1.45;
   color: var(--text-primary); border: 1px solid var(--ob-line); background: var(--ob-soft); }
-.ob-root .cx-confirm-btns { display: flex; gap: 8px; flex: none; }
-.ob-root .cx-run-line { display: block; margin-top: 6px; font: 11.5px/1.4 'JetBrains Mono', ui-monospace, monospace; background: var(--surface-sunken);
+:is(.ob-root, .install-recipes) .cx-confirm-btns { display: flex; gap: 8px; flex: none; }
+:is(.ob-root, .install-recipes) .cx-run-line { display: block; margin-top: 6px; font: 11.5px/1.4 'JetBrains Mono', ui-monospace, monospace; background: var(--surface-sunken);
   border: 1px solid var(--border-subtle); border-radius: 6px; padding: 5px 8px; overflow-wrap: anywhere; }
 .ob-root .cx-h3 { font-size: 13px; font-weight: 600; margin: 6px 0 8px; }
 .ob-root .cx-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; text-align: left; font: inherit; cursor: pointer; margin-bottom: 8px;

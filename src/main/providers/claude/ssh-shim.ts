@@ -673,16 +673,39 @@ export function remoteSessionStatusUrlPath(sessionId: string): string {
 }
 
 /**
- * U8: the in-band cleanup command run down a live SSH PTY when a session is
- * explicitly closed -- removes the two per-session sidecars CCC planted on the
- * remote (`settings-<sid>.json` + `mcp-<sid>.json`). The shared statusline shim
- * is reused across sessions so it is left in place; the shared settings /
+ * U8: the POSIX command that removes the three per-session files CCC planted
+ * on the remote (`settings-<sid>.json`, `mcp-<sid>.json`,
+ * `ccc-status-<sid>.url`). Run over a SEPARATE ssh exec when a non-persistent
+ * session is closed (endSshRemoteDetailed, files only), never typed down the
+ * session's own terminal, whose foreground is Claude. The shared statusline
+ * shim is reused across sessions so it is left in place; the shared settings /
  * .claude.json edits are removals (healing), not plants, so nothing else needs
  * sweeping. The session id is sanitized to the same safe form used for the
  * filenames, so it cannot smuggle shell metacharacters into the command.
  */
 export function buildRemoteSessionCleanupCommand(sessionId: string): string {
   return `rm -f ${remoteSessionSettingsPath(sessionId)} ${remoteSessionMcpConfigPath(sessionId)} ${remoteSessionStatusUrlPath(sessionId)}\n`
+}
+
+/**
+ * The same removal for a WINDOWS remote, whose shell is cmd.exe or PowerShell
+ * (no `rm`, no `;` list in cmd): a node program that removes exactly this
+ * session's three files under `%USERPROFILE%\.claude`, UTF-8 base64'd into
+ * the same `$`-free powershell one-liner the Windows setup uses
+ * (getWindowsRemoteSetupCommand), so it parses the same under a cmd.exe and a
+ * PowerShell DefaultShell. The session id, sanitized to `[A-Za-z0-9_-]`, is the
+ * only value in the program, and it sits inside the base64. Run over a
+ * separate ssh exec (End, and a close), like the POSIX one.
+ */
+export function buildWindowsRemoteSessionCleanupCommand(sessionId: string): string {
+  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  const program = [
+    `const fs=require('fs'),path=require('path'),os=require('os')`,
+    `const claudeDir=path.join(os.homedir(),'.claude')`,
+    `for(const name of ['settings-${safeSid}.json','mcp-${safeSid}.json','ccc-status-${safeSid}.url']){try{fs.rmSync(path.join(claudeDir,name),{force:true})}catch{}}`,
+  ].join(';')
+  const b64 = Buffer.from(program, 'utf-8').toString('base64')
+  return `powershell -NoProfile -NonInteractive -Command "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}'))|node"`
 }
 
 /**
@@ -1326,8 +1349,10 @@ export function getWindowsRemoteSetupCommand(
  * `%USERPROFILE%\.claude\...` (cmd expands %USERPROFILE%; `~` does not expand
  * in cmd), and `claude` resolves to claude.cmd on PATH. No tmux wrap (Windows
  * has none). `extraFlags` is the SAME claude flag string the POSIX path builds
- * MINUS --settings/--mcp-config (re-added here with Windows paths);
- * `continueFlag` is '--continue' on a reconnect or ''.
+ * MINUS --settings/--mcp-config (re-added here with Windows paths), the
+ * user's extra args last; `continueFlag` is '--continue' on a reconnect or ''
+ * and goes ahead of `extraFlags`, so the user's extra args stay the last
+ * options on the line.
  */
 export function buildWindowsClaudeCommand(input: {
   sessionId: string
@@ -1339,7 +1364,7 @@ export function buildWindowsClaudeCommand(input: {
   const settings = `"%USERPROFILE%\\.claude\\settings-${safeSid}.json"`
   const mcp = `"%USERPROFILE%\\.claude\\mcp-${safeSid}.json"`
   const sets = input.envPrefixVars.map((kv) => `set "${kv}"&& `).join('')
-  const flags = [`--settings ${settings}`, `--mcp-config ${mcp}`, input.extraFlags, input.continueFlag]
+  const flags = [`--settings ${settings}`, `--mcp-config ${mcp}`, input.continueFlag, input.extraFlags]
     .filter((f) => f && f.trim())
     .join(' ')
   return `${sets}claude ${flags}`

@@ -442,7 +442,7 @@ describe('the run', () => {
     expect(s.opts.cwd).toBe('D:\\work\\proj')
     const e = s.opts.env as Record<string, string>
     expect(Object.entries(e).filter(([k]) => k.toUpperCase() === 'NODEFAULTCURRENTDIRECTORYINEXEPATH')).toEqual([['NoDefaultCurrentDirectoryInExePath', '1']])
-    expect(e.Path).toBe('C:\\Windows;D:/tools;"C:\\Program Files\\nodejs"')
+    expect(e.Path).toBe('C:\\Windows;D:/tools;C:\\Program Files\\nodejs')
     s.child.emit('close', 0)
     await p
     // POSIX: the same PATH rule.

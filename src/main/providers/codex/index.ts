@@ -18,6 +18,8 @@ import { CODEX_PINNED_CLI_VERSION, CODEX_MIN_SUPPORTED_VERSION, CODEX_MAX_TESTED
 import { codexInstallRecipes } from './install-recipes'
 import { codexOperationBaseEnv } from './process-env'
 import { runCodexCli, defaultCodexRunDeps } from './cli-runner'
+import { codexCliEnv } from './cli-env'
+import { warmFirstStart } from '../../first-start-warmup'
 import { discoverCodex } from './discovery'
 import type { CodexDiscovery, CodexDiscoveryDeps } from './discovery'
 import { readCodexModelCatalogue } from './model-catalogue'
@@ -33,7 +35,7 @@ import type { CodexConversationCarry } from './conversation-carry'
 import { codexExternalDefaultHome, codexHomeDisplay, codexManagedRealmSkillsDir } from './realm-paths'
 import { createCodexLiveUsage, createCodexUsageOperations, createCodexCarryMarks, codexRolloutIdFromName, newestCarriedStamp, realCodexUsageFsPort } from './usage'
 import type { CodexLiveUsage, CodexUsageFsPort, CodexCarryMarks, CodexCarryMarksPort } from './usage'
-import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort, CodexRealmFolderLimits } from './realm-folders'
+import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort, CodexRealmFolderDeps, CodexRealmFolderLimits } from './realm-folders'
 import { removeConductorVisionFromCodexConfig } from './mcp-config'
 import {
   codexPricingKeys, priceForModel, codexCachedInputPer1M,
@@ -43,6 +45,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { sweepStaleFolders } from '../../stale-folder-sweep'
+import { secureOwnerOnlyFolders } from '../../owner-only-folders'
 import { logWarn } from '../../debug-logger'
 
 // WP2 Codex adapter: the CLI contract, install recipes, the allowlisted
@@ -316,7 +319,7 @@ export const CODEX_PINNED_VERSION = CODEX_PINNED_CLI_VERSION
 export const CODEX_MINIMUM_VERSION_CANDIDATE = CODEX_MIN_SUPPORTED_VERSION
 export const codexCapabilities: ProviderCapabilities = {
   'cli.discovery': { state: 'supported', note: 'codex --version in a throwaway home under the allowlisted environment (setup.discover); run at start, by Check again in Settings, Accounts and by the Codex setup page' },
-  'install.recipes': { state: 'supported', note: 'code-defined recipes (npm everywhere, Homebrew on macOS); a package-manager recipe runs only in a visible terminal tab after the user confirms its line; the install scripts are shown and copied, never run' },
+  'install.recipes': { state: 'supported', note: 'code-defined recipes from the README (OpenAI\'s installer first, then npm everywhere and Homebrew on macOS); each runs only in a visible terminal tab after the user confirms its line (for the installer, a confirmation that names chatgpt.com, the host its script comes from; ADR-024), never on its own and never elevated' },
   'auth.browser': { state: 'unknown', note: 'codex login (ChatGPT); wired in the Codex adapter slice' },
   'auth.device': { state: 'unknown', note: 'codex login --device-auth, labelled beta by the provider; wired in the Codex adapter slice' },
   'auth.apiKey': { state: 'unknown', note: 'codex login --with-api-key over a one-shot non-TTY stdin pipe, never an argument; wired in the Codex adapter slice' },
@@ -421,6 +424,11 @@ export interface CodexPackageDeps {
   authPorts?: Partial<Omit<CodexAuthDeps, 'proven' | 'lookupRealm' | 'takeSecret' | 'locks'>>
   /** Replaces the real folder filesystem, for a test. */
   realmFs?: CodexRealmFsPort
+  /** The owner-only folder rule for a test's folder filesystem (realmFs).
+   *  Read only with realmFs: the real filesystem always gets the app's own
+   *  rule, and a test filesystem is not this disk, so without one its
+   *  folders are taken as already made owner-only. */
+  secureFolders?: CodexRealmFolderDeps['secureFolders']
   /** Smaller bounds on the folder walks, for a test. */
   realmLimits?: Partial<CodexRealmFolderLimits>
   /** Replaces the inherited CODEX_HOME and the home directory, for a test. */
@@ -532,7 +540,9 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
       ),
       // P3.6: a switched session's conversation is carried with the real
       // file system (conversation-carry.ts), under these same realm locks.
-      realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks, carry: deps.conversationCarry ?? carryCodexRollout, marks: carryMarks, newestStamp: deps.newestCopiedStamp ?? ((dir, id) => newestCarriedStamp(dir, id, deps.now ? deps.now() : Date.now())), ...(deps.now ? { now: deps.now } : {}), ...(deps.realmLimits ? { limits: deps.realmLimits } : {}) }),
+      // The managed folders on this disk get the app's owner-only folder
+      // rule; a test's folder filesystem brings its own.
+      realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks, secureFolders: deps.realmFs ? (deps.secureFolders ?? testFolderRule) : secureOwnerOnlyFolders, carry: deps.conversationCarry ?? carryCodexRollout, marks: carryMarks, newestStamp: deps.newestCopiedStamp ?? ((dir, id) => newestCarriedStamp(dir, id, deps.now ? deps.now() : Date.now())), ...(deps.now ? { now: deps.now } : {}), ...(deps.realmLimits ? { limits: deps.realmLimits } : {}) }),
       // The user's own ~/.codex (or inherited CODEX_HOME), adopted only when
       // the user chooses to use it and it is signed in (owner decision
       // 2026-09-26): realm-only, never vouched for (design 6.3).
@@ -561,6 +571,8 @@ function withRealms(ops: CodexAuthOperations, usageFs: CodexUsageFsPort, liveUsa
     launch: {
       kinds: ['session', 'review', 'background'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.usageSessionsDir(realm),
       accountFolders: (realm) => ops.accountFolders(realm),
+      // ADR-025: awaited by the accounts service before a local launch.
+      warmFirstStart: (executable) => warmCodexFirstStart(executable),
     },
     usage: createCodexUsageOperations({
       sessionsDir: (realm) => ops.usageSessionsDir(realm), fs: usageFs, live: liveUsage, marks,
@@ -580,6 +592,10 @@ export function codexExecutableKey(p: CodexDiscovery | null): { key: string; ver
   const version = typeof p.version === 'string' ? p.version : null
   return { key: JSON.stringify([id.path, id.size, id.mtimeMs, id.ctimeMs, id.dev, id.ino, version]), version }
 }
+
+/** A test folder filesystem's folders, which are not on this disk: each
+ *  answered as made owner-only (no process runs, nothing on disk changes). */
+const testFolderRule: NonNullable<CodexRealmFolderDeps['secureFolders']> = async (dirs) => dirs.map((dir) => ({ dir, ok: true, detail: 'owner-only' }))
 
 /** The real filesystem behind the managed folders. */
 function realRealmFsPort(platform: NodeJS.Platform, mkdirSecure: (dir: string) => void): CodexRealmFsPort {
@@ -689,7 +705,7 @@ function realCatalogueDeps(): Omit<CodexCatalogueDeps, 'proven'> {
     executablePorts: realExecutablePorts(platform),
     baseEnv: () => codexOperationBaseEnv(process.env, platform),
     run: (cmd, opts) => runCodexCli(cmd, opts, defaultCodexRunDeps(platform)),
-    scratchHome: () => codexModelsScratchHome(os.tmpdir()),
+    scratchHome: () => codexModelsScratchHome(codexModelsScratchParent()),
   }
 }
 
@@ -697,6 +713,15 @@ function realCatalogueDeps(): Omit<CodexCatalogueDeps, 'proven'> {
 export const CODEX_MODELS_HOME_PREFIX = 'ccc-codex-models-'
 /** A run's own folder older than this is a leftover (P3.9 round 1). */
 export const STALE_RUN_FOLDER_MS = 60 * 60 * 1000
+
+/** The folder the model list read's homes are made in: the temp folder by
+ *  its real path, so the leftover sweep (which lists nothing through a
+ *  link) still runs where the temp folder is named through one (macOS
+ *  /tmp; a TEMP folder behind a junction); the temp folder as named when
+ *  its real path cannot be read. */
+export function codexModelsScratchParent(tmp: string = os.tmpdir(), realpath: (p: string) => string = fs.realpathSync.native): string {
+  try { return realpath(tmp) } catch { return tmp }
+}
 
 /** A fresh empty home for one model list read, under `parent`, removed by
  *  its dispose. P3.9 round 1: a home an earlier read left behind (a crash or
@@ -707,6 +732,33 @@ export function codexModelsScratchHome(parent: string): { home: string; dispose(
   return { home, dispose: () => fs.rmSync(home, { recursive: true, force: true }) }
 }
 
+/** The CLI prepares its home before it parses `--version`: a fresh, empty
+ *  one under the temp folder, removed by `dispose`, never the user's own
+ *  ~/.codex or an account's folder. */
+function codexVersionHome(): { home: string; dispose(): void } {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-codex-version-'))
+  return { home, dispose: () => fs.rmSync(home, { recursive: true, force: true }) }
+}
+
+/** ADR-025: a launch's first start of the proven executable this app run,
+ *  off the main thread, with the environment discovery's `--version` run is
+ *  built with: the operation environment, allowlisted, over a fresh
+ *  throwaway home that is removed once that start has finished. Built only
+ *  when the file has not been started this run. */
+function warmCodexFirstStart(executable: string): Promise<unknown> {
+  const platform = process.platform
+  return warmFirstStart(executable, async () => {
+    const base = await codexOperationBaseEnv(process.env, platform)
+    const scratch = codexVersionHome()
+    try {
+      return { env: codexCliEnv(base, scratch.home, platform), dispose: scratch.dispose }
+    } catch (e) {
+      scratch.dispose()
+      throw e
+    }
+  })
+}
+
 /** The real ports behind discovery: the session resolver, the filesystem,
  *  and the runner. Built per call, so the environment is read fresh. */
 async function realDiscoveryDeps(): Promise<CodexDiscoveryDeps> {
@@ -715,13 +767,10 @@ async function realDiscoveryDeps(): Promise<CodexDiscoveryDeps> {
   return {
     ...realExecutablePorts(platform),
     run: (cmd, env) => runCodexCli(cmd, { env, timeoutMs: 10_000 }, runDeps),
+    // ADR-025: the `--version` run's own environment, as it is about to get it.
+    warm: (executable, env) => warmFirstStart(executable, () => ({ env })),
     env: await codexOperationBaseEnv(process.env, platform),
-    // The CLI prepares its home before it parses `--version`: give it a
-    // fresh, empty one and remove it, never the user's own ~/.codex.
-    versionHome: () => {
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-codex-version-'))
-      return { home, dispose: () => fs.rmSync(home, { recursive: true, force: true }) }
-    },
+    versionHome: () => codexVersionHome(),
     now: () => Date.now(),
   }
 }

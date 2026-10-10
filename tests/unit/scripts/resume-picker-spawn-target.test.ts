@@ -51,7 +51,7 @@ describe('buildSpawnTarget keeps arguments as argv elements', () => {
   it('routes a .cmd shim through cmd.exe, the shim path quoted inside the /s /c line', () => {
     const t = buildSpawnTarget('C:\\npm\\claude.cmd', ['--model', 'opus[1m]'], 'win32', { SystemRoot: 'C:\\Windows' })!
     expect(t.file).toBe('C:\\Windows\\System32\\cmd.exe')
-    expect(t.argv).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\npm\\claude.cmd" --model opus[1m]"'])
+    expect(t.argv).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\npm\\claude.cmd" "--model" "opus[1m]""'])
     expect(t.verbatim).toBe(true)
   })
 
@@ -83,6 +83,20 @@ function quoteLikeNode(a: string): string {
     slashes = 0
   }
   return `"${out}${'\\'.repeat(slashes * 2)}"`
+}
+/** How the shim route writes each argument after the shim path: in double
+ *  quotes, each quote inside doubled, the backslashes before a quote doubled
+ *  (resume-picker-cmd-quoting.test.ts checks that this arrives as written). */
+function quoteForShim(a: string): string {
+  let out = '"'
+  let slashes = 0
+  for (const ch of a) {
+    if (ch === '\\') { slashes++; continue }
+    if (ch === '"') { out += '\\'.repeat(slashes * 2) + '""'; slashes = 0; continue }
+    out += '\\'.repeat(slashes) + ch
+    slashes = 0
+  }
+  return out + '\\'.repeat(slashes * 2) + '"'
 }
 function whatCmdRuns(t: { file: string; argv: string[]; verbatim?: boolean }): { program: string; rest: string } {
   expect(t.file).toMatch(SYSTEM_CMD_RE)
@@ -117,22 +131,22 @@ describe('a .cmd shim under a folder with a space still starts (P3.10 round 3, F
     const args = ['--resume', uuid, '--settings', settings]
     const ran = whatCmdRuns(buildSpawnTarget(shim, args, 'win32')!)
     expect(ran.program).toBe(shim)
-    expect(ran.rest).toBe(args.map(quoteLikeNode).join(' '))
+    expect(ran.rest).toBe(args.map(quoteForShim).join(' '))
   })
 
   it('runs the shim itself when its folder carries parentheses', () => {
     const shim = 'C:\\Program Files (x86)\\npm\\claude.cmd'
     const ran = whatCmdRuns(buildSpawnTarget(shim, ['--model', 'opus'], 'win32')!)
     expect(ran.program).toBe(shim)
-    expect(ran.rest).toBe('--model opus')
+    expect(ran.rest).toBe('"--model" "opus"')
   })
 
-  it('changes only how the shim path is written: the arguments reach cmd.exe as Node writes them', () => {
+  it('writes the shim path the same way in every folder, the arguments after it', () => {
     const args = ['--agents', agents, '--settings', settings, '--model', 'opus[1m]']
     for (const shim of ['C:\\npm\\claude.cmd', 'C:\\Users\\Jo Smith\\npm\\claude.cmd', 'C:\\npm\\claude.bat']) {
       const ran = whatCmdRuns(buildSpawnTarget(shim, args, 'win32')!)
       expect(ran.program).toBe(shim)
-      expect(ran.rest).toBe(args.map(quoteLikeNode).join(' '))
+      expect(ran.rest).toBe(args.map(quoteForShim).join(' '))
     }
   })
 
@@ -144,16 +158,18 @@ describe('a .cmd shim under a folder with a space still starts (P3.10 round 3, F
     expect(buildSpawnTarget('C:\\a&b\\claude.exe', ['--model', 'opus'], 'win32')).not.toBeNull()
   })
 
-  it('both launches pass the verbatim flag and stop on a refused target', () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const fs = require('fs') as typeof import('fs')
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const path = require('path') as typeof import('path')
-    const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'scripts', 'resume-picker.js'), 'utf-8')
-    const body = src.slice(src.indexOf('function launchClaude('), src.indexOf('function resolveRetargetCwd('))
-    expect(body.match(/windowsVerbatimArguments: target\.verbatim/g) ?? []).toHaveLength(1)
-    expect(body.match(/windowsVerbatimArguments: freshTarget\.verbatim/g) ?? []).toHaveLength(1)
-    expect(body).toMatch(/if \(!target\)/)
+  it('a launch passes the verbatim flag exactly when its line is written for cmd.exe, and a refused target starts nothing', () => {
+    // resume-picker.test.ts drives both launches through this one step.
+    const { launchSpec } = picker as {
+      launchSpec: (cmd: string, args: string[], base: Record<string, unknown>, platform?: string, env?: Record<string, string | undefined>) =>
+        { file?: string; argv?: string[]; opts?: Record<string, unknown>; message?: string }
+    }
+    const env = { SystemRoot: 'C:\\Windows' }
+    expect(launchSpec('C:\\Program Files (x86)\\npm\\claude.cmd', ['--model', 'opus'], {}, 'win32', env).opts!.windowsVerbatimArguments).toBe(true)
+    expect(launchSpec('C:\\bin\\claude.exe', ['--model', 'opus'], {}, 'win32', env).opts!.windowsVerbatimArguments).toBe(false)
+    const refused = launchSpec('C:\\a&b\\claude.cmd', ['--model', 'opus'], {}, 'win32', env)
+    expect(refused.file).toBeUndefined()
+    expect(refused.message).toContain('cmd.exe would re-read a character in that path')
   })
 })
 
@@ -196,10 +212,10 @@ describe('the shim runs through the system cmd.exe, by its full path (P3.10 roun
     expect(run({ SystemRoot: 'C:\\Windows', SYSTEMROOT: 'C:\\Windows' })!.file).toBe('C:\\Windows\\System32\\cmd.exe')
   })
 
-  it('starts cmd.exe from the system folder; the line it runs is as before', () => {
+  it('starts cmd.exe from the system folder, with the shim and its arguments on one verbatim line', () => {
     const t = run({ SystemRoot: 'C:\\Windows' })!
     expect(t.file).toMatch(SYSTEM_CMD_RE)
-    expect(t.argv).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\npm\\claude.cmd" --model opus"'])
+    expect(t.argv).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\npm\\claude.cmd" "--model" "opus""'])
     expect(t.verbatim).toBe(true)
     // A plain executable starts as it is, whatever the environment says.
     expect(buildSpawnTarget('C:\\bin\\claude.exe', ['x'], 'win32', { SystemRoot: 'relative' })!.file).toBe('C:\\bin\\claude.exe')

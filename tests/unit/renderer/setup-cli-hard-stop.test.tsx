@@ -90,6 +90,34 @@ describe('first-run setup: the Claude CLI gate', () => {
     expect(container.textContent).toContain('Claude Code is not installed')
   })
 
+  // PowerShell runs npm.ps1 for a bare `npm`, and its default script policy
+  // refuses to load it; npm.cmd is not subject to that policy.
+  it('on Windows the install command shown and copied names npm.cmd; on macOS and Linux it names npm', async () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(globalThis.navigator, 'clipboard', { value: { writeText }, configurable: true })
+    const w = window as unknown as { electronPlatform?: string }
+    const before = w.electronPlatform
+    try {
+      for (const [platform, command] of [
+        ['win32', 'npm.cmd install -g @anthropic-ai/claude-code'],
+        ['darwin', 'npm install -g @anthropic-ai/claude-code'],
+        ['linux', 'npm install -g @anthropic-ai/claude-code'],
+      ] as const) {
+        w.electronPlatform = platform
+        writeText.mockClear()
+        setup.probeCli.mockResolvedValue({ installed: false, probe: 'where claude' })
+        await renderAtStep2()
+        expect(byTest('setup-cli-install-command')!.textContent, platform).toBe(command)
+        await act(async () => { byTest('setup-cli-copy')!.click() })
+        expect(writeText, platform).toHaveBeenCalledWith(command)
+        act(() => { root.unmount() })
+        root = createRoot(container)
+      }
+    } finally {
+      w.electronPlatform = before
+    }
+  })
+
   it('spawns NO setup PTY while blocked', async () => {
     setup.probeCli.mockResolvedValue({ installed: false, probe: 'where claude' })
     await renderAtStep2()

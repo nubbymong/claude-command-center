@@ -299,18 +299,29 @@ export interface TmuxLaunchInput {
    * be exported as separate tokens before the tmux binary token, because
    * tmux's own launch environment does not come from this command line.
    *
-   * IMPORTANT: pass the BARE claude command WITHOUT `--continue`. This
-   * builder appends `--continue` itself, and ONLY on the fresh-create
-   * branch of the has-session wrapper (see `reconnect` below and
-   * buildTmuxLaunchCommand's doc comment) -- never on the attach branch,
-   * where a second claude in an already-live pane would be wrong.
+   * IMPORTANT: pass the BARE claude command WITHOUT `--continue`: the
+   * line a first connect's fresh create runs. On a reconnect the fresh
+   * create runs `continueCmd` instead (see `reconnect` below and
+   * buildTmuxLaunchCommand's doc comment) -- never the attach branch, where
+   * a second claude in an already-live pane would be wrong.
    */
   innerCmd: string
+  /**
+   * The same launch line with `--continue` among the app's own options,
+   * AHEAD of the user's extra args, which stay the last words on the line
+   * (pty-manager's claudeCmdWith('--continue')): what the fresh create runs
+   * on a reconnect, as given. This builder never adds the flag to a line
+   * itself, so an option among the user's words that takes a value can never
+   * take the app's flag as it. Required when `reconnect` is true: the build
+   * is refused without it (the caller then writes the bare launch, with the
+   * flag placed the same way).
+   */
+  continueCmd?: string
   /**
    * SSH tmux enhancement (item 6 — silent-blank-chat fix): true when this
    * spawn respawns a session that had previously reached claude-running
    * (SSHOptions.reconnect). Gates whether the wrapper's FRESH-create branch
-   * appends `--continue` to `innerCmd`.
+   * runs `continueCmd` (the line carrying `--continue`) instead of `innerCmd`.
    *
    * The bug this closes: the pre-enhancement wrapper was `new-session -A`,
    * which cannot tell "attach to the still-running claude" from "the tmux
@@ -338,7 +349,7 @@ export interface TmuxLaunchInput {
  *   `if command tmux has-session -t '=ccc-<sid>' 2>/dev/null; then`
  *   ` <mo>; command tmux attach -t '=ccc-<sid>' || <fresh>;`
  *   ` else <fresh>; fi`   where <fresh> =
- *   ` command tmux new-session -s ccc-<sid> '<mo>; <innerCmd[ --continue]>'`
+ *   ` command tmux new-session -s ccc-<sid> '<mo>; <innerCmd | continueCmd>'`
  * Every `-t` operand carries tmux's `=` EXACT-match prefix, single-quoted; the
  * `-s` NAME does not (see `name` / `target` below).
  * and for a tier-2/3/4 (`staged: true`) binary the identical shape with
@@ -348,13 +359,15 @@ export interface TmuxLaunchInput {
  * wire-reported path reaches the command). `has-session`/`attach`/
  * `new-session`/`then`/`else`/`fi`/`2>/dev/null` are all compile-time
  * literals with no operand an attacker controls; `ccc-<sid>` is safeSid-
- * sanitized; `<innerCmd>` is single-quoted exactly as before.
+ * sanitized; `<innerCmd>` / `<continueCmd>` is single-quoted exactly as before.
  *
- * `--continue` is appended to the FRESH-create branch's inner command only
- * (never the attach branch, never on a first connect) — see TmuxLaunchInput.
- * reconnect. That is the whole silent-blank-chat fix: on a reconnect where
- * the remote session vanished, the fresh claude resumes the conversation;
- * on an attach it does not double-launch.
+ * `--continue` rides the FRESH-create branch's inner command only (never the
+ * attach branch, never on a first connect) — see TmuxLaunchInput.reconnect —
+ * as part of the caller's `continueCmd`, which places it ahead of the user's
+ * extra args: this builder never adds it to a line. That is the whole
+ * silent-blank-chat fix: on a reconnect where the remote session vanished,
+ * the fresh claude resumes the conversation; on an attach it does not
+ * double-launch.
  *
  * #242 round-3 correction (I3): an earlier version took a `tmuxBin` string
  * here for the `staged:
@@ -510,9 +523,15 @@ export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
   const buildAttachOpts = (wheel: boolean): string =>
     `${sessionOpts(`-t ${target} `, `-t ${windowTarget} `, wheel)}${wheel ? `; ${leaveCopyMode}` : ''}`
   // Fresh-create branch only: resume the prior conversation on a reconnect
-  // where the remote session was gone. Appended to innerCmd BEFORE quoting so
-  // it rides inside tmux's single `<shell-cmd>` argument, next to `claude`.
-  const claudeInner = input.reconnect ? `${input.innerCmd} --continue` : input.innerCmd
+  // where the remote session was gone, with the caller's line that carries
+  // --continue ahead of the user's extra args (TmuxLaunchInput.continueCmd),
+  // as given, quoted below so it rides inside tmux's single `<shell-cmd>`
+  // argument. No line has the flag added to it here: one ending with the
+  // user's words would hand it to an option among them as its value.
+  if (input.reconnect && typeof input.continueCmd !== 'string') {
+    throw new Error('a reconnect needs the launch line that carries --continue')
+  }
+  const claudeInner = input.reconnect ? input.continueCmd! : input.innerCmd
   // The mouse-off runs INSIDE the freshly-created pane (where the session is
   // live and addressable), then claude; both ride tmux's single quoted arg.
   const buildFresh = (wheel: boolean): string =>

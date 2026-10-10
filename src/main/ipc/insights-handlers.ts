@@ -13,6 +13,8 @@ import {
 } from '../insights-runner'
 import { isValidProfileId } from '../account-profiles'
 import { isOpaqueId } from '../../shared/providers'
+import type { InsightsCatalogue } from '../../shared/types'
+import { logWarn } from '../debug-logger'
 import { appWindowSender } from './trusted-sender'
 
 /** What main answers a run request it does not take (WP2 PR 4, P4.7): the
@@ -107,6 +109,8 @@ export function registerInsightsHandlers(getWindow: () => BrowserWindow | null):
   cleanupStuckRuns()
   /** The app's own window, top frame only (trusted-sender.ts). */
   const trusted = appWindowSender(getWindow)
+  /** One log line per refused request, run or read, never the request itself. */
+  const refused = (channel: string): void => logWarn(`[insights] ${channel} refused: not the app window`)
   // The profileId becomes a path component (and the run's HOME) once it reaches
   // resolveInsightsAccount. Drop an invalid one at the boundary rather than
   // forwarding it: the runner then resolves the primary account, which is
@@ -114,7 +118,7 @@ export function registerInsightsHandlers(getWindow: () => BrowserWindow | null):
   // P4.7: a run starts only for the app's own window, and a Codex run names a
   // Codex account (checkInsightsRunRequest).
   ipcMain.handle('insights:run', async (event, opts?: unknown) => {
-    if (!trusted(event)) return INSIGHTS_REJECTED_UNTRUSTED
+    if (!trusted(event)) { refused('run'); return INSIGHTS_REJECTED_UNTRUSTED }
     const req = checkInsightsRunRequest(opts)
     if (!req) return INSIGHTS_REJECTED_INVALID
     if (req.provider === 'codex') {
@@ -127,13 +131,17 @@ export function registerInsightsHandlers(getWindow: () => BrowserWindow | null):
   // the real accounts inside the runner, so a bogus id from the renderer can
   // only ever shrink the target set, never widen it or reach a path.
   ipcMain.handle('insights:runAll', async (event, opts?: unknown) => {
-    if (!trusted(event)) return INSIGHTS_REJECTED_UNTRUSTED
+    if (!trusted(event)) { refused('runAll'); return INSIGHTS_REJECTED_UNTRUSTED }
     const req = checkInsightsRunAllRequest(opts)
     if (!req) return INSIGHTS_REJECTED_INVALID
     return runCrossAccountInsights(getWindow, req.profileIds ? { profileIds: req.profileIds } : undefined)
   })
 
-  ipcMain.handle('insights:getCatalogue', async () => {
+  // The reads answer only the app's own window too. A refused read answers
+  // the channel's empty value (so the renderer's types hold) and reads nothing.
+
+  ipcMain.handle('insights:getCatalogue', async (event): Promise<InsightsCatalogue> => {
+    if (!trusted(event)) { refused('getCatalogue'); return { runs: [] } }
     return getCatalogue()
   })
 
@@ -141,21 +149,25 @@ export function registerInsightsHandlers(getWindow: () => BrowserWindow | null):
   // path component, so a crafted id is rejected before it reaches any join. Two
   // layers on purpose — a future caller of the runner cannot bypass the check by
   // not going through this handler.
-  ipcMain.handle('insights:getReport', async (_event, runId: string) => {
+  ipcMain.handle('insights:getReport', async (event, runId: string) => {
+    if (!trusted(event)) { refused('getReport'); return null }
     if (!isValidRunId(runId)) return null
     return getInsightsReport(runId)
   })
 
-  ipcMain.handle('insights:getKpis', async (_event, runId: string) => {
+  ipcMain.handle('insights:getKpis', async (event, runId: string) => {
+    if (!trusted(event)) { refused('getKpis'); return null }
     if (!isValidRunId(runId)) return null
     return getInsightsKpis(runId)
   })
 
-  ipcMain.handle('insights:getLatest', async () => {
+  ipcMain.handle('insights:getLatest', async (event) => {
+    if (!trusted(event)) { refused('getLatest'); return null }
     return getLatestRun()
   })
 
-  ipcMain.handle('insights:isRunning', async () => {
+  ipcMain.handle('insights:isRunning', async (event) => {
+    if (!trusted(event)) { refused('isRunning'); return false }
     return isRunning()
   })
 }

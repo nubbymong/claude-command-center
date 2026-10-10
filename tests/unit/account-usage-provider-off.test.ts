@@ -29,6 +29,8 @@ vi.mock('../../src/main/account-profiles', () => ({
   readProfileAccountEmail: (id: string) => { emailRead.push(id); return null },
   atomicWriteSecure: vi.fn(),
   hardenCredentialFile: vi.fn(),
+  // The sign-in folder has passed the owner-only check (the rule is off off Windows).
+  credentialFoldersVerdict: () => ({ ok: true }),
 }))
 vi.mock('../../src/main/claude-account-identity', () => ({
   isProfileInUseByLiveSession: () => false,

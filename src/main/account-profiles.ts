@@ -14,6 +14,8 @@ import path from 'node:path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { isValidProfileId, profileIdFromHome, PROFILES_ROOT_DIRNAME } from './profile-id'
 import { atomicWriteFileSync } from './atomic-write'
+import { secureSignInFoldersWindows, OWNER_ONLY_INSIDE_REASONS, OWNER_ONLY_INSIDE_FAILED_REASONS } from './owner-only-folders'
+import type { OwnerOnlyFolderResult } from './owner-only-folders'
 import { logInfo, logWarn } from './debug-logger'
 import { recordSettingsSanitise, recordAmbientStrip, clearSettingsSanitise } from './managed-launch-state'
 import { recordManagedLaunchPreflight } from './managed-launch-diagnostics'
@@ -23,6 +25,7 @@ import { decodeSettingsText } from './settings-text'
 // behind the registry so a launch path cannot opt out of a provider's policy.
 import { realmEnvForProvider, ambientAuthVariablesForProvider, sanitizeManagedSettingsFor } from './providers'
 import { canonicaliseEmail } from '../shared/account-chip-color'
+import { lowerAsciiLetters } from '../shared/profile-id'
 import type { AccountProfile, AccountProfilesConfig } from '../shared/account-types'
 import type { ProjectGateResult } from '../shared/providers'
 
@@ -759,9 +762,14 @@ export function mkdirSecure(dir: string): void {
   }
 }
 /** Atomic write of a credential file with a restrictive 0o600 mode (POSIX),
- *  creating parent dirs (subsumes the old plain atomicWriteFile). */
-function writeCredentialFile(file: string, data: string): void {
+ *  creating parent dirs (subsumes the old plain atomicWriteFile). Into a
+ *  profile's sign-in folder only once that folder is checked owner-only in
+ *  this run (see the owner-only block below); otherwise it throws and writes
+ *  nothing. `holdsNoCredential`: the empty object that signs a copy out, which
+ *  may always replace what is there. */
+function writeCredentialFile(file: string, data: string, opts?: { holdsNoCredential?: boolean }): void {
   mkdirSecure(path.dirname(file))
+  if (opts?.holdsNoCredential !== true) guardCredentialFolder(path.dirname(file))
   atomicWriteSecure(file, data, IS_POSIX ? CRED_FILE_MODE : undefined)
   hardenCredentialFile(file)   // rename preserves the tmp's mode; re-assert to be safe
 }
@@ -773,8 +781,806 @@ function writeCredentialFile(file: string, data: string): void {
  *  exclusive-create staging instead, then re-assert 0o600. Exported for tests. */
 export function copyCredentialFile(src: string, dest: string): void {
   mkdirSecure(path.dirname(dest))
+  guardCredentialFolder(path.dirname(dest))
   atomicWriteSecure(dest, fs.readFileSync(src), IS_POSIX ? CRED_FILE_MODE : undefined)
   hardenCredentialFile(dest)
+}
+
+/** A profile home's `.claude.json` (the CLI's identity file, which can carry a
+ *  token), owner-only on POSIX and, on Windows, only into a home checked
+ *  owner-only in this run (as writeCredentialFile). */
+function writeProfileHomeIdentity(home: string, data: string | Uint8Array): void {
+  mkdirSecure(home)
+  guardCredentialFolder(home)
+  atomicWriteSecure(path.join(home, '.claude.json'), data, IS_POSIX ? CRED_FILE_MODE : undefined)
+}
+
+// ── Owner-only sign-in folders (Windows) ────────────────────────────────────
+// A profile's three sign-in folders -- its home (`<profiles>/<id>`, where the
+// CLI keeps its `.claude.json`), the CLI's config folder (`<home>/.claude`,
+// where it keeps `.credentials.json`) and the identity copy (`<home>/identity`)
+// -- are written into by the app, and a session runs in the profile, only once
+// each is made this user's and owner-only and read back by the app's
+// owner-only folder rule (owner-only-folders.ts: owner the user; rights exactly
+// the user and SYSTEM, passed to what is inside; nothing inherited from above;
+// the Administrators group accepted beside them) in this run:
+//
+//   1. In place: the folder is given the rule and read back, and so is
+//      every entry directly inside it (the sign-in files among them): one
+//      another account owns is made this user's first (never a sign-in file
+//      or a file with more than one name), then each one this user, the
+//      Administrators group or SYSTEM owns takes the folder's rights (never a
+//      link or a file with more than one name), and the folder passes only
+//      when every such entry read back lets no other account in (the home's
+//      links to the user's own dot-files are left out while each has more
+//      than one name); how many were made this user's is logged. What is
+//      deeper is not read: it keeps the rights Windows gives it when the
+//      folder's rights are written. A sign-in file that is a link or that
+//      another account owns, any other entry (a link among them) still
+//      another account's, an entry that cannot be read or put right, or a
+//      file with more than one name that is not owner-only refuses it; a
+//      link's own rights are not judged, and it is never followed.
+//   2. Where that is refused (its owner cannot be made this user, say), a new
+//      folder is made beside it by the rule and read back, everything plain in
+//      the old one is copied in as new files (each takes the new folder's
+//      rights; times kept; links are made again afterwards, not copied), and
+//      the new folder is swapped into place: a sign-in file rewritten during
+//      the copy -- the folder's own or, for a profile folder, one in the
+//      folders inside it -- is copied again first, and the old copy then goes,
+//      every such sign-in file first (one newer than the copy in place is
+//      carried in, never dropped). A failure at any step undoes that step and
+//      falls to 3. The copy is complete before the swap begins, so a swap a
+//      quit interrupted is settled by the next check. Once swapped in, the
+//      new folder is read again with what it holds; if that read refuses it,
+//      it stays in place (the old copy goes), no sign-in is written to it and
+//      its account is refused as in 3.
+//   3. Otherwise nothing is written there, a launch is refused with
+//      CREDENTIAL_FOLDER_REFUSAL, the folder and what it holds stay exactly as
+//      they were, and one log line says why, in fixed words (never a path).
+//
+// The check is asynchronous -- one Windows PowerShell call for the folders it
+// asks about (where Constrained Language Mode leaves that call no read, the
+// same rule with Windows' own programs: owner-only-folders.ts), off the main
+// thread: at start for every profile, when a profile
+// is made, and whenever a write or a launch finds a folder with no verdict for
+// what it is now. A verdict, a pass or a refusal, holds for this run while the
+// folder stays the same folder (its file identity). A call that gives no read
+// at all (it could not run or end) is no verdict and no refusal: nothing is
+// made anew, and the folders are asked again (once more at once at start, for
+// the home kept ready and by a waiting launch, else by the next write or
+// launch, which is told they could not be checked, CREDENTIAL_FOLDER_UNCHECKED). A check whose account
+// was removed while it ran leaves nothing in that account's place. The write
+// and launch paths are synchronous and only READ the verdict: with none yet
+// they write nothing and refuse with CREDENTIAL_FOLDER_PENDING (the check
+// they start then lets a retry through). A new profile takes a home already
+// made and checked (one is kept ready in the profiles folder), so its first
+// sign-in is written at once. The main process turns the rule on at start
+// (startOwnerOnlyCredentialFolders), and what launches in a profile, launches
+// naming no account (it runs on the primary one) or lists the profiles at
+// start waits for the start's profile steps too (startProfileStepsSettled,
+// startProfileStepsPending). POSIX keeps its 0700 folders and the rule is off
+// there.
+
+/** What a launch or a write is told when step 3 refused a folder. */
+export const CREDENTIAL_FOLDER_REFUSAL =
+  "Windows did not let AI Code Conductor make this account's sign-in folders readable by you alone, so nothing was written there " +
+  "and the account cannot be used until they are. Make your Windows user the owner of AI Code Conductor's resources folder (the folder chosen for its data when it was set up), " +
+  'or move that folder to an NTFS disk, then restart AI Code Conductor.'
+/** What a launch or a write is told while its folders have no verdict yet. */
+export const CREDENTIAL_FOLDER_PENDING =
+  "AI Code Conductor is still checking that this account's sign-in folders are readable by you alone. Try again in a moment."
+/** What a launch or a write is told when the last check of its folders gave no read (it could not run or end). */
+export const CREDENTIAL_FOLDER_UNCHECKED =
+  "AI Code Conductor could not check this account's sign-in folders just now, so nothing was written there. " +
+  'Try again in a moment; if this keeps happening, restart AI Code Conductor.'
+/** The sign-in folders inside a profile home. */
+const SIGN_IN_FOLDER_NAMES = ['.claude', 'identity'] as const
+/** The sign-in files: an old copy's go first, and are the ones copied again. */
+const CREDENTIAL_FILE_NAMES = ['.credentials.json', '.claude.json']
+const STAGED_SUFFIX = '.owner-only-new'
+const ASIDE_SUFFIX = '.owner-only-old'
+/** The checked home kept ready for the next new profile (never a profile id). */
+const READY_HOME_NAME = '.owner-only-ready'
+/** How much a remade folder carries over. */
+const CARRY_MAX_ENTRIES = 20_000
+const CARRY_MAX_BYTES = 256 * 1024 * 1024
+
+type CredentialFolderRule = (dirs: readonly string[]) => Promise<OwnerOnlyFolderResult[]> | OwnerOnlyFolderResult[]
+let enabledCredentialFolderRule: CredentialFolderRule | null = null
+let credentialFolderRuleForTest: CredentialFolderRule | null = null
+let credentialFolderRenameForTest: ((from: string, to: string) => void) | null = null
+/** This run's verdicts: a folder's key -> its file identity then, and whether it passed. */
+const credentialFolderVerdicts = new Map<string, { id: string; ok: boolean }>()
+/** Checks running: a home's key -> the check that will give its folders a verdict. */
+const credentialFolderChecks = new Map<string, Promise<void>>()
+/** Homes whose last check gave no read for some folder: a home's key. */
+const credentialChecksUnanswered = new Set<string>()
+let readyHomeCheck: Promise<void> | null = null
+/** The start's profile steps while they are still to run. */
+let startStepsPending: Promise<void> | null = null
+
+/** The app's own rule for the sign-in folders (Windows): each folder made
+ *  owner-only and read back with what is inside it, the home mirror's links
+ *  to the user's own files left out of that read (homeMirrorLinks). */
+const signInFolderRule: CredentialFolderRule = (dirs) => secureSignInFoldersWindows(dirs, homeMirrorLinks(dirs))
+
+/** The home mirror's links to the user's own files (mirrorRealHome) in each
+ *  profile home among `dirs`, by full path: the real home's dot-files, but
+ *  never the private or sign-in ones. The rule leaves each out of its read of
+ *  what is inside that home while it is a file with more than one name, so
+ *  that read never resets the user's real files: they keep their own entries
+ *  (what the home's own rights pass on still reaches them, as it reaches any
+ *  file in the home; a copy made where a link could not be is the profile's
+ *  own, and is read). Best-effort: none when the real home cannot be read. */
+function homeMirrorLinks(dirs: readonly string[]): string[] {
+  const homes = dirs.filter((d) => isProfileHome(d))
+  if (homes.length === 0) return []
+  let names: string[]
+  try {
+    names = fs.readdirSync(realHomeDir(), { withFileTypes: true })
+      .filter((e) => e.isFile() && e.name.startsWith('.') && !HOME_PRIVATE.has(e.name) && !CREDENTIAL_FILE_NAMES.includes(e.name))
+      .map((e) => e.name)
+  } catch { return [] }
+  return homes.flatMap((home) => names.map((name) => path.join(home, name)))
+}
+
+/** Start (main process): turns the owner-only rule on for the sign-in folders
+ *  (Windows), checks every profile's folders and makes a checked home ready
+ *  for the next new profile, THEN runs `steps` -- the start's profile steps
+ *  that write a sign-in. The steps run once the check has ended, whatever it
+ *  found: each write reads its own folder's verdict. `rule` is the app's own
+ *  owner-only rule unless a test brings one. */
+export async function startOwnerOnlyCredentialFolders(
+  steps: () => void | Promise<void>,
+  rule: CredentialFolderRule = signInFolderRule,
+): Promise<void> {
+  enabledCredentialFolderRule = rule
+  let settle!: () => void
+  const settled = new Promise<void>((resolve) => { settle = resolve })
+  startStepsPending = settled
+  try {
+    try { await checkEveryProfileCredentialFolders() } catch { /* no verdict: every write refuses as pending */ }
+    await steps()
+  } finally {
+    if (startStepsPending === settled) startStepsPending = null
+    settle()
+  }
+}
+
+/** Resolves once the start's profile steps have run (or failed); at once when
+ *  none are pending (the start never ran, or they are done). Never rejects.
+ *  The steps make the first account from the user's own sign-in and move a
+ *  kept sign-in in, so what lists the profiles or launches in one at start
+ *  waits for this. */
+export function startProfileStepsSettled(): Promise<void> {
+  return startStepsPending ?? Promise.resolve()
+}
+
+/** Whether the start's profile steps are still to run (or running): a launch
+ *  that may wait for them (one that names no account runs on the primary
+ *  account the steps may still be making) asks this synchronously first. */
+export function startProfileStepsPending(): boolean {
+  return startStepsPending !== null
+}
+
+/** Every listed profile's sign-in folders checked (those without a verdict),
+ *  then a checked home made ready for the next new profile. Never rejects. */
+export async function checkEveryProfileCredentialFolders(): Promise<void> {
+  const rule = credentialFolderRule()
+  if (!rule) return
+  const homes: string[] = []
+  try { for (const p of listProfiles()) if (isValidProfileId(p.id)) homes.push(getProfileConfigDir(p.id)) } catch { /* none listed */ }
+  await checkHomesAnswering(homes, rule)
+  await prepareReadyHome(rule)
+}
+
+/** One profile's sign-in folders checked unless they have a verdict this run;
+ *  resolves once they do (or the check ended without one, after asking once
+ *  more when it gave no read). While the start's profile steps are pending it
+ *  waits for them first. Never rejects. A launch that may run asynchronously
+ *  waits for this before its synchronous part reads the verdict. */
+export function checkProfileCredentialFolders(profileId: string): Promise<void> {
+  const steps = startStepsPending
+  if (steps) return steps.then(() => checkProfileCredentialFolders(profileId))
+  const rule = credentialFolderRule()
+  if (!rule || !isValidProfileId(profileId)) return Promise.resolve()
+  return checkHomesAnswering([getProfileConfigDir(profileId)], rule)
+}
+
+/** Whether a launch in the profile can read a verdict at once: every one of
+ *  its sign-in folders has one this run for what it is now (a pass or a
+ *  refusal), and the start's profile steps are not pending; always true where
+ *  the rule is off. Read only: it never starts a check. A launch that may run
+ *  asynchronously awaits checkProfileCredentialFolders first only when this
+ *  is false, so its common path stays synchronous up to its start. */
+export function profileCredentialFoldersChecked(profileId: string): boolean {
+  if (!credentialFolderRule()) return true
+  if (startStepsPending) return false
+  if (!isValidProfileId(profileId)) return true
+  return credentialFoldersOfHome(getProfileConfigDir(profileId)).every((d) => hasVerdict(d) || (realFolderId(d) === null && existsAtAll(d)))
+}
+
+/** Test seam: the rule (on any platform; it may answer at once or later) and,
+ *  optionally, the rename the swap uses; null puts both back and turns the
+ *  app's own rule off. Forgets every verdict. */
+export function _setCredentialFolderRuleForTest(rule: CredentialFolderRule | null, rename: ((from: string, to: string) => void) | null = null): void {
+  credentialFolderRuleForTest = rule
+  credentialFolderRenameForTest = rename
+  enabledCredentialFolderRule = null
+  credentialFolderVerdicts.clear()
+  credentialFolderChecks.clear()
+  credentialChecksUnanswered.clear()
+  readyHomeCheck = null
+  startStepsPending = null
+}
+
+function credentialFolderRule(): CredentialFolderRule | null {
+  if (credentialFolderRuleForTest) return credentialFolderRuleForTest
+  return IS_WINDOWS ? enabledCredentialFolderRule : null
+}
+
+const CASE_FOLDING_PATHS = IS_WINDOWS || process.platform === 'darwin'
+const folderKey = (dir: string): string => { const r = path.resolve(dir); return CASE_FOLDING_PATHS ? lowerAsciiLetters(r) : r }
+
+/** The folder's file identity when it is a real folder (never a link), else null. */
+function realFolderId(dir: string): string | null {
+  try {
+    const st = fs.lstatSync(dir, { bigint: true })
+    return !st.isSymbolicLink() && st.isDirectory() ? `${st.dev}:${st.ino}` : null
+  } catch { return null }
+}
+
+function existsAtAll(p: string): boolean {
+  try { fs.lstatSync(p); return true } catch { return false }
+}
+
+/** Whether `dir` is a profile home: a valid profile id directly inside the
+ *  profiles folder, compared as the file system compares names (so a path
+ *  spelled in another case is still checked). */
+function isProfileHome(dir: string): boolean {
+  const name = path.basename(dir)
+  const id = CASE_FOLDING_PATHS ? lowerAsciiLetters(name) : name
+  if (!isValidProfileId(id)) return false
+  try { return folderKey(dir) === folderKey(path.join(getProfilesRoot(), id)) } catch { return false }
+}
+
+/** Whether `dir` is one of a profile's sign-in folders. */
+function isProfileCredentialFolder(dir: string): boolean {
+  if (isProfileHome(dir)) return true
+  const name = CASE_FOLDING_PATHS ? lowerAsciiLetters(path.basename(dir)) : path.basename(dir)
+  return (SIGN_IN_FOLDER_NAMES as readonly string[]).includes(name) && isProfileHome(path.dirname(dir))
+}
+
+const homeOfFolder = (dir: string): string => (isProfileHome(dir) ? dir : path.dirname(dir))
+/** The profile a sign-in folder belongs to, and the folder's name, for a log line (never a path). */
+const profileOfFolder = (dir: string): string => path.basename(homeOfFolder(dir))
+const folderLabel = (dir: string): string => (isProfileHome(dir) ? 'profile' : path.basename(dir))
+
+/** A home's three sign-in folders, the home first. */
+const signInFoldersOf = (home: string): string[] => [home, ...SIGN_IN_FOLDER_NAMES.map((n) => path.join(home, n))]
+
+/** A profile home's sign-in folders that a launch checks: the home, its
+ *  config folder, and its identity folder once there is one. None for any
+ *  other home. */
+function credentialFoldersOfHome(home: string): string[] {
+  if (!isProfileHome(home)) return []
+  const identity = path.join(home, 'identity')
+  return existsAtAll(identity) ? signInFoldersOf(home) : signInFoldersOf(home).slice(0, 2)
+}
+
+/**
+ * The verdict this run for each folder, read only (the rule never runs here,
+ * so this is safe on any synchronous path). ok:false, with the message to
+ * show, when any was refused (or is not a real folder), or when any has no
+ * verdict for what it is now -- its check is then started, so a retry passes
+ * once it ends (told the folders could not be checked when the last check
+ * gave no read). Always ok where the rule is off (POSIX, or before the main
+ * process turns it on).
+ */
+export function credentialFoldersVerdict(dirs: readonly string[]): { ok: true } | { ok: false; message: string } {
+  const rule = credentialFolderRule()
+  if (!rule) return { ok: true }
+  let refused = false
+  const unchecked = new Set<string>()
+  for (const dir of dirs) {
+    const id = realFolderId(dir)
+    if (id === null && existsAtAll(dir)) { refused = true; continue }
+    const v = id === null ? undefined : credentialFolderVerdicts.get(folderKey(dir))
+    if (!v || v.id !== id) { unchecked.add(homeOfFolder(dir)); continue }
+    if (!v.ok) refused = true
+  }
+  if (refused) return { ok: false, message: CREDENTIAL_FOLDER_REFUSAL }
+  if (unchecked.size > 0) {
+    const unanswered = [...unchecked].some((home) => credentialChecksUnanswered.has(folderKey(home)))
+    void checkHomes([...unchecked], rule)
+    return { ok: false, message: unanswered ? CREDENTIAL_FOLDER_UNCHECKED : CREDENTIAL_FOLDER_PENDING }
+  }
+  return { ok: true }
+}
+
+/** Throws (nothing written) when `dir` is a profile's sign-in folder without a
+ *  passing verdict for what it is now. */
+function guardCredentialFolder(dir: string): void {
+  if (!isProfileCredentialFolder(dir)) return
+  const v = credentialFoldersVerdict([dir])
+  if (!v.ok) throw new Error(v.message)
+}
+
+function recordVerdict(dir: string, ok: boolean): void {
+  credentialFolderVerdicts.set(folderKey(dir), { id: realFolderId(dir) ?? '', ok })
+}
+
+/** A folder read back owner-only: its verdict recorded, and the entries
+ *  directly inside it that another account owned, which the rule made this
+ *  user's (OwnerOnlyFolderResult.takenOver), logged in fixed words. */
+function recordPass(dir: string, answers: RuleAnswers): void {
+  recordVerdict(dir, true)
+  const n = answers.get(dir)?.answer?.takenOver
+  if (typeof n === 'number' && Number.isInteger(n) && n > 0) {
+    logWarn(`[profiles] ${profileOfFolder(dir)}: ${n} ${n === 1 ? 'entry' : 'entries'} directly inside the ${folderLabel(dir)} folder ${n === 1 ? 'was' : 'were'} another account's and ${n === 1 ? 'is' : 'are'} now this Windows user's, owner-only (none of them a sign-in file)`)
+  }
+}
+
+function hasVerdict(dir: string): boolean {
+  const id = realFolderId(dir)
+  return id !== null && credentialFolderVerdicts.get(folderKey(dir))?.id === id
+}
+
+/** The homes' folders checked, each home at most once at a time: a home with
+ *  a check running waits for that one; one whose folders all have a verdict
+ *  is not asked again. Never rejects. */
+function checkHomes(homes: readonly string[], rule: CredentialFolderRule): Promise<void> {
+  const waits: Promise<void>[] = []
+  const fresh = new Map<string, string>()
+  for (const home of homes) {
+    if (!isProfileHome(home)) continue
+    const key = folderKey(home)
+    const running = credentialFolderChecks.get(key)
+    if (running) { waits.push(running); continue }
+    if (fresh.has(key)) continue
+    if (signInFoldersOf(home).every((d) => hasVerdict(d))) continue
+    fresh.set(key, home)
+  }
+  if (fresh.size > 0) {
+    const run: Promise<void> = checkFolders([...fresh.values()], rule)
+      .catch(() => { /* a check that failed leaves no verdict: writes stay pending */ })
+      .finally(() => { for (const key of fresh.keys()) if (credentialFolderChecks.get(key) === run) credentialFolderChecks.delete(key) })
+    for (const key of fresh.keys()) credentialFolderChecks.set(key, run)
+    waits.push(run)
+  }
+  return Promise.all(waits).then(() => undefined)
+}
+
+/** The homes checked, then asked once more where that check gave no read (a
+ *  cold Windows PowerShell can run past its bound once). Never rejects. */
+async function checkHomesAnswering(homes: readonly string[], rule: CredentialFolderRule): Promise<void> {
+  await checkHomes(homes, rule)
+  const again = homes.filter((home) => credentialChecksUnanswered.has(folderKey(home)))
+  if (again.length > 0) await checkHomes(again, rule)
+}
+
+/** The rule's answer for each folder asked, matched by place (none on any
+ *  failure), with the folder's file identity when it was asked (null: the
+ *  rule was to make it). */
+type RuleAnswers = Map<string, { answer: OwnerOnlyFolderResult | undefined; asked: string | null }>
+async function askRule(rule: CredentialFolderRule, dirs: readonly string[]): Promise<RuleAnswers> {
+  const asked = dirs.map((dir) => realFolderId(dir))
+  let answers: unknown
+  try { answers = dirs.length > 0 ? await rule(dirs) : [] } catch { answers = [] }
+  const out: RuleAnswers = new Map()
+  dirs.forEach((dir, i) => { out.set(dir, { answer: Array.isArray(answers) ? answers[i] as OwnerOnlyFolderResult | undefined : undefined, asked: asked[i] }) })
+  return out
+}
+
+/** Read back owner-only: the answer is for this folder and says so, and the
+ *  folder is a real one -- the same one the rule was asked about. */
+function passed(dir: string, answers: RuleAnswers): boolean {
+  const r = answers.get(dir)
+  const id = realFolderId(dir)
+  return !!r?.answer && r.answer.ok === true && r.answer.dir === dir && id !== null && (r.asked === null || r.asked === id)
+}
+
+/** The rule's read of what is inside this folder failed (an entry gone while
+ *  it was read can do that), as against an entry read and judged. */
+function insideReadFailed(dir: string, answers: RuleAnswers): boolean {
+  const a = answers.get(dir)?.answer
+  return !!a && a.ok !== true && OWNER_ONLY_INSIDE_FAILED_REASONS.includes(String(a.detail))
+}
+
+/** `dirs` asked once more, as one call, when the read of what is inside any of
+ *  them failed (insideReadFailed): a passing condition is not taken for a
+ *  refusal and made anew, as a call that gave no read is not
+ *  (checkHomesAnswering). Their answers are replaced by the new ones. */
+async function askAgainWhereInsideFailed(rule: CredentialFolderRule, dirs: readonly string[], answers: RuleAnswers): Promise<void> {
+  if (!dirs.some((d) => insideReadFailed(d, answers))) return
+  const again = await askRule(rule, dirs)
+  for (const d of dirs) answers.set(d, again.get(d)!)
+}
+
+/** The rule gave no read of this folder: no answer for it, an answer for
+ *  another folder, or a call that could not run or end. No verdict, never a
+ *  refusal: nothing is made anew for it. */
+function unread(dir: string, answers: RuleAnswers): boolean {
+  const a = answers.get(dir)?.answer
+  return !a || a.dir !== dir || a.unread === true
+}
+
+/** Whether a profile home's account is no longer listed. A list that cannot
+ *  be read never says so. */
+function profileRemoved(home: string): boolean {
+  const listed = readProfilesStrict()
+  if (listed === null) return false
+  const key = folderKey(home)
+  return !listed.some((p) => {
+    const id = (p as { id?: unknown } | null)?.id
+    return isValidProfileId(id) && folderKey(getProfileConfigDir(id)) === key
+  })
+}
+
+/** An account removed while its folders were checked: the folder now in its
+ *  home's place, made after the check began (by the check, as the account's
+ *  own was removed), goes -- links as links, never followed -- and nothing
+ *  there keeps a verdict. */
+function dropRemovedProfileHome(home: string): void {
+  for (const dir of signInFoldersOf(home)) credentialFolderVerdicts.delete(folderKey(dir))
+  credentialChecksUnanswered.delete(folderKey(home))
+  if (realFolderId(home) === null) return
+  try { safeTeardown(home) } catch {
+    logWarn(`[profiles] ${path.basename(home)}: a folder made for an account removed meanwhile could not be removed yet`)
+  }
+}
+
+/** The rule's refusals in the app's own words: a reason the rule wrote itself
+ *  is kept; anything else (an error's text can name a path or a user) is
+ *  given as a fixed phrase. */
+const LOGGED_REASONS = new Set([
+  'no answer', 'the user could not be named', 'its owner is not this user', 'it inherits rights from above',
+  'an entry could not be read', 'an inherited entry', 'a deny entry', 'this user lacks full control over it and what is inside',
+  'SYSTEM is missing', 'the folder cannot be named safely', 'a name in its path ends in a dot or a space',
+  'the answer could not be read', 'the answer does not match what was asked',
+  'its owner could not be read', 'it was replaced while it was checked',
+  ...OWNER_ONLY_INSIDE_REASONS,
+])
+function loggedReason(a: { answer: OwnerOnlyFolderResult | undefined } | undefined): string {
+  const detail = typeof a?.answer?.detail === 'string' ? a.answer.detail : 'no answer'
+  if (LOGGED_REASONS.has(detail)) return detail
+  if (/^an entry for S-1-[0-9-]+$/.test(detail)) return 'an entry for another account'
+  return 'the rights could not be set or read'
+}
+
+/** Homes a check gave no read for: a home's folder key (however the home or a
+ *  folder inside it was spelled) -> the home as first named, for its log line. */
+type Unanswered = Map<string, string>
+function markUnanswered(unanswered: Unanswered, home: string): void {
+  const key = folderKey(home)
+  if (!unanswered.has(key)) unanswered.set(key, home)
+}
+
+/** One check: the folders of each home with no verdict for what they are now
+ *  asked in one call (a home before what is inside it), each refusal remade
+ *  (step 2) or refused (step 3), every folder inside a remade home asked again
+ *  there; then one log line per refused folder. */
+async function checkFolders(homes: readonly string[], rule: CredentialFolderRule): Promise<void> {
+  const refused: Array<[string, string]> = []
+  const unanswered: Unanswered = new Map()
+  const checks: Array<{ home: string; homeId: string; set: string[] }> = []
+  const ask: string[] = []
+  for (const home of homes) {
+    for (const dir of signInFoldersOf(home)) {
+      try { settleInterruptedRemake(dir) } catch { /* still in the way: its remake says so */ }
+    }
+    const homeId = realFolderId(home)
+    if (homeId === null) {
+      // A missing home is not made here; a link or a file is refused as it stands.
+      if (existsAtAll(home)) refused.push([home, 'it is a link or not a folder'])
+      continue
+    }
+    const set: string[] = []
+    for (const dir of signInFoldersOf(home)) {
+      if (realFolderId(dir) === null && existsAtAll(dir)) { refused.push([dir, 'it is a link or not a folder']); continue }
+      if (!hasVerdict(dir)) set.push(dir)
+    }
+    if (set.length === 0) continue
+    checks.push({ home, homeId, set })
+    ask.push(...set)
+  }
+  const answers = await askRule(rule, ask)
+  const again: string[] = []
+  for (const { home, homeId, set } of checks) {
+    // The home is another folder (or none) now and its account was removed
+    // meanwhile: what is in its place was made after the check began.
+    if (realFolderId(home) !== homeId && profileRemoved(home)) { dropRemovedProfileHome(home); continue }
+    await askAgainWhereInsideFailed(rule, set, answers)
+    for (const dir of set) {
+      if (!isProfileHome(dir)) { await settleOne(dir, answers, rule, refused, unanswered); continue }
+      if (passed(dir, answers)) { recordPass(dir, answers); clearAside(dir); continue }
+      if (unread(dir, answers)) { markUnanswered(unanswered, home); continue }
+      const was = realFolderId(dir)
+      const made = await remakeOwnerOnly(dir, rule)
+      if (made === UNREAD) markUnanswered(unanswered, home)
+      else if (made !== null) { recordVerdict(dir, false); refused.push([dir, `${loggedReason(answers.get(dir))}; ${made}`]) }
+      // Not made anew: the folders inside it keep their own answers.
+      if (realFolderId(dir) === was) continue
+      // The home is another folder now (whatever its new read said):
+      // everything inside it is a new copy.
+      for (const inside of signInFoldersOf(dir).slice(1)) if (realFolderId(inside) !== null) again.push(inside)
+      break
+    }
+  }
+  if (again.length > 0) {
+    const second = await askRule(rule, again)
+    await askAgainWhereInsideFailed(rule, again, second)
+    for (const dir of again) await settleOne(dir, second, rule, refused, unanswered)
+  }
+  for (const { home } of checks) {
+    if (unanswered.has(folderKey(home))) credentialChecksUnanswered.add(folderKey(home))
+    else credentialChecksUnanswered.delete(folderKey(home))
+  }
+  for (const [dir, why] of refused) {
+    logWarn(`[profiles] ${profileOfFolder(dir)}: the ${folderLabel(dir)} folder could not be made readable by this user alone (${why}); nothing was written to it`)
+  }
+  for (const home of unanswered.values()) {
+    logWarn(`[profiles] ${path.basename(home)}: the sign-in folders could not be checked this time (the check gave no read); nothing was written to them, and the next write or launch checks them again`)
+  }
+}
+
+/** One folder's verdict from its answer: passed in place, else remade, else
+ *  refused; no read (of it, or of the folder made for it) is no verdict. */
+async function settleOne(dir: string, answers: RuleAnswers, rule: CredentialFolderRule, refused: Array<[string, string]>, unanswered: Unanswered): Promise<void> {
+  if (passed(dir, answers)) { recordPass(dir, answers); clearAside(dir); return }
+  if (unread(dir, answers)) { markUnanswered(unanswered, homeOfFolder(dir)); return }
+  const made = await remakeOwnerOnly(dir, rule)
+  if (made === UNREAD) { markUnanswered(unanswered, homeOfFolder(dir)); return }
+  if (made !== null) { recordVerdict(dir, false); refused.push([dir, `${loggedReason(answers.get(dir))}; ${made}`]) }
+}
+
+/** The old copy left beside a folder that has just passed (a quit came between
+ *  a swap and its clearing): cleared, a newer sign-in file in it carried in. */
+function clearAside(dir: string): void {
+  const aside = dir + ASIDE_SUFFIX
+  if (realFolderId(aside) === null) return
+  try { clearOldCopy(aside, dir) } catch { logWarn(`[profiles] ${profileOfFolder(dir)}: the earlier ${folderLabel(dir)} folder could not be removed yet; the next check removes it`) }
+}
+
+/** A remade folder's sign-in files, by their path inside it: its own and,
+ *  for a profile folder, those of the sign-in folders inside it. */
+function signInFilesOf(dir: string): string[] {
+  if (!isProfileHome(dir)) return [...CREDENTIAL_FILE_NAMES]
+  return [...CREDENTIAL_FILE_NAMES, ...SIGN_IN_FOLDER_NAMES.flatMap((folder) => CREDENTIAL_FILE_NAMES.map((name) => path.join(folder, name)))]
+}
+
+/** Whether the folder holding `rel` inside `root` is a real one (or `root`
+ *  itself): a sign-in file is never read or removed through a link. */
+const inRealFolder = (root: string, rel: string): boolean =>
+  path.dirname(rel) === '.' || realFolderId(path.join(root, path.dirname(rel))) !== null
+
+/** The old folder's copy after a swap: every sign-in file in it first (the
+ *  folder's own and, for a profile folder, those of the folders inside it) --
+ *  one newer than the copy now in place is carried into the place first, so a
+ *  sign-in is never lost -- so none is left in it should the rest not go;
+ *  then the rest (links removed as links, never followed). */
+function clearOldCopy(aside: string, dir: string): void {
+  for (const rel of signInFilesOf(dir)) {
+    if (!inRealFolder(aside, rel)) continue
+    const old = path.join(aside, rel)
+    let st: fs.Stats
+    try { st = fs.lstatSync(old) } catch { continue }
+    if (st.isFile()) {
+      if (!inRealFolder(dir, rel)) throw new Error('the folder for the sign-in in place is not a folder')
+      const cur = path.join(dir, rel)
+      let now: fs.Stats | null = null
+      try { now = fs.lstatSync(cur) } catch { now = null }
+      if (now && !now.isFile()) throw new Error('the sign-in in place is not a file')
+      if (!now || st.mtimeMs > now.mtimeMs) {
+        fs.writeFileSync(cur, fs.readFileSync(old), IS_POSIX ? { mode: CRED_FILE_MODE } : {})
+        fs.utimesSync(cur, st.atime, st.mtime)
+      }
+    }
+    fs.rmSync(old, { force: true })
+  }
+  safeTeardown(aside)
+}
+
+/** What an earlier remake that a quit interrupted left beside `dir`: between
+ *  the two renames the new folder (its copy complete) goes into place, else the
+ *  old one goes back; a new folder never swapped in goes. An old copy beside a
+ *  folder in place is cleared once that folder passes (clearAside). Throws
+ *  when it cannot settle. */
+function settleInterruptedRemake(dir: string): void {
+  const staged = dir + STAGED_SUFFIX
+  const aside = dir + ASIDE_SUFFIX
+  if (realFolderId(aside) !== null && !existsAtAll(dir)) fs.renameSync(realFolderId(staged) !== null ? staged : aside, dir)
+  if (realFolderId(staged) !== null && realFolderId(dir) !== null) safeTeardown(staged)
+}
+
+/** Every plain file and folder below `from` copied into `to` as new files and
+ *  folders, so each takes `to`'s rights; links and special files are left out
+ *  (the profile's links are made again after the swap). Times kept. Bounded;
+ *  throws past the bound or on any failure. Answers the size and time, as
+ *  copied, of each file in `track` (paths inside `from`). */
+async function carryFolder(from: string, to: string, budget: { entries: number; bytes: number }, track: readonly string[], stamps = new Map<string, string>(), rel = ''): Promise<Map<string, string>> {
+  for (const name of await fs.promises.readdir(from)) {
+    if (--budget.entries < 0) throw new Error('more than the app carries over')
+    const src = path.join(from, name)
+    const dest = path.join(to, name)
+    const inside = rel ? path.join(rel, name) : name
+    const st = await fs.promises.lstat(src)
+    if (st.isSymbolicLink()) continue
+    if (st.isDirectory()) {
+      await fs.promises.mkdir(dest)
+      await carryFolder(src, dest, budget, track, stamps, inside)
+    } else if (st.isFile()) {
+      budget.bytes -= st.size
+      if (budget.bytes < 0) throw new Error('more than the app carries over')
+      await fs.promises.writeFile(dest, await fs.promises.readFile(src), { flag: 'wx', ...(IS_POSIX ? { mode: CRED_FILE_MODE } : {}) })
+      await fs.promises.utimes(dest, st.atime, st.mtime)
+      if (track.includes(inside)) stamps.set(inside, `${st.size}:${st.mtimeMs}`)
+    }
+  }
+  return stamps
+}
+
+/** After the old folder moved aside: each sign-in file (`files`, paths inside
+ *  it) that changed there while the copy ran (rewritten, made or removed) is
+ *  copied again, so the folder that goes into place holds it as it is now. */
+function recarrySignInFiles(aside: string, staged: string, stamps: Map<string, string>, files: readonly string[]): void {
+  for (const rel of files) {
+    const old = path.join(aside, rel)
+    const dest = path.join(staged, rel)
+    let st: fs.Stats | null = null
+    if (inRealFolder(aside, rel)) { try { st = fs.lstatSync(old) } catch { st = null } }
+    if (!st || !st.isFile()) {
+      if (stamps.has(rel)) fs.rmSync(dest, { force: true })
+      continue
+    }
+    if (stamps.get(rel) === `${st.size}:${st.mtimeMs}`) continue
+    // A sign-in folder made inside the old one during the copy is made in the new one too.
+    if (!existsAtAll(path.dirname(dest))) fs.mkdirSync(path.dirname(dest))
+    fs.writeFileSync(dest, fs.readFileSync(old), IS_POSIX ? { mode: CRED_FILE_MODE } : {})
+    fs.utimesSync(dest, st.atime, st.mtime)
+  }
+}
+
+/** A home's or its config folder's links made again after a remake: the
+ *  config folder's shared folders and, for a home, the mirror of the real
+ *  home. Best-effort: the next launch's setup makes them too. */
+function relinkAfterRemake(dir: string): void {
+  if (folderLabel(dir) === 'identity') return
+  const home = homeOfFolder(dir)
+  try {
+    const claudeDir = path.join(home, '.claude')
+    if (realFolderId(claudeDir) !== null) linkSharedDirs(claudeDir)
+    if (dir === home) mirrorRealHome(home)
+  } catch {
+    logWarn(`[profiles] ${profileOfFolder(dir)}: the account's shared folders could not be linked again yet; its next launch links them`)
+  }
+}
+
+/** remakeOwnerOnly's answer when the rule gave no read of the new folder. */
+const UNREAD = Symbol('unread')
+
+/** Step 2 for one folder the rule refused in place. Null when the new folder
+ *  is in place and checked (its verdict recorded); UNREAD (no verdict) when
+ *  the rule gave no read of the new folder; else why not. Every step before
+ *  the swap is undone unless null. Once swapped in, the new folder is asked
+ *  about again with what it now holds (the copy, its sign-in files and its
+ *  links): it passes only when that read holds; a refusal is recorded, and
+ *  no read leaves it without a verdict. The old copy goes either way: the
+ *  new folder holds everything it held. */
+async function remakeOwnerOnly(dir: string, rule: CredentialFolderRule): Promise<string | null | typeof UNREAD> {
+  if (realFolderId(dir) === null) return 'it is missing'
+  const staged = dir + STAGED_SUFFIX
+  const aside = dir + ASIDE_SUFFIX
+  if (existsAtAll(staged) || existsAtAll(aside)) return 'a folder from an earlier attempt is in the way'
+  const stagedAnswers = await askRule(rule, [staged])
+  const stagedId = realFolderId(staged)
+  if (stagedId === null || !passed(staged, stagedAnswers)) {
+    try { if (stagedId !== null) safeTeardown(staged) } catch { /* settled by the next check */ }
+    return unread(staged, stagedAnswers) ? UNREAD : 'a new folder could not be made owner-only'
+  }
+  const files = signInFilesOf(dir)
+  let stamps: Map<string, string>
+  try {
+    stamps = await carryFolder(dir, staged, { entries: CARRY_MAX_ENTRIES, bytes: CARRY_MAX_BYTES }, files)
+  } catch {
+    try { safeTeardown(staged) } catch { /* settled by the next check */ }
+    return 'what it holds could not be copied'
+  }
+  // From here to the swap nothing waits: no other step of the app runs in
+  // between. The read of the new folder once it is in place does wait; the
+  // old copy is cleared when that read is done, whatever it says.
+  const rename = credentialFolderRenameForTest ?? fs.renameSync
+  try {
+    rename(dir, aside)
+  } catch {
+    try { safeTeardown(staged) } catch { /* settled by the next check */ }
+    return 'it is in use'
+  }
+  try {
+    recarrySignInFiles(aside, staged, stamps, files)
+  } catch {
+    try { rename(aside, dir) } catch { /* the next check puts it back */ }
+    try { if (realFolderId(dir) !== null) safeTeardown(staged) } catch { /* settled by the next check */ }
+    return 'a sign-in file changed during the copy and could not be copied again'
+  }
+  try {
+    rename(staged, dir)
+  } catch {
+    try { rename(aside, dir) } catch { /* the next check puts it back */ }
+    try { if (realFolderId(dir) !== null) safeTeardown(staged) } catch { /* settled by the next check */ }
+    return 'the new folder could not be put in its place'
+  }
+  if (realFolderId(dir) !== stagedId) return 'the new folder could not be put in its place'
+  relinkAfterRemake(dir)
+  const answers = await askRule(rule, [dir])
+  await askAgainWhereInsideFailed(rule, [dir], answers)
+  const ok = passed(dir, answers) && realFolderId(dir) === stagedId
+  if (ok) recordPass(dir, answers)
+  else if (!unread(dir, answers)) recordVerdict(dir, false)
+  clearAside(dir)
+  if (ok) return null
+  return unread(dir, answers) ? UNREAD : 'the new folder did not read back owner-only with what it holds'
+}
+
+/** The checked home kept ready for the next new profile: made by the rule with
+ *  its two sign-in folders, all read back owner-only. One at a time; one this
+ *  run has not read back owner-only (an earlier run's, or one found already
+ *  there) is taken away first and made anew; one whose check gave no read is
+ *  asked once more; a refused one goes. */
+function readyHomePath(): string { return path.join(getProfilesRoot(), READY_HOME_NAME) }
+
+/** A ready home holds only its two sign-in folders, both empty real folders. */
+function readyHomeIsEmpty(ready: string): boolean {
+  try {
+    if (realFolderId(ready) === null) return false
+    const names = fs.readdirSync(ready)
+    return names.every((n) => (SIGN_IN_FOLDER_NAMES as readonly string[]).includes(n) && realFolderId(path.join(ready, n)) !== null && fs.readdirSync(path.join(ready, n)).length === 0)
+  } catch { return false }
+}
+
+function prepareReadyHome(rule: CredentialFolderRule): Promise<void> {
+  const ready = readyHomePath()
+  if (signInFoldersOf(ready).every((d) => hasVerdict(d) && credentialFolderVerdicts.get(folderKey(d))?.ok === true) && readyHomeIsEmpty(ready)) return Promise.resolve()
+  if (readyHomeCheck) return readyHomeCheck
+  const run: Promise<void> = (async () => {
+    fs.mkdirSync(getProfilesRoot(), { recursive: true })
+    // Whatever is there has no passing verdict from this run (see the early
+    // answer above), so the rule makes the home anew rather than taking over
+    // a folder it did not make. A link or a file is left as it is: no home
+    // is ready.
+    if (existsAtAll(ready)) {
+      if (realFolderId(ready) === null) return
+      for (const d of signInFoldersOf(ready)) credentialFolderVerdicts.delete(folderKey(d))
+      safeTeardown(ready)
+    }
+    const set = signInFoldersOf(ready)
+    let answers = await askRule(rule, set)
+    // A call that gave no read is no refusal: asked once more at once, as a
+    // profile's folders are (checkHomesAnswering). On a first run this is the
+    // run's first, coldest call, and the first account is made in this home.
+    if (set.some((d) => unread(d, answers))) answers = await askRule(rule, set)
+    if (set.every((d) => passed(d, answers))) { for (const d of set) recordVerdict(d, true); return }
+    if (realFolderId(ready) !== null) safeTeardown(ready)
+  })().catch(() => { /* no home ready: a new profile is checked after it is made */ })
+    .finally(() => { if (readyHomeCheck === run) readyHomeCheck = null })
+  readyHomeCheck = run
+  return run
+}
+
+/** A new profile's home taken from the ready one (Windows, rule on): renamed
+ *  into place, its folders keeping the verdicts they were checked with. False
+ *  when none is ready. */
+function takeReadyHome(home: string): boolean {
+  if (!credentialFolderRule()) return false
+  const ready = readyHomePath()
+  const from = signInFoldersOf(ready)
+  const ids = from.map((d) => realFolderId(d))
+  if (!from.every((d, i) => ids[i] !== null && credentialFolderVerdicts.get(folderKey(d))?.id === ids[i] && credentialFolderVerdicts.get(folderKey(d))?.ok === true)) return false
+  if (!readyHomeIsEmpty(ready) || existsAtAll(home)) return false
+  try { fs.renameSync(ready, home) } catch { return false }
+  for (const d of from) credentialFolderVerdicts.delete(folderKey(d))
+  signInFoldersOf(home).forEach((d, i) => { if (realFolderId(d) === ids[i]) credentialFolderVerdicts.set(folderKey(d), { id: ids[i]!, ok: true }) })
+  return true
 }
 
 function profilesMetaFile(): string { return path.join(getProfilesRoot(), 'profiles.json') }
@@ -893,7 +1699,17 @@ export function resolveHeadlessProfileHome(preferredProfileId?: string | null): 
  *  touches the default ~/.claude. */
 export function createProfile(name?: string): AccountProfile {
   const id = `profile-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`
+  // Windows: a new profile takes the home kept ready, made and checked
+  // owner-only, so its first sign-in can be written at once; without one its
+  // folders are checked now (a write before that ends is refused as pending).
+  // Either way the next new profile's home is made ready.
+  const tookReady = takeReadyHome(getProfileConfigDir(id))
   setupProfileLinks(id)
+  const rule = credentialFolderRule()
+  if (rule) {
+    if (!tookReady) void checkHomes([getProfileConfigDir(id)], rule)
+    void prepareReadyHome(rule)
+  }
   const trimmed = name?.trim()
   const profile: AccountProfile = {
     id,
@@ -1444,6 +2260,20 @@ function writeSanitisedSettingsCopy(src: string, dest: string): void {
   }
 }
 
+/** A config folder's shared folders, each linked to the shared one. */
+function linkSharedDirs(claudeDir: string): void {
+  const shared = sharedRoot()
+  for (const name of SHARED_DIR_NAMES) {
+    const target = path.join(shared, name)
+    if (!fs.existsSync(target)) fs.mkdirSync(target, { recursive: true })
+    // `projects` (session transcripts, uuid filenames -> union-safe) recovers an
+    // orphaned real dir into the shared store before junctioning (#131). Other
+    // shared dirs keep the plain replace-if-empty behavior: `memory` has a curated
+    // MEMORY.md index that is NOT union-safe, and the rest are synced config.
+    ensureLink(target, path.join(claudeDir, name), name === 'projects')
+  }
+}
+
 function buildHomeLinks(home: string): void {
   // This build's verdict starts empty. Anything that throws between here and
   // the settings block then reports `'not-evaluated'` -- the truth -- instead of
@@ -1468,15 +2298,7 @@ function buildHomeLinks(home: string): void {
   const realmConfigRoot = profileRealmConfigRoot(home)
   if (realmConfigRoot) fs.mkdirSync(realmConfigRoot, { recursive: true })
   const shared = sharedRoot()
-  for (const name of SHARED_DIR_NAMES) {
-    const target = path.join(shared, name)
-    if (!fs.existsSync(target)) fs.mkdirSync(target, { recursive: true })
-    // `projects` (session transcripts, uuid filenames -> union-safe) recovers an
-    // orphaned real dir into the shared store before junctioning (#131). Other
-    // shared dirs keep the plain replace-if-empty behavior: `memory` has a curated
-    // MEMORY.md index that is NOT union-safe, and the rest are synced config.
-    ensureLink(target, path.join(claudeDir, name), name === 'projects')
-  }
+  linkSharedDirs(claudeDir)
   const srcSettings = path.join(shared, 'settings.json')
   if (fs.existsSync(srcSettings)) {
     writeSanitisedSettingsCopy(srcSettings, path.join(claudeDir, 'settings.json'))
@@ -1699,7 +2521,7 @@ export function cleanupSessionHomes(): void {
   try { entries = fs.readdirSync(root, { withFileTypes: true }) } catch { return } // absent -> nothing to do
 
   const profiles = listProfiles()
-  type Cand = { claudeJson: string; credentials: string | undefined; exp: number; fromSession: boolean }
+  type Cand = { claudeJson: string; credentials: string | undefined; exp: number; fromSession: boolean; dir: string }
   const best = new Map<string, Cand>() // profileId -> freshest candidate
 
   const consider = (profileId: string, dir: string, fromSession: boolean): void => {
@@ -1709,7 +2531,7 @@ export function cleanupSessionHomes(): void {
     try { credentials = fs.readFileSync(path.join(dir, '.claude', '.credentials.json'), 'utf8') } catch { credentials = undefined }
     const exp = credentialExpiry(credentials)
     const cur = best.get(profileId)
-    if (!cur || exp > cur.exp) best.set(profileId, { claudeJson, credentials, exp, fromSession })
+    if (!cur || exp > cur.exp) best.set(profileId, { claudeJson, credentials, exp, fromSession, dir })
   }
 
   // Seed candidates with each profile's CURRENT home so we never downgrade it.
@@ -1722,18 +2544,26 @@ export function cleanupSessionHomes(): void {
     const prof = profiles.find((p) => p.accountEmail && normEmail(p.accountEmail) === normEmail(email))
     if (prof) consider(prof.id, path.join(root, e.name), true)
   }
-  // Apply only when a session home was fresher than the profile home.
+  // Apply only when a session home was fresher than the profile home. A
+  // session home whose sign-in did not land in its profile's home (a write
+  // refused -- on Windows, a profile folder not checked owner-only -- or
+  // failed) keeps its own copies below, so the next start tries again and the
+  // freshest sign-in is never dropped.
+  const unsalvaged = new Set<string>()
   for (const [profileId, cand] of best) {
     if (!cand.fromSession) continue
     // Per-item: a reparse-point plant (or any fs error) on ONE profile's dir must
     // not abort salvaging the others, nor the shared-dir repair pass further down.
     try { writeCanonicalIdentity(profileId, { claudeJson: cand.claudeJson, credentials: cand.credentials }) } catch { /* best-effort */ }
     const home = getProfileConfigDir(profileId)
-    // Token-bearing .claude.json — owner-only atomic write, not a bare 0644 one.
-    try { atomicWriteSecure(path.join(home, '.claude.json'), cand.claudeJson, IS_POSIX ? CRED_FILE_MODE : undefined) } catch { /* best-effort */ }
+    let landed = true
+    // Token-bearing .claude.json — owner-only atomic write, not a bare 0644 one,
+    // and on Windows only into a home checked owner-only.
+    try { writeProfileHomeIdentity(home, cand.claudeJson) } catch { landed = false }
     if (cand.credentials != null) {
-      try { const cd = path.join(home, '.claude'); fs.mkdirSync(cd, { recursive: true }); hardenCredentialDir(cd); writeCredentialFile(path.join(cd, '.credentials.json'), cand.credentials) } catch { /* best-effort */ }
+      try { const cd = path.join(home, '.claude'); fs.mkdirSync(cd, { recursive: true }); hardenCredentialDir(cd); writeCredentialFile(path.join(cd, '.credentials.json'), cand.credentials) } catch { landed = false }
     }
+    if (!landed) unsalvaged.add(path.resolve(cand.dir))
   }
 
   // UPGRADE GUARD -- do NOT delete the retired session homes. A session created
@@ -1754,10 +2584,13 @@ export function cleanupSessionHomes(): void {
     const home = path.join(root, e.name)
     try {
       // Drop the private per-session identity copies (freshest token already
-      // salvaged into the profile + canonical above).
-      try { fs.unlinkSync(path.join(home, '.claude.json')) } catch { /* absent */ }
+      // salvaged into the profile + canonical above) -- unless that salvage did
+      // not land, when they stay for the next start.
       const claudeDir = path.join(home, '.claude')
-      try { fs.unlinkSync(path.join(claudeDir, '.credentials.json')) } catch { /* absent */ }
+      if (!unsalvaged.has(path.resolve(home))) {
+        try { fs.unlinkSync(path.join(home, '.claude.json')) } catch { /* absent */ }
+        try { fs.unlinkSync(path.join(claudeDir, '.credentials.json')) } catch { /* absent */ }
+      }
       // Re-point the shared dirs to canonical (self-heals a missing/old junction).
       fs.mkdirSync(claudeDir, { recursive: true })
       for (const name of SHARED_DIR_NAMES) {
@@ -1789,6 +2622,8 @@ export function writeCanonicalIdentity(
   // credential filenames enumerable by any other local user even though their
   // contents are 0600.
   hardenCredentialDir(dir)
+  // Windows: nothing is written here until the folder is checked owner-only.
+  guardCredentialFolder(dir)
   if (files.claudeJson != null) {
     const f = path.join(dir, '.claude.json')
     // .claude.json carries the account's OAuth token; write it owner-only, not at
@@ -1821,7 +2656,7 @@ export function captureGlobalLogin(name?: string): AccountProfile | null {
     writeCanonicalIdentity(profile.id, { claudeJson, credentials })
     // Also seed the per-account-home layout the spawn reads (USERPROFILE=<profileDir>):
     const home = getProfileConfigDir(profile.id)
-    fs.writeFileSync(path.join(home, '.claude.json'), claudeJson)
+    writeProfileHomeIdentity(home, claudeJson)
     if (credentials != null) {
       const claudeDir = path.join(home, '.claude')
       fs.mkdirSync(claudeDir, { recursive: true })
@@ -1912,9 +2747,9 @@ export function restoreProfileHomeFromCanonical(id: string): boolean {
   if (!fs.existsSync(srcJson)) return false
   const home = getProfileConfigDir(id)
   // .claude.json can carry OAuth tokens, so restore it through the same
-  // link-safe path as the credential file rather than a plain copyFileSync.
-  mkdirSecure(home)
-  atomicWriteSecure(path.join(home, '.claude.json'), fs.readFileSync(srcJson))
+  // link-safe path as the credential file rather than a plain copyFileSync
+  // (and, on Windows, only into a home checked owner-only).
+  writeProfileHomeIdentity(home, fs.readFileSync(srcJson))
   const srcCred = path.join(idDir, '.credentials.json')
   if (fs.existsSync(srcCred)) {
     const claudeDir = path.join(home, '.claude')
@@ -1972,7 +2807,7 @@ export function stripIdentityTokens(claudeJson: string): string {
 }
 
 /**
- * rc.15 review R4 (aicc_planning#50): the restore the CAPTURE path runs after
+ * rc.15 review R4: the restore the CAPTURE path runs after
  * another account was captured out of this profile's shared home. IDENTITY
  * ONLY. Canonical is the last SETTLED observation of this account; a token
  * that rotated after it and was then overwritten by the /login (a rotation and
@@ -2008,7 +2843,7 @@ export function restoreProfileIdentityFromCanonical(id: string): boolean {
   try { fs.rmSync(cred, { force: true, recursive: true }) } catch { /* fall through to the overwrite */ }
   if (fs.existsSync(cred)) {
     try {
-      writeCredentialFile(cred, '{}')
+      writeCredentialFile(cred, '{}', { holdsNoCredential: true })
     } catch (e) {
       // ADR-009 adversarial review (Lens B, round 2): the token file cannot be
       // neutralised here (a reparse point, or an OS lock held by a live session
@@ -2022,6 +2857,14 @@ export function restoreProfileIdentityFromCanonical(id: string): boolean {
       try { fs.rmSync(path.join(home, '.claude.json'), { force: true }) } catch { /* best-effort */ }
       return false
     }
+  }
+  // Windows: the identity goes back only into a home checked owner-only;
+  // otherwise the home keeps no identity (as when the sign-in cannot be cleared).
+  const homeFolder = credentialFoldersVerdict(isProfileHome(home) ? [home] : [])
+  if (!homeFolder.ok) {
+    logWarn(`[profiles] restore ${id}: the profile folder is not checked readable by this user alone; its identity was removed instead`)
+    try { fs.rmSync(path.join(home, '.claude.json'), { force: true }) } catch { /* best-effort */ }
+    return false
   }
   atomicWriteSecure(path.join(home, '.claude.json'), stripIdentityTokens(fs.readFileSync(srcJson, 'utf8')), IS_POSIX ? CRED_FILE_MODE : undefined)
   return true
@@ -2186,7 +3029,7 @@ export function captureDetectedAccount(profileId: string, name?: string): Accoun
   try {
     writeCanonicalIdentity(np.id, { claudeJson, credentials })
     const npHome = getProfileConfigDir(np.id)
-    fs.writeFileSync(path.join(npHome, '.claude.json'), claudeJson)
+    writeProfileHomeIdentity(npHome, claudeJson)
     if (credentials != null) {
       const cd = path.join(npHome, '.claude'); fs.mkdirSync(cd, { recursive: true })
       hardenCredentialDir(cd)
@@ -2485,6 +3328,10 @@ export function profileRealmLaunch(
   }
   setupProfileLinks(profileId)
   const home = getProfileConfigDir(profileId)
+  // Windows: the account's sign-in folders are checked owner-only before
+  // anything runs in them (see credentialFoldersVerdict).
+  const folders = credentialFoldersVerdict(credentialFoldersOfHome(home))
+  if (!folders.ok) return { refused: folders.message }
   const baseEnv = profileHomeLaunchBase(env, home)
   // Diagnostic, as withProfileHome records it: the ambient variables the
   // accounts service's hardening will remove, for the launch's preflight.
@@ -2512,6 +3359,12 @@ export function withProfileHome(
   context?: ManagedLaunchContext,
 ): Record<string, string> {
   if (!home) return env
+  // Windows: the account's sign-in folders are checked owner-only before
+  // anything runs in them -- the CLI writes its sign-in into the home and its
+  // config folder (see credentialFoldersVerdict). Refused, as an isolation
+  // fault, otherwise.
+  const folders = credentialFoldersVerdict(credentialFoldersOfHome(home))
+  if (!folders.ok) throw new Error(`${MANAGED_LAUNCH_REFUSAL}: ${folders.message}`)
   const next = profileHomeLaunchBase({ ...env, USERPROFILE: home }, home)
   // macOS locates the login keychain via $HOME (~/Library/Keychains/login.keychain-db).
   // Pointing HOME at the fake profile home — which mirrors only dot-entries, never

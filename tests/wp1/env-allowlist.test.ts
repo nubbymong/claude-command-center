@@ -66,11 +66,17 @@ describe('the Codex CLI subprocess environment (Windows)', () => {
     expect(Object.keys(codexCliEnv({ nodefaultcurrentdirectoryinexepath: '0' }, 'C:\\r', 'win32')).filter((k) => /nodefault/i.test(k))).toEqual(['NoDefaultCurrentDirectoryInExePath'])
   })
 
-  it('PATH keeps only absolute entries (a drive, a share, or either quoted), under the spelling it came in', () => {
+  it('PATH keeps only fully qualified folders (a drive or a share, either read without its quotes), under the spelling it came in', () => {
     const env = codexCliEnv({ Path: 'C:\\Windows;tools;;.\\bin;"D:\\Program Files\\x";\\\\srv\\share;C:rel;\\rooted' }, 'C:\\r', 'win32')
-    expect(env.Path).toBe('C:\\Windows;"D:\\Program Files\\x";\\\\srv\\share')
+    expect(env.Path).toBe('C:\\Windows;D:\\Program Files\\x;\\\\srv\\share')
     expect(Object.keys(env).filter((k) => k.toUpperCase() === 'PATH')).toEqual(['Path'])
     expect(Object.keys(codexCliEnv({ PATH: 'tools;.' }, 'C:\\r', 'win32')).some((k) => k.toUpperCase() === 'PATH')).toBe(false)
+  })
+
+  it('a device path is not a PATH folder, either slash, and a padded entry is read as its folder', () => {
+    const env = codexCliEnv({ PATH: '\\\\?\\C:\\dev;\\\\.\\pipe\\x;//?/C:/fwd;\\\\?\\UNC\\srv\\share; C:\\padded ;"  D:\\quoted  "' }, 'C:\\r', 'win32')
+    expect(env.PATH).toBe('C:\\padded;D:\\quoted')
+    expect('PATH' in codexCliEnv({ PATH: '\\\\?\\C:\\dev;\\\\.\\pipe\\x' }, 'C:\\r', 'win32')).toBe(false)
   })
 
   it('a Unicode lookalike name (long s, dotless i) is never folded onto an allowed one', () => {

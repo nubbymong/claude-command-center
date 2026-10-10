@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // rc.14 review F6 (aicc_planning#50), the acceptance bullet end to end with the
 // REAL account-profiles code over a temp resources root: rotate A's token
 // without exiting, sign B into A's shared home, capture B, restore A -- and A

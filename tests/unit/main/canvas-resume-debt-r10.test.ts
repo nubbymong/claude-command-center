@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // rc.15 review R10 (Codex, 2026-09-06; aicc_planning#52 adjacent): the reviewer's
 // characterization (evidence/canvas-followup.review.test.ts) flipped into the
 // desired behaviour, credit Codex rc.15 stability review; RED against 7ef62a2e

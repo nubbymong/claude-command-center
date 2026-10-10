@@ -20,7 +20,18 @@ vi.mock('fs', async (importOriginal) => {
   return { ...real, existsSync: (p: string) => (String(p).startsWith('/bin/') ? host.present.has(String(p)) : real.existsSync(p)) }
 })
 
+// A login shell outside the sh family is asked for the PATH it builds
+// (claude-launch-login-path.test.ts covers its answer). Here it gives none, so
+// these cases pin the launcher a session falls back to; no shell starts.
+const asked = vi.hoisted(() => ({ files: [] as string[] }))
+vi.mock('child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('child_process')>()),
+  execFileSync: (file: string) => { asked.files.push(file); throw new Error('no answer in this test') },
+  execFile: (file: string, _a: unknown, _o: unknown, cb?: (e: unknown) => void) => { asked.files.push(file); cb?.(new Error('no answer in this test')); return { pid: 1 } },
+}))
+
 const { buildClaudeLocalSpawn } = await import('../../../../src/main/providers/claude/spawn')
+const { _resetClaudeLoginShellLookupForTest } = await import('../../../../src/main/claude-cli-probe')
 
 const BASE_OPTS = { sessionId: 'ses-1', cwd: '/work', cols: 80, rows: 24 }
 const savedShell = process.env.SHELL
@@ -29,6 +40,8 @@ beforeEach(() => {
   host.platform = 'linux'
   host.present = new Set()
   delete process.env.SHELL
+  asked.files.length = 0
+  _resetClaudeLoginShellLookupForTest()
 })
 afterEach(() => {
   if (savedShell === undefined) delete process.env.SHELL
@@ -36,11 +49,36 @@ afterEach(() => {
 })
 
 describe('buildClaudeLocalSpawn -- the launch shell', () => {
-  it('$SHELL wins, as a login shell', () => {
-    process.env.SHELL = '/opt/fish'
-    const { cmd, args } = buildClaudeLocalSpawn({ ...BASE_OPTS })
-    expect(cmd).toBe('/opt/fish')
-    expect(args).toEqual(['-l'])
+  it('a sh-family $SHELL wins, as a login shell', () => {
+    for (const s of ['/opt/homebrew/bin/bash', '/bin/zsh', '/bin/sh']) {
+      process.env.SHELL = s
+      const { cmd, args } = buildClaudeLocalSpawn({ ...BASE_OPTS })
+      expect(cmd, s).toBe(s)
+      expect(args).toEqual(['-l'])
+    }
+  })
+
+  it('a launch line is typed only into a sh-family shell: a fish or pwsh user\'s Claude session runs the sh-family fallback', () => {
+    host.present = new Set(['/bin/bash', '/bin/zsh'])
+    for (const s of ['/opt/homebrew/bin/fish', '/usr/local/bin/pwsh', '/usr/bin/nu', '/bin/tcsh']) {
+      process.env.SHELL = s
+      host.platform = 'linux'
+      _resetClaudeLoginShellLookupForTest()
+      expect(buildClaudeLocalSpawn({ ...BASE_OPTS }), s).toMatchObject({ cmd: '/bin/bash', args: ['-l'] })
+      host.platform = 'darwin'
+      _resetClaudeLoginShellLookupForTest()
+      expect(buildClaudeLocalSpawn({ ...BASE_OPTS }), s).toMatchObject({ cmd: '/bin/zsh', args: ['-l'] })
+    }
+    // Each of those login shells was asked for its PATH; it gave no answer here.
+    expect(new Set(asked.files)).toEqual(new Set(['/opt/homebrew/bin/fish', '/usr/local/bin/pwsh', '/usr/bin/nu', '/bin/tcsh']))
+  })
+
+  it('a terminal tab keeps the user\'s own shell, fish or pwsh included, and so does an elevated one', () => {
+    for (const s of ['/opt/homebrew/bin/fish', '/usr/local/bin/pwsh']) {
+      process.env.SHELL = s
+      expect(buildClaudeLocalSpawn({ ...BASE_OPTS, shellOnly: true }), s).toMatchObject({ cmd: s, args: ['-l'] })
+      expect(buildClaudeLocalSpawn({ ...BASE_OPTS, shellOnly: true, elevated: true }), s).toMatchObject({ cmd: 'sudo', args: [s, '-l'] })
+    }
   })
 
   it('without $SHELL takes the first of bash, zsh, sh that exists (the probe rule), not a hard-coded bash', () => {
@@ -65,11 +103,18 @@ describe('buildClaudeLocalSpawn -- the launch shell', () => {
     expect(buildClaudeLocalSpawn({ ...BASE_OPTS, shellOnly: true, elevated: true })).toMatchObject({ cmd: 'sudo', args: ['/bin/zsh', '-l'] })
   })
 
-  it('Windows never consults the login shell', () => {
+  it('Windows never consults the login shell: PowerShell by its full path in the system folder', () => {
     host.platform = 'win32'
     process.env.SHELL = '/should/be/ignored'
-    const { cmd, args } = buildClaudeLocalSpawn({ ...BASE_OPTS })
-    expect(cmd).toBe('powershell.exe')
-    expect(args).toEqual([])
+    const savedRoot = process.env.SystemRoot
+    process.env.SystemRoot = 'C:\\Windows'
+    try {
+      const { cmd, args } = buildClaudeLocalSpawn({ ...BASE_OPTS })
+      expect(cmd).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+      expect(args).toEqual([])
+    } finally {
+      if (savedRoot === undefined) delete process.env.SystemRoot
+      else process.env.SystemRoot = savedRoot
+    }
   })
 })

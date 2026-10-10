@@ -45,6 +45,7 @@ import { emitPrMerged } from '../channel-emitters'
 import { AiUsageScheduler } from '../github/copilot-usage'
 import { readConfig } from '../config-manager'
 import { logWarn } from '../debug-logger'
+import { appWindowSender } from './trusted-sender'
 
 // Binds repo + branch into the session registry without touching the label
 // that pty-manager set at spawn time. updateSessionMeta's patch type makes
@@ -785,7 +786,14 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     return { ok: true }
   })
 
-  ipcMain.handle(IPC.GITHUB_SESSION_CONTEXT_GET, async (_e, sessionId: string) => {
+  // The session context answers only the app's own window, its main frame
+  // (trusted-sender.ts): it reads a session's transcript and its repository.
+  const trusted = appWindowSender(deps.getWindow)
+  ipcMain.handle(IPC.GITHUB_SESSION_CONTEXT_GET, async (e, sessionId: string) => {
+    if (!trusted(e)) {
+      logWarn('[github] session context refused: not the app window')
+      return { ok: false, data: null }
+    }
     const sessions = await deps.loadSessions()
     const session = sessions.find((s) => s.id === sessionId)
     const integration = session?.githubIntegration

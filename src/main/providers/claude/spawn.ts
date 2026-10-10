@@ -1,10 +1,11 @@
 import * as os from 'os'
 import { commandSecretEnvName } from '../../../shared/command-secret'
-import { execSync } from 'child_process'
-import { askPromptEnvValue } from '../../terminal-launch-line'
+import { AGENTS_ENV, askPromptEnvValue } from '../../terminal-launch-line'
+import { findOnWindowsPath, windowsEnvValue, withFullyQualifiedProgramLookup } from '../../windows-programs'
+import { CLAUDE_NOT_ON_PATH, CLAUDE_WINDOWS_NAMES, claudeInLoginShellPathForLaunch, recentClaudeInLoginShellPath, recentClaudeOnWindows, recordClaudeOnWindows } from '../../claude-cli-probe'
 import { resolveVersionBinary } from '../../legacy-version-manager'
 import { logInfo } from '../../debug-logger'
-import { localSessionShell } from '../../login-shell'
+import { localSessionShell, shFamilyLoginShell } from '../../login-shell'
 import type { LegacyVersion } from '../../../shared/types'
 import type { SpawnOptions } from '../types'
 import { colorFgBgValue } from '../host-color-scheme'
@@ -13,7 +14,35 @@ import { colorFgBgValue } from '../host-color-scheme'
 // ../host-color-scheme (shared by the local Claude env, the Codex env and the
 // SSH remote launch line -- book item 34); callers import them from there.
 
-export function resolveClaudeBinary(legacyVersion?: LegacyVersion): { cmd: string; args: string[] } {
+/** What a launch says when Claude Code is in none of PATH's folders (the
+ *  one message every check and start uses, claude-cli-probe.ts). */
+export { CLAUDE_NOT_ON_PATH }
+
+/** Claude Code on Windows, found IN-PROCESS in the folders PATH names
+ *  (`env`), in the order every check and start asks (claude-cli-probe.ts
+ *  CLAUDE_WINDOWS_NAMES: `claude.exe` in any of them, then `claude.cmd`, then
+ *  `claude.bat`). Null when none is there: never a bare name. The launch
+ *  cannot wait, so a recent answer of the same walk (the CLI check asks every
+ *  30 s, off the event loop) is used as is; only without one does this walk
+ *  PATH here, and its answer is kept for the next launch. */
+export function findClaudeOnWindows(env: NodeJS.ProcessEnv = process.env, stat?: (p: string) => boolean): string | null {
+  const recent = recentClaudeOnWindows(env)
+  if (recent) return recent
+  const found = findOnWindowsPath(CLAUDE_WINDOWS_NAMES, env, stat, 'name')
+  recordClaudeOnWindows(windowsEnvValue(env, 'PATH') ?? '', found, Date.now())
+  return found
+}
+
+/** The Claude Code a launch runs: a valid legacy pin's binary when it is
+ *  installed; otherwise, on Windows, the full path findClaudeOnWindows finds
+ *  in `env`, and when Claude Code is in none of PATH's folders this THROWS
+ *  (CLAUDE_NOT_ON_PATH) so the launch starts nothing. Elsewhere: for a user
+ *  whose login shell is not of the sh family, the Claude Code found in the
+ *  PATH that shell builds, by its full path, once the launch has that answer
+ *  (claude-cli-probe.ts recentClaudeInLoginShellPath; buildClaudeLocalSpawn
+ *  asks first); otherwise `claude`, which the session's login shell resolves
+ *  from its own PATH. */
+export function resolveClaudeBinary(legacyVersion?: LegacyVersion, env: NodeJS.ProcessEnv = process.env): { cmd: string; args: string[] } {
   if (legacyVersion?.enabled && legacyVersion.version) {
     const legacyBin = resolveVersionBinary(legacyVersion.version)
     if (legacyBin) {
@@ -23,22 +52,12 @@ export function resolveClaudeBinary(legacyVersion?: LegacyVersion): { cmd: strin
     logInfo(`[claude-provider] Legacy v${legacyVersion.version} binary not found, falling back to system claude`)
   }
 
-  if (os.platform() !== 'win32') return { cmd: 'claude', args: [] }
+  if (os.platform() !== 'win32') return { cmd: recentClaudeInLoginShellPath(env, os.platform())?.claude ?? 'claude', args: [] }
 
-  for (const bin of ['claude.exe', 'claude.cmd']) {
-    try {
-      // stdio pipe on stderr suppresses the "INFO: Could not find files..."
-      // noise that `where` writes to stderr on a miss; default execSync
-      // inherits stderr so probe-fallthrough leaks into the parent's terminal.
-      const cmdPath = execSync(`where ${bin}`, {
-        encoding: 'utf-8',
-        timeout: 5000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).trim().split('\n')[0].trim()
-      return { cmd: cmdPath, args: [] }
-    } catch { /* try next */ }
-  }
-  return { cmd: 'claude', args: [] }
+  const found = findClaudeOnWindows(env)
+  if (found) return { cmd: found, args: [] }
+  logInfo(`[claude-provider] ${CLAUDE_NOT_ON_PATH}`)
+  throw new Error(CLAUDE_NOT_ON_PATH)
 }
 
 /**
@@ -48,9 +67,22 @@ export function resolveClaudeBinary(legacyVersion?: LegacyVersion): { cmd: strin
  * (cd + claude command + flags) is constructed and dispatched by pty-manager
  * because it depends on additional state (resume picker path, agents flag,
  * extra CLI flags) that is pty-manager's responsibility.
+ *
+ * The environment, the session shell, the elevated helper (gsudo) and, off
+ * Windows, the login shell asked for its PATH all come from `source` (the env
+ * the session inherits; this process's own by default); `source` itself is
+ * never changed. The Claude Code the launch line names is resolveClaudeBinary's,
+ * which takes its own env.
  */
-export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string> } {
-  const env: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: opts.sessionId } as Record<string, string>
+export function buildClaudeLocalSpawn(
+  opts: SpawnOptions,
+  source: NodeJS.ProcessEnv = process.env,
+): { cmd: string; args: string[]; env: Record<string, string> } {
+  const env: Record<string, string> = { ...source, CLAUDE_MULTI_SESSION_ID: opts.sessionId } as Record<string, string>
+  // The agent templates' variable is the app's own, set for one launch only
+  // (pty-manager, from this session's templates): a value inherited from the
+  // app's environment, in any spelling, reaches no session.
+  for (const k of Object.keys(env)) if (k.toUpperCase() === AGENTS_ENV) delete env[k]
 
   // Tell Claude Code (and any TUI) the host terminal's light/dark scheme via
   // COLORFGBG, which Claude reads FIRST when auto-detecting its theme. Without
@@ -148,8 +180,9 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
   // POSIX: the same shell the CLI probes use (login-shell.ts), so a box the
   // probe passes is a box the launch can spawn on. This used to hard-code
   // /bin/bash while the probes hard-coded /bin/zsh (final adversarial pass,
-  // 2.1.1).
-  const shell = localSessionShell(process.env, os.platform())
+  // 2.1.1). A Claude session's launcher differs only when that shell is not
+  // of the sh family (below).
+  const shell = localSessionShell(source, os.platform())
   // POSIX: spawn a LOGIN shell (-l) so PATH picks up Homebrew/nvm/npm-global
   // entries from ~/.zprofile. A Finder/Dock-launched app inherits launchd's
   // minimal PATH, and a non-login zsh never sources ~/.zprofile, so without
@@ -157,15 +190,53 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
   // check (which already uses -l, see index.ts cli:check) passes.
   const shellArgs = os.platform() === 'win32' ? [] : ['-l']
 
+  // The install or update tab the app opens to run its own line
+  // (opts.fullyQualifiedLookup): on Windows that line's program, and what it
+  // starts by a bare name (npm.cmd's node), is found only in the folders PATH
+  // names in full, never in the tab's working folder nor in one named relative
+  // to it (withFullyQualifiedProgramLookup), as in a Claude session. Any other
+  // terminal tab keeps the user's own lookup rules.
+  const tabEnv = opts.shellOnly && opts.fullyQualifiedLookup && os.platform() === 'win32' ? withFullyQualifiedProgramLookup(env) : env
+
   if (opts.shellOnly && opts.elevated) {
-    const cmd = os.platform() === 'win32' ? 'gsudo' : 'sudo'
-    return { cmd, args: [shell, ...shellArgs], env }
+    // Windows: gsudo by the full path found in PATH's folders, never by name;
+    // without it no elevated terminal starts.
+    if (os.platform() === 'win32') {
+      const gsudo = findOnWindowsPath(['gsudo.exe'], source)
+      if (!gsudo) throw new Error('An elevated terminal needs gsudo, which was not found in a folder PATH names (gsudo.exe)')
+      return { cmd: gsudo, args: [shell, ...shellArgs], env: tabEnv }
+    }
+    return { cmd: 'sudo', args: [shell, ...shellArgs], env: tabEnv }
   }
 
   if (opts.shellOnly) {
-    return { cmd: shell, args: shellArgs, env }
+    return { cmd: shell, args: shellArgs, env: tabEnv }
   }
 
-  // Claude session: spawn shell only; pty-manager writes the cd+claude command into the shell post-spawn.
-  return { cmd: shell, args: shellArgs, env }
+  // Claude session: spawn shell only; pty-manager writes the cd+claude command
+  // into the shell post-spawn. Off Windows that line is written for the sh
+  // family, so the launcher is a sh-family login shell whatever the user's
+  // own shell is (shFamilyLoginShell); a terminal tab above keeps theirs.
+  // When the user's login shell is outside the sh family, the PATH it builds
+  // is where their Claude Code (and an npm install's node) lives: the launcher
+  // carries that PATH and starts without -l (no login profile rebuilds it),
+  // and the launch line names the Claude Code found in it
+  // (resolveClaudeBinary). Without an answer from
+  // that shell, or with no Claude Code in its PATH, the launcher is a login
+  // shell that builds its own PATH, as for a sh-family user.
+  if (os.platform() !== 'win32') {
+    const launcher = shFamilyLoginShell(source, os.platform())
+    const own = claudeInLoginShellPathForLaunch(source, os.platform())
+    if (own?.claude) return { cmd: launcher, args: [], env: { ...env, PATH: own.path } }
+    return { cmd: launcher, args: shellArgs, env }
+  }
+  // Windows: the launch line starts Claude Code in the project folder, and a
+  // command shim (npm's claude.cmd) starts further programs by a bare name
+  // (`node`). The session finds those only in the folders PATH names in full,
+  // never in the project folder or one named relative to it
+  // (withFullyQualifiedProgramLookup: the lookup setting in one spelling, so
+  // the session's environment reads the same however it was inherited, and
+  // only fully qualified PATH folders). A terminal tab above keeps the user's
+  // own lookup rules, except the install or update tab.
+  return { cmd: shell, args: shellArgs, env: withFullyQualifiedProgramLookup(env) }
 }

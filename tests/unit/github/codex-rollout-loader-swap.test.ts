@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions, symbolic links and hard links. [CI] [VM] only -- never run on the owner's machine.
 /**
  * P3.12 round 1: the GitHub Session Context loader of a Codex session reads
  * only the rollout it checked. Two swaps, each made by the file-system call

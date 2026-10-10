@@ -38,9 +38,10 @@ export interface InstallRecipe {
   platform: CapabilityPlatform
   publisher: string
   sourceUrl: string
-  /** Structured argv, never interpolated with user data, run without a
-   *  shell. Null for a recipe the app only shows (`autoRunAllowed` false):
-   *  there is then nothing a careless caller could execute. */
+  /** Structured argv for a package manager, never interpolated with user
+   *  data. Null for anything else: a vendor's installer script runs only as
+   *  its documented line (`scriptUrl`), and a recipe the app only shows has
+   *  nothing a careless caller could execute. */
   command: readonly string[] | null
   /** Exactly what the user is shown and may copy, character for character
    *  the provider's documented command. */
@@ -48,8 +49,19 @@ export interface InstallRecipe {
   method: 'package-manager' | 'installer' | 'script'
   needsNetwork: boolean
   mayElevate: boolean
-  /** A remote pipe-to-shell recipe is displayed/copied, never auto-run (8.4). */
+  /** Whether the app may run it, in a visible terminal after the user
+   *  confirms its line, never on its own and never elevated. A package
+   *  manager by its argv; a vendor's installer script (ADR-024, superseding
+   *  design 8.4's show-and-copy rule for scripts) only as its documented
+   *  line naming its fixed `scriptUrl`. False: shown and copied only. */
   autoRunAllowed: boolean
+  /** A vendor's installer script the app may run: the one HTTPS address its
+   *  documented line downloads the script from, written in code beside that
+   *  line and copied from the publisher's own install docs. Main gives the
+   *  recipe a line to type only when the documented line names exactly this
+   *  address and no other (recipeRunLine), and the confirmation names its
+   *  host. Absent on every other recipe. */
+  scriptUrl?: string
   /** Non-secret caveat shown beside the command. */
   note?: string
 }
@@ -330,6 +342,14 @@ export interface ProviderLaunchOperations {
    *  none (Claude keeps one memory store for every account, and its own log
    *  folder is the app's). */
   accountFolders?(realm: RealmRef): Promise<ProviderAccountFolders | null>
+  /** ADR-025: before a launch that runs on THIS computer, the first start of
+   *  the executable `prepare` returned, off the main thread, when this app
+   *  run has not started that file yet (on Windows a new program's first
+   *  start holds the start call while the OS checks it). The accounts service
+   *  awaits it for a local launch only, never for an SSH one; it is a
+   *  pre-start, never a gate: its outcome, or a throw, changes nothing.
+   *  Absent: nothing is warmed. */
+  warmFirstStart?(executable: string): Promise<unknown>
 }
 
 /** A realm's folders the Memory page and Settings, Debug Logging show (P4.4):
@@ -376,11 +396,13 @@ export interface ReviewUsage {
   outputTokens: number
 }
 
-/** `killSettled`: a stopped review whose kill was still under way when its
- *  run settled (a slow process table) says when that kill has finished; it
- *  never rejects. The caller holding the account's lease lets go only then. */
+/** `killSettled`: a run whose processes were still being ended when it
+ *  settled (a stop whose kill was still under way, or a run that had exited
+ *  while what it left was still being ended) says when that has finished,
+ *  whatever its outcome; it never rejects. The caller holding the account's
+ *  lease lets go only then. */
 export type ReviewRunResult =
-  | { ok: true; text: string; usage?: ReviewUsage }
+  | { ok: true; text: string; usage?: ReviewUsage; killSettled?: Promise<void> }
   | { ok: false; code: 'timed-out' | 'cancelled' | 'failed' | 'no-output' | 'not-started'; message: string; usage?: ReviewUsage; killSettled?: Promise<void> }
 
 export interface ProviderReviewOperations {
@@ -416,12 +438,11 @@ export interface BackgroundRunInput {
   onDiagnostic?: (text: string) => void
 }
 
-/** `killSettled`: a stopped run whose kill was still under way when it
- *  settled says when that kill has finished; it never rejects. The caller
+/** `killSettled`: as ReviewRunResult's, whatever the outcome; the caller
  *  holding the account's lease lets go only then. `costUsd`: only when the
  *  model run is known and priced. */
 export type BackgroundRunResult =
-  | { ok: true; usage?: ReviewUsage; costUsd?: number }
+  | { ok: true; usage?: ReviewUsage; costUsd?: number; killSettled?: Promise<void> }
   | { ok: false; code: 'cancelled' | 'failed' | 'not-started'; message: string; usage?: ReviewUsage; costUsd?: number; killSettled?: Promise<void> }
 
 export interface ProviderBackgroundOperations {
@@ -443,10 +464,10 @@ export interface InsightsRunInput {
   signal?: AbortSignal
 }
 
-/** `killSettled`: as BackgroundRunResult's; the caller holding the account's
- *  lease lets go only once it has settled. */
+/** `killSettled`: as ReviewRunResult's, whatever the outcome; the caller
+ *  holding the account's lease lets go only once it has settled. */
 export type InsightsRunResult =
-  | { ok: true; text: string; usage?: ReviewUsage }
+  | { ok: true; text: string; usage?: ReviewUsage; killSettled?: Promise<void> }
   | { ok: false; code: 'not-started' | 'failed' | 'timed-out' | 'cancelled' | 'no-output'; message: string; usage?: ReviewUsage; killSettled?: Promise<void> }
 
 /** The package's report run, under its own deadline. Never rejects. */

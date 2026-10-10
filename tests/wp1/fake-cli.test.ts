@@ -76,7 +76,7 @@ if (a === 'debug models --bundled') {
   process.stdout.write(JSON.stringify({ models: [{ slug: 'gpt-5.5', display_name: 'GPT-5.5', visibility: 'list', priority: 2 }, { slug: 'gpt-5.4', display_name: 'GPT-5.4', visibility: 'hide', priority: 1 }, { slug: 'gpt-6-astra', display_name: 'GPT-6-Astra', visibility: 'list', priority: 1 }] }) + '\\n')
   process.exit(0)
 }
-if (a === 'exec --json --ephemeral --skip-git-repo-check --sandbox read-only -m gpt-5.5 -') {
+if (a === 'exec --json --ephemeral --skip-git-repo-check --ignore-user-config --ignore-rules --sandbox read-only -m gpt-5.5 -') {
   // A review (WP2 5a): reports what reached it -- the request from stdin, its
   // working folder, any Conductor variable -- as the pinned JSONL events.
   let d = ''

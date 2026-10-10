@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 // The canvas library: listing every canvas, and the one destructive operation
 // the store has.
 //

@@ -43,7 +43,7 @@ import type {
   ProviderId, ProviderRegistryDoc, RegistryResult, AuthMethod, KnownAuthState, AccountLifecycle, SessionBinding,
   CapabilityKey, CapabilityPlatform, ScopedCapabilityKey, ProviderPreference, SignInMethod, AccountsSnapshot, AccountsFailure,
   AccountsFailureCode, AccountsResult, AccountView, ProviderInstallationView, CapabilityView, PendingSetupView, ExternalDefaultView,
-  SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, CredentialClass,
+  SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, CredentialClass, PathHintView,
   ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView, ProviderLaunchRefusal,
   ProviderAccountUsageView, ProviderUsageStreamResult, AuthRealm, SignInAgainResult, SignInPhase, ProviderAccount,
 } from '../../../shared/providers'
@@ -53,7 +53,7 @@ import type { ConsumerLeaseRegistry, AccountLease, LaunchLeaseKind } from './con
 import { LAUNCH_LEASE_KINDS } from './consumer-leases'
 import type { SecretHandleStore } from './secret-handles'
 import { realmEnvForProvider } from './registry'
-import { recipeRunLine } from './recipe-run-line'
+import { installRecipeView, recipeRunsNpm } from './recipe-run-line'
 import { lowerAsciiLetters } from '../../../shared/profile-id'
 // P4.6 (row 58): what an account holds outside its sign-in is cleared before it
 // is archived, through a provider-neutral seam inside core (index.ts registers
@@ -95,11 +95,31 @@ export interface AccountsServiceDeps {
   log?: (message: string) => void
   /** Usage track MP8: the fresh reads' clock and pacing. Absent: the
    *  shipped values (tests shorten them). */
-  usageReads?: { now?: () => number; gapMs?: number; reuseMs?: number; retryFloorMs?: number; settleMaxMs?: number }
+  usageReads?: { now?: () => number; gapMs?: number; reuseMs?: number; retryFloorMs?: number; settleMaxMs?: number; accountFolderRetryMs?: readonly number[] }
   /** Whether the registry's load has run, whatever came of it. Until it
    *  has, no registry (or one not loaded) means "not read yet"; after, it
    *  means none can be read. Absent: never settled. */
   registrySettled?: () => boolean
+  /** Whether Node.js and npm are where an install tab's npm line would find
+   *  them (owner decision D3). Asked for a recipe list that has an npm
+   *  recipe; a throw counts as no answer, which marks nothing. Absent: never
+   *  asked. */
+  nodeToolsFound?: () => Promise<boolean>
+  /** Brings this process's PATH up to date before a check the user asked for
+   *  (owner decision D4): on Windows it appends the folders the registry's
+   *  PATH holds now and the process does not, never dropping one, so a tool
+   *  installed since the app started is found without a restart. A throw is
+   *  ignored. Absent: nothing to bring up to date. */
+  refreshPath?: () => Promise<unknown>
+  /** What a check the user asked for adds when it did not find the CLI: the
+   *  publisher's own install folder holds it but PATH does not name it, or a
+   *  restart would help (main's install-folder-path.ts). Display text only.
+   *  A throw counts as nothing to add. Absent: nothing is added. */
+  pathHint?: (providerId: ProviderId) => Promise<PathHintView | undefined>
+  /** "Add it to PATH for me": appends the publisher's install folder for the
+   *  provider, which main computes itself, to the user PATH and to this
+   *  process's PATH (Windows). Absent: the provider offers no such change. */
+  addToPath?: (providerId: ProviderId) => Promise<{ outcome: 'added' | 'already' } | { outcome: 'refused' | 'failed'; message: string }>
 }
 
 /** Usage track MP8 (ADR-022, bound 7): the least time between two fresh
@@ -118,6 +138,13 @@ export const USAGE_READ_TRANSIENT_LIMIT = 3
  *  The package bounds it itself (the Codex runner: CODEX_KILL_WORST_MS);
  *  past this, a package that never says goes on without it. */
 export const USAGE_READ_SETTLE_MAX_MS = 60_000
+
+/** The usage index's list of account folders (sessionsRoots): a live
+ *  realm whose folder cannot be found at that moment (its lookup throws or
+ *  answers none) holds the list back, asked again after each of these
+ *  pauses; after the last, the list goes without it and says so once. Never
+ *  longer: the index must not wait for ever. */
+export const ACCOUNT_FOLDER_RETRY_MS: readonly number[] = [250, 750, 2_000]
 
 /** One fresh read of one account (MP8): joined by a second asker, stopped
  *  by a launch, sign-in, sign-out, archive or inactivate on it. `done`
@@ -407,6 +434,11 @@ export class AccountsService {
   private readonly usageReadLeases = new Map<string, number>()
   /** The app is quitting: no fresh read starts again (stopUsageReads). */
   private usageStopped = false
+  /** Per provider, the live realms a list of its account folders already
+   *  went without (after its bounded wait), until each is found again: a
+   *  later list does not wait for them again, nor say so again. A list for
+   *  one provider never changes another's. */
+  private readonly accountFolderGaps = new Map<ProviderId, Set<string>>()
   private subscribedStore: AccountRegistryStore | null = null
   private unsubscribeStore: (() => void) | null = null
 
@@ -815,6 +847,38 @@ export class AccountsService {
     return { ok: true, installation: this.installationView(p) }
   }
 
+  /** A check the user asked for (Check again, a setup page's check, the
+   *  check after an install or update tab ends): this process's PATH is
+   *  brought up to date first (deps.refreshPath), so a CLI installed since
+   *  the app started is found without a restart, and then discover. A
+   *  refresh that fails still checks. */
+  async checkAgain(providerId: ProviderId): Promise<AccountsResult<{ installation: ProviderInstallationView; pathHint?: PathHintView }>> {
+    if (this.pkg(providerId)?.setup && this.deps.refreshPath) {
+      try { await this.deps.refreshPath() } catch { /* the check runs on the PATH there is */ }
+    }
+    const r = await this.discover(providerId)
+    if (!r.ok || r.installation.discoveryState !== 'missing' || !this.deps.pathHint) return r
+    let pathHint: PathHintView | undefined
+    try { pathHint = await this.deps.pathHint(providerId) } catch { pathHint = undefined }
+    return pathHint ? { ...r, pathHint } : r
+  }
+
+  /** "Add it to PATH for me" for a provider whose check found its CLI in its
+   *  publisher's install folder, off PATH (pathHint `add-to-path`): main
+   *  appends that folder, which it computes itself, to the user PATH and to
+   *  its own (deps.addToPath), then checks again. The renderer names only
+   *  the provider. */
+  async addToPath(providerId: ProviderId): Promise<AccountsResult<{ added: 'added' | 'already'; installation: ProviderInstallationView; pathHint?: PathHintView }>> {
+    const p = this.pkg(providerId)
+    if (!p?.setup || !this.deps.addToPath) return failure('unsupported')
+    const done = await this.deps.addToPath(p.id)
+    if (done.outcome === 'refused') return failure('unsupported', done.message)
+    if (done.outcome === 'failed') return failure('internal', done.message)
+    const checked = await this.checkAgain(p.id)
+    if (!checked.ok) return checked
+    return { ...checked, added: done.outcome }
+  }
+
   /** The models the provider's installed CLI offers in its own picker, read
    *  from the CLI (P3.9, row 39: Sentinel's live model check). Like every
    *  CLI a provider runs, the launch rule decides first, and again after the
@@ -956,26 +1020,36 @@ export class AccountsService {
     if (moved) this.changed()
   }
 
-  /** What to show and copy, and, only for a recipe main allows to run, the
-   *  one shell line a terminal tab may type for it (`runLine`, decided and
-   *  built here from the argv for this platform's terminal shell). Never the
-   *  argv itself: the renderer neither decides what runs nor builds the line. */
-  installRecipes(providerId: ProviderId): InstallRecipeView[] {
+  /** The provider's recipes for this platform, for the install discovery
+   *  last resolved (the one sessions run), not merely any install: its path
+   *  stays in main. None when it has no setup or its recipes throw. */
+  private recipesOf(providerId: ProviderId): readonly InstallRecipe[] {
     const p = this.pkg(providerId)
     if (!p?.setup) return []
-    // The update commands update the install discovery last resolved (the
-    // one sessions run), not merely any install: its path stays in main.
     const executable = this.installations.get(p.id)?.executable
-    let recipes: readonly InstallRecipe[] = []
-    try { recipes = p.setup.installRecipes(this.deps.platform, executable ? { executable } : {}) } catch { return [] }
-    return recipes.map((r) => {
-      const runLine = recipeRunLine(r, this.deps.platform)
-      return {
-        id: r.id, providerId: r.providerId, purpose: r.purpose, publisher: r.publisher, sourceUrl: r.sourceUrl, displayCommand: r.displayCommand,
-        method: r.method, needsNetwork: r.needsNetwork, mayElevate: r.mayElevate, autoRunAllowed: r.autoRunAllowed, ...(r.note !== undefined ? { note: r.note } : {}),
-        ...(runLine !== undefined ? { runLine } : {}),
-      }
-    })
+    try { return p.setup.installRecipes(this.deps.platform, executable ? { executable } : {}) } catch { return [] }
+  }
+
+  /** What to show and copy, and, only for a recipe main allows to run, the
+   *  one shell line a terminal tab may type for it (`runLine`, decided and
+   *  built here for this platform's terminal shell; installRecipeView).
+   *  Never the argv or a script's address itself: the renderer neither
+   *  decides what runs nor builds the line. `nodeFound: false` marks the npm
+   *  recipes as needing Node.js first. */
+  installRecipes(providerId: ProviderId, opts: { nodeFound?: boolean } = {}): InstallRecipeView[] {
+    return this.recipesOf(providerId).map((r) => installRecipeView(r, this.deps.platform, opts))
+  }
+
+  /** installRecipes, with Node.js looked for first when a recipe runs npm
+   *  (deps.nodeToolsFound): the list the setup pages and Settings show. No
+   *  answer (no check, or one that threw) marks nothing. */
+  async installRecipesChecked(providerId: ProviderId): Promise<InstallRecipeView[]> {
+    const recipes = this.recipesOf(providerId)
+    let nodeFound: boolean | undefined
+    if (this.deps.nodeToolsFound && recipes.some((r) => recipeRunsNpm(r))) {
+      try { nodeFound = (await this.deps.nodeToolsFound()) === true } catch { nodeFound = undefined }
+    }
+    return recipes.map((r) => installRecipeView(r, this.deps.platform, { nodeFound }))
   }
 
   // -------------------------------------------------------------------------
@@ -3156,40 +3230,67 @@ export class AccountsService {
     }
   }
 
-  /** The transcript folders of a provider's live realms (plan A13): what the
-   *  usage index reads beside the provider's own default folder. Paths only;
-   *  a realm that cannot be located now is left out. */
-  /** The same folders with whose sessions each holds (usage track MP9: the
-   *  Tokenomics account attribution): the realm's account (null only for a
-   *  record naming none), and whether it is this computer's own home
-   *  (`external`), which the user's own tools share. Paths and opaque ids
-   *  only. */
+  /** The transcript folders of a provider's live realms (plan A13), with
+   *  whose sessions each holds (usage track MP9: the Tokenomics account
+   *  attribution): the realm's account (null only for a record naming none),
+   *  and whether it is this computer's own home (`external`), which the
+   *  user's own tools share. What the usage index reads beside the
+   *  provider's own default folder; the index settles its first sort on the
+   *  first list it is given, so a list names every live realm's folder: one
+   *  that cannot be found at that moment holds the list back, asked again
+   *  after each pause (ACCOUNT_FOLDER_RETRY_MS), and only after the last
+   *  does the list go without it, saying so once. Paths and opaque ids only. */
   async sessionsRoots(providerId: ProviderId): Promise<Array<{ dir: string; accountId: string | null; external: boolean }> | null> {
     const p = this.pkg(providerId)
     if (!p?.launch || !launchKindsOf(p).includes('session')) return []
-    // Null while the registry has not been read (no store yet, or one not
-    // loaded): the index is not told "no folders" before it could know
-    // (MP9 round 1, lens B). A registry that cannot be read lists none, and
-    // so does one still missing or unloaded once its load has run (its load
-    // threw): otherwise the index would wait for it for ever.
-    const store = this.currentStore()
-    const status = store?.status()
-    if (!store || (status?.mode === 'recovery' && status.reason === 'unloaded')) {
-      let settled = false
-      try { settled = this.deps.registrySettled?.() === true } catch { settled = false }
-      return settled ? [] : null
+    const launch = p.launch
+    const pauses = this.accountFolderPauses()
+    let gaps = this.accountFolderGaps.get(p.id)
+    if (!gaps) { gaps = new Set<string>(); this.accountFolderGaps.set(p.id, gaps) }
+    for (let attempt = 0; ; attempt++) {
+      // Null while the registry has not been read (no store yet, or one not
+      // loaded): the index is not told "no folders" before it could know
+      // (MP9 round 1, lens B). A registry that cannot be read lists none, and
+      // so does one still missing or unloaded once its load has run (its load
+      // threw): otherwise the index would wait for it for ever.
+      const store = this.currentStore()
+      const status = store?.status()
+      if (!store || (status?.mode === 'recovery' && status.reason === 'unloaded')) {
+        let settled = false
+        try { settled = this.deps.registrySettled?.() === true } catch { settled = false }
+        return settled ? [] : null
+      }
+      const ready = this.ready()
+      if ('ok' in ready) return []
+      const out: Array<{ dir: string; accountId: string | null; external: boolean }> = []
+      const live = new Set<string>()
+      const missing: string[] = []
+      for (const realm of ready.doc.realms) {
+        if (realm.providerId !== p.id || realm.lifecycle !== 'active') continue
+        live.add(realm.id)
+        let dir: string | null = null
+        try { dir = await launch.sessionsDir({ authRealmId: realm.id }) } catch { dir = null }
+        if (typeof dir !== 'string' || !dir) { missing.push(realm.id); continue }
+        gaps.delete(realm.id)
+        if (out.some((o) => o.dir === dir)) continue
+        out.push({ dir, accountId: findAccount(ready.doc, realm.ownerProviderAccountId)?.id ?? null, external: realm.ownership === 'external-default' })
+      }
+      for (const id of [...gaps]) if (!live.has(id)) gaps.delete(id)
+      const waiting = missing.filter((id) => !gaps.has(id))
+      if (waiting.length === 0) return out
+      if (attempt >= pauses.length) {
+        for (const id of waiting) gaps.add(id)
+        this.log(`the usage index lists ${waiting.length} account folder(s) fewer: they could not be found`)
+        return out
+      }
+      await new Promise<void>((resolve) => { setTimeout(resolve, pauses[attempt]) })
     }
-    const ready = this.ready()
-    if ('ok' in ready) return []
-    const out: Array<{ dir: string; accountId: string | null; external: boolean }> = []
-    for (const realm of ready.doc.realms) {
-      if (realm.providerId !== p.id || realm.lifecycle !== 'active') continue
-      let dir: string | null = null
-      try { dir = await p.launch.sessionsDir({ authRealmId: realm.id }) } catch { dir = null }
-      if (typeof dir !== 'string' || !dir || out.some((o) => o.dir === dir)) continue
-      out.push({ dir, accountId: findAccount(ready.doc, realm.ownerProviderAccountId)?.id ?? null, external: realm.ownership === 'external-default' })
-    }
-    return out
+  }
+
+  /** The pauses a list of account folders waits through (tests shorten them). */
+  private accountFolderPauses(): readonly number[] {
+    const v = this.deps.usageReads?.accountFolderRetryMs
+    return Array.isArray(v) && v.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0) ? v : ACCOUNT_FOLDER_RETRY_MS
   }
 
   /** The account a provider's legacy record is linked to (usage track MP10:
@@ -3212,20 +3313,12 @@ export class AccountsService {
     return link && findAccount(ready.doc, link.accountId) ? link.accountId : null
   }
 
+  /** The same folders, paths only, by the same rule (sessionsRoots); none
+   *  while the registry has not been read. Only a package whose sessions
+   *  launch here writes session transcripts in its realms (a reviewer
+   *  invocation persists none). */
   async sessionsDirs(providerId: ProviderId): Promise<string[]> {
-    const p = this.pkg(providerId)
-    const ready = this.ready()
-    // Only a package whose sessions launch here writes session transcripts in
-    // its realms (a reviewer invocation persists none).
-    if (!p?.launch || !launchKindsOf(p).includes('session') || 'ok' in ready) return []
-    const out: string[] = []
-    for (const realm of ready.doc.realms) {
-      if (realm.providerId !== p.id || realm.lifecycle !== 'active') continue
-      let dir: string | null = null
-      try { dir = await p.launch.sessionsDir({ authRealmId: realm.id }) } catch { dir = null }
-      if (typeof dir === 'string' && dir && !out.includes(dir)) out.push(dir)
-    }
-    return out
+    return ((await this.sessionsRoots(providerId)) ?? []).map((r) => r.dir)
   }
 
   /** WP2 PR 4, P4.4 (rows 55, 56): each account's own folders -- its log
@@ -3361,6 +3454,13 @@ export class AccountsService {
       env = realmEnvForProvider(p.id, prep.baseEnv, prep.realmEnv)
     } catch {
       return release(failure('internal', 'The launch environment could not be prepared.'))
+    }
+    // ADR-025: a launch on this computer starts the executable on the main
+    // thread, which on Windows holds for seconds at a new program's first
+    // start; the package starts it once off the main thread first. Never for
+    // an SSH session (it runs on another machine), and never a gate.
+    if (input.remote !== true && typeof p.launch.warmFirstStart === 'function') {
+      try { await p.launch.warmFirstStart(prep.executable) } catch { /* the launch goes ahead */ }
     }
     return {
       ok: true, lease: leased.lease, binding: leased.binding, realmOnly: leased.realmOnly,

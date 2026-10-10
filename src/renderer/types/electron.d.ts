@@ -49,7 +49,7 @@ import type { AccountPaneStateView, CodexWebSessionView, CodexWebSignInState } f
 import type { ModelRegistry } from '../../shared/model-registry'
 export type { ModelRegistry } from '../../shared/model-registry'
 import type {
-  AccountsSnapshot as ProviderAccountsSnapshot, AccountsResult as ProviderAccountsResult, ProviderInstallationView, InstallRecipeView,
+  AccountsSnapshot as ProviderAccountsSnapshot, AccountsResult as ProviderAccountsResult, ProviderInstallationView, InstallRecipeView, PathHintView,
   SignInOutputEvent, BeginSetupRequest, SignInRequest, SignInAgainRequest, SignInAgainResult, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest,
   SecretDeposit, KnownAuthState, ProviderId as ProviderAccountsProviderId, ResolveConflictRequest, SetReviewerDefaultRequest,
   ProviderAccountUsageView, ProviderUsageStreamResult,
@@ -651,8 +651,9 @@ export interface ElectronAPI {
     selectResourcesDir: () => Promise<string | null>
     setResourcesDir: (dir: string) => Promise<boolean>
     isCliReady: () => Promise<boolean>
-    probeCli: () => Promise<{ installed: boolean; path?: string; probe: string }>
-    spawnCliSetup: (cols: number, rows: number) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
+    probeCli: () => Promise<{ installed: boolean; path?: string; probe: string; pathHint?: PathHintView }>
+    /** null: closed, or asked for again, before it started (nothing started). */
+    spawnCliSetup: (cols: number, rows: number) => Promise<string | import('../../shared/providers').ProviderLaunchRefused | null>
     killCliSetup: () => Promise<boolean>
   }
   diagnostics: {
@@ -964,8 +965,9 @@ export interface ElectronAPI {
   providerAccounts: {
     snapshot: () => Promise<ProviderAccountsSnapshot | null>
     onChanged: (cb: (snapshot: ProviderAccountsSnapshot) => void) => () => void
-    discover: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult<{ installation: ProviderInstallationView }>>
+    discover: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult<{ installation: ProviderInstallationView; pathHint?: PathHintView }>>
     installRecipes: (providerId: ProviderAccountsProviderId) => Promise<InstallRecipeView[] | ProviderAccountsResult>
+    addToPath: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult<{ added: 'added' | 'already'; installation: ProviderInstallationView; pathHint?: PathHintView }>>
     setEnabled: (providerId: ProviderAccountsProviderId, enabled: boolean) => Promise<ProviderAccountsResult>
     beginSetup: (req: BeginSetupRequest) => Promise<ProviderAccountsResult<{ accountId: string }>>
     issueSecretHandle: (accountId: string) => Promise<ProviderAccountsResult<{ handle: string }>>

@@ -4,7 +4,9 @@
  * behind by a crash or a quit mid-run; the next run sweeps them. Only direct
  * children of the one parent, only the run's own prefix, only real folders
  * (a link is never followed or removed), on POSIX only this user's, and only
- * past an age no live run reaches. Never throws.
+ * past an age no live run reaches. Never throws. The parent itself is
+ * looked at first (a link, or not a folder, lists nothing), and a caller's
+ * own check of it is asked before the listing and again before each removal.
  *
  * PURE: the filesystem is injected; nothing on disk is read or removed.
  */
@@ -19,17 +21,25 @@ const HOUR = 60 * 60 * 1000
 type Entry = { dir?: boolean; link?: boolean; linkAsFolder?: boolean; age: number; uid?: number; lstatThrows?: boolean; rmThrows?: boolean }
 
 /** `anyPathIsStale`: any path not listed reads as an old folder of this
- *  user's, so only the sweep's own checks keep it. */
-function fakeFs(parent: string, entries: Record<string, Entry>, opts: { readdirThrows?: boolean; anyPathIsStale?: boolean } = {}) {
+ *  user's, so only the sweep's own checks keep it. `parentIs`: what the
+ *  parent's own lstat says (a real folder unless told otherwise). */
+function fakeFs(parent: string, entries: Record<string, Entry>, opts: { readdirThrows?: boolean; anyPathIsStale?: boolean; parentIs?: 'folder' | 'link' | 'file' | 'gone' } = {}) {
   const removed: string[] = []
   const removedPaths: string[] = []
+  let listings = 0
   const fs: SweepFs = {
     readdirSync: (d) => {
+      listings++
       if (opts.readdirThrows) throw new Error('EACCES')
       expect(d).toBe(parent)
       return Object.keys(entries)
     },
     lstatSync: (p) => {
+      if (p === parent) {
+        const is = opts.parentIs ?? 'folder'
+        if (is === 'gone') throw new Error('ENOENT')
+        return { isDirectory: () => is === 'folder', isSymbolicLink: () => is === 'link', mtimeMs: NOW, uid: 1000 }
+      }
       const listed = path.dirname(p) === parent ? entries[path.basename(p)] : undefined
       const e = listed ?? (opts.anyPathIsStale ? { age: 2 * HOUR } : undefined)
       if (!e || e.lstatThrows) throw new Error('ENOENT')
@@ -42,7 +52,7 @@ function fakeFs(parent: string, entries: Record<string, Entry>, opts: { readdirT
       removedPaths.push(p)
     },
   }
-  return { fs, removed, removedPaths }
+  return { fs, removed, removedPaths, listings: () => listings }
 }
 
 const PARENT = path.join(path.sep, 'app', 'runs')
@@ -100,5 +110,55 @@ describe('sweepStaleFolders', () => {
     })
     expect(sweepStaleFolders(PARENT, PREFIX, { maxAgeMs: HOUR, now: NOW, fs, uid: null })).toEqual(['ccc-sentinel-codex-last'])
     expect(removed).toEqual(['ccc-sentinel-codex-last'])
+  })
+
+  it('a parent that is a link, not a folder, or gone lists nothing and removes nothing', () => {
+    for (const parentIs of ['link', 'file', 'gone'] as const) {
+      const { fs, removed, listings } = fakeFs(PARENT, { 'ccc-sentinel-codex-aaaa': { age: 2 * HOUR } }, { parentIs, anyPathIsStale: true })
+      expect(sweepStaleFolders(PARENT, PREFIX, { maxAgeMs: HOUR, now: NOW, fs, uid: null }), parentIs).toEqual([])
+      expect(listings(), parentIs).toBe(0)
+      expect(removed, parentIs).toEqual([])
+    }
+  })
+
+  it("the caller's check of the parent is asked before the listing: one that does not hold lists nothing and removes nothing", () => {
+    const { fs, removed, listings } = fakeFs(PARENT, { 'ccc-sentinel-codex-aaaa': { age: 2 * HOUR } })
+    let asked = 0
+    const out = sweepStaleFolders(PARENT, PREFIX, { maxAgeMs: HOUR, now: NOW, fs, uid: null, parentHolds: () => { asked++; return false } })
+    expect(out).toEqual([])
+    expect(asked).toBe(1)
+    expect(listings()).toBe(0)
+    expect(removed).toEqual([])
+  })
+
+  it("the caller's check is asked again before each removal: once it stops holding, the rest are kept", () => {
+    const { fs, removed } = fakeFs(PARENT, {
+      'ccc-sentinel-codex-aaaa': { age: 2 * HOUR },
+      'ccc-sentinel-codex-bbbb': { age: 2 * HOUR },
+      'ccc-sentinel-codex-cccc': { age: 2 * HOUR },
+    })
+    let holds = true
+    let asked = 0
+    const realRm = fs.rmSync
+    fs.rmSync = (p, o) => { realRm(p, o); holds = false }
+    const out = sweepStaleFolders(PARENT, PREFIX, { maxAgeMs: HOUR, now: NOW, fs, uid: null, parentHolds: () => { asked++; return holds } })
+    expect(out).toEqual(['ccc-sentinel-codex-aaaa'])
+    expect(removed).toEqual(['ccc-sentinel-codex-aaaa'])
+    // Before the listing, before the first removal, before the second (refused).
+    expect(asked).toBe(3)
+  })
+
+  it("a check that throws counts as not holding, and the sweep still never throws", () => {
+    const { fs, removed } = fakeFs(PARENT, { 'ccc-sentinel-codex-aaaa': { age: 2 * HOUR } })
+    let calls = 0
+    const parentHolds = () => { if (++calls > 1) throw new Error('lstat failed'); return true }
+    expect(sweepStaleFolders(PARENT, PREFIX, { maxAgeMs: HOUR, now: NOW, fs, uid: null, parentHolds })).toEqual([])
+    expect(removed).toEqual([])
+  })
+
+  it('a check that holds throughout sweeps as before', () => {
+    const { fs, removed } = fakeFs(PARENT, { 'ccc-sentinel-codex-aaaa': { age: 2 * HOUR }, 'ccc-sentinel-codex-bbbb': { age: 2 * HOUR } })
+    expect(sweepStaleFolders(PARENT, PREFIX, { maxAgeMs: HOUR, now: NOW, fs, uid: null, parentHolds: () => true })).toEqual(['ccc-sentinel-codex-aaaa', 'ccc-sentinel-codex-bbbb'])
+    expect(removed).toEqual(['ccc-sentinel-codex-aaaa', 'ccc-sentinel-codex-bbbb'])
   })
 })

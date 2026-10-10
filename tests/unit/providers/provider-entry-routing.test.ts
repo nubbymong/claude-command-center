@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // WP2 PR 4 (owner answers, 2026-10-04): the nine imports that reached past a
 // provider package's entry point now go through the provider interfaces,
 // reached from the registry. tests/wp1/dependency-boundaries.test.ts R4 holds

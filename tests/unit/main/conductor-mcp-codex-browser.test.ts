@@ -26,7 +26,12 @@ vi.mock('../../../src/main/vision-manager', () => ({
   getGlobalManager: vi.fn(() => null),
   launchBrowser: vi.fn(),
 }))
-vi.mock('../../../src/main/config-manager', () => ({ readConfig: vi.fn((name: string) => (name === 'settings' ? settings.value : null)), saveConfig: vi.fn() }))
+vi.mock('../../../src/main/config-manager', () => ({
+  readConfig: vi.fn((name: string) => (name === 'settings' ? settings.value : null)),
+  // No saved settings is a fresh install's missing file.
+  readConfigChecked: vi.fn((name: string) => (name === 'settings' && settings.value !== null ? { value: settings.value, outcome: 'ok' } : { value: null, outcome: 'absent' })),
+  saveConfig: vi.fn(),
+}))
 vi.mock('../../../src/main/update-watcher', () => ({ isPackagedApp: () => false, getProjectRootPath: vi.fn(() => ''), hasSourcePath: vi.fn(() => false) }))
 vi.mock('../../../src/main/ipc/setup-handlers', () => {
   const nodeFs = require('node:fs') as typeof import('node:fs')

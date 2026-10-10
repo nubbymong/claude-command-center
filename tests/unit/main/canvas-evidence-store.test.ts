@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants symbolic links and hard links. [CI] [VM] only -- never run on the owner's machine.
 // Testing-mode EVIDENCE (M3), main-side: the ladder, the clamp, the rate gate,
 // the pack cap, the pending → lock → delete cascade, the read allow-list, the
 // pack name, and the run trail at submit.

@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening); starts real processes (read-only git). [CI] [VM] only -- never run on the owner's machine.
 // WP1.54 Gate 0 characterization of CURRENT Claude account/setup behaviour
 // that WP1 touches and that had no behavioural test on the base (gaps C1, C5,
 // C6, C7, C8 in docs/wp1/baseline-2026-09-19.md). Observable inputs, outputs,
@@ -46,11 +47,18 @@ const ptySpawnFactory = () => ({
   },
 })
 vi.mock('node-pty', () => ptySpawnFactory())
+// The launch gate asks for the Claude CLI's version: answered here as on a
+// machine with none (unknown), so no Claude CLI is started from this file.
+vi.mock('../../src/main/claude-cli-version', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/claude-cli-version')>()),
+  ensureClaudeCliVersion: () => {},
+  probeClaudeCliVersion: async () => null,
+}))
 vi.mock('../../src/main/usage/usage-snapshots', () => ({ loadSnapshots: () => new Map(), saveSnapshots() {} }))
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logVerbose: vi.fn() }))
 
 const profiles = await import('../../src/main/account-profiles')
-const { spawnPty, killPty } = await import('../../src/main/pty-manager')
+const { spawnPty, killPty, REMOVED_ACCOUNT_REFUSAL } = await import('../../src/main/pty-manager')
 const { registerProviderPackage, _resetProviderRegistryForTest } = await import('../../src/main/providers/core')
 const { createClaudePackage } = await import('../../src/main/providers/claude')
 const { getConfigDir } = await import('../../src/main/config-manager')
@@ -144,11 +152,12 @@ describe('C1: local Claude spawn resolves a profile and isolates it through USER
     else expect(env.HOME).toBeUndefined()
   })
 
-  it('an invalid or escaping requested id falls back to the primary profile instead of failing the spawn', async () => {
-    await launch('wp1-c1-invalid', { shellOnly: false, profileId: '../escape' })
-    expect(lastEnv().USERPROFILE).toBe(profiles.getProfileConfigDir(primaryId))
-    await launch('wp1-c1-missing', { shellOnly: false, profileId: 'profile-does-not-exist' })
-    expect(lastEnv().USERPROFILE).toBe(profiles.getProfileConfigDir(primaryId))
+  it('an invalid, escaping or removed requested account starts nothing and says why, never running on the primary profile', () => {
+    const before = spawned.length
+    sids.push('wp1-c1-invalid', 'wp1-c1-missing')
+    expect(() => spawnPty(win, 'wp1-c1-invalid', { cwd: sandbox, shellOnly: false, profileId: '../escape' } as never)).toThrow(REMOVED_ACCOUNT_REFUSAL)
+    expect(() => spawnPty(win, 'wp1-c1-missing', { cwd: sandbox, shellOnly: false, profileId: 'profile-does-not-exist' } as never)).toThrow(REMOVED_ACCOUNT_REFUSAL)
+    expect(spawned.length).toBe(before)
   })
 
   it('an interactive session with no requested profile never runs on the bare global home (clobber-proofing)', async () => {
@@ -457,6 +466,8 @@ describe('C7: setup:isCliReady and setup:spawnCliSetup on the base', () => {
     vi.useFakeTimers()
     const saved = Object.getOwnPropertyDescriptor(process, 'platform')!
     const savedShell = process.env.SHELL
+    const savedPath = process.env.PATH
+    const restorePath = () => { if (savedPath === undefined) delete process.env.PATH; else process.env.PATH = savedPath }
     try {
       const { registerSetupHandlers } = await vi.importActual<typeof import('../../src/main/ipc/setup-handlers')>('../../src/main/ipc/setup-handlers')
       ipcHandlers.clear()
@@ -464,13 +475,23 @@ describe('C7: setup:isCliReady and setup:spawnCliSetup on the base', () => {
       const invoke = (ch: string, ...args: any[]) => ipcHandlers.get(ch)!({ sender: {} } as any, ...args)
 
       Object.defineProperty(process, 'platform', { value: 'win32' })
+      // A Windows PATH on every runner: fully qualified folders (a drive, a
+      // share) among a relative one, the current folder and a POSIX one.
+      process.env.PATH = ['C:\\wp1\\bin', 'wp1\\relative', '.', '/usr/wp1/bin', '\\\\wp1-host\\share\\tools', 'D:\\wp1 tools'].join(';')
+      process.env.WP1_C7_PARENT_VALUE = 'from-the-parent'
       expect(await invoke('setup:spawnCliSetup', 100, 20)).toBe('__cli_setup__')
       const w = ptyCalls[0]
       expect(w.cmd).toBe('claude-resolved')
       expect(w.args).toEqual([])
       expect(w.opts.cwd).toBe(installPath)
       // [to be inverted by decision D3 / design 12] the setup PTY inherits the raw parent environment
-      expect(w.opts.env.PATH ?? w.opts.env.Path).toBe(process.env.PATH ?? process.env.Path)
+      expect(w.opts.env.WP1_C7_PARENT_VALUE).toBe('from-the-parent')
+      // ...apart from PATH, kept to its fully qualified folders (the program
+      // lookup rule every Windows start of Claude Code has): the relative, the
+      // current-folder and the POSIX entries are dropped.
+      expect(w.opts.env.PATH ?? w.opts.env.Path).toBe(['C:\\wp1\\bin', '\\\\wp1-host\\share\\tools', 'D:\\wp1 tools'].join(';'))
+      restorePath()
+      delete process.env.WP1_C7_PARENT_VALUE
       w.pty.dataCb?.('hello from claude')
       w.pty.exitCb?.({ exitCode: 3 })
       expect(sends).toEqual([['pty:data:__cli_setup__', 'hello from claude'], ['pty:exit:__cli_setup__', 3]])
@@ -486,15 +507,19 @@ describe('C7: setup:isCliReady and setup:spawnCliSetup on the base', () => {
       expect(call.opts.cols).toBe(100)
       expect(call.opts.rows).toBe(20)
       expect(call.opts.cwd).toBe(installPath)
-      // The resolved claude command is typed into the login shell after 500 ms.
+      // Changed with the sh-family session launcher: `claude` is typed into the
+      // user's own login shell after 500 ms, which finds Claude Code by name, as
+      // the CLI check asks it (Windows starts the resolved command directly).
       vi.advanceTimersByTime(499)
       expect(call.pty.write).not.toHaveBeenCalled()
       vi.advanceTimersByTime(1)
-      expect(call.pty.write).toHaveBeenCalledWith('claude-resolved\r')
+      expect(call.pty.write).toHaveBeenCalledWith('claude\r')
       await invoke('setup:killCliSetup')
       expect(call.pty.kill).toHaveBeenCalledTimes(1) // live: killed
     } finally {
       if (savedShell === undefined) delete process.env.SHELL; else process.env.SHELL = savedShell
+      restorePath()
+      delete process.env.WP1_C7_PARENT_VALUE
       Object.defineProperty(process, 'platform', saved)
       vi.useRealTimers()
     }

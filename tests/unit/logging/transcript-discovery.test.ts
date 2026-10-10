@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 /**
  * Pure unit tests for transcript-discovery.ts.
  *

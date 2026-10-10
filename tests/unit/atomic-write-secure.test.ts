@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants symbolic links. [CI] [VM] only -- never run on the owner's machine.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 // NOTE: 'fs' and 'node:fs' resolve to the SAME module under vitest, so the
 // fixture writes below DO go through the mock. An earlier version of this comment

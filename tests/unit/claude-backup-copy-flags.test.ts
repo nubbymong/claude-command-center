@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 // Fixtures use the 'fs' specifier; only 'node:fs' is mocked, so setup writes
 // never land in the recorded copy list.

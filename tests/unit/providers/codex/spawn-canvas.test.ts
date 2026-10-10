@@ -32,6 +32,8 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
 }))
 vi.mock('../../../../src/main/config-manager', () => ({
   readConfig: () => (globalThis as any).__mockSettings ?? {},
+  // The launch reads the built-in tools switches the checked way.
+  readConfigChecked: () => (globalThis as any).__mockSettingsRead ?? { outcome: 'ok', value: (globalThis as any).__mockSettings ?? {} },
   getConfigDir: () => '/cfg',
 }))
 const logWarn = vi.fn()
@@ -91,6 +93,7 @@ beforeEach(() => {
 afterEach(() => {
   delete (globalThis as any).__mockMcpPort
   delete (globalThis as any).__mockSettings
+  delete (globalThis as any).__mockSettingsRead
 })
 
 describe('approvals (PB2), by parity per preset', () => {
@@ -154,6 +157,42 @@ describe('approvals (PB2), by parity per preset', () => {
   it('a tool name is a plain word or nothing is written', () => {
     expect(() => codexToolApprovalArg('canvas_render;x')).toThrow()
     expect(() => codexToolApprovalArg('a b')).toThrow()
+  })
+})
+
+// The built-in tools switches, as every reader of them reads them
+// (conductor-tools-switch.ts): settings that are there but cannot be read
+// keep the built-in tools off until they can; a fresh install has them on.
+describe('the built-in tools stay off while the settings cannot be read', () => {
+  const conductorArgs = (args: string[]) => args.filter((a) => a.startsWith('mcp_servers.conductor.'))
+  const UNRESTRICTED = { model: 'gpt-5.5', permissionsPreset: 'unrestricted' as const }
+
+  it.each([
+    ['cannot be read', { outcome: 'failed', value: null }],
+    ['do not parse', { outcome: 'unparseable', value: null }],
+    ['are not a settings object', { outcome: 'ok', value: ['x'] }],
+  ])('settings that %s: no built-in tools reach the launch, and no credential is issued', (_name, read) => {
+    ;(globalThis as any).__mockSettingsRead = read
+    const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: UNRESTRICTED })
+    expect(conductorArgs(out.args)).toEqual([])
+    expect(out.env.CONDUCTOR_MCP_TOKEN).toBeUndefined()
+  })
+
+  it('a fresh install (no settings file yet): the built-in tools reach the launch, every group on', () => {
+    ;(globalThis as any).__mockSettingsRead = { outcome: 'absent', value: null }
+    const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: UNRESTRICTED })
+    expect(conductorArgs(out.args)).toContain('mcp_servers.conductor.enabled=true')
+    expect(keysOf(out.args).sort()).toEqual(CODEX_CONDUCTOR_TOOLS.map((t) => codexToolApprovalArg(t.name)).sort())
+    expect(out.env.CONDUCTOR_MCP_TOKEN).toBe('tok-sid')
+  })
+
+  it('saved off: none; a group saved off gets no key, and only true or false counts as saved', () => {
+    ;(globalThis as any).__mockSettings = { conductorToolsEnabled: false }
+    expect(conductorArgs(buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: UNRESTRICTED }).args)).toEqual([])
+    ;(globalThis as any).__mockSettings = { conductorTools: { vision: false, canvas: 'no' } }
+    const keys = keysOf(buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: UNRESTRICTED }).args)
+    expect(keys.some((k) => /\.tools\.vision_/.test(k))).toBe(false)
+    expect(keys).toContain(codexToolApprovalArg('canvas_render'))
   })
 })
 

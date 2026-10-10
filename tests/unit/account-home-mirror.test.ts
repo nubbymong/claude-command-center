@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links; changes ACLs on temp folders. [CI] [VM] only -- never run on the owner's machine.
 // tests/unit/account-home-mirror.test.ts
 // USERPROFILE fake-home model: the profile dir mirrors the real home (dot-dirs ->
 // junctions, dot-files -> hard links) so tools behave identically, while .claude

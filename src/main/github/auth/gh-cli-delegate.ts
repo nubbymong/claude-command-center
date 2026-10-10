@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { redactTokens } from '../security/token-redactor'
+import { ghStartCommand } from '../gh-program'
 
 export interface RunResult {
   stdout: string
@@ -49,13 +50,23 @@ export async function ghAuthStatus(run: RunGh): Promise<string[]> {
 }
 
 /**
- * Default `gh` runner using child_process.spawn. Windows: Node's spawn
- * finds `gh.cmd` on PATH without needing shell:true.
+ * Default `gh` runner using child_process.spawn, with no shell, started as
+ * ghStartCommand says (gh-program.ts): on Windows gh.exe by the full path found
+ * in the folders PATH names in full, never by name, with the child's own lookup
+ * kept to them; not found rejects, which every caller reads as "no gh auth
+ * available". Elsewhere `gh` from PATH, as before. `env` is where PATH is read
+ * (this process's own by default).
  */
-export function defaultGhRun(): RunGh {
-  return (args) =>
-    new Promise<RunResult>((resolve, reject) => {
-      const proc = spawn('gh', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+export function defaultGhRun(env: NodeJS.ProcessEnv = process.env): RunGh {
+  return async (args) => {
+    const start = await ghStartCommand(args, env)
+    if ('refused' in start) throw new Error(start.refused)
+    return new Promise<RunResult>((resolve, reject) => {
+      const proc = spawn(start.file, start.args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        ...(start.env ? { env: start.env } : {}),
+        ...(start.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+      })
       let stdout = ''
       let stderr = ''
       proc.stdout.on('data', (c) => (stdout += c.toString()))
@@ -63,4 +74,5 @@ export function defaultGhRun(): RunGh {
       proc.on('error', reject)
       proc.on('close', (code) => resolve({ stdout, stderr, code: code ?? -1 }))
     })
+  }
 }

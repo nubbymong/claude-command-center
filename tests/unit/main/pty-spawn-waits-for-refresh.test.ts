@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening); its managed launch asks Claude Code for its version (on Windows the suite's empty stand-in, found first on PATH, which cannot start; on Linux and macOS a login shell and the claude it finds, real processes). [CI] [VM] only -- never run on the owner's machine.
 // rc.15 review R3 (Codex, 2026-09-06; aicc_planning#49): the reviewer's
 // characterization (evidence/accounts-refresh-pty.review.test.ts) flipped into
 // the desired behaviour, credit Codex rc.15 stability review; RED against
@@ -22,11 +23,17 @@
 // control that used to make that claim about a managed spawn now makes it about
 // an unmanaged one, and asserts the new ordering for the managed case.
 //
+// The managed launch's version check first awaits the first-start warm-up (ADR-025).
+// Here that is the setup file's default fake (tests/unit/setup.ts), which answers at
+// once; the real one started the stand-in claude.exe in a worker thread, which the home
+// guard refuses (a TEST_ISOLATION_VIOLATION on Windows CI).
+//
 // Real fetchAccountUsage held at a mocked POST; real spawnPty with node-pty mocked.
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { putFakeClaudeOnPath } from '../../helpers/fake-claude-on-path'
 
 class FakePty {
   pid = 4242
@@ -89,6 +96,11 @@ const consumers = await import('../../../src/main/profile-consumers')
 const { fetchAccountUsage, _resetLiveUsageForTest, _resetSnapshotsForTest } = await import('../../../src/main/usage/account-usage')
 const { isPtySessionLive } = await import('../../../src/main/session-registry')
 const canvasLink = await import('../../../src/main/canvas/canvas-session-link')
+// On Windows an interactive (Claude) launch names Claude Code by the full path
+// its PATH walk finds, and starts nothing without one: a stand-in it finds
+// (tests/helpers), ahead of any Claude Code installed on the machine.
+const fakeClaude = putFakeClaudeOnPath()
+afterAll(() => fakeClaude.restore())
 const fakeProvider = {
   // No resolveBinary here: the local launch resolves Claude through the
   // provider (WP2 PR 4), so the real package's (layered below) answers.

@@ -7,7 +7,9 @@ import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('../../src/main/channel-storage', () => ({
   readJsonFile: (_n: string, seed: () => unknown) => seed(),
-  writeJsonFile: vi.fn(),
+  writeJsonFile: vi.fn(() => true),
+  peekJsonFile: () => ({ kind: 'absent' }),
+  quarantinedCopyOf: () => null,
 }))
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
 vi.mock('../../src/main/account-profiles', () => ({ getProfileConfigDir: () => '' }))

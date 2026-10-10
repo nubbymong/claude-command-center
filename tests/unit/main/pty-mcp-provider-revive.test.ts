@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // [host] The real spawnPty with node-pty faked (the mocks are
 // pty-codex-color-replies.test.ts's) and the real record of which assistant a
 // session's MCP credential was issued to (conductor-mcp-server.ts). An Ask tab

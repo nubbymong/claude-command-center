@@ -1,5 +1,7 @@
 // Single-quoting a value for the shell a Conductor terminal runs: PowerShell
-// on Windows, a POSIX shell elsewhere. PURE, no imports, so both the Claude
+// on Windows, a shell of the sh family elsewhere (sh, bash, zsh, dash, ksh;
+// main/login-shell.ts isShFamilyShell); off Windows, a line quoted here is for
+// a shell of that family only. PURE, no imports, so both the Claude
 // launch line (src/main/spawn-claude-command.ts, which re-exports
 // quoteArgForShell) and provider core (the install-recipe run line) share
 // one implementation without provider core reaching outside core and shared.
@@ -22,7 +24,7 @@ const PS_SINGLE_QUOTE_CLASS = /[\u0027\u2018\u2019\u201A\u201B]/g
 /**
  * Escape a path for single-quoting in the target shell.
  *   - win32 (PowerShell): double every single-quote delimiter (see above).
- *   - posix (sh): close-quote, backslash-escape, reopen-quote.
+ *   - posix (the sh family only): close-quote, backslash-escape, reopen-quote.
  *
  * Doubling is the correct escape for ALL of them: PowerShell reads a doubled
  * delimiter inside a single-quoted string as one literal character, whichever

@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 // ccc-ux:// protocol + canvas store — the serving-confinement suite.
 //
 // Real filesystem in a temp resources dir (the resolver's containment layers

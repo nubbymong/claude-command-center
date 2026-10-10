@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // The deferred managed spawn (2026-09-22) and what it must CARRY across its
 // own re-entry. Two defects the re-attack found, both on the common path:
 //
@@ -34,8 +35,12 @@ const h = vi.hoisted(() => ({
   spawns: [] as Array<{ args: string[]; cwd: string; env: Record<string, string | undefined> }>,
   /** What `git worktree list --porcelain` answers, or null for "git failed". */
   worktreePorcelain: null as string | null,
+  /** The git the picker's lookup finds (its full path, from PATH's folders). */
+  pickerGit: '/stand-in/bin/git',
   /** Everything written INTO a spawned PTY: the launch command lands here 300 ms after the spawn. */
   writes: [] as string[],
+  /** Any other program a child-process call asked for (refused, never run). */
+  otherChildren: [] as string[],
 }))
 const UUID = '11111111-2222-3333-4444-555555555555'
 
@@ -62,12 +67,18 @@ vi.mock('child_process', async (importOriginal) => {
   return {
     ...real,
     execFile: ((file: string, args: string[], opts: unknown, cb: (err: Error | null, stdout: string) => void) => {
-      if (file === 'git' && Array.isArray(args) && args[0] === 'worktree') {
+      if (file === h.pickerGit && Array.isArray(args) && args.includes('worktree')) {
         setTimeout(() => (h.worktreePorcelain === null ? cb(new Error('git failed'), '') : cb(null, h.worktreePorcelain)), 0)
         return { on() {}, kill() {} }
       }
-      return (real.execFile as (...a: unknown[]) => unknown)(file, args, opts, cb)
-    }) as typeof real.execFile,
+      // Any other execFile child is recorded and refused, never started
+      // (afterEach checks there was none). Making the test's profile
+      // owner-only may still run the system's permissions tool, on the test's
+      // own temp folder only.
+      h.otherChildren.push(String(file))
+      setTimeout(() => cb?.(new Error('no other program is started in this test'), ''), 0)
+      return { on() {}, kill() {}, unref() {} }
+    }) as unknown as typeof real.execFile,
   }
 })
 vi.mock('../../../src/main/spawn-claude-command', async (importOriginal) => ({
@@ -99,6 +110,13 @@ vi.mock('../../../src/main/providers/claude/spawn', async (importOriginal) => ({
   resolveClaudeBinary: () => ({ cmd: 'claude', args: [] }),
   resolveHostColorScheme: () => 'dark',
 }))
+// The launch gate asks for the Claude CLI's version: answered here as on a
+// machine with none (unknown), so no Claude CLI is started from this file.
+vi.mock('../../../src/main/claude-cli-version', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/claude-cli-version')>()),
+  ensureClaudeCliVersion: () => {},
+  probeClaudeCliVersion: async () => null,
+}))
 vi.mock('../../../src/main/vision-manager', () => ({ isGlobalVisionRunning: () => false, getGlobalVisionConfig: () => null, teardownVisionSession: () => {} }))
 vi.mock('../../../src/main/canvas/canvas-plugin', () => ({ ensureCanvasPlugin: () => null }))
 vi.mock('../../../src/main/hooks', () => ({ getGateway: () => null, isExactBindSourceActive: () => true }))
@@ -120,7 +138,7 @@ vi.mock('../../../src/main/config-manager', async (importOriginal) => ({
 const profiles = await import('../../../src/main/account-profiles')
 const consumers = await import('../../../src/main/profile-consumers')
 const identity = await import('../../../src/main/claude-account-identity')
-const { spawnPty, killPty, isSessionWritable } = await import('../../../src/main/pty-manager')
+const { spawnPty, killPty, isSessionWritable, _setPickerGitLookupForTest } = await import('../../../src/main/pty-manager')
 const { _resetProjectScanStateForTest, _resetManagedLaunchReportsForTest, listManagedLaunchReports } = await import('../../../src/main/managed-launch-diagnostics')
 const { registerFakeClaudePackage } = await import('../../helpers/claude-package')
 
@@ -157,18 +175,21 @@ beforeEach(() => {
   profiles._setRootsForTest({ resourcesDir: root, sharedRoot: path.join(root, 'global', '.claude') })
   profileId = profiles.createProfile('Synthetic profile').id
   identity._resetForTest(); consumers._resetProfileConsumersForTest()
-  h.resumeTargetCwd = null; h.resumeLaunchCwd = null; h.bindsLeft = 0; h.spawns.length = 0; h.writes.length = 0; h.worktreePorcelain = null
+  h.resumeTargetCwd = null; h.resumeLaunchCwd = null; h.bindsLeft = 0; h.spawns.length = 0; h.writes.length = 0; h.worktreePorcelain = null; h.otherChildren.length = 0
   messages.length = 0; payloads.length = 0
   _resetProjectScanStateForTest()
   _resetManagedLaunchReportsForTest()
   registerFakeClaudePackage({ resolveBinary: () => ({ cmd: 'claude', args: [] }) } as never)
+  _setPickerGitLookupForTest(async () => h.pickerGit)
 })
 afterEach(() => {
   for (const id of ids) killPty(id)
+  _setPickerGitLookupForTest(null)
   identity._resetForTest(); consumers._resetProfileConsumersForTest()
   profiles._setRootsForTest(null)
   for (const d of [root, ...dirs.splice(0)]) { try { fs.rmSync(d, { recursive: true, force: true }) } catch { /* ignore */ } }
   _resetProjectScanStateForTest()
+  expect(h.otherChildren).toEqual([])
 })
 
 describe('a deferred managed spawn carries its self-captured resume target across the re-entry', () => {

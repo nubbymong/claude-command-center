@@ -1,3 +1,4 @@
+// HOST QUARANTINE: starts real processes. [CI] [VM] only -- never run on the owner's machine.
 // scripts/session-guard.mjs — `claim` honours the worktree location CCC
 // designates through CCC_SESSION_WORKTREE (ADR-016), so the Agent Canvas can
 // serve the session's worktree. Runs the real script against a throwaway repo.

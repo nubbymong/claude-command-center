@@ -9,6 +9,18 @@
 // real links are in insights-codex-links.test.ts (quarantined: CI and VM only).
 //
 // Guarantees held here:
+//  - reports, the catalogue and the runs folders are written only into
+//    `insights` when it is Insights' own folder (a real folder, its real path
+//    `<resources>/insights`, on POSIX this user's and writable by no one
+//    else): a Claude Code run, a Codex report, a roll-up and the catalogue
+//    are refused before any launch when it is not, and start-up never fails
+//    on the catalogue; each run's own folder is made new (an entry already
+//    at its name refuses the run), and every file of a run, Claude Code's
+//    report and its facets included, is written by one writer that checks
+//    the run's folder (and the facets folder made in it) again first;
+//  - main reads a report, a run's figures, the catalogue and the files a
+//    Claude Code report is copied from only as the regular file each is, at
+//    a bounded size, never waiting on one;
 //  - the runs folder, and `insights` above it, are real folders (never links)
 //    and (POSIX) both writable by no one else, checked before any launch,
 //    again just before the stale sweep and again just before the run's
@@ -80,6 +92,25 @@ const h = vi.hoisted(() => ({
   prepareCalls: [] as Array<Record<string, unknown>>,
   execCalls: [] as Array<{ cwd: string; env: Record<string, string>; prompt: string }>,
   released: 0,
+  /** Claude Code terminals started (none may be, in these cases). */
+  ptySpawns: 0,
+  /** Accounts the accounts snapshot lists. */
+  snapAccounts: [] as Array<Record<string, unknown>>,
+  /** Told of each mkdirSync, before it runs, with the path it names. */
+  beforeMkdir: null as null | ((p: string) => void),
+  /** A Claude Code account's home (its usage data is Claude Code's report)
+   *  and its profile id; none by default (the default home, never read). */
+  claudeHome: '',
+  claudeProfile: null as null | string,
+  /** What the Claude Code terminal does before it ends (writes nothing by
+   *  default); unset, no terminal starts. */
+  ptyRun: null as null | (() => void),
+  /** The KPI reply a Claude Code run's analysis gets; unset, none runs. */
+  claudeKpis: null as null | string,
+  /** A rename that fails, by its destination (a full disk). */
+  failRename: null as null | ((to: string) => boolean),
+  /** Warnings the app logged. */
+  warns: [] as string[],
   real: null as any,
 }))
 
@@ -207,7 +238,13 @@ async function wrapFs(real: any): Promise<any> {
     },
     createWriteStream: f1('createWriteStream'),
     unlinkSync: f1('unlinkSync', false),
-    renameSync: (a: any, b: any) => real.renameSync(isStr(a) ? follow(a, false) : a, isStr(b) ? follow(b, false) : b),
+    // A rename onto a link replaces the link, as the OS does.
+    renameSync: (a: any, b: any) => {
+      if (isStr(b) && h.failRename?.(path.resolve(b))) throw Object.assign(new Error(`ENOSPC: no space left on device, rename -> ${b}`), { code: 'ENOSPC' })
+      const to = isStr(b) ? follow(b, false) : b
+      real.renameSync(isStr(a) ? follow(a, false) : a, to)
+      if (isStr(b)) delLink(to)
+    },
     copyFileSync: (a: any, b: any, m?: any) => real.copyFileSync(isStr(a) ? follow(a, true) : a, isStr(b) ? follow(b, true) : b, m),
     realpathSync,
     lstatSync: (p: any, o?: any) => {
@@ -220,6 +257,7 @@ async function wrapFs(real: any): Promise<any> {
     },
     mkdirSync: (p: any, o?: any) => {
       if (!isStr(p)) return real.mkdirSync(p, o)
+      h.beforeMkdir?.(path.resolve(p))
       const q = follow(p, false)
       if (linkAt(q)) { if (o?.recursive) return undefined; throw Object.assign(new Error(`EEXIST: ${p}`), { code: 'EEXIST' }) }
       return real.mkdirSync(q, o)
@@ -277,8 +315,39 @@ vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: 
 vi.mock('../../../src/main/update-watcher', () => ({ getInstallPath: () => '', getProjectRootPath: () => '' }))
 vi.mock('../../../src/main/profile-consumers', () => ({ acquireProfileConsumer: () => () => {}, waitForProfileRefresh: async () => {} }))
 vi.mock('../../../src/main/pty-manager', () => ({ resolveClaudeForPty: () => ({ cmd: 'claude' }), withProfileHome: (env: unknown) => env }))
-vi.mock('node-pty', () => ({ spawn: () => { throw new Error('no Claude PTY in a Codex run') } }))
-vi.mock('../../../src/main/claude-headless', () => ({ spawnClaudeHeadless: async () => { throw new Error('no Claude run in a Codex run') } }))
+// A Claude Code terminal only where a case gives it a step (`ptyRun`): it
+// does that step and ends at once with exit code 0.
+vi.mock('node-pty', () => ({
+  spawn: () => {
+    h.ptySpawns++
+    const step = h.ptyRun
+    if (!step) throw new Error('no Claude PTY in a Codex run')
+    return { onData: () => {}, write: () => {}, kill: () => {}, onExit: (cb: (e: { exitCode: number }) => void) => { step(); cb({ exitCode: 0 }) } }
+  },
+}))
+// No Claude Code account unless a case names one (`claudeProfile`): a Claude
+// Code run then resolves its home (`claudeHome`).
+vi.mock('../../../src/main/account-profiles', async (orig) => ({
+  ...(await orig<typeof import('../../../src/main/account-profiles')>()),
+  getPrimaryProfileId: () => h.claudeProfile,
+  getProfileConfigDir: () => h.claudeHome,
+  listProfiles: () => [],
+  setupProfileLinks: () => {},
+}))
+vi.mock('../../../src/main/managed-launch-diagnostics', async (orig) => ({
+  ...(await orig<typeof import('../../../src/main/managed-launch-diagnostics')>()),
+  gateManagedLaunch: async () => null,
+}))
+vi.mock('../../../src/main/claude-headless', () => ({
+  spawnClaudeHeadless: async () => {
+    if (h.claudeKpis === null) throw new Error('no Claude run in a Codex run')
+    return { code: 0, stdout: h.claudeKpis, stderr: '' }
+  },
+}))
+vi.mock('../../../src/main/debug-logger', async (orig) => ({
+  ...(await orig<typeof import('../../../src/main/debug-logger')>()),
+  logWarn: (...a: unknown[]) => { h.warns.push(a.map(String).join(' ')) },
+}))
 vi.mock('../../../src/main/providers/codex/insights-exec', () => ({
   CODEX_INSIGHTS_TIMEOUT_MS: 600_000,
   runCodexInsightsExec: async () => { throw new Error('reached past the package entry point') },
@@ -313,7 +382,7 @@ vi.mock('../../../src/main/providers/core', async (importOriginal) => ({
 vi.mock('../../../src/main/provider-accounts', () => ({
   getAccountsService: () => ({
     launchRefusal: () => null,
-    snapshot: () => ({ revision: 1, providers: [], groups: [], pendingSetups: [], externalDefaults: [], conflicts: [], reviewerNotices: [], identities: [], accounts: [] }),
+    snapshot: () => ({ revision: 1, providers: [], groups: [], pendingSetups: [], externalDefaults: [], conflicts: [], reviewerNotices: [], identities: [], accounts: h.snapAccounts }),
     prepareLaunch: async (input: Record<string, unknown>) => {
       h.prepareCalls.push(input)
       return {
@@ -333,6 +402,12 @@ const win = () => null
 const RUNS = '.insights-codex-runs'
 const R = () => h.real
 const NO_FOLDER = 'This report could not be written: no empty folder could be made for it.'
+/** Why nothing is written when `insights` is not Insights' own folder. */
+const INSIGHTS_REFUSED = "Nothing was written: the insights folder in the app's resources folder could not be checked as Insights' own folder. It must be a real folder, not a link or junction, and on macOS and Linux one only you can write to (a drive without file permissions cannot hold one)."
+/** Why nothing is written when a run's own folder cannot be made new and checked. */
+const RUN_FOLDER_REFUSED = "Nothing was written: this run's own folder in the insights folder could not be made and checked."
+/** The run-id shaped folders directly in `dir` (a run's own folders). */
+const runFolders = (dir: string): string[] => (R().existsSync(dir) ? R().readdirSync(dir).filter((n: string) => /^\d{4}-\d{2}-\d{2}-/.test(n)) : [])
 
 function rollout(cwd: string, text: string): string {
   const at = new Date().toISOString()
@@ -379,6 +454,8 @@ beforeEach(() => {
   h.fifo.clear(); h.fifoFds.clear(); h.hang.clear(); h.hangStreams = []
   h.hard.clear(); h.hardOnOpen.clear(); h.hardGoneOnOpen.clear(); h.stall.clear(); h.hangReaddir.clear(); h.destroys = 0; h.closes = 0
   h.inoFor = null; h.onChmod = null; h.fdPaths.clear(); h.fdTargets.clear(); h.fstatUidFor = null
+  h.ptySpawns = 0; h.snapAccounts = []; h.beforeMkdir = null
+  h.claudeHome = ''; h.claudeProfile = null; h.ptyRun = null; h.claudeKpis = null; h.failRename = null; h.warns = []
   h.gate = new Promise<void>((r) => { h.release = r })
 })
 afterEach(() => {
@@ -388,6 +465,7 @@ afterEach(() => {
   else (process as any).getuid = realGetuid
   h.links.clear(); h.hard.clear()
   h.onReaddir = null; h.onLstat = null; h.onRun = null; h.uidFor = null; h.modeFor = null; h.inoFor = null; h.onChmod = null; h.fstatUidFor = null
+  h.beforeMkdir = null; h.ptyRun = null; h.failRename = null
   const t = h.tmpRoot
   if (t && basename(t).startsWith(PREFIX) && nodePath.resolve(dirname(t)) === nodePath.resolve(os.tmpdir())) {
     try { R().rmSync(t, { recursive: true, force: true }) } catch { /* ignore */ }
@@ -409,15 +487,15 @@ describe('the runs folder is a real folder, checked before any launch [host]', (
     expect(runner.isRunning()).toBe(false)
   })
 
-  it("an `insights` folder that is a link: the runs folder is never made through it; refused before any launch [host]", async () => {
+  it("an `insights` folder that is a link: refused with the reason before any launch; nothing (no record, no run folder, no runs folder) is made through it [host]", async () => {
     const outside = join(h.tmpRoot, 'outside-insights')
     R().mkdirSync(outside, { recursive: true })
     h.links.set(nodePath.resolve(insightsDir()), outside)
-    const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
-    expect(runOf(id)).toMatchObject({ status: 'failed', error: NO_FOLDER })
-    expect(R().readdirSync(outside)).not.toContain(RUNS)
+    await expect(runner.runCodexInsights(win, { accountId: ACCT })).rejects.toThrow(INSIGHTS_REFUSED)
+    expect(R().readdirSync(outside)).toEqual([])
     expect(h.prepareCalls).toEqual([])
     expect(h.execCalls).toHaveLength(0)
+    expect(runner.isRunning()).toBe(false)
   })
 
   it('on POSIX a runs folder that others can write to is refused before any launch [host]', async () => {
@@ -448,13 +526,15 @@ describe('the runs folder is a real folder, checked before any launch [host]', (
     const ok = await runner.runCodexInsights(win, { accountId: ACCT }) as string
     expect(runOf(ok).status).toBe('complete')
     expect(chmods).toEqual([0o700])
-    // The folder stays writable by others: refused, nothing launched.
+    // The folder stays writable by others: refused with the reason, nothing
+    // written into it and nothing launched.
     h.onChmod = null
     for (const mode of [0o040775, 0o040757, 0o040777]) {
       insMode = mode
       h.prepareCalls = []
-      const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
-      expect(runOf(id), mode.toString(8)).toMatchObject({ status: 'failed', error: NO_FOLDER })
+      const before = runFolders(insightsDir())
+      await expect(runner.runCodexInsights(win, { accountId: ACCT }), mode.toString(8)).rejects.toThrow(INSIGHTS_REFUSED)
+      expect(runFolders(insightsDir()), mode.toString(8)).toEqual(before)
       expect(h.prepareCalls).toEqual([])
     }
     // Another user's insights folder: refused, never changed.
@@ -462,8 +542,7 @@ describe('the runs folder is a real folder, checked before any launch [host]', (
     h.onChmod = (p) => { if (fkey(p) === fkey(ins())) chmods.push(-1) }
     posixAs((p) => (fkey(p) === fkey(ins()) ? 7 : 4242), (p) => (fkey(p) === fkey(ins()) ? 0o040777 : fkey(p) === fkey(runs()) ? 0o040700 : undefined))
     h.prepareCalls = []
-    const other = await runner.runCodexInsights(win, { accountId: ACCT }) as string
-    expect(runOf(other)).toMatchObject({ status: 'failed', error: NO_FOLDER })
+    await expect(runner.runCodexInsights(win, { accountId: ACCT })).rejects.toThrow(INSIGHTS_REFUSED)
     expect(h.prepareCalls).toEqual([])
     expect(chmods).not.toContain(-1)
   })
@@ -488,11 +567,10 @@ describe('the runs folder is a real folder, checked before any launch [host]', (
     h.onChmod = (_p, _m, target) => { landed.push(fkey(target)) }
     groupWritableInsights()
     insightsSwappedAfterItsLstat(elsewhere)
-    const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    await expect(runner.runCodexInsights(win, { accountId: ACCT })).rejects.toThrow(INSIGHTS_REFUSED)
     expect(landed).not.toContain(fkey(elsewhere))
-    expect(R().readdirSync(elsewhere)).not.toContain(RUNS)
+    expect(R().readdirSync(elsewhere)).toEqual(['kept.txt'])
     expect(R().readFileSync(join(elsewhere, 'kept.txt'), 'utf8')).toBe('kept')
-    expect(runOf(id)).toMatchObject({ status: 'failed', error: NO_FOLDER })
     expect(h.prepareCalls).toEqual([])
     expect(h.execCalls).toHaveLength(0)
   })
@@ -539,9 +617,8 @@ describe('the runs folder is a real folder, checked before any launch [host]', (
     h.onChmod = (p, m) => { if (fkey(p) === fkey(insightsDir())) landed.push(m) }
     groupWritableInsights()
     h.fstatUidFor = (p) => (fkey(p) === fkey(insightsDir()) ? 7 : undefined)
-    const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    await expect(runner.runCodexInsights(win, { accountId: ACCT })).rejects.toThrow(INSIGHTS_REFUSED)
     expect(landed).toEqual([])
-    expect(runOf(id)).toMatchObject({ status: 'failed', error: NO_FOLDER })
     expect(h.prepareCalls).toEqual([])
   })
 
@@ -581,6 +658,18 @@ describe('the runs folder is checked again before anything in it is removed [hos
     expect(h.released).toBe(1)
   })
 
+  it('swapped for a link once the stale sweep has listed it: a leftover of the same name in the link target is not removed; no model run [host]', async () => {
+    const leftover = staleVictim(runsParent(), 'ccc-insights-codex-old2')
+    const elsewhere = join(h.tmpRoot, 'elsewhere3')
+    const victim = staleVictim(elsewhere, 'ccc-insights-codex-old2')
+    h.onReaddir = (p) => { if (fkey(p) === fkey(runsParent())) { h.onReaddir = null; h.links.set(nodePath.resolve(runsParent()), elsewhere) } }
+    const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    expect(R().readFileSync(join(victim, 'keep.txt'), 'utf8')).toBe('kept')
+    expect(R().existsSync(join(leftover, 'keep.txt'))).toBe(true)
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: NO_FOLDER })
+    expect(h.execCalls).toHaveLength(0)
+  })
+
   it('swapped for a link while the model runs: the removal after it removes nothing in the link target [host]', async () => {
     const elsewhere = join(h.tmpRoot, 'elsewhere2')
     R().mkdirSync(elsewhere, { recursive: true })
@@ -595,6 +684,366 @@ describe('the runs folder is checked again before anything in it is removed [hos
     expect(runOf(id).status).toBe('complete')
     expect(planted).not.toBe('')
     expect(R().existsSync(join(planted, 'keep.txt'))).toBe(true)
+  })
+})
+
+// [host] Insights keeps its reports, its catalogue and its runs' own
+// folders only in its own folder: `insights` a real folder whose real path
+// is `<resources>/insights` (and on POSIX this user's, writable by no one
+// else), checked before anything is made or written in it; each run's own
+// folder made new (an entry already at its name refuses the run) and checked
+// again before each file is written into it.
+describe('Insights keeps its reports only in its own folder [host]', () => {
+  const ACCT_B = `acct-${'b'.repeat(16)}`
+  const activeCodex = (id: string) => ({ id, providerId: 'codex', lifecycle: 'active' })
+
+  it("a Claude Code run with `insights` a link: refused with the reason before any terminal starts; nothing is made through it [host]", async () => {
+    const outside = join(h.tmpRoot, 'outside-claude')
+    R().mkdirSync(outside, { recursive: true })
+    h.links.set(nodePath.resolve(insightsDir()), outside)
+    await expect(runner.runInsights(win)).rejects.toThrow(INSIGHTS_REFUSED)
+    expect(h.ptySpawns).toBe(0)
+    expect(R().readdirSync(outside)).toEqual([])
+    expect(runner.isRunning()).toBe(false)
+  })
+
+  it('a cross-account roll-up with `insights` a link: refused with the reason before any member runs; nothing is made through it [host]', async () => {
+    h.snapAccounts = [activeCodex(ACCT), activeCodex(ACCT_B)]
+    const outside = join(h.tmpRoot, 'outside-rollup')
+    R().mkdirSync(outside, { recursive: true })
+    h.links.set(nodePath.resolve(insightsDir()), outside)
+    await expect(runner.runCrossAccountInsights(win)).rejects.toThrow(INSIGHTS_REFUSED)
+    expect(h.prepareCalls).toEqual([])
+    expect(h.execCalls).toHaveLength(0)
+    expect(h.ptySpawns).toBe(0)
+    expect(R().readdirSync(outside)).toEqual([])
+    expect(runner.isCrossAccountRunning()).toBe(false)
+  })
+
+  it("a link already at a run's own folder name: the run fails with the reason before any launch; nothing is written through it [host]", async () => {
+    const target = join(h.tmpRoot, 'planted-run-target')
+    R().mkdirSync(target, { recursive: true })
+    R().mkdirSync(insightsDir(), { recursive: true })
+    h.beforeMkdir = (p) => {
+      if (nodePath.resolve(dirname(p)) === nodePath.resolve(insightsDir()) && /^\d{4}-\d{2}-\d{2}-/.test(basename(p))) {
+        h.beforeMkdir = null
+        h.links.set(p, target)
+      }
+    }
+    const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: RUN_FOLDER_REFUSED })
+    expect(h.prepareCalls).toEqual([])
+    expect(h.execCalls).toHaveLength(0)
+    expect(R().readdirSync(target)).toEqual([])
+  })
+
+  it('`insights` swapped for a link just after its lstat in the check: its real path is matched too, so nothing is made in the link target [host]', async () => {
+    const elsewhere = join(h.tmpRoot, 'elsewhere-ins-rp')
+    R().mkdirSync(elsewhere, { recursive: true })
+    R().mkdirSync(insightsDir(), { recursive: true })
+    let seen = 0
+    h.onLstat = (p) => { if (fkey(p) === fkey(insightsDir()) && ++seen === 2) { h.onLstat = null; h.links.set(nodePath.resolve(insightsDir()), elsewhere) } }
+    await expect(runner.runCodexInsights(win, { accountId: ACCT })).rejects.toThrow(INSIGHTS_REFUSED)
+    expect(seen).toBe(2)
+    expect(R().readdirSync(elsewhere)).toEqual([])
+    expect(h.prepareCalls).toEqual([])
+  })
+
+  it("`insights` swapped for a link while the model runs: the report and its figures are never written through it [host]", async () => {
+    const elsewhere = join(h.tmpRoot, 'elsewhere-ins-run')
+    R().mkdirSync(elsewhere, { recursive: true })
+    let planted = ''
+    h.onRun = () => {
+      const [id] = runFolders(insightsDir())
+      planted = join(elsewhere, id)
+      R().mkdirSync(planted, { recursive: true })
+      h.links.set(nodePath.resolve(insightsDir()), elsewhere)
+    }
+    await expect(runner.runCodexInsights(win, { accountId: ACCT })).rejects.toThrow(INSIGHTS_REFUSED)
+    expect(h.execCalls).toHaveLength(1)
+    expect(planted).not.toBe('')
+    expect(R().readdirSync(planted)).toEqual([])
+    expect(runner.isRunning()).toBe(false)
+    expect(h.released).toBe(1)
+  })
+
+  it("a run's own folder swapped for a link while the model runs (insights still its own): the report and its figures are never written through it [host]", async () => {
+    const target = join(h.tmpRoot, 'elsewhere-run-folder')
+    R().mkdirSync(target, { recursive: true })
+    let swapped = ''
+    h.onRun = () => {
+      const [id] = runFolders(insightsDir())
+      swapped = nodePath.resolve(join(insightsDir(), id))
+      h.links.set(swapped, target)
+    }
+    const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    expect(swapped).not.toBe('')
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: RUN_FOLDER_REFUSED })
+    expect(R().readdirSync(target)).toEqual([])
+    expect(h.released).toBe(1)
+    expect(runner.isRunning()).toBe(false)
+  })
+
+  it('at start-up a catalogue in an `insights` that is a link is left as it is, and start-up does not fail [host]', () => {
+    const outside = join(h.tmpRoot, 'outside-cleanup')
+    R().mkdirSync(outside, { recursive: true })
+    const stuck = JSON.stringify({ runs: [{ id: '2026-10-01-120000-000001', timestamp: 1, status: 'running' }] })
+    R().writeFileSync(join(outside, 'catalogue.json'), stuck)
+    h.links.set(nodePath.resolve(insightsDir()), outside)
+    expect(() => runner.cleanupStuckRuns()).not.toThrow()
+    expect(R().readFileSync(join(outside, 'catalogue.json'), 'utf8')).toBe(stuck)
+    expect(R().readdirSync(outside)).toEqual(['catalogue.json'])
+    // The refusal once, where it is raised; then that the catalogue was left.
+    expect(h.warns.filter((w) => w.includes(INSIGHTS_REFUSED))).toHaveLength(1)
+    expect(h.warns.filter((w) => w.includes('The catalogue was left as it is at start-up'))).toHaveLength(1)
+  })
+
+  it('control: a run with `insights` as it should be completes, its own folder owner-only where modes apply [host]', async () => {
+    const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(id).status).toBe('complete')
+    expect(R().existsSync(join(insightsDir(), id, 'report.json'))).toBe(true)
+    if (process.platform !== 'win32') expect(R().statSync(join(insightsDir(), id)).mode & 0o777).toBe(0o700)
+  })
+})
+
+// [host] Claude Code's own report of a run (its report.html and the facets
+// beside it, in the account's usage data) is copied into the run's own
+// folder only as the regular files they are, each within its size limit, and
+// written by the run's one writer, which checks the run's folder (and the
+// facets folder made new in it) again before each file.
+describe("Claude Code's report is copied into a run's own folder only by the run's one writer [host]", () => {
+  const PROFILE = 'abcdef0123456789abcdef01'
+  const REPORT = '<html><body>the account report</body></html>'
+  const usageDir = () => join(h.claudeHome, '.claude', 'usage-data')
+  const KPIS = JSON.stringify({ period: { start: '2026-09-01', end: '2026-09-30', days: 30 }, kpis: { Volume: { sessions: { value: 3, label: 'Sessions', format: 'number', goodDirection: 'up' } } } })
+  /** A Claude Code account whose terminal writes nothing: its report and two facets are already there. */
+  function claudeAccount(): void {
+    h.claudeHome = join(h.tmpRoot, 'claude-home')
+    R().mkdirSync(join(usageDir(), 'facets'), { recursive: true })
+    R().writeFileSync(join(usageDir(), 'report.html'), REPORT)
+    R().writeFileSync(join(usageDir(), 'facets', 's1.json'), '{"s":1}')
+    R().writeFileSync(join(usageDir(), 'facets', 's2.json'), '{"s":2}')
+    h.claudeProfile = PROFILE
+    h.ptyRun = () => {}
+  }
+  /** The one run folder a case made. */
+  const runDir = () => { const [id] = runFolders(insightsDir()); return join(insightsDir(), id) }
+  const COPY_FAILED = 'Failed to copy report files'
+
+  it("control: the report and its facets are copied into the run's own folder, owner-only where modes apply, and the run completes [host]", async () => {
+    claudeAccount()
+    h.claudeKpis = KPIS
+    const id = await runner.runInsights(win) as string
+    expect(runOf(id).status).toBe('complete')
+    expect(h.ptySpawns).toBe(1)
+    expect(R().readFileSync(join(insightsDir(), id, 'report.html'), 'utf8')).toBe(REPORT)
+    expect(R().readdirSync(join(insightsDir(), id, 'facets')).sort()).toEqual(['s1.json', 's2.json'])
+    expect(R().readFileSync(join(insightsDir(), id, 'facets', 's2.json'), 'utf8')).toBe('{"s":2}')
+    if (process.platform !== 'win32') {
+      expect(R().statSync(join(insightsDir(), id, 'report.html')).mode & 0o777).toBe(0o600)
+      expect(R().statSync(join(insightsDir(), id, 'facets')).mode & 0o777).toBe(0o700)
+    }
+    expect(runner.isRunning(PROFILE)).toBe(false)
+  })
+
+  it("a link at `report.html` in the run's own folder, put there while the terminal runs: the report is written into the run's own folder, never through it [host]", async () => {
+    claudeAccount()
+    const outsideFile = join(h.tmpRoot, 'outside-report.html')
+    R().writeFileSync(outsideFile, 'kept')
+    h.ptyRun = () => { h.links.set(nodePath.resolve(join(runDir(), 'report.html')), outsideFile) }
+    const id = await runner.runInsights(win) as string
+    expect(R().readFileSync(outsideFile, 'utf8')).toBe('kept')
+    expect(R().readFileSync(join(insightsDir(), id, 'report.html'), 'utf8')).toBe(REPORT)
+    expect(runner.isRunning(PROFILE)).toBe(false)
+  })
+
+  it("a link at `facets` in the run's own folder, put there while the terminal runs: nothing is written through it, and the run fails [host]", async () => {
+    claudeAccount()
+    const outside = join(h.tmpRoot, 'outside-facets')
+    R().mkdirSync(outside, { recursive: true })
+    h.ptyRun = () => { h.links.set(nodePath.resolve(join(runDir(), 'facets')), outside) }
+    const id = await runner.runInsights(win) as string
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: COPY_FAILED })
+    expect(R().readdirSync(outside)).toEqual([])
+    expect(runner.isRunning(PROFILE)).toBe(false)
+  })
+
+  it("the run's own folder swapped for a link once the terminal is done: Claude Code's report is never written through it, and the run fails [host]", async () => {
+    claudeAccount()
+    const outside = join(h.tmpRoot, 'outside-run')
+    R().mkdirSync(outside, { recursive: true })
+    h.ptyRun = () => { h.links.set(nodePath.resolve(runDir()), outside) }
+    const id = await runner.runInsights(win) as string
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: COPY_FAILED })
+    expect(R().readdirSync(outside)).toEqual([])
+    expect(runner.isRunning(PROFILE)).toBe(false)
+  })
+
+  it("`facets` in the run's own folder swapped for a link just after its lstat in the check before a facet is written: its real path is matched too, so nothing is written in the link target [host]", async () => {
+    claudeAccount()
+    const outside = join(h.tmpRoot, 'outside-facets-rp')
+    R().mkdirSync(outside, { recursive: true })
+    // The first lstat is the check as the folder is made; the second, the
+    // check before the first facet is written.
+    h.ptyRun = () => {
+      const facets = nodePath.resolve(join(runDir(), 'facets'))
+      let seen = 0
+      h.onLstat = (p) => { if (fkey(p) === fkey(facets) && ++seen === 2) { h.onLstat = null; h.links.set(facets, outside) } }
+    }
+    const id = await runner.runInsights(win) as string
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: COPY_FAILED })
+    expect(R().readdirSync(outside)).toEqual([])
+  })
+
+  it("`facets` in the run's own folder swapped for a link between two facets: no later facet is written through it, and the run fails [host]", async () => {
+    claudeAccount()
+    const outside = join(h.tmpRoot, 'outside-facets-later')
+    R().mkdirSync(outside, { recursive: true })
+    // The swap comes as the second facet is read, after the first is written
+    // (whichever order the folder lists them in).
+    h.ptyRun = () => {
+      const facets = nodePath.resolve(join(runDir(), 'facets'))
+      let seen = 0
+      h.onLstat = (p) => {
+        if (nodePath.resolve(dirname(p)) === nodePath.resolve(join(usageDir(), 'facets')) && ++seen === 2) { h.onLstat = null; h.links.set(facets, outside) }
+      }
+    }
+    const id = await runner.runInsights(win) as string
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: COPY_FAILED })
+    expect(R().readdirSync(outside)).toEqual([])
+  })
+
+  it("the run's own folder swapped for a link as the facets folder is made: the folder made through it is removed again, and the run fails [host]", async () => {
+    claudeAccount()
+    const outside = join(h.tmpRoot, 'outside-run-at-facets')
+    R().mkdirSync(outside, { recursive: true })
+    h.ptyRun = () => {
+      const run = nodePath.resolve(runDir())
+      h.beforeMkdir = (p) => { if (nodePath.resolve(p) === nodePath.resolve(join(run, 'facets'))) { h.beforeMkdir = null; h.links.set(run, outside) } }
+    }
+    const id = await runner.runInsights(win) as string
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: COPY_FAILED })
+    expect(R().readdirSync(outside)).toEqual([])
+    expect(runner.isRunning(PROFILE)).toBe(false)
+  })
+
+  it("Claude Code's report and its facets are copied byte for byte, bytes that are not UTF-8 included [host]", async () => {
+    claudeAccount()
+    h.claudeKpis = KPIS
+    const report = Buffer.from([0x3c, 0x70, 0x3e, 0xff, 0xfe, 0x63, 0x61, 0x66, 0xe9, 0x3c, 0x2f, 0x70, 0x3e])
+    const facet = Buffer.from([0x7b, 0x22, 0x73, 0x22, 0x3a, 0x22, 0xe9, 0x80, 0x22, 0x7d])
+    R().writeFileSync(join(usageDir(), 'report.html'), report)
+    R().writeFileSync(join(usageDir(), 'facets', 's1.json'), facet)
+    const id = await runner.runInsights(win) as string
+    expect(runOf(id).status).toBe('complete')
+    expect(R().readFileSync(join(insightsDir(), id, 'report.html')).equals(report)).toBe(true)
+    expect(R().readFileSync(join(insightsDir(), id, 'facets', 's1.json')).equals(facet)).toBe(true)
+  })
+
+  it("a report.html in the account's usage data that is not a regular file (a FIFO) is not copied: the run fails, never waits [host]", async () => {
+    claudeAccount()
+    h.fifo.add(fkey(join(usageDir(), 'report.html')))
+    const id = await runner.runInsights(win) as string
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: COPY_FAILED })
+    expect(R().existsSync(join(insightsDir(), id, 'report.html'))).toBe(false)
+    expect(runner.isRunning(PROFILE)).toBe(false)
+  })
+
+  it('a facet that is not a regular file (a FIFO) is left out, never waited on; the others are copied [host]', async () => {
+    claudeAccount()
+    h.claudeKpis = KPIS
+    h.fifo.add(fkey(join(usageDir(), 'facets', 's1.json')))
+    const id = await runner.runInsights(win) as string
+    expect(runOf(id).status).toBe('complete')
+    expect(R().readdirSync(join(insightsDir(), id, 'facets'))).toEqual(['s2.json'])
+    expect(h.warns.filter((w) => w.includes('s1.json'))).toHaveLength(1)
+  })
+})
+
+// [host] A run's own folder made through an `insights` that became a link
+// as it was made is removed again (it is empty: nothing was written in it);
+// its real path is matched as well as its lstat when it is checked.
+describe("a run's own folder is made only in the insights folder that was checked [host]", () => {
+  it("`insights` swapped for a link as the run's own folder is made: the folder made through it is removed again, and nothing is launched [host]", async () => {
+    const elsewhere = join(h.tmpRoot, 'elsewhere-made')
+    R().mkdirSync(elsewhere, { recursive: true })
+    R().mkdirSync(insightsDir(), { recursive: true })
+    h.beforeMkdir = (p) => {
+      if (nodePath.resolve(dirname(p)) === nodePath.resolve(insightsDir()) && /^\d{4}-\d{2}-\d{2}-/.test(basename(p))) {
+        h.beforeMkdir = null
+        h.links.set(nodePath.resolve(insightsDir()), elsewhere)
+      }
+    }
+    await expect(runner.runCodexInsights(win, { accountId: ACCT })).rejects.toThrow(INSIGHTS_REFUSED)
+    expect(R().readdirSync(elsewhere)).toEqual([])
+    expect(h.prepareCalls).toEqual([])
+  })
+
+  it("the run's own folder swapped for a link just after its lstat when it is checked: its real path is matched too, so the run fails before any launch [host]", async () => {
+    const target = join(h.tmpRoot, 'elsewhere-run-rp')
+    R().mkdirSync(target, { recursive: true })
+    R().mkdirSync(insightsDir(), { recursive: true })
+    h.onLstat = (p) => {
+      if (nodePath.resolve(dirname(p)) === nodePath.resolve(insightsDir()) && /^\d{4}-\d{2}-\d{2}-/.test(basename(p))) {
+        h.onLstat = null
+        h.links.set(nodePath.resolve(p), target)
+      }
+    }
+    const id = await runner.runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: RUN_FOLDER_REFUSED })
+    expect(h.prepareCalls).toEqual([])
+    expect(R().readdirSync(target)).toEqual([])
+  })
+})
+
+// [host] Start-up marks interrupted runs failed in the catalogue; a write of
+// it that fails (here a full disk) is logged and never fails start-up.
+describe('start-up never fails on the catalogue [host]', () => {
+  it('a catalogue write that fails at start-up is logged, and start-up goes on [host]', () => {
+    R().mkdirSync(insightsDir(), { recursive: true })
+    const stuck = JSON.stringify({ runs: [{ id: '2026-10-01-120000-000002', timestamp: 1, status: 'running' }] })
+    R().writeFileSync(join(insightsDir(), 'catalogue.json'), stuck)
+    h.failRename = (to) => basename(to) === 'catalogue.json'
+    expect(() => runner.cleanupStuckRuns()).not.toThrow()
+    expect(R().readFileSync(join(insightsDir(), 'catalogue.json'), 'utf8')).toBe(stuck)
+    expect(h.warns.some((w) => w.includes('catalogue'))).toBe(true)
+  })
+
+  it('a catalogue that is not a list of runs reads as no runs, an entry that is not a run is left out, and start-up goes on [host]', () => {
+    R().mkdirSync(insightsDir(), { recursive: true })
+    const file = join(insightsDir(), 'catalogue.json')
+    for (const text of ['{}', '{"runs":5}', '{"runs":{"0":{"id":"x"}}}', 'null', '[1,2]']) {
+      R().writeFileSync(file, text)
+      expect(() => runner.cleanupStuckRuns(), text).not.toThrow()
+      expect(runner.getCatalogue().runs, text).toEqual([])
+    }
+    const stuck = { id: '2026-10-01-120000-000003', timestamp: 1, status: 'running' }
+    R().writeFileSync(file, JSON.stringify({ runs: [null, 7, 'x', [stuck], stuck] }))
+    expect(() => runner.cleanupStuckRuns()).not.toThrow()
+    expect(runner.getCatalogue().runs).toEqual([{ ...stuck, status: 'failed', error: 'Interrupted by app restart' }])
+    expect(runner.getInsightsReport('2026-10-01-120000-000004')).toBeNull()
+  })
+})
+
+// [host] A refused run says why once in the log, though its own failure
+// record meets the same refusal.
+describe('a refusal is logged once [host]', () => {
+  it('a Claude Code run with `insights` a link logs the refusal once [host]', async () => {
+    const outside = join(h.tmpRoot, 'outside-once')
+    R().mkdirSync(outside, { recursive: true })
+    h.links.set(nodePath.resolve(insightsDir()), outside)
+    await expect(runner.runInsights(win)).rejects.toThrow(INSIGHTS_REFUSED)
+    expect(h.warns.filter((w) => w.includes(INSIGHTS_REFUSED))).toHaveLength(1)
+  })
+
+  it('the same refusal in a later run is logged again [host]', async () => {
+    const outside = join(h.tmpRoot, 'outside-again')
+    R().mkdirSync(outside, { recursive: true })
+    h.links.set(nodePath.resolve(insightsDir()), outside)
+    await expect(runner.runInsights(win)).rejects.toThrow(INSIGHTS_REFUSED)
+    await new Promise((r) => setTimeout(r, 0))
+    await expect(runner.runInsights(win)).rejects.toThrow(INSIGHTS_REFUSED)
+    expect(h.warns.filter((w) => w.includes(INSIGHTS_REFUSED))).toHaveLength(2)
   })
 })
 
@@ -759,5 +1208,96 @@ describe("main hands the page a Codex run's report.json only as the regular file
     expect(runner.getInsightsReport('r-ino')).toBeNull()
     h.inoFor = (p) => (fkey(p) === fkey(file) ? big : undefined)
     expect(JSON.parse(runner.getInsightsReport('r-ino')!).subtitle).toBe('THE-RUN-OWN')
+  })
+})
+
+// [host] A report.html, a kpis.json and the catalogue are read only as the
+// regular file each is, within its own size limit: a folder, a FIFO, a link
+// put in its place after its lstat, a file whose open is not the one lstat
+// saw, or one past the limit is no report (null) or no runs, never an error
+// and never a wait.
+describe("main reads a report, a run's figures and the catalogue only as the regular file each is, at a bounded size [host]", () => {
+  const HTML = '<html><body>THE-RUN-OWN-REPORT</body></html>'
+  const KPIS = { kpis: { Volume: { sessions: { value: 7 } } }, mark: 'THE-RUN-OWN-KPIS' }
+  /** A Claude Code run in the catalogue, with its report.html and kpis.json; their paths. */
+  function claudeRun(id: string): { html: string; kpis: string } {
+    const dir = join(insightsDir(), id)
+    R().mkdirSync(dir, { recursive: true })
+    R().writeFileSync(join(insightsDir(), 'catalogue.json'), JSON.stringify({ runs: [{ id, timestamp: 1, status: 'complete' }] }))
+    R().writeFileSync(join(dir, 'report.html'), HTML)
+    R().writeFileSync(join(dir, 'kpis.json'), JSON.stringify(KPIS))
+    return { html: join(dir, 'report.html'), kpis: join(dir, 'kpis.json') }
+  }
+
+  it('a regular report and its figures are read as written [host]', () => {
+    claudeRun('r-plain')
+    expect(runner.getInsightsReport('r-plain')).toBe(HTML)
+    expect(runner.getInsightsKpis('r-plain')).toEqual(KPIS)
+  })
+
+  it('a report.html or a kpis.json that is a folder is none, never an error [host]', () => {
+    const f = claudeRun('r-dirs')
+    for (const p of [f.html, f.kpis]) { R().rmSync(p); R().mkdirSync(p) }
+    expect(runner.getInsightsReport('r-dirs')).toBeNull()
+    expect(runner.getInsightsKpis('r-dirs')).toBeNull()
+  })
+
+  it('a run whose report.html and kpis.json are not there has none, never an error [host]', () => {
+    const f = claudeRun('r-gone')
+    for (const p of [f.html, f.kpis]) R().rmSync(p)
+    expect(runner.getInsightsReport('r-gone')).toBeNull()
+    expect(runner.getInsightsKpis('r-gone')).toBeNull()
+    expect(runner.getInsightsKpis('r-never-made')).toBeNull()
+  })
+
+  it('a report.html or a kpis.json that is not a regular file (a FIFO) is none, never a wait [host]', () => {
+    const f = claudeRun('r-fifo2')
+    h.fifo.add(fkey(f.html)); h.fifo.add(fkey(f.kpis))
+    expect(runner.getInsightsReport('r-fifo2')).toBeNull()
+    expect(runner.getInsightsKpis('r-fifo2')).toBeNull()
+  })
+
+  it('a report.html or a kpis.json swapped for a link after its lstat: the file it now names is not read [host]', () => {
+    const f = claudeRun('r-swap2')
+    const otherHtml = join(h.tmpRoot, 'elsewhere-report.html')
+    const otherKpis = join(h.tmpRoot, 'elsewhere-kpis.json')
+    R().writeFileSync(otherHtml, '<html>NOT-THIS-RUN</html>')
+    R().writeFileSync(otherKpis, JSON.stringify({ mark: 'NOT-THIS-RUN' }))
+    const swapAt = new Map([[fkey(f.html), otherHtml], [fkey(f.kpis), otherKpis]])
+    h.onLstat = (p) => { const to = swapAt.get(fkey(p)); if (to) { swapAt.delete(fkey(p)); h.links.set(nodePath.resolve(p), to) } }
+    expect(runner.getInsightsReport('r-swap2')).toBeNull()
+    expect(runner.getInsightsKpis('r-swap2')).toBeNull()
+  })
+
+  it('a report.html or a kpis.json whose open file is not the one its lstat saw (whole inode numbers) is none [host]', () => {
+    const f = claudeRun('r-ino2')
+    const big = 2n ** 60n
+    h.inoFor = (p, how) => (fkey(p) === fkey(f.html) || fkey(p) === fkey(f.kpis) ? (how === 'lstat' ? big : big + 1n) : undefined)
+    expect(runner.getInsightsReport('r-ino2')).toBeNull()
+    expect(runner.getInsightsKpis('r-ino2')).toBeNull()
+  })
+
+  it('a report.html or a kpis.json past its size limit is none; one at the limit is read [host]', () => {
+    const f = claudeRun('r-big')
+    R().writeFileSync(f.html, 'x'.repeat(runner.INSIGHTS_REPORT_MAX_BYTES + 1))
+    const pad = (n: number) => JSON.stringify({ pad: 'y'.repeat(n - '{"pad":""}'.length) })
+    R().writeFileSync(f.kpis, pad(runner.INSIGHTS_KPIS_MAX_BYTES + 1))
+    expect(runner.getInsightsReport('r-big')).toBeNull()
+    expect(runner.getInsightsKpis('r-big')).toBeNull()
+    R().writeFileSync(f.html, 'x'.repeat(runner.INSIGHTS_REPORT_MAX_BYTES))
+    R().writeFileSync(f.kpis, pad(runner.INSIGHTS_KPIS_MAX_BYTES))
+    expect(runner.getInsightsReport('r-big')).toHaveLength(runner.INSIGHTS_REPORT_MAX_BYTES)
+    expect((runner.getInsightsKpis('r-big') as { pad: string }).pad).toHaveLength(runner.INSIGHTS_KPIS_MAX_BYTES - '{"pad":""}'.length)
+  })
+
+  it('a catalogue that is not a regular file (a FIFO, a folder) reads as no runs, never a wait [host]', () => {
+    claudeRun('r-cat')
+    const cat = join(insightsDir(), 'catalogue.json')
+    expect(runner.getCatalogue().runs.map((r: any) => r.id)).toEqual(['r-cat'])
+    h.fifo.add(fkey(cat))
+    expect(runner.getCatalogue()).toEqual({ runs: [] })
+    h.fifo.clear()
+    R().rmSync(cat); R().mkdirSync(cat)
+    expect(runner.getCatalogue()).toEqual({ runs: [] })
   })
 })

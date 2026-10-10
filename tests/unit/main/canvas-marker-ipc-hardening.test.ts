@@ -59,7 +59,11 @@ const SID = 'a1b2c3d4e5f6a7b8c9d0e1f2'
 const CID = 'c1c2c3c4c5c6c7c8c9c0d1d2'
 const LINE = 'Approved v7 on the canvas · canvas_version_verdict recorded'
 
-const invoke = (args: unknown): unknown => handlers.get(IPC.CANVAS_AGENT_MARKER)!({} as never, args)
+/** The app window and its main frame: the only sender these handlers answer. */
+const APP_FRAME = {}
+const APP_WIN = { isDestroyed: () => false, webContents: { mainFrame: APP_FRAME, send: () => {} } }
+const APP_EVENT = { sender: APP_WIN.webContents, senderFrame: APP_FRAME }
+const invoke = (args: unknown): unknown => handlers.get(IPC.CANVAS_AGENT_MARKER)!(APP_EVENT as never, args)
 /** The line the queue was handed by the last accepted call. */
 const deliveredLine = (): string => delivery.deliver.mock.calls[0][1] as unknown as string
 
@@ -67,7 +71,7 @@ beforeEach(() => {
   handlers.clear()
   vi.clearAllMocks()
   link.allowed.mockReturnValue({ ok: true })
-  registerCanvasHandlers(() => null)
+  registerCanvasHandlers(() => APP_WIN as never)
 })
 
 describe('ownership: a marker must name a canvas the session owns', () => {

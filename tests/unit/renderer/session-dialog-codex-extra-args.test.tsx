@@ -145,9 +145,9 @@ describe('Claude Code\'s field is the same field', () => {
     const f = field()
     expect(f.input.value).toBe('--verbose')
     expect(f.input.placeholder).toBe('--verbose --add-dir F:\\shared_libs')
-    setInput(f.input, ' --verbose --add-dir docs ')
+    setInput(f.input, ' --verbose --add-dir=docs ')
     submit()
-    expect(saved(onConfirm).claudeOptions.extraArgs).toBe('--verbose --add-dir docs')
+    expect(saved(onConfirm).claudeOptions.extraArgs).toBe('--verbose --add-dir=docs')
     expect(saved(onConfirm).codexOptions).toBeUndefined()
   })
 
@@ -162,6 +162,21 @@ describe('Claude Code\'s field is the same field', () => {
     expect(codex.input.className).toBe(claudeShape.input)
     // What was typed for one assistant stays with it.
     expect(codex.input.value).toBe('')
+  })
+
+  it('its help says the words go after the app\'s own options, and what the app refuses, as the Codex field does', () => {
+    render({ initial: { id: 'c3', provider: 'claude', sessionType: 'local', label: 'x', workingDirectory: 'C:\\proj', color: '' } })
+    const f = field()
+    act(() => { f.help.click() })
+    const hint = f.box.querySelector('p')!.textContent!
+    expect(hint).toMatch(/^Advanced\. Added to the claude command after the app's own options\. /)
+    expect(hint).not.toMatch(/one argument/i)
+    for (const flag of ['--model', '--settings', '--agent and --agents', '--plugin-dir', '--resume', '--session-id', '--bare', '--safe-mode']) expect(hint).toContain(flag)
+    expect(hint).toMatch(/where or how it runs, its permission mode or the settings it reads/)
+    expect(hint).toContain('mcp (or /logout)')
+    expect(hint).toContain('an address (name://)')
+    expect(hint).toMatch(/--add-dir=docs, and an option's value after an = sign/)
+    expect(hint).not.toMatch(/exactly as typed/)
   })
 
   // Fixer 10 (gate 3 quality nit 1): the label names its input, in both

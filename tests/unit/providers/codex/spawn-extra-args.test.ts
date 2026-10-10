@@ -14,6 +14,19 @@ vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>()
   return { ...actual, execSync: vi.fn(() => (process.platform === 'win32' ? 'C:\\node\\node.exe\n' : '/usr/local/bin/node\n')) }
 })
+// The disk, for the picker route's node lookup on Windows: one fixed node.exe
+// (named in the picker launches' PATH below) answers as a file; every other
+// path as the real disk answers.
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return {
+    ...actual,
+    statSync: vi.fn((p: unknown, o?: unknown) => {
+      if (p === 'C:\\ccc-test-only\\nodejs\\node.exe') return { isFile: () => true } as import('fs').Stats
+      return (actual.statSync as (a: unknown, b?: unknown) => import('fs').Stats)(p, o)
+    }),
+  }
+})
 vi.mock('../../../../src/main/ipc/setup-handlers', () => ({
   getResourcesDirectory: () => (globalThis as any).__mockResourcesDir ?? '',
   getDataDirectory: () => (globalThis as any).__mockResourcesDir ?? '',
@@ -23,9 +36,13 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   mcpSessionToken: () => 'tok',
   issueMcpSessionToken: () => 'tok',
 }))
+// The launch reads the built-in tools switches the checked way: each case
+// says what that read answers (by default a fresh install, tools on), so no
+// settings file on disk decides it.
 vi.mock('../../../../src/main/config-manager', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../src/main/config-manager')>()),
   readConfig: () => ({}),
+  readConfigChecked: () => (globalThis as any).__mockSettingsRead ?? { outcome: 'absent', value: null },
   getConfigDir: () => '/cfg',
 }))
 const RESUME_ID = '0199a5e1-2f3b-7c4d-8e5f-60718293a4b5'
@@ -51,6 +68,7 @@ function resources(files: string[]): string {
 afterEach(() => {
   ;(globalThis as any).__mockResourcesDir = undefined
   ;(globalThis as any).__mockMcpPort = undefined
+  ;(globalThis as any).__mockSettingsRead = undefined
   // TEST CLEANUP GUARD: only the folders this test made, by their own prefix, under the temp folder.
   for (const d of made.splice(0)) {
     if (!basename(d).startsWith(TEST_PREFIX) || dirname(d) !== realpathSync.native(tmpdir())) continue
@@ -77,6 +95,7 @@ const build = (opts: Record<string, unknown>) => new CodexProvider().buildSpawnC
 describe('a direct launch', () => {
   it('appends each word as one argument, after every flag the app sets (the MCP server included)', () => {
     ;(globalThis as any).__mockMcpPort = 4321
+    ;(globalThis as any).__mockSettingsRead = { outcome: 'ok', value: { conductorToolsEnabled: true } }
     const out = withPlatform('linux', () => build({ codexOptions: co('--search  --add-dir /srv/shared -i shot.png') }))
     expect(out.cmd).toBe('/opt/codex/bin/codex')
     expect(out.args.slice(-5)).toEqual(['--search', '--add-dir', '/srv/shared', '-i', 'shot.png'])
@@ -84,6 +103,15 @@ describe('a direct launch', () => {
     expect(appFlags).toContain('--ask-for-approval')
     expect(appFlags.some((a) => a.startsWith('mcp_servers.conductor.url='))).toBe(true)
     expect(out.args).not.toContain('')
+  })
+
+  it('with the built-in tools off the launch carries no MCP server, and the words still come last', () => {
+    ;(globalThis as any).__mockMcpPort = 4321
+    ;(globalThis as any).__mockSettingsRead = { outcome: 'ok', value: { conductorToolsEnabled: false } }
+    const out = withPlatform('linux', () => build({ codexOptions: co('--search') }))
+    expect(out.args[out.args.length - 1]).toBe('--search')
+    expect(out.args).toContain('--ask-for-approval')
+    expect(out.args.some((a) => a.startsWith('mcp_servers.conductor.'))).toBe(false)
   })
 
   it('adds nothing for none, an empty value or spaces only (the launch is what it was)', () => {
@@ -136,7 +164,7 @@ describe('the npm .cmd shim through cmd.exe', () => {
   })
   it('the picker on that route carries them too', () => {
     resources(['codex-resume-picker.js'])
-    const out = withWin32(() => build({ realmLaunch: shim, useResumePicker: true, codexOptions: co('--search') }))
+    const out = withWin32(() => build({ realmLaunch: { ...shim, env: { ...winEnv, PATH: 'C:\\ccc-test-only\\nodejs' } }, useResumePicker: true, codexOptions: co('--search') }))
     expect(out.args[out.args.length - 1]).toBe('--search')
   })
   // Round 1 (A1): a resume by id on that route too.

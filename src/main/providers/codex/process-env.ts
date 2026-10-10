@@ -7,6 +7,7 @@
 // login shell's PATH too, or node is not found and the CLI reads as broken.
 import { execFile } from 'node:child_process'
 import { defaultLoginShell } from '../../login-shell'
+import { absolutePathValue } from './cli-env'
 
 const OPEN = '__CCC_CODEX_PATH_BEGIN__'
 const CLOSE = '__CCC_CODEX_PATH_END__'
@@ -49,13 +50,27 @@ export function codexLoginShellPath(env: NodeJS.ProcessEnv = process.env, platfo
 /** The inherited environment with, on macOS and Linux, the login shell's
  *  PATH. Everything else is narrowed later by codexCliEnv. It is also what a
  *  Codex session's launch is built on (auth-operations prepareLaunch). On
- *  macOS and Linux the environment keeps only absolute PATH entries in every
- *  case, whether or not the login shell answered (P3.10 round 3b). */
+ *  every platform the environment keeps only absolute PATH entries: on macOS
+ *  and Linux whether or not the login shell answered (P3.10 round 3b); on
+ *  Windows only fully qualified folders, in every spelling of the variable
+ *  (cli-env.ts absolutePathValue, the rule every Windows PATH filter keeps),
+ *  so a relative entry is never read against the project folder a session
+ *  runs in. A variable left with none is dropped. */
 export async function codexOperationBaseEnv(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Promise<Record<string, string | undefined>> {
   const loginPath = await codexLoginShellPath(env, platform)
   if (loginPath) return { ...env, PATH: loginPath }
   const out: Record<string, string | undefined> = { ...env }
-  if (platform !== 'win32' && typeof out.PATH === 'string') {
+  if (platform === 'win32') {
+    for (const key of Object.keys(out)) {
+      if (key.toUpperCase() !== 'PATH') continue
+      const value = out[key]
+      const kept = typeof value === 'string' ? absolutePathValue(value, true) : null
+      if (kept !== null) out[key] = kept
+      else delete out[key]
+    }
+    return out
+  }
+  if (typeof out.PATH === 'string') {
     const kept = absolutePathEntries(out.PATH)
     if (kept) out.PATH = kept
     else delete out.PATH

@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // @vitest-environment jsdom
 // ADR-009 round 3 (Codex PR600 finding 5): a canvas whose only debt is a
 // rejected, unreworked plan must offer the FORCE route -- otherwise Mark

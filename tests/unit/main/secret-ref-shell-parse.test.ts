@@ -1,3 +1,4 @@
+// HOST QUARANTINE: starts real processes. [CI] [VM] only -- never run on the owner's machine.
 /**
  * What the SHELL does with the launch line — not what the string looks like.
  *

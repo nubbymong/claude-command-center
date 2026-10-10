@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
 // Artifact archive + permanent delete (item C, phase 5) — the store half, which
 // is where the security-critical properties live: durability (a deleted version
 // id is never reissued), path-safe version-file removal, review-note deletion,

@@ -11,7 +11,7 @@ import { create } from 'zustand'
 import type {
   AccountsSnapshot, AccountView, AccountsResult, AccountsFailure, ProviderInstallationView, ProviderId,
   BeginSetupRequest, SignInRequest, SignInAgainRequest, SignInAgainResult, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, ResolveConflictRequest,
-  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, InstallRecipeView, UpdateIdentityRequest, IdentityView, SignInPhase,
+  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, InstallRecipeView, PathHintView, UpdateIdentityRequest, IdentityView, SignInPhase,
 } from '../../shared/providers'
 import { SIGN_IN_METHODS } from '../../shared/providers'
 import { useSettingsStore } from './settingsStore'
@@ -148,11 +148,19 @@ export async function answerYesIfUnanswered(providerId: ProviderId): Promise<Acc
 
 export const providerAccountActions = {
   setEnabled: (providerId: ProviderId, enabled: boolean) => call(() => api().setEnabled(providerId, enabled)),
-  /** Look for the provider's CLI again. Main keeps what it finds as the
-   *  executable its launches and sign-ins run, and pushes a new snapshot. */
-  discover: (providerId: ProviderId) => call<{ installation: ProviderInstallationView }>(() => api().discover(providerId)),
-  /** How the provider's CLI is installed or updated, to show; never run by
-   *  main. Null when main could not say. */
+  /** Look for the provider's CLI again, after main brings its PATH up to
+   *  date. Main keeps what it finds as the executable its launches and
+   *  sign-ins run, and pushes a new snapshot. When it still finds nothing,
+   *  `pathHint` says what helps (the publisher's install folder is off
+   *  PATH, or a restart). */
+  discover: (providerId: ProviderId) => call<{ installation: ProviderInstallationView; pathHint?: PathHintView }>(() => api().discover(providerId)),
+  /** Add it to PATH for me: main appends the provider's own install folder
+   *  (which it computes; this sends only the provider id) to the user PATH
+   *  and its own, then checks again. */
+  addToPath: (providerId: ProviderId) => call<{ added: 'added' | 'already'; installation: ProviderInstallationView; pathHint?: PathHintView }>(() => api().addToPath(providerId)),
+  /** How the provider's CLI is installed or updated: each command to show
+   *  and copy, and the line a terminal may run for it after the user
+   *  confirms. Null when main could not say. */
   installRecipes: async (providerId: ProviderId): Promise<InstallRecipeView[] | null> => {
     try {
       const r = await api().installRecipes(providerId)
@@ -392,6 +400,35 @@ export function canOfferMakeReviewer(snapshot: AccountsSnapshot | null, account:
   if (account.reviewRefusal) return false
   if (account.isReviewerDefault) return false
   return !!providerView(snapshot, account.providerId)?.review
+}
+
+/** Why reviews cannot run on the account a provider's reviews would use,
+ *  asked once that review is known not to be ready. A kind, not a sentence:
+ *  the Accounts card and Code review tools each word it for their own place.
+ *  - external-only / external-another: this computer's own sign-in, which
+ *    is confirmed at each launch, and a review has no one to confirm it;
+ *    with no other account to make the reviewer, or with one.
+ *  - unverified-only / unverified-another: the same for an unverified sign-in.
+ *  - refusal: this platform will not let the account review (its message says why).
+ *  - other: anything else (inactive, blocked, signed out, signing in).
+ *  "Another" is exactly an account whose row offers Make reviewer
+ *  (canOfferMakeReviewer), so no surface points at a menu item that is not there. */
+export type ReviewerBlockKind = 'external-only' | 'external-another' | 'unverified-only' | 'unverified-another' | 'refusal' | 'other'
+
+export function reviewerBlockKind(snapshot: AccountsSnapshot | null, account: AccountView): ReviewerBlockKind {
+  if (account.external || account.unverified) {
+    const another = (snapshot?.accounts ?? []).some((a) => a.id !== account.id && a.providerId === account.providerId && canOfferMakeReviewer(snapshot, a))
+    if (account.external) return another ? 'external-another' : 'external-only'
+    return another ? 'unverified-another' : 'unverified-only'
+  }
+  return account.reviewRefusal ? 'refusal' : 'other'
+}
+
+/** Why a sign-in confirmed at each launch cannot run reviews, as a clause
+ *  the reviewer line and the Confirm each launch badge both use. */
+export function confirmEachLaunchWhy(account: Pick<AccountView, 'external'>): string {
+  const which = account.external ? "this computer's own sign-in" : 'an unverified sign-in'
+  return `you confirm each launch on ${which}, and a review has no one to confirm it`
 }
 
 /** The Codex accounts Sentinel's analysis may run under (P3.9), as the

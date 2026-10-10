@@ -1,3 +1,4 @@
+// HOST QUARANTINE: changes ACLs on temp folders (through the app's own folder hardening). [CI] [VM] only -- never run on the owner's machine.
 // #573 — approval auto-complete must not orphan the approval's own notes.
 //
 // The live repro (2026-08-30): the user approved v4 WITH two notes; the

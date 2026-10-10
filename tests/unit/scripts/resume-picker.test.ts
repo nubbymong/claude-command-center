@@ -1,7 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+// HOST QUARANTINE: plants junctions and symbolic links. [CI] [VM] only -- never run on the owner's machine.
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, existsSync, rmSync, symlinkSync, realpathSync } from 'fs'
 import { join, basename, dirname } from 'path'
 import { tmpdir } from 'os'
+
+type SpawnFn = (file: string, args: string[], opts: Record<string, unknown>) => { status: number | null; stdout?: string; error?: Error }
 
 // The picker is plain Node.js (CommonJS) and guards main() behind
 // `require.main === module`, so require()-ing it here imports only the pure
@@ -11,7 +14,20 @@ const picker = require('../../../scripts/resume-picker.js') as {
   encodeProjectPath: (p: string) => string
   resolveProjectDir: (claudeProjectsDir: string, cwd: string, realpath?: (p: string) => string) => string | null
   parseWorktrees: (text: string) => Array<{ path: string; branch: string | null; isMain: boolean }>
-  listWorktrees: (cwd: string) => Array<{ path: string; branch: string | null; isMain: boolean }>
+  listWorktrees: (
+    cwd: string,
+    platform?: string,
+    deps?: { spawn?: SpawnFn; env?: Record<string, string | undefined>; isFile?: (p: string) => boolean },
+  ) => Array<{ path: string; branch: string | null; isMain: boolean }>
+  resolveClaudeCmd: (platform?: string, env?: Record<string, string | undefined>, isFile?: (p: string) => boolean) => string | null
+  buildSpawnTarget: (cmd: string, args: string[], platform?: string, env?: Record<string, string | undefined>) =>
+    { file: string; argv: string[]; verbatim: boolean; env?: Record<string, string | undefined> } | null
+  notStartedMessage: (cmd: string | null, args: string[], env?: Record<string, string | undefined>) => string
+  launchSpec: (cmd: string | null, args: string[], base: Record<string, unknown>, platform?: string, env?: Record<string, string | undefined>) =>
+    { file: string; argv: string[]; opts: Record<string, unknown>; message?: undefined } | { message: string }
+  launchClaude: (resumeId: string | undefined, sourceCwd: string | undefined, deps: {
+    spawn: SpawnFn; exit: (code: number) => void; argv: string[]; env: Record<string, string | undefined>; platform: string; isFile: (p: string) => boolean
+  }) => void
   worktreeLabelFor: (wt: { path: string; branch: string | null; isMain: boolean }) => string | null
   scanWorktreeConversations: (
     wt: { path: string; branch: string | null; isMain: boolean },
@@ -199,16 +215,16 @@ describe('resume-picker worktreeLabelFor', () => {
 // ── listWorktrees fail-safe ────────────────────────────────────────
 describe('resume-picker listWorktrees (fail-safe)', () => {
   it('returns a single synthetic main record when cwd is not a git repo', () => {
-    // A fresh temp dir is not a git repo → git errors → single-source fallback.
-    const notARepo = mkdtempSync(join(tmpdir(), 'ccc-rp-notrepo-'))
-    try {
-      const out = picker.listWorktrees(notARepo)
-      expect(out).toHaveLength(1)
-      expect(out[0].path).toBe(notARepo)
-      expect(out[0].isMain).toBe(true)
-    } finally {
-      rmSync(notARepo, { recursive: true, force: true })
-    }
+    // Outside a repository git exits 128 with nothing on stdout → single-source
+    // fallback. git, PATH and the file check are injected: nothing starts.
+    const calls: string[][] = []
+    const out = picker.listWorktrees('C:\\not-a-repo', 'win32', {
+      env: { PATH: 'C:\\Git\\cmd' },
+      isFile: () => true,
+      spawn: (_file, args) => { calls.push(args); return { status: 128, stdout: '' } },
+    })
+    expect(calls).toEqual([['--no-pager', '-c', 'core.fsmonitor=false', 'worktree', 'list', '--porcelain']])
+    expect(out).toEqual([{ path: 'C:\\not-a-repo', branch: null, isMain: true }])
   })
 })
 
@@ -561,5 +577,224 @@ describe('resume-picker readSidecarName', () => {
     writeFileSync(sidecar(), JSON.stringify({ name: '   ' }), 'utf-8')
     expect(picker.readSidecarName(transcript())).toBeNull()          // blank
     expect(picker.readSidecarName(join(dir, 'notes.txt'))).toBeNull() // not a transcript
+  })
+})
+
+// ── Programs from PATH's folders ───────────────────────────────────
+// git and Claude Code are run only from the folders PATH names: by a full
+// path, without a shell, never looked up in the project folder. Everything
+// here is injected (PATH, the file check, the spawn); nothing is started.
+describe('git and Claude Code are run only from the folders PATH names', () => {
+  // No process may start in this block: a lookup that tried one fails here.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const cp = require('child_process') as typeof import('child_process')
+  const spies: Array<{ mockRestore: () => void }> = []
+  beforeEach(() => {
+    for (const name of ['execSync', 'execFileSync', 'exec', 'execFile'] as const) {
+      spies.push(vi.spyOn(cp, name).mockImplementation((() => { throw new Error('no process may start here') }) as never))
+    }
+  })
+  afterEach(() => { while (spies.length) spies.pop()!.mockRestore() })
+
+  const PORCELAIN = 'worktree C:\\proj\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n\nworktree C:\\proj-wt\\feature\nHEAD 2222222222222222222222222222222222222222\nbranch refs/heads/feature\n\n'
+  const run = (env: Record<string, string | undefined>, isFile: (p: string) => boolean, platform = 'win32', result: { status: number | null; stdout?: string; error?: Error } = { status: 0, stdout: PORCELAIN }) => {
+    const calls: Array<{ file: string; args: string[]; opts: Record<string, unknown> }> = []
+    const spawn: SpawnFn = (file, args, opts) => { calls.push({ file, args, opts }); return result }
+    const out = picker.listWorktrees(platform === 'win32' ? 'C:\\proj' : '/proj', platform, { spawn, env, isFile })
+    return { calls, out }
+  }
+
+  it('starts git by its full path from a folder PATH names, without a shell, and never from the project folder', () => {
+    // Every candidate "exists": only the folder rule decides which one runs.
+    const { calls, out } = run({ Path: '.;rel\\bin;%GITDIR%\\cmd; "C:\\Git\\cmd" ;C:\\Other', NoDefaultCurrentDirectoryInExePath: '0', nodefaultcurrentdirectoryinexepath: '', KEEP: 'kept' }, () => true)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].file).toBe('C:\\Git\\cmd\\git.exe')
+    expect(calls[0].args).toEqual(['--no-pager', '-c', 'core.fsmonitor=false', 'worktree', 'list', '--porcelain'])
+    expect(calls[0].opts.shell).toBe(false)
+    expect(calls[0].opts.cwd).toBe('C:\\proj')
+    const env = calls[0].opts.env as Record<string, string>
+    expect(Object.keys(env).filter((k) => k.toUpperCase() === 'NODEFAULTCURRENTDIRECTORYINEXEPATH')).toEqual(['NoDefaultCurrentDirectoryInExePath'])
+    expect(env.NoDefaultCurrentDirectoryInExePath).toBe('1')
+    // What git starts by name comes from PATH's fully qualified folders only.
+    expect(env.Path).toBe('C:\\Git\\cmd;C:\\Other')
+    expect(env.KEEP).toBe('kept')
+    expect(out.map((w) => w.path)).toEqual(['C:\\proj', 'C:\\proj-wt\\feature'])
+  })
+
+  it('reads PATH the way Windows starts a program from it: a share, either slash, a trailing dot dropped', () => {
+    expect(run({ PATH: 'C:\\tools.\\bin.;D:\\x' }, (p) => p === 'C:\\tools\\bin\\git.exe').calls[0].file).toBe('C:\\tools\\bin\\git.exe')
+    expect(run({ PATH: '\\\\srv\\share\\git' }, (p) => p === '\\\\srv\\share\\git\\git.exe').calls[0].file).toBe('\\\\srv\\share\\git\\git.exe')
+    expect(run({ PATH: 'C:/Git/cmd' }, (p) => p.toLowerCase() === 'c:\\git\\cmd\\git.exe').calls[0].file).toBe('C:\\Git\\cmd\\git.exe')
+    // Not folders a lookup reads: a lone server name, the device namespace, a drive-relative name,
+    // and a folder named through a variable that was never expanded.
+    expect(run({ PATH: '\\\\srv;\\\\?\\C:\\Git;\\\\.\\C:\\Git;C:Git;\\Git;C:\\%GITDIR%\\cmd' }, () => true).calls).toEqual([])
+    expect(picker.resolveClaudeCmd('win32', { PATH: 'C:\\%NPM%;C:\\npm' }, () => true)).toBe('C:\\npm\\claude.exe')
+  })
+
+  it('with no git in PATH\'s folders, or a git that fails, it falls back to the one folder and starts nothing else', () => {
+    const none = run({ PATH: 'C:\\Git\\cmd' }, () => false)
+    expect(none.calls).toEqual([])
+    expect(none.out).toEqual([{ path: 'C:\\proj', branch: null, isMain: true }])
+    const failed = run({ PATH: 'C:\\Git\\cmd' }, () => true, 'win32', { status: 128, stdout: '' })
+    expect(failed.calls).toHaveLength(1)
+    expect(failed.out).toEqual([{ path: 'C:\\proj', branch: null, isMain: true }])
+    // A file check that throws (a share that does not answer) is "not there".
+    expect(run({ PATH: '\\\\down\\share;C:\\Git\\cmd' }, (p) => { if (p.startsWith('\\\\')) throw new Error('unreachable'); return true }).calls[0].file).toBe('C:\\Git\\cmd\\git.exe')
+  })
+
+  it('elsewhere: an absolute folder only, and the environment passed on as it is', () => {
+    const { calls } = run({ PATH: 'bin:./tools::/usr/bin', HOME: '/home/jo' }, () => true, 'linux')
+    expect(calls[0].file).toBe('/usr/bin/git')
+    expect(calls[0].opts.shell).toBe(false)
+    expect(calls[0].opts.env).toEqual({ PATH: 'bin:./tools::/usr/bin', HOME: '/home/jo' })
+  })
+
+  it('elsewhere: a git file the user may not run is passed over, as the system\'s own lookup does', () => {
+    // The file checks are answered here: nothing on disk is read.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const nodeFs = require('fs') as typeof import('fs')
+    const stat = vi.spyOn(nodeFs, 'statSync').mockImplementation(((p: string) => ({ isFile: () => p === '/a/git' || p === '/b/git' })) as never)
+    const access = vi.spyOn(nodeFs, 'accessSync').mockImplementation(((p: string) => {
+      if (p === '/a/git') throw Object.assign(new Error('not allowed'), { code: 'EACCES' })
+    }) as never)
+    try {
+      const calls: string[] = []
+      picker.listWorktrees('/proj', 'linux', { env: { PATH: '/a:/b' }, spawn: (file) => { calls.push(file); return { status: 0, stdout: '' } } })
+      expect(calls).toEqual(['/b/git'])
+      expect(access).toHaveBeenCalledWith('/b/git', nodeFs.constants.X_OK)
+    } finally {
+      stat.mockRestore()
+      access.mockRestore()
+    }
+  })
+
+  it('finds Claude Code in PATH\'s folders: the native claude.exe in any of them first, then claude.cmd, then claude.bat', () => {
+    const files = new Set(['C:\\bat\\claude.bat', 'C:\\npm\\claude.cmd', 'C:\\native\\claude.exe', 'C:\\proj\\claude.exe', 'C:\\proj\\claude.bat'])
+    const isFile = (p: string) => files.has(p)
+    expect(picker.resolveClaudeCmd('win32', { Path: '.;C:\\bat;C:\\npm;C:\\native' }, isFile)).toBe('C:\\native\\claude.exe')
+    expect(picker.resolveClaudeCmd('win32', { Path: '.;C:\\bat;C:\\npm' }, isFile)).toBe('C:\\npm\\claude.cmd')
+    expect(picker.resolveClaudeCmd('win32', { Path: '.;C:\\bat' }, isFile)).toBe('C:\\bat\\claude.bat')
+    // None there: no bare name to fall back on; the launch refuses, visibly.
+    expect(picker.resolveClaudeCmd('win32', { Path: '.;relative;%X%' }, isFile)).toBeNull()
+    expect(picker.resolveClaudeCmd('win32', {}, () => true)).toBeNull()
+    // Elsewhere the name, as before.
+    expect(picker.resolveClaudeCmd('darwin', { PATH: '/usr/bin' }, () => false)).toBe('claude')
+  })
+
+  it('finds Claude Code without starting anything', () => {
+    expect(picker.resolveClaudeCmd('win32', { PATH: 'C:\\native' }, (p) => p === 'C:\\native\\claude.exe')).toBe('C:\\native\\claude.exe')
+    expect(cp.execSync).not.toHaveBeenCalled()
+    expect(cp.execFileSync).not.toHaveBeenCalled()
+    const src = readFileSync(join(__dirname, '..', '..', '..', 'scripts', 'resume-picker.js'), 'utf-8')
+    expect(src).not.toMatch(/execSync\s*\(/)
+    expect(src).not.toMatch(/['"`]where[\s'"`]/)
+    expect(src).not.toMatch(/spawnSync\(\s*['"`]git['"`]/)
+  })
+
+  it('an npm claude.cmd runs with the same rule, so the programs it starts by name come from PATH\'s folders', () => {
+    const t = picker.buildSpawnTarget('C:\\npm\\claude.cmd', ['--model', 'opus'], 'win32', { SystemRoot: 'C:\\Windows', Path: '.;rel;C:\\npm;C:\\Program Files\\nodejs', NODEFAULTCURRENTDIRECTORYINEXEPATH: '0', KEEP: 'kept' })!
+    expect(Object.keys(t.env!).filter((k) => k.toUpperCase() === 'NODEFAULTCURRENTDIRECTORYINEXEPATH')).toEqual(['NoDefaultCurrentDirectoryInExePath'])
+    expect(t.env!.NoDefaultCurrentDirectoryInExePath).toBe('1')
+    // Only PATH's fully qualified folders: never the project folder, nor one named relative to it.
+    expect(t.env!.Path).toBe('C:\\npm;C:\\Program Files\\nodejs')
+    expect(t.env!.KEEP).toBe('kept')
+    // The native binary starts as it is, with the environment it inherits.
+    expect(picker.buildSpawnTarget('C:\\native\\claude.exe', ['--model', 'opus'], 'win32', { SystemRoot: 'C:\\Windows' })!.env).toBeUndefined()
+  })
+
+  // Both launches -- the first, and the fresh one after a resume that fails --
+  // run exactly what one launch step returns. The spawn and the exit are
+  // injected: nothing starts and nothing exits.
+  const RESUME = '0f8fad5b-d9cb-469f-a165-70867728950e'
+  const NPM_ENV = { SystemRoot: 'C:\\Windows', Path: 'C:\\npm', NODEFAULTCURRENTDIRECTORYINEXEPATH: '0', KEEP: 'kept' }
+  const npmOnly = (p: string) => p === 'C:\\npm\\claude.cmd'
+  const BASE = { stdio: 'inherit', shell: false, windowsHide: false }
+  type Launched = { calls: Array<{ file: string; args: string[]; opts: Record<string, unknown> }>; exits: number[]; said: string }
+  const launch = (o: { resumeId?: string; statuses?: number[]; argv?: string[]; env: Record<string, string | undefined>; isFile: (p: string) => boolean }): Launched => {
+    const calls: Launched['calls'] = []
+    const exits: number[] = []
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      picker.launchClaude(o.resumeId, undefined, {
+        spawn: (file, args, opts) => { calls.push({ file, args, opts }); return { status: (o.statuses ?? [])[calls.length - 1] ?? 0 } },
+        exit: (code) => { exits.push(code) },
+        argv: o.argv ?? ['--model', 'opus'],
+        env: o.env,
+        platform: 'win32',
+        isFile: o.isFile,
+      })
+      return { calls, exits, said: err.mock.calls.map((c) => String(c[0])).join('\n') }
+    } finally {
+      err.mockRestore()
+      log.mockRestore()
+    }
+  }
+
+  it('one launch step decides the program, its arguments and its options, or what the launch says instead', () => {
+    const base = { ...BASE, cwd: 'C:\\proj-wt\\feature' }
+    const shim = picker.launchSpec('C:\\npm\\claude.cmd', ['--model', 'opus'], base, 'win32', NPM_ENV)
+    expect('file' in shim && shim.file).toBe('C:\\Windows\\System32\\cmd.exe')
+    const opts = (shim as { opts: Record<string, unknown> }).opts
+    expect(opts).toMatchObject({ ...base, windowsVerbatimArguments: true })
+    expect((opts.env as Record<string, string>).NoDefaultCurrentDirectoryInExePath).toBe('1')
+    expect(base).toEqual({ ...BASE, cwd: 'C:\\proj-wt\\feature' })
+    expect(picker.launchSpec('C:\\native\\claude.exe', ['--model', 'opus'], base, 'win32', NPM_ENV))
+      .toEqual({ file: 'C:\\native\\claude.exe', argv: ['--model', 'opus'], opts: { ...base, windowsVerbatimArguments: false } })
+    expect(picker.launchSpec(null, ['--model', 'opus'], base, 'win32', NPM_ENV)).toEqual({ message: picker.notStartedMessage(null, ['--model', 'opus'], NPM_ENV) })
+    expect((picker.launchSpec('C:\\npm\\claude.cmd', ['--model', '1%'], base, 'win32', NPM_ENV) as { message: string }).message).toContain('the value of --model holds')
+  })
+
+  it('an npm claude.cmd starts with the rule in its environment, on the first launch and on the fresh one after a resume fails', () => {
+    const { calls, exits } = launch({ resumeId: RESUME, statuses: [1, 0], env: NPM_ENV, isFile: npmOnly })
+    expect(calls).toHaveLength(2)
+    for (const c of calls) {
+      expect(c.file).toBe('C:\\Windows\\System32\\cmd.exe')
+      expect(c.opts).toMatchObject({ ...BASE, windowsVerbatimArguments: true })
+      const env = c.opts.env as Record<string, string>
+      expect(Object.keys(env).filter((k) => k.toUpperCase() === 'NODEFAULTCURRENTDIRECTORYINEXEPATH')).toEqual(['NoDefaultCurrentDirectoryInExePath'])
+      expect(env.NoDefaultCurrentDirectoryInExePath).toBe('1')
+      expect(env.KEEP).toBe('kept')
+    }
+    expect(calls[0].args).toEqual(['/d', '/v:off', '/s', '/c', `""C:\\npm\\claude.cmd" "--resume" "${RESUME}" "--model" "opus""`])
+    expect(calls[1].args).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\npm\\claude.cmd" "--model" "opus""'])
+    expect(exits).toEqual([0])
+  })
+
+  it('a claude.bat alone in PATH\'s folders starts exactly as a claude.cmd does, on the first launch and on the fresh one after a resume fails', () => {
+    const BAT_ENV = { ...NPM_ENV, Path: '.;C:\\bat' }
+    const bat = launch({ resumeId: RESUME, statuses: [1, 0], env: BAT_ENV, isFile: (p) => p === 'C:\\bat\\claude.bat' })
+    const cmd = launch({ resumeId: RESUME, statuses: [1, 0], env: BAT_ENV, isFile: (p) => p === 'C:\\bat\\claude.cmd' })
+    expect(bat.calls).toHaveLength(2)
+    expect(bat.calls[0].args).toEqual(['/d', '/v:off', '/s', '/c', `""C:\\bat\\claude.bat" "--resume" "${RESUME}" "--model" "opus""`])
+    expect(bat.calls[1].args).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\bat\\claude.bat" "--model" "opus""'])
+    const swapped = cmd.calls.map((c) => ({ ...c, args: c.args.map((a) => a.split('claude.cmd').join('claude.bat')) }))
+    expect(bat.calls).toEqual(swapped)
+    for (const c of bat.calls) {
+      expect(c.file).toBe('C:\\Windows\\System32\\cmd.exe')
+      expect(c.opts).toMatchObject({ ...BASE, windowsVerbatimArguments: true })
+      expect((c.opts.env as Record<string, string>).NoDefaultCurrentDirectoryInExePath).toBe('1')
+    }
+    expect(bat.exits).toEqual([0])
+  })
+
+  it('the native claude.exe starts as it is, with the environment it inherits', () => {
+    const { calls, exits } = launch({ env: { SystemRoot: 'C:\\Windows', Path: 'C:\\npm;C:\\native' }, isFile: (p) => p === 'C:\\native\\claude.exe' || npmOnly(p) })
+    expect(calls).toEqual([{ file: 'C:\\native\\claude.exe', args: ['--model', 'opus'], opts: { ...BASE, windowsVerbatimArguments: false } }])
+    expect(exits).toEqual([0])
+  })
+
+  it('the launch refuses, visibly, when Claude Code is not in PATH\'s folders: nothing starts', () => {
+    const { calls, exits, said } = launch({ env: { SystemRoot: 'C:\\Windows', Path: '.;relative;C:\\npm' }, isFile: () => false })
+    expect(calls).toEqual([])
+    expect(exits).toEqual([1])
+    expect(said).toContain('Not starting Claude Code: it was not found in a folder PATH names (claude.exe, claude.cmd, claude.bat)')
+  })
+
+  it('an argument the npm route cannot pass stops the launch before anything starts, and says which', () => {
+    const { calls, exits, said } = launch({ env: NPM_ENV, isFile: npmOnly, argv: ['--agents', JSON.stringify([{ name: 'coverage', prompt: 'cover 100%' }])] })
+    expect(calls).toEqual([])
+    expect(exits).toEqual([1])
+    expect(said).toContain('Not starting Claude Code: the agent template "coverage" holds a % sign')
   })
 })

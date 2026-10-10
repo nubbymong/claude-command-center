@@ -36,6 +36,7 @@ import { logError, logInfo } from '../debug-logger'
 // vision stack — and `conductor-mcp-server` -> `update-watcher` -> `app.isPackaged`
 // — into this module's graph, which broke an unrelated test three hops away.
 import { getBrowserPaths } from '../browser-paths'
+import { systemTool } from '../windows-programs'
 import {
   AUTH_BROWSER_LABELS,
   DEFAULT_AUTH_BROWSER,
@@ -48,6 +49,8 @@ import {
 import { DEVTOOLS_PORT_FILE, authProfileDir, buildAuthBrowserArgs, type AuthBrowser } from './browser-launch'
 import { harvestClaudeCookies, type CdpCookie } from './cookie-harvest'
 import { closeInAppSignInWindow, runInAppSignIn } from './in-app-sign-in'
+// A type only: erased at build, so the record store's module graph stays out.
+import type { ClaudeWebRecordsForSweep } from './session-store'
 // A wipe must forget the web-session record and close the account's pane
 // surfaces. Those owners subscribe via this zero-dependency seam so sign-in.ts
 // keeps its narrow module graph (#439 adversarial A9) — importing session-store
@@ -95,6 +98,74 @@ let cancelled = false
 
 export function getSignInState(): SignInState {
   return current
+}
+
+/** What a sign-in, an account view or the artifacts window on an account is
+ *  refused with while its web session is being cleared. */
+export const WEB_SESSION_CLEARING_REASON = "This account's claude.ai sign-in is being cleared. Try again in a moment."
+
+/** Accounts whose web session is being wiped now (a sign-out, an account
+ *  delete, an unfinished sign-in, the start sweep), counted: overlapping
+ *  wipes of one account keep the bar up until the last one ends. */
+const clearing = new Map<string, number>()
+
+/** One wipe's share of an account's clearing bar: calling it releases the
+ *  share, and `holdUntil` names the storage clear the wipe started. */
+type ClearingShare = (() => void) & { holdUntil(cleared: Promise<unknown>): void }
+
+/** Bar the account for one wipe; the returned release lifts this wipe's share
+ *  once, but never before a storage clear it holds has itself ended (resolved
+ *  or rejected). A bounded wait that gives up does not end the clear, so the
+ *  account stays barred until the clear itself ends; one that never ends keeps
+ *  it barred for the rest of the run. */
+function barWhileClearing(profileId: string): ClearingShare {
+  clearing.set(profileId, (clearing.get(profileId) ?? 0) + 1)
+  let done = false
+  let released = false
+  let pending = false
+  const lift = (): void => {
+    if (done) return
+    done = true
+    const n = (clearing.get(profileId) ?? 1) - 1
+    if (n > 0) clearing.set(profileId, n)
+    else clearing.delete(profileId)
+  }
+  const release = (): void => {
+    released = true
+    if (!pending) lift()
+  }
+  return Object.assign(release, {
+    holdUntil(cleared: Promise<unknown>): void {
+      pending = true
+      const settled = (): void => {
+        pending = false
+        if (released) lift()
+      }
+      void cleared.then(settled, settled)
+    },
+  })
+}
+
+/** True while any wipe of this account's web session runs: a sign-in, a view
+ *  and the artifacts window on it are refused until its own wipe ends. */
+export function isClaudeWebClearing(profileId: string): boolean {
+  return (clearing.get(profileId) ?? 0) > 0
+}
+
+/** Told BEFORE a wipe: close everything that holds the session (the account's
+ *  views and its artifacts window), so nothing writes it back mid-wipe. The
+ *  owners subscribe at start, as with notifyPartitionRevoked. */
+const closingHandlers = new Set<(profileId: string) => void>()
+
+/** Subscribe to "this account's web session is about to be wiped". */
+export function onClaudeWebSessionClosing(handler: (profileId: string) => void): void {
+  closingHandlers.add(handler)
+}
+
+function notifyClosing(profileId: string): void {
+  for (const handler of [...closingHandlers]) {
+    try { handler(profileId) } catch { /* one subscriber must not stop the rest */ }
+  }
 }
 
 /**
@@ -290,16 +361,28 @@ function killBrowserTree(proc: ChildProcess): void {
   if (proc.exitCode !== null || proc.signalCode !== null) return
   if (process.platform === 'win32') {
     // /T = tree, /F = force. Windows has no process-group kill for this.
+    // taskkill starts by its full path in the system folder (systemTool),
+    // never by a bare name a search could resolve elsewhere; with no plain
+    // system folder to name it from, none starts and the direct signal below
+    // ends the browser itself.
     // NOT silent on failure: a swallowed error here looks exactly like a kill
     // that worked, and the only visible symptom is an EPERM further down whose
     // cause is then unknowable. Measured working standalone on this box, so if
     // it fails from inside Electron the log needs to say so.
+    let taskkill: string | null = null
     try {
-      const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
-      if (r.error) logError(`[account-web] taskkill could not run (${r.error.message}); falling back to a direct signal`)
-      else if (r.status !== 0) logError(`[account-web] taskkill exited ${r.status} for pid ${pid}`)
+      taskkill = systemTool('taskkill.exe')
     } catch (err) {
-      logError(`[account-web] taskkill threw: ${(err as Error)?.message}`)
+      logError(`[account-web] no system folder to start taskkill from (${(err as Error)?.message}); falling back to a direct signal`)
+    }
+    if (taskkill) {
+      try {
+        const r = spawnSync(taskkill, ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
+        if (r.error) logError(`[account-web] taskkill could not run (${r.error.message}); falling back to a direct signal`)
+        else if (r.status !== 0) logError(`[account-web] taskkill exited ${r.status} for pid ${pid}`)
+      } catch (err) {
+        logError(`[account-web] taskkill threw: ${(err as Error)?.message}`)
+      }
     }
   }
   else {
@@ -609,6 +692,12 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
   if (inFlight() || signInInFlightElsewhere('claude')) {
     return { phase: 'failed', profileId, error: 'A sign-in is already in progress. Finish or cancel it first.' }
   }
+  // An account whose web session is being wiped takes no new sign-in until
+  // that wipe's storage clear has itself ended (resolved or failed), whatever
+  // its bounded wait did.
+  if (isClaudeWebClearing(profileId)) {
+    return { phase: 'failed', profileId, error: WEB_SESSION_CLEARING_REASON }
+  }
 
   cancelled = false
 
@@ -649,15 +738,9 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
       // is present only on a clean completion, so its absence is the signal to
       // wipe (the X button is a likelier gesture than Cancel). This is the
       // DEFAULT route for subscription accounts; the SSO branches wipe on revoke,
-      // so this must too — empty the partition and forget the record + pane.
-      if (!res.session) {
-        try {
-          await withTimeout(Promise.resolve(electronSession.fromPartition(partition).clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
-        } catch (err) {
-          logError(`[account-web] could not clear a cancelled in-app session for ${profileId}: ${(err as Error)?.message ?? err}`)
-        }
-        notifyPartitionRevoked(profileId)
-      }
+      // so this must too: close the account's views, empty the partition, and
+      // forget the record only once that wipe succeeded.
+      if (!res.session) await wipeAfterIncompleteRun(profileId, partition)
       current = res.session
         ? { phase: 'done', profileId, session: res.session }
         : { phase: 'failed', profileId, error: res.error ?? (res.cancelled ? 'Sign-in cancelled.' : 'Sign-in failed.') }
@@ -665,7 +748,9 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
       // runInAppSignIn is contracted never to throw; this is defence-in-depth so
       // an unexpected throw still lands as a failed state and releases the
       // single-flight latch, never propagating out of runSignIn (adversarial review).
+      // The window may have written a session cookie already: it is wiped too.
       closeInAppSignInWindow()
+      await wipeAfterIncompleteRun(profileId, partition)
       current = { phase: 'failed', profileId, error: (err as Error)?.message ?? String(err) }
     }
     return current
@@ -850,7 +935,7 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
           // landed and FAIL — reporting `done` here would have the IPC layer
           // save a session record for a session the user just signed out of.
           try {
-            await withTimeout(Promise.resolve(store.clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
+            await clearStorageBarred(profileId, store)
           } catch (err) {
             // Loudly: what is left is cookies in a partition the user revoked.
             logError(`[account-web] could not clear a partially written session for ${profileId}: ${(err as Error)?.message}`)
@@ -882,7 +967,7 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
         // partition, and every request under it would 401.
         if (revoked()) {
           try {
-            await withTimeout(Promise.resolve(store.clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
+            await clearStorageBarred(profileId, store)
           } catch (err) {
             logError(`[account-web] could not clear a revoked session for ${profileId}: ${(err as Error)?.message}`)
           }
@@ -948,43 +1033,234 @@ export function cancelSignIn(profileId?: string): void {
   closeInAppSignInWindow()
 }
 
+type PartitionStore = ReturnType<typeof electronSession.fromPartition>
+
+/**
+ * The partition's storage clear, bounded, with the account barred until the
+ * clear itself has ended (resolved or failed), whatever its bounded wait did.
+ * Throws as the bounded wait does; a clear that fails lifts its share at once.
+ */
+async function clearStorageBarred(profileId: string, store: PartitionStore): Promise<void> {
+  const unbar = barWhileClearing(profileId)
+  try {
+    const cleared = Promise.resolve(store.clearStorageData())
+    unbar.holdUntil(cleared)
+    await withTimeout(cleared, IO_CALL_TIMEOUT_MS, 'clearStorageData')
+  } finally {
+    unbar()
+  }
+}
+
+/**
+ * Wipe one account's partition, the same on every path (a sign-out, an account
+ * delete, an unfinished in-app sign-in, the start sweep): its stored data
+ * (cookies, local and session storage, IndexedDB and the rest), then its HTTP
+ * cache, then its code caches, each bounded. The stored data holds the session,
+ * so a failure there throws and the caller keeps the record (fail closed); a
+ * cache that cannot be cleared is logged, the session being gone already. The
+ * account's bar (`unbar`) is held until the storage clear itself ends, even
+ * when its bounded wait gives up first.
+ */
+async function wipeClaudePartition(partition: string, profileId: string, unbar: ClearingShare): Promise<void> {
+  const store = electronSession.fromPartition(partition)
+  await clearPartitionStorage(store, unbar)
+  await clearPartitionCaches(store, profileId)
+}
+
+/** The partition's stored data (the session), bounded; the account's bar is
+ *  held until the clear itself ends. Throws when it fails or its wait gives up. */
+async function clearPartitionStorage(store: PartitionStore, unbar: ClearingShare): Promise<void> {
+  // BOUNDED, like every other IO in this module: a `clearStorageData` that
+  // never settles would otherwise leave the sign-out and account-delete IPC
+  // calls unresolved forever.
+  const cleared = Promise.resolve(store.clearStorageData())
+  unbar.holdUntil(cleared)
+  await withTimeout(cleared, IO_CALL_TIMEOUT_MS, 'clearStorageData')
+}
+
+/** The partition's HTTP cache, then its code caches, each bounded. Never
+ *  throws: a cache that cannot be cleared is logged. */
+async function clearPartitionCaches(store: PartitionStore, profileId: string): Promise<void> {
+  // Storage first, THEN the HTTP cache and the code caches: the account
+  // partition is a long-lived claude.ai browsing surface (#439), so it holds
+  // cached response bodies and compiled script that clearStorageData does not
+  // touch. Best effort: the storage wipe is the part that must succeed.
+  try {
+    await withTimeout(Promise.resolve(store.clearCache()), IO_CALL_TIMEOUT_MS, 'clearCache')
+  } catch (err) {
+    logError(`[account-web] could not clear the HTTP cache for ${profileId}: ${(err as Error)?.message ?? err}`)
+  }
+  try {
+    await withTimeout(Promise.resolve(store.clearCodeCaches({})), IO_CALL_TIMEOUT_MS, 'clearCodeCaches')
+  } catch (err) {
+    logError(`[account-web] could not clear the code cache for ${profileId}: ${(err as Error)?.message ?? err}`)
+  }
+}
+
+/**
+ * An in-app sign-in that ended without a session: the account's views close
+ * first, then the wipe, and the record is forgotten only after a wipe that
+ * succeeded (a failed one leaves it, so Sign out stays offered). Barred like
+ * any clear. The run ends once the stored data (the session) is cleared: the
+ * HTTP and code caches, which hold no session, are cleared after it, so a
+ * slow cache clear never keeps the next sign-in waiting. Never throws.
+ */
+async function wipeAfterIncompleteRun(profileId: string, partition: string): Promise<void> {
+  const unbar = barWhileClearing(profileId)
+  try {
+    notifyClosing(profileId)
+    let store: PartitionStore
+    try {
+      store = electronSession.fromPartition(partition)
+      await clearPartitionStorage(store, unbar)
+    } catch (err) {
+      logError(`[account-web] could not clear a cancelled in-app session for ${profileId}: ${(err as Error)?.message ?? err}`)
+      return
+    }
+    notifyPartitionRevoked(profileId)
+    void clearPartitionCaches(store, profileId)
+  } catch (err) {
+    logError(`[account-web] clearing a cancelled in-app session for ${profileId} failed: ${(err as Error)?.message ?? err}`)
+  } finally {
+    unbar()
+  }
+}
+
 /**
  * Forget one account's web session — used on account delete and on sign-out.
  *
  * Clears the WHOLE partition, not just cookies: claude.ai also leaves
  * localStorage, IndexedDB and cache behind, and "signed out" should not mean
  * "the cookie is gone but the account's data is still on disk".
+ *
+ * The account is barred for the whole clear, and until its storage clear has
+ * itself ended: a sign-in, a view or the artifacts window on it is refused
+ * meanwhile (isClaudeWebClearing). A storage clear that fails, or whose
+ * bounded wait gives up, THROWS, and the record is kept.
  */
 export async function clearWebSession(profileId: string): Promise<void> {
-  // CANCEL FIRST. A sign-in for this account may be mid-poll, and it would
-  // otherwise finish and write a fresh session into the partition we are about
-  // to clear — the user presses Sign out and ends up signed in. There is a
-  // second entry point for sign-in (the session right-click), so the two can
-  // overlap without the settings panel ever disabling its own button.
-  cancelSignIn(profileId)
-  const store = electronSession.fromPartition(webPartitionForProfile(profileId))
-  // BOUNDED, like every other IO in this module. This was the last raw await
-  // left: a `clearStorageData` that never settles left the sign-out and
-  // account-delete IPC calls unresolved forever, so the renderer's button stayed
-  // busy with nothing to show for it.
-  await withTimeout(Promise.resolve(store.clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
-  // Storage first, THEN the HTTP cache — the account partition is now a
-  // long-lived claude.ai browsing surface (#439), so it accumulates cached
-  // response bodies that clearStorageData does not touch; a wipe that left them
-  // holds page content on disk. Same order webview-manager uses for the
-  // throwaway partition. Best-effort: the storage wipe is the part that must
-  // succeed.
+  const partition = webPartitionForProfile(profileId)
+  const unbar = barWhileClearing(profileId)
   try {
-    await withTimeout(Promise.resolve(store.clearCache()), IO_CALL_TIMEOUT_MS, 'clearCache')
-  } catch (err) {
-    logError(`[account-web] could not clear the HTTP cache for ${profileId}: ${(err as Error)?.message ?? err}`)
+    // CANCEL FIRST. A sign-in for this account may be mid-poll, and it would
+    // otherwise finish and write a fresh session into the partition we are about
+    // to clear — the user presses Sign out and ends up signed in. There is a
+    // second entry point for sign-in (the session right-click), so the two can
+    // overlap without the settings panel ever disabling its own button.
+    cancelSignIn(profileId)
+    // THEN CLOSE what holds the session (the account's views, its artifacts
+    // window), so nothing on the partition writes to it during or after the
+    // wipe. The callers close them too; this covers every caller.
+    notifyClosing(profileId)
+    await wipeClaudePartition(partition, profileId, unbar)
+    // Forget the record + close the pane ONLY after the wipe SUCCEEDED (A4): the
+    // storage clear's throw above propagates, so a failed wipe leaves the record
+    // intact — the account survives to be signed out again rather than showing
+    // "signed out" over a live session. The pane's own cookie-recheck guard means
+    // an in-flight recording between now and here fails closed (the cookie is
+    // gone), and a recording that saved just before the wipe is undone here.
+    notifyPartitionRevoked(profileId)
+    logInfo(`[account-web] cleared the web session for ${profileId}`)
+  } finally {
+    unbar()
   }
-  // Forget the record + close the pane ONLY after the wipe SUCCEEDED (A4): the
-  // clearStorageData throw above propagates, so a failed wipe leaves the record
-  // intact — the account survives to be signed out again rather than showing
-  // "signed out" over a live session. The pane's own cookie-recheck guard means
-  // an in-flight recording between now and here fails closed (the cookie is
-  // gone), and a recording that saved just before the wipe is undone here.
-  notifyPartitionRevoked(profileId)
-  logInfo(`[account-web] cleared the web session for ${profileId}`)
+}
+
+/**
+ * At start: wipe each listed account's claude.ai web session that has NO
+ * record, so no claude.ai session stays signed in at start without a record
+ * (and the Sign out a record offers).
+ *   - The record store is read ONCE by the caller, without side effects
+ *     (readClaudeWebRecordsForSweep); unless it read cleanly (or is absent) the
+ *     whole sweep stands down with one log line, so a corrupt, downgraded or
+ *     unreadable store never wipes a session it may hold a record for.
+ *   - Only an account whose own partition folder already exists (in this
+ *     instance's own session data folder) is touched, so no partition is made
+ *     at start for a never-used account; a folder check that throws skips it.
+ *   - Each wipe holds the clearing bar (until its storage clear actually ends)
+ *     and closes the account's views first, is bounded, and never throws; the
+ *     account of a sign-in in flight is skipped.
+ *   - The accounts to wipe are chosen, and each one barred, before the first
+ *     wait: from then on a sign-in, a view or the artifacts window on a chosen
+ *     account is refused until its own wipe ends, and one already open is
+ *     closed as it is barred, so no sign-in can be recorded on it under the
+ *     bar. An account not chosen is never touched, so a sign-in that completes
+ *     on it while the sweep runs keeps its session and its record.
+ * Returns the accounts wiped.
+ */
+export async function sweepUnrecordedClaudeWebSessions(
+  profileIds: readonly string[],
+  records: ClaudeWebRecordsForSweep,
+  partitionExists: (profileId: string) => boolean,
+): Promise<string[]> {
+  if (!records.ok) {
+    logInfo(`[account-web] start sweep skipped: the claude.ai record store did not read cleanly (${records.why}${records.file ? `: ${records.file}` : ''})`)
+    return []
+  }
+  // Chosen and barred with no wait in between (see above), and anything
+  // already open on a chosen account closed at once.
+  const chosen: Array<{ profileId: string; unbar: ClearingShare }> = []
+  for (const profileId of profileIds) {
+    if (typeof profileId !== 'string' || !PROFILE_ID_RE.test(profileId)) continue
+    if (records.profiles.has(profileId)) continue
+    if (current.profileId === profileId && inFlight()) continue
+    let exists = false
+    try { exists = partitionExists(profileId) === true } catch { exists = false }
+    if (!exists) continue
+    chosen.push({ profileId, unbar: barWhileClearing(profileId) })
+    notifyClosing(profileId)
+  }
+  const wiped: string[] = []
+  for (const { profileId, unbar } of chosen) {
+    try {
+      notifyClosing(profileId)
+      await wipeClaudePartition(webPartitionForProfile(profileId), profileId, unbar)
+      wiped.push(profileId)
+    } catch (err) {
+      logError(`[account-web] could not clear an unrecorded claude.ai session for ${profileId} at start: ${(err as Error)?.message ?? err}`)
+    } finally {
+      unbar()
+    }
+  }
+  if (wiped.length) logInfo(`[account-web] cleared ${wiped.length} claude.ai session(s) with no record at start`)
+  return wiped
+}
+
+/**
+ * Whether an account's own partition folder already exists, under this
+ * instance's session data folder's Partitions (never another install's: a dev
+ * instance runs with its own session data folder). The start sweep touches
+ * only those, so it never makes a partition. Anything unknown (an id that is
+ * not a profile id, no session data folder, a check that throws) answers false.
+ */
+export function claudePartitionFolderExists(
+  sessionDataDir: () => string,
+  exists: (path: string) => boolean = existsSync,
+): (profileId: string) => boolean {
+  return (profileId) => {
+    try {
+      const folder = webPartitionForProfile(profileId).replace(/^persist:/, '')
+      return exists(join(sessionDataDir(), 'Partitions', folder)) === true
+    } catch {
+      return false
+    }
+  }
+}
+
+/**
+ * A finished run whose record the caller could not save: its state reads
+ * failed, not done, so the panel never shows "signed in" over a session that
+ * is being cleared for want of a record. Only that account's finished run.
+ */
+export function discardSignInRun(profileId: string, error: string): void {
+  if (current.profileId === profileId && current.phase === 'done') current = { phase: 'failed', profileId, error }
+}
+
+/** Tests only: back to a fresh module state. */
+export function _resetClaudeWebForTest(): void {
+  closeInAppSignInWindow()
+  current = { phase: 'idle', profileId: null }
+  cancelled = false
+  clearing.clear()
+  closingHandlers.clear()
 }

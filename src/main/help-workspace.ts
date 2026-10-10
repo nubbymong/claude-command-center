@@ -10,7 +10,9 @@ import { logWarn } from './debug-logger'
  * app-knowledge.md; the ask session simply launches with this folder as its
  * working directory, so Claude Code reads the knowledge through its normal
  * CLAUDE.md mechanism and Codex through its AGENTS.md one. No global config
- * writes, and the user can open the files themselves.
+ * writes, and the user can open the files themselves. An empty `.git` file
+ * beside them ends git's search for a repository in this folder
+ * (helpWorkspaceFiles).
  *
  * Checked on every call, and rebuilt from nothing whenever the folder is not
  * exactly the app's own files (WP2 PR 4, P4.3), so the docs always match the
@@ -231,10 +233,21 @@ export function askConductorProjectDocMaxBytes(platform: NodeJS.Platform = proce
 }
 
 /** Every file the help folder holds, by name, with its exact bytes. Nothing
- *  else may be in the folder (ensureHelpWorkspace). */
+ *  else may be in the folder (ensureHelpWorkspace).
+ *
+ *  `.git`, empty, as the Insights and Sentinel run folders have: git started
+ *  in this folder (by an Ask session, the CLI it runs, or the resume picker)
+ *  reads it first and stops there with an error, so it finds no repository
+ *  above the help folder, whatever repository holds the resources folder and
+ *  whatever spelling of the folder git was handed, on every platform. The
+ *  ceiling an Ask launch carries (askGitCeiling, pty-manager.ts and the Codex
+ *  package) is a second layer. Like every file here it is the app's: what a
+ *  session writes into it, or puts in its place, is gone before the next Ask
+ *  launch reads the folder. */
 function helpWorkspaceFiles(dir: string, appVersion: string, platform: NodeJS.Platform): ReadonlyArray<readonly [string, Buffer]> {
   const utf8 = (s: string) => Buffer.from(s, 'utf-8')
   return [
+    ['.git', Buffer.alloc(0)],
     ['CLAUDE.md', utf8(CLAUDE_MD)],
     ['AGENTS.md', utf8(askConductorAgentsMarkdown(platform))],
     ['app-knowledge.md', utf8(appKnowledgeMarkdown())],

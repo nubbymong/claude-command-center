@@ -64,7 +64,8 @@ import { webSessionFromElectronCookies } from './cookie-harvest'
 import { blockPartitionDownloads, diagHost, subFrameNavAllowed, toChromeUserAgent } from './in-app-sign-in'
 import { clearCodexWebSession } from './codex-web-session'
 import { readAccountEmail, readServiceAccountEmail } from './account-email-read'
-import { getWebSession, saveWebSession, removeWebSession } from './session-store'
+import { claudeWebStoreIsNewer, getWebSession, NEWER_WEB_STORE_REASON, saveWebSession, removeWebSession } from './session-store'
+import { clearWebSession, isClaudeWebClearing, WEB_SESSION_CLEARING_REASON } from './sign-in'
 import { getCodexWebSession, saveCodexWebSession, removeCodexWebSession } from './codex-web-store'
 import { attachPaneView, detachPaneView } from '../pane-slot'
 
@@ -182,8 +183,15 @@ interface PaneService {
    *  it, as the sign-in window's path does, so nothing stays signed in with no
    *  record (and no Sign out). */
   recordFailed?: (ownerId: string) => void
+  /** Why the view may not open on this account now, or null: checked before
+   *  the partition is touched. */
+  refuseOpen?: (ownerId: string) => string | null
   stateOf: (sessionId: string, ownerId: string, authed: boolean | null, email: string | null) => AccountPaneState
 }
+
+/** What the renderer shows when a claude.ai view closes because the sign-in
+ *  made in it could not be recorded. */
+const CLAUDE_RECORD_FAILED_REASON = 'The claude.ai sign-in in this view could not be recorded, so the view closed and the sign-in is being cleared. Try again.'
 
 const CLAUDE_PANE: PaneService = {
   label: 'claude.ai',
@@ -205,6 +213,21 @@ const CLAUDE_PANE: PaneService = {
     origin: 'in-pane',
   }),
   remove: (id) => removeWebSession(id),
+  recordFailed: (id) => {
+    // A store written by a newer build keeps its own records: nothing is
+    // cleared on its account (the view does not open over such a store).
+    if (claudeWebStoreIsNewer()) return
+    // The account's views close first, each with the reason; the clear starts
+    // in the same tick (and bars the account), so no view opens between the two.
+    closeAccountPanesForProfile(id, CLAUDE_RECORD_FAILED_REASON)
+    void clearWebSession(id).catch((err) => {
+      logError(`[account-pane] could not clear the unrecorded claude.ai session of ${id}: ${(err as Error)?.message ?? err}`)
+    })
+  },
+  // Refused while the account's web session is being cleared (until that
+  // clear has really ended), and over a record store from a newer build,
+  // where a sign-in seen here could never be recorded.
+  refuseOpen: (id) => (isClaudeWebClearing(id) ? WEB_SESSION_CLEARING_REASON : claudeWebStoreIsNewer() ? NEWER_WEB_STORE_REASON : null),
   stateOf: (sessionId, id, authed, email) => ({ sessionId, profileId: id, authed, email }),
 }
 
@@ -270,6 +293,158 @@ interface PaneEntry {
   /** Set by closeAccountPane: an in-flight recording must not write after the
    *  pane (or the whole web session, on sign-out) is gone. */
   closed: boolean
+  /** When the user last pressed a mouse button, tapped a touch screen, or
+   *  pressed Enter or Space on a link or a button in this view (an OS input
+   *  event; a page cannot make one; a key's time is its press, not when its
+   *  landing place was read), on the steady clock (inputClock); null for
+   *  never. */
+  inputAt: number | null
+  /** That input has already let one popup or link through. */
+  inputUsed: boolean
+  /** Counts the inputs noted in the view, so the answer for an older key
+   *  press never arms the view over a newer input. */
+  inputSeq: number
+  /** The count (inputSeq) of the input that set inputAt; 0 for none. A
+   *  hand-off asked for before that input came never uses it. */
+  inputAtSeq: number
+  /** Where the latest Enter or Space landed, still being read; null when
+   *  none is. A hand-off waits for it. */
+  keyCheck: Promise<void> | null
+}
+
+/** How long a user's input lets one popup or one link out of the view through. */
+const USER_INPUT_WINDOW_MS = 1_000
+
+/** The clock an input's age is measured on: steady (it never runs back), so a
+ *  wall clock set back never keeps an old input fresh. */
+function inputClock(): number {
+  return performance.now()
+}
+
+/** Note a real input in the view: it may let one popup or link through. */
+function noteUserInput(entry: PaneEntry): void {
+  entry.inputSeq++
+  entry.inputAt = inputClock()
+  entry.inputAtSeq = entry.inputSeq
+  entry.inputUsed = false
+  // A press or a tap needs no read: a hand-off after it goes at once.
+  entry.keyCheck = null
+}
+
+/** The world the view's focused element is read in: one of the app's own,
+ *  never the page's (a page script cannot change what is read there). */
+const FOCUS_READ_WORLD_ID = 2
+
+/** Whether the element the user's Enter or Space landed on is a link or a
+ *  button (a menu item among them: a button in a menu), through open shadow
+ *  roots and the page's own frames. A text area, an input that takes typed
+ *  text (any type but a button, a check box, a radio, a slider, a colour, a
+ *  file or a hidden one) or a choice box is not, whatever role it is given;
+ *  nor is an editable element, a frame from another site, or anything else.
+ *  Run in FOCUS_READ_WORLD_ID. */
+export const FOCUSED_CONTROL_PROBE = `(() => {
+  try {
+    let el = document.activeElement
+    let depth = 0
+    for (; el && depth < 32; depth++) {
+      const inShadow = el.shadowRoot ? el.shadowRoot.activeElement : null
+      if (inShadow) { el = inShadow; continue }
+      const tag = String(el.tagName).toUpperCase()
+      if (tag === 'IFRAME' || tag === 'FRAME') { const doc = el.contentDocument; el = doc ? doc.activeElement : null; continue }
+      break
+    }
+    if (!el || depth >= 32 || el.isContentEditable === true) return false
+    const tag = String(el.tagName).toUpperCase()
+    const type = String(el.type || '').toLowerCase()
+    if (tag === 'TEXTAREA' || tag === 'SELECT') return false
+    if (tag === 'INPUT' && !['button', 'submit', 'reset', 'image', 'checkbox', 'radio', 'range', 'color', 'file', 'hidden'].includes(type)) return false
+    const role = String(el.getAttribute('role') || '').trim().toLowerCase().split(/\\s+/)[0]
+    if (role) return ['button', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio'].includes(role)
+    if (tag === 'A' || tag === 'AREA') return el.hasAttribute('href') === true
+    if (tag === 'BUTTON' || tag === 'SUMMARY') return true
+    if (tag === 'INPUT') return ['button', 'submit', 'reset', 'image'].includes(type)
+    return false
+  } catch (e) {
+    return false
+  }
+})()`
+
+/** Whether the key just pressed in the view landed on a link or a button,
+ *  read in the app's own world and bounded by the input window. False on any
+ *  failure, a late answer, or anything but a plain yes. */
+async function keyLandedOnControl(wc: WebContentsView['webContents']): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    if (typeof wc.executeJavaScriptInIsolatedWorld !== 'function') return false
+    const answer = await Promise.race([
+      Promise.resolve(wc.executeJavaScriptInIsolatedWorld(FOCUS_READ_WORLD_ID, [{ code: FOCUSED_CONTROL_PROBE }])),
+      new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), USER_INPUT_WINDOW_MS) }),
+    ])
+    return answer === true
+  } catch {
+    return false
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+/** Note an Enter or Space in the view: it counts as the user's click only
+ *  when it landed on a link or a button, so a key typed into the page's text
+ *  box lets nothing out. Its age runs from the key press. */
+function noteKeyInput(entry: PaneEntry): void {
+  const at = inputClock()
+  const seq = ++entry.inputSeq
+  const check: Promise<void> = keyLandedOnControl(entry.view.webContents).then((onControl) => {
+    if (onControl && entry.inputSeq === seq && !entry.closed) {
+      entry.inputAt = at
+      entry.inputAtSeq = seq
+      entry.inputUsed = false
+    }
+  }).finally(() => {
+    if (entry.keyCheck === check) entry.keyCheck = null
+  })
+  entry.keyCheck = check
+}
+
+/** Hand one popup or link off on the view's latest input: at once, or, while
+ *  a key's landing place is still being read, once it is. Only an input that
+ *  came before the hand-off was asked for can let it through. */
+function withUserInput(entry: PaneEntry, go: () => void, refused: () => void): void {
+  const askedAfter = entry.inputSeq
+  const decide = (): void => {
+    if (entry.closed) return
+    if (takeUserInput(entry, askedAfter)) go()
+    else refused()
+  }
+  const pending = entry.keyCheck
+  if (pending) void pending.then(decide)
+  else decide()
+}
+
+/** Use the view's latest input for one hand-off: true (and used up) only when
+ *  it is fresh, has let nothing through yet, and is no later than the input
+ *  count `askedAfter` the hand-off was asked for at. */
+function takeUserInput(entry: PaneEntry, askedAfter: number): boolean {
+  if (entry.inputUsed || entry.inputAt === null) return false
+  if (entry.inputAtSeq > askedAfter) return false
+  const age = inputClock() - entry.inputAt
+  if (!(age >= 0 && age <= USER_INPUT_WINDOW_MS)) return false
+  entry.inputUsed = true
+  return true
+}
+
+/** True for a tap on a touch screen: Chromium's gesture for it, an OS input
+ *  event like a mouse press (the page's own click comes from it later). */
+function isTap(input: { type?: string } | null | undefined): boolean {
+  return input?.type === 'gestureTap'
+}
+
+/** True for a key press that may follow a focused link or button: Enter or
+ *  Space, pressed (not held down and repeating). Where it landed is read
+ *  next (noteKeyInput). */
+function isActivationKey(input: { type?: string; key?: string; code?: string; isAutoRepeat?: boolean }): boolean {
+  if (input?.type !== 'keyDown' || input.isAutoRepeat === true) return false
+  return input.key === 'Enter' || input.key === ' ' || input.code === 'Space' || input.code === 'Enter' || input.code === 'NumpadEnter'
 }
 
 const panes = new Map<string, PaneEntry>()
@@ -556,6 +731,13 @@ function openPane(
   } catch (err) {
     return { ok: false, error: (err as Error)?.message ?? 'invalid account' }
   }
+  let refusal: string | null = null
+  try {
+    refusal = svc.refuseOpen?.(ownerId) ?? null
+  } catch (err) {
+    refusal = (err as Error)?.message ?? 'could not open the account view'
+  }
+  if (refusal) return { ok: false, error: refusal }
 
   const existing = panes.get(sessionId)
   if (existing) {
@@ -630,6 +812,11 @@ function openPane(
       authSeq: 0,
       refreshTimer: null,
       closed: false,
+      inputAt: null,
+      inputUsed: false,
+      inputSeq: 0,
+      inputAtSeq: 0,
+      keyCheck: null,
     }
 
     // MAIN-FRAME ONLY. The session-security invariant is about the top-level,
@@ -657,9 +844,16 @@ function openPane(
       if (decision === 'allow') return
       event.preventDefault()
       if (decision === 'external') {
+        // To the real browser only after the user's own click (or Enter /
+        // Space on a link or a button) in this view, one hand-off per input:
+        // a page cannot send the user's browser anywhere by navigating on its
+        // own.
         const href = safeExternalHttpsHref(target)
-        if (href) void shell.openExternal(href)
-        else logError('[account-pane] refused to hand a non-https URL to the OS')
+        if (!href) logError('[account-pane] refused to hand a non-https URL to the OS')
+        else {
+          withUserInput(entry, () => { void shell.openExternal(href) },
+            () => logError(`[account-pane] did not open ${diagHost(href)} in the browser: no click in the view let it through`))
+        }
       } else {
         // The host only: a blocked URL can carry an OAuth code or state in
         // its query or fragment.
@@ -677,25 +871,54 @@ function openPane(
       guard('will-frame-navigate')(event, String(event?.url ?? ''))
     })
     view.webContents.on('will-prevent-unload', (event) => { event.preventDefault() })
-    view.webContents.setWindowOpenHandler(({ url }) => {
+    view.webContents.setWindowOpenHandler((details) => {
+      const url = String(details?.url ?? '')
       // A popup is only ever followed into THIS view when it is the service's
-      // own URL; a signed-in off-site popup goes to the real browser; everything
-      // else is dropped. Never a new window, and - unlike a plain nav - loadURL
-      // here bypasses the will-navigate guard, so the service check is explicit
-      // and does NOT trust the pre-auth allowance (which a stale authed could
-      // widen).
+      // own URL, opened by the service's own page (its referrer; a frame
+      // embedded from elsewhere, or a page that sends no referrer, is not),
+      // right after the user's own click. A signed-in off-site popup goes to
+      // the real browser right after the user's click, when the page that
+      // opened it is the service's own or is not named at all (a link that
+      // opens in a new tab usually sends no referrer); a popup that names any
+      // other page is dropped. Everything else is dropped. Each click lets
+      // one popup through (a popup dropped for its opener uses none).
+      // Never a new window, and - unlike a plain nav - loadURL here bypasses
+      // the will-navigate guard, so the service check is explicit and does
+      // NOT trust the pre-auth allowance (which a stale authed could widen).
+      const referrer = String(details?.referrer?.url ?? '')
+      let fromService = false
+      try { fromService = svc.isServiceUrl(referrer) } catch { fromService = false }
       if (svc.isServiceUrl(url)) {
-        let href: string | null = null
-        try { href = new URL(url).href } catch { href = null }
-        if (href) loadQuietly(view.webContents, href, 'a service popup')
+        let parsed: string | null = null
+        try { parsed = new URL(url).href } catch { parsed = null }
+        const href = parsed
+        const refused = (): void => logError(`[account-pane] did not follow a popup to ${diagHost(url)}: not opened by the service's own page after a click`)
+        if (href && fromService) withUserInput(entry, () => loadQuietly(view.webContents, href, 'a service popup'), refused)
+        else refused()
       } else if (svc.navDecision(url, entry.authed) === 'external') {
         const href = safeExternalHttpsHref(url)
-        if (href) void shell.openExternal(href)
+        if (!href) logError('[account-pane] refused to hand a non-https URL to the OS')
+        else if (!fromService && referrer !== '') logError(`[account-pane] did not open a popup to ${diagHost(href)} in the browser: not opened by the service's own page`)
+        else {
+          withUserInput(entry, () => { void shell.openExternal(href) },
+            () => logError(`[account-pane] did not open a popup to ${diagHost(href)} in the browser: no click in the view let it through`))
+        }
       }
       return { action: 'deny' }
     })
-    // Esc closes the pane exactly like the ordinary view.
+    // The user's own input in the view: a mouse press, a tap on a touch
+    // screen, or Enter / Space that landed on a link or a button (read just
+    // after the key, noteKeyInput). Only these let a popup or a link out
+    // through (above).
+    view.webContents.on('before-mouse-event', (_event, mouse) => {
+      if (mouse?.type === 'mouseDown') noteUserInput(entry)
+    })
+    view.webContents.on('input-event', (_event, input) => {
+      if (isTap(input)) noteUserInput(entry)
+    })
     view.webContents.on('before-input-event', (_event, input) => {
+      if (isActivationKey(input)) noteKeyInput(entry)
+      // Esc closes the pane exactly like the ordinary view.
       if (input.type === 'keyDown' && input.key === 'Escape') {
         try {
           if (!parent.isDestroyed()) parent.webContents.send(IPC.WEBVIEW_ESCAPE_PRESSED, sessionId)
@@ -823,10 +1046,11 @@ export function getAccountPaneState(sessionId: string): AccountPaneState | null 
   return entry.svc.stateOf(sessionId, entry.ownerId, entry.authed, entry.svc.stored(entry.ownerId)?.accountEmail ?? null)
 }
 
-/** Close every claude.ai account pane for one PROFILE - sign-out revokes the session. */
-export function closeAccountPanesForProfile(profileId: string): void {
+/** Close every claude.ai account pane for one PROFILE - sign-out revokes the
+ *  session, a clear is about to wipe it. A `reason` goes to the renderer. */
+export function closeAccountPanesForProfile(profileId: string, reason?: string): void {
   for (const [sessionId, entry] of [...panes.entries()]) {
-    if (entry.svc === CLAUDE_PANE && entry.ownerId === profileId) closeAccountPane(sessionId)
+    if (entry.svc === CLAUDE_PANE && entry.ownerId === profileId) closeAccountPane(sessionId, reason)
   }
 }
 

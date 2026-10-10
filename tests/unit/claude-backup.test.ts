@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links; changes ACLs on temp folders. [CI] [VM] only -- never run on the owner's machine.
 // tests/unit/claude-backup.test.ts
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'

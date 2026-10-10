@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions, symbolic links and hard links. [CI] [VM] only -- never run on the owner's machine.
 // P3.5 (rows 34, 38): where a Codex conversation's rollout is, and whether a
 // launch can resume it exactly and in which directory. The rules Claude's
 // resolveResumeLaunch keeps (a canonical id; the transcript must exist; the

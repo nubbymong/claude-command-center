@@ -2028,6 +2028,45 @@ describe('spawnPty SSH branch — SSHOptions.reconnect drives --continue on the 
     expect(written).toContain('--continue')
   })
 
+  // The user's extra args stay the last words on every claude line a
+  // tmux-wrapped launch writes: on a reconnect the fresh create carries
+  // --continue among the app's own options, ahead of them, so an option among
+  // them that takes a value can never take the app's flag as it.
+  // Mutation to prove this can fail: append --continue after the user's words
+  // on the fresh create again.
+  it('a tmux-wrapped reconnect\'s fresh create carries --continue ahead of the user\'s extra args, which stay last', () => {
+    const WORDS = '--append-system-prompt'
+    /** The tmux-wrapped line a launch of `sid` writes, the setup reporting tmux on PATH. */
+    const wrappedLine = (sid: string, ssh: Record<string, unknown>): string => {
+      onDataListeners.length = 0
+      spawnPty(fakeWin, sid, { ssh, extraArgs: WORDS } as never)
+      writeMock.mockClear()
+      getSshFlow(sid)!.launchClaude()
+      vi.advanceTimersByTime(300)
+      feedPtyData(nonceSentinel(sid, 'setup ok {NONCE} tmux=path\r\n'))
+      vi.advanceTimersByTime(1500)
+      vi.advanceTimersByTime(300)
+      const line = writeMock.mock.calls.map((c) => c[0]).find((w) => typeof w === 'string' && w.includes(`new-session -s ccc-${sid} `))
+      killPty(sid)
+      expect(line).toBeDefined()
+      return line as string
+    }
+    const reconnectLine = wrappedLine('s-reconnect-tmux-words', { ...SSH, reconnect: true })
+    const creates = reconnectLine.split('new-session -s ccc-s-reconnect-tmux-words ').slice(1)
+    expect(creates.length).toBe(2)
+    for (const c of creates) {
+      // The fresh pane's one quoted command ends with the user's words.
+      expect(c).toContain(` --continue ${WORDS}'`)
+      expect(c).not.toContain(`${WORDS} --continue`)
+    }
+    // A first connect: no --continue, and the user's words last all the same.
+    const firstLine = wrappedLine('s-firstconnect-tmux-words', SSH)
+    expect(firstLine).not.toContain('--continue')
+    const firstCreates = firstLine.split('new-session -s ccc-s-firstconnect-tmux-words ').slice(1)
+    expect(firstCreates.length).toBe(2)
+    for (const c of firstCreates) expect(c).toContain(` ${WORDS}'`)
+  })
+
   // Mutation to prove this can fail: drop the `reconnect` gate itself (add
   // --continue unconditionally whenever tmux is unavailable) -- a session's
   // FIRST-ever connect (reconnect false/absent) would wrongly get
@@ -2161,13 +2200,15 @@ describe('killPty / gracefulExitPty — a tmux-persistent remote is DETACHED, ne
     expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('rm -f'))).toBe(false)
   })
 
-  it('killPty on a NON-persistent SSH session still sweeps its sidecars in-band (unchanged behaviour)', () => {
+  // The session's files go over a separate connection on a close
+  // (pty-close-remote-cleanup.test.ts); nothing is typed into its pane.
+  it('killPty on a NON-persistent SSH session types nothing into the live Claude pane either', () => {
     driveToClaudeWrite('s-nonpersist-close', 'setup ok {NONCE} tmux=none\r\n')
     // tmux=none -> staging fails (helper) -> bare launch, so NOT persistent.
     expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session'))).toBe(false)
     writeMock.mockClear()
     killPty('s-nonpersist-close')
-    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('rm -f'))).toBe(true)
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('rm -f'))).toBe(false)
   })
 
   it('gracefulExitPty DETACHES a tmux-persistent SSH session (no ESC/Ctrl-C/`/exit`) so the remote survives app quit', () => {

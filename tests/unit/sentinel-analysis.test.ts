@@ -297,6 +297,27 @@ describe('the analysis of untrusted notes (P3.9 round 1)', () => {
     expect(f.title).toMatch(/\[REDACTED\]|\[removed\]/)
   })
 
+  it("what a finding says hides a URL's password and a password= value, in the title and in what breaks, for either analysis", () => {
+    // Plain words, so nothing here reads as a token run: only the redaction
+    // of credential shapes can hide them. Synthetic values.
+    const urlPw = ['lanternfish!', 'marigoldpath!']
+    const pw = ['quietharbor', 'velvetcanyon']
+    const title = `Login moved: https://ops:${urlPw[0]}@notes.example/a and password=${pw[0]}`
+    const what = `Sign-in fails; the notes say use https://ops:${urlPw[1]}@notes.example/b with password=${pw[1]} to repair it.`
+    const ev = '- The --sandbox flag was removed.'
+    for (const subject of ['codex', 'claude'] as const) {
+      const f = parseAnalysisOutput(reply(ev, title, what), 'a', 'b', subject, NOTES)![0]
+      // What is around the values stays, so the text was read, not dropped.
+      expect(f.title, subject).toContain('notes.example/a')
+      expect(f.badgeText, subject).toContain('notes.example/b')
+      for (const secret of [...urlPw, ...pw]) {
+        const bare = secret.replace(/!$/, '')
+        expect(f.title, `${subject} title`).not.toContain(bare)
+        expect(f.badgeText, `${subject} what breaks`).not.toContain(bare)
+      }
+    }
+  })
+
   it('an id comes from what the finding says: the same finding keeps its id, a different one at the same place gets another', () => {
     const a = parseAnalysisOutput(reply('- The --sandbox flag was removed.', 'Harmless'), 'a', '0.156.1', 'codex', NOTES)![0].id
     const again = parseAnalysisOutput(reply('- The --sandbox flag was removed.', 'Harmless'), 'x', '0.156.1', 'codex', NOTES)![0].id

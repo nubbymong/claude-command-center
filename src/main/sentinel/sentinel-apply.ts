@@ -2,9 +2,18 @@
 // observed patches go through the SAME path — both fully untrusted. Apply itself
 // delegates to model-registry-service.applyOverlayEntry (atomic write + hot
 // reload) — this module only decides whether a proposal is safe.
+import { followsModelPickerRule } from '../../shared/model-registry'
 import type { ModelRegistry, OverlayModelEntry } from '../../shared/model-registry'
+import { stripSpoofableText } from '../../shared/safe-text'
 
 const MAX_SANE_PER_1M_USD = 1000
+
+/** Fixed, and never the value itself: a proposal is untrusted text. */
+const NAME_RULE_ERROR = 'model name holds characters a model name cannot'
+
+/** A proposal's pattern or family as a refusal names it: plain text (every
+ *  control and invisible character a space), cut short. */
+const shown = (v: string): string => stripSpoofableText(v, 120)
 
 // Mirrors matchEntry's contract: anchored patterns are regexes, everything else
 // is a case-insensitive substring (regex specials inert there).
@@ -17,6 +26,18 @@ function patternHits(pattern: string, candidate: string): boolean {
 
 export function validateProposal(registry: ModelRegistry, entry: OverlayModelEntry): { ok: boolean; error?: string } {
   if (!entry.id || !entry.label || !entry.family) return { ok: false, error: 'id, label, family are required' }
+  if (typeof entry.id !== 'string' || typeof entry.label !== 'string' || typeof entry.family !== 'string') {
+    return { ok: false, error: 'id, label, family must be text' }
+  }
+  // The same name rule as the model picker of the family's provider, for the
+  // id and every alias.
+  if (!followsModelPickerRule(entry.family, entry.id)) return { ok: false, error: NAME_RULE_ERROR }
+  if (entry.aliases !== undefined) {
+    if (!Array.isArray(entry.aliases)) return { ok: false, error: 'aliases must be a list' }
+    for (const a of entry.aliases) {
+      if (!followsModelPickerRule(entry.family, a)) return { ok: false, error: NAME_RULE_ERROR }
+    }
+  }
   if (registry.models.some((m) => m.id === entry.id)) {
     return { ok: false, error: `id "${entry.id}" already exists in the registry — edit/revert that entry instead` }
   }
@@ -31,7 +52,7 @@ export function validateProposal(registry: ModelRegistry, entry: OverlayModelEnt
   if (!entry.patterns?.length) return { ok: false, error: 'at least one pattern required' }
   for (const p of entry.patterns) {
     if (p.startsWith('^') || p.endsWith('$')) {
-      try { new RegExp(p, 'i') } catch { return { ok: false, error: `anchored pattern does not compile: ${p}` } }
+      try { new RegExp(p, 'i') } catch { return { ok: false, error: `anchored pattern does not compile: ${shown(p)}` } }
     }
   }
   const fp = entry.fallbackPricing
@@ -47,7 +68,7 @@ export function validateProposal(registry: ModelRegistry, entry: OverlayModelEnt
     return { ok: false, error: 'colour must be #rrggbb or var(--token)' }
   }
   if (!registry.families[entry.family]) {
-    return { ok: false, error: `family "${entry.family}" not in registry` }
+    return { ok: false, error: `family "${shown(entry.family)}" not in registry` }
   }
   // Hijack guard: would any pattern capture an id that already belongs to a
   // DIFFERENT known entry? Loud rejection instead of a quiet Apply (spec §7).
@@ -56,7 +77,7 @@ export function validateProposal(registry: ModelRegistry, entry: OverlayModelEnt
     for (const p of entry.patterns) {
       let hit = false
       try { hit = patternHits(p, known.id) } catch { /* unreachable: compile pre-checked */ }
-      if (hit) return { ok: false, error: `pattern "${p}" re-matches already-known model ${known.id}` }
+      if (hit) return { ok: false, error: `pattern "${shown(p)}" re-matches already-known model ${known.id}` }
     }
   }
   return { ok: true }

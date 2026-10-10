@@ -674,7 +674,7 @@ describe('What\'s New after PR 4 (P4.11)', () => {
       /Codex is no longer marked Beta/,
       /The Feature Guide and its tour show the cards for the assistants you use/,
       /with Claude Code alone, Code review is not shown, since it needs both/,
-      /Claude Opus 5\.5 and Claude Sonnet 5\.5 are in the model picker/,
+      /Claude Opus 5\.5, Claude Sonnet 5\.5 and Claude Haiku 5\.5 are in the model picker/,
       /The Usage page's Updated line now ages while the page stays open/,
       /now says 1 note, not 1 notes/,
     ]) expect(all).toMatch(said)
@@ -795,5 +795,223 @@ describe('Claude usage by account, said where Ask Conductor reads it (MP10)', ()
     expect(pages()).toMatch(/with one exception: when a local session listed as Not recorded is later resumed in the app under an account profile, its earlier usage moves to that profile's account too\./)
     expect(guide).toMatch(/A session resumed under another account profile counts toward that one from then on; what it used before keeps its account\./)
     expect(guide).toMatch(/with one exception: when a local session that reads \*Not recorded\* is later resumed in the app under an account profile, its earlier usage moves to that profile's account too\./)
+  })
+})
+
+// [host] The 2.1.1-beta.2 entry states the hardening this release ships, one
+// line per guarantee, found by its highlight as the blocks above find it. The
+// pins match key phrases, so a copy edit that keeps the guarantee keeps them.
+describe('What\'s New (2.1.1-beta.2): the hardening it ships, as guarantees', () => {
+  const top = changelog.find((e) => e.highlights?.startsWith('Codex becomes a full second assistant'))!
+  const all = () => top.changes.map((c) => c.description).join('\n')
+  it('lists each guarantee, in plain ASCII', () => {
+    for (const said of [
+      /When the app's settings cannot be read, the built-in tools stay off until they can\./,
+      /refused once their session ends; an SSH Persistent session that stays running on its host keeps its own across a restart of the app\./,
+      /A Codex review now runs without the Codex settings file or the rules files of the account it runs on\./,
+      /Failure text from a review, a Codex Insights run, a Codex cloud agent or a Sentinel analysis that runs on Codex hides credentials written inside URLs and session values\./,
+      /cloud agent that runs on Codex, keeps its Codex account in use until anything it left running has been ended\./,
+      /On Windows a Codex session's PATH keeps only absolute folders/,
+      /On Windows a Claude session's PATH keeps only absolute folders too, and so does the PATH of the terminals in which the app sets up Claude Code, runs its \/insights command or runs an install or update command you confirmed, and of a cloud agent, a Sentinel or Insights run, a Claude review or the check of whether one can run, the sign-in check, the Claude Code version check during onboarding, the list of versions to pin and a pinned version's install\./,
+      /only in the folders PATH names or in the Windows system folder, never in the current folder\./,
+      /A Claude Code or Codex session in a network folder that its npm launcher cannot start from is refused, with the reason/,
+      /Ask Conductor's conversation list stays inside its help folder/,
+      /Names and paths shown from outside the app drop more invisible characters\./,
+      /Sentinel's proposed model entries follow the same name rule as the model picker\./,
+      /A Claude Code config's extra CLI arguments are now held to a rule of the same shape as a Codex config's/,
+      /and so is a word Claude Code would read as a command or as a server to run the session on, or that starts or ends with a comma\./,
+      /extra CLI arguments now come after the app's own options on its start line\. On Windows each word reaches a local Claude Code session as one argument, exactly as typed\./,
+      /the resume list hands agent templates and other options to Claude Code exactly as written, or starts nothing and says why/,
+      /starts under your login shell when it is sh, bash, zsh, dash or ksh/,
+      /finds Claude Code where that shell finds it when asked to run a command, so a PATH change made only in interactive shells, such as nvm\.fish's default node, is not seen \(see Known issues in the Feature Guide\)\./,
+      /On macOS and Linux, a terminal tab whose shell is outside the sh family, such as fish or PowerShell, opens in its folder, and the app types no folder line into it\./,
+      /A session's status bar shows only its own status updates\./,
+      /the log says why, and a status line of your own still shows/,
+      /starts nothing and says so; it never runs on another account in its place\./,
+      /Closing or ending an SSH session removes the files the app last wrote for it from the host it wrote them to, when the app can reach that host with a key or a saved password/,
+      /answer only the app's own window\./,
+      /an account's sign-in is written only into folders the app has made readable by you alone and checked/,
+      /A web sign-in you cancel or leave unfinished never stays signed in after a restart/,
+      /only right after your own click, tap, Enter or Space in the view\./,
+      /Signing in to chatgpt\.com inside the app reaches the sign-in pages of one more sign-in method\./,
+      /Insights keeps its reports only in its own folder/,
+      /Insights shows no report, rather than waiting, when a report cannot be read\./,
+      /The cross-account roll-up's written analysis is shown as plain text\./,
+      /The app starts normally even when the Insights catalogue cannot be updated or has been edited into another shape\./,
+    ]) expect(all()).toMatch(said)
+    for (const c of top.changes) expect(c.description, c.description.slice(0, 40)).toMatch(/^[\x20-\x7e]*$/)
+  })
+
+  it('the review line names only what the review leaves out by its own flags, and no handler line claims more than its own channels', () => {
+    expect(all()).not.toMatch(/review[^.]*without[^.]*hooks/i)
+    expect(all()).not.toMatch(/as the others do/)
+  })
+})
+
+// [host] On Windows the npm commands the app runs, or shows to copy, start
+// with npm.cmd: in PowerShell a plain npm runs npm.ps1, which the default
+// script policy refuses. What's New and the Feature Guide say so.
+describe('npm.cmd on Windows, in What\'s New (2.1.1-beta.2) and the Feature Guide', () => {
+  const top = changelog.find((e) => e.highlights?.startsWith('Codex becomes a full second assistant'))!
+  it('What\'s New says only the npm commands (Claude Code\'s install, Codex\'s install and update) start with npm.cmd on Windows', () => {
+    const said = top.changes.map((c) => c.description).join('\n')
+    expect(said).toMatch(/On Windows the npm commands \(Claude Code's install, Codex's install and update\), whether the app runs them or shows them to copy, start with npm\.cmd, so they work where PowerShell's script policy blocks npm\./)
+    // Claude Code has no npm update command (its recipes install only).
+    expect(said).not.toMatch(/npm install and update commands, for Claude Code and Codex alike/)
+    // The publishers' own installers come first and are not npm commands.
+    expect(said).not.toMatch(/the Codex install and update commands[^.]*start with npm\.cmd/)
+  })
+
+  it('the Feature Guide gives the Codex npm commands as npm.cmd on Windows', () => {
+    const s = APP_KNOWLEDGE_SECTIONS.find((x) => x.id === 'providers')!.body
+    expect(s).toMatch(/On Windows the npm commands start with npm\.cmd instead of npm \(npm\.cmd install -g @openai\/codex\), which runs in PowerShell even where its script policy blocks npm\./)
+  })
+})
+
+// [host] What the 2.1.1-beta.2 hardening adds where Ask Conductor and the
+// Feature Guide read it: the extra CLI arguments rule for Claude Code, a
+// session whose account is gone, and each known issue it ships with, with
+// its workaround.
+describe('app knowledge for the 2.1.1-beta.2 hardening', () => {
+  const body = (id: string) => APP_KNOWLEDGE_SECTIONS.find((s) => s.id === id)!.body
+  it('says what a Claude Code config\'s extra CLI arguments refuse, and how to give a folder or a value', () => {
+    const s = body('sessions')
+    expect(s).toMatch(/For Claude Code, the extra CLI arguments come after the app's own options, and what the app sets, or what changes the conversation, where or how the session runs, its permission mode or the settings it reads, is refused, whether Claude Code's help lists it or not/)
+    expect(s).toMatch(/--cloud, --bare and --safe-mode among them\./)
+    expect(s).toMatch(/a word that starts with an address, a name and a colon as a web address does, which Claude Code can read as a server to run the session on: give a folder as --add-dir=docs, and an option's value after an = sign\./)
+    expect(s).toMatch(/an option's value after an = sign\. So is a word that starts or ends with a comma: give a comma only inside a word, such as --allowedTools=Bash,Edit\./)
+  })
+
+  it('says a Claude session whose account is gone starts nothing, in the words the app shows', () => {
+    expect(body('accounts')).toMatch(/starts nothing and says so: This session's Claude account is no longer set up here\. Choose an account for it and start it again\. It never runs on another account in its place\./)
+  })
+
+  it('each known issue it ships with carries its workaround', () => {
+    const k = body('known-issues')
+    for (const said of [
+      /cannot start through the npm launcher, claude\.cmd or codex\.cmd, so the app refuses it and says why\. Workaround: open the folder from a mapped drive letter, or install the native Claude Code or the standalone Codex\./,
+      /Ask Conductor cannot start, on either assistant, when the resources folder's path holds a ; on Windows \(a : on macOS and Linux\) or a control character; it says so and starts nothing\. Workaround: choose a resources folder whose path has none\./,
+      /With Claude Code on Windows installed as claude\.cmd \(npm's launcher\) or claude\.bat, a session that opens the resume list cannot pass an option that holds a % sign or a control character/,
+      /holds a % sign or a control character: it starts nothing, and names the option where it can\. Workaround: remove the % sign, or install the native Claude Code\./,
+      /other variables set only in that shell's own configuration are not passed on\. Workaround: set them in \.zshenv \(macOS\) or \.bashrc \(Linux\) in your home folder as well\./,
+      /a folder added to PATH only in interactive fish shells, such as nvm\.fish's default node version, is not seen, and a Claude Code installed with npm under that node reads as not found\./,
+      /Workaround: add the line nvm use --silent \$nvm_default_version to your config\.fish outside any is-interactive block\./,
+      /also add Claude Code's folder to PATH in \.zprofile \(macOS\) or \.profile \(Linux; \.bash_profile if you have one\) in your home folder; until then the app may report Claude Code as not found/,
+      /add the folder that holds it \(for Claude Code, the folder with claude\.exe, claude\.cmd or claude\.bat\) to your PATH as a full path, then restart the app\./,
+      /only when you name it with \.\\ in front \(\.\\build\.cmd rather than build\.cmd\)\. Terminal tabs you open are unchanged\./,
+      /a status line of your own still shows\. Workaround: choose a resources folder whose path has none of these\./,
+      /give an option's value after an = sign when the value starts with letters and a colon/,
+      /and write a list with no space after its commas \(--allowedTools=Bash,Edit rather than --allowedTools=Bash, Edit\)\./,
+      /that account cannot be used and nothing is written there\. Workaround: make your Windows user the owner of AI Code Conductor's resources folder/,
+      /make sure Windows PowerShell, whoami and icacls are allowed to run for your user/,
+      /Insights runs only when the insights folder in your resources folder is a real folder, not a link or junction/,
+      /and on macOS and Linux one you own whose permissions let only you write to it\./,
+      /On macOS the app keeps your accounts' sign-in folders in your resources folder to you alone, and the Insights and Sentinel folders there writable only by you, through their owner and permissions\. That holds when the resources folder is on a volume that honours ownership/,
+      /Workaround: keep the resources folder on your Mac's own disk, or on a drive whose Get Info has Ignore ownership on this volume turned off/,
+      /On Windows, an account cannot be used when a file, folder or link directly in its own folder, its Claude Code folder or its identity folder belongs to another Windows account and the app can neither make it yours nor copy that folder into a new one of yours/,
+      /but never a link, a sign-in file \(\.credentials\.json or \.claude\.json\) or a file with a second name \(a hard link\)\. Workaround: take ownership of it or remove it, then restart the app\./,
+    ]) expect(k).toMatch(said)
+    // Sessions start through node (the resume picker), so the native installer
+    // alone does not help a user whose only node is an interactive-only one.
+    expect(k).not.toMatch(/native Claude Code installer, which needs no node/)
+  })
+
+  it('says on macOS that the sign-in folders stay yours only while only you can write to the resources folder, and how to keep it so', () => {
+    const k = body('known-issues')
+    expect(k).toMatch(/That holds when the resources folder is on a volume that honours ownership, only you can write to the resources folder, and no access entry on it, or passed down to it from a folder above, lets another user in\./)
+    expect(k).toMatch(/Ignore ownership on this volume turned off, as a folder only you can write to, and not inside a folder you have opened to other users with access entries/)
+  })
+
+  it('names each Windows program the sign-in folder check starts, so a check that gets no answer points at the right one', () => {
+    const k = body('known-issues')
+    expect(k).toMatch(/If the app cannot check those folders \(Windows PowerShell, or whoami or icacls, which the app starts when Windows PowerShell gives it no answer, did not answer in time or is not allowed to run\), it writes nothing there and says so/)
+    expect(k).toMatch(/make sure Windows PowerShell, whoami and icacls are allowed to run for your user, since the app uses them to check those folders' rights\./)
+  })
+})
+
+// [host] Installing from setup (owner decisions D1 to D4, 2026-10-10;
+// ADR-024): both tools can be installed or updated with Run it for me or
+// Copy, the publisher's own installer first and npm second, and the app
+// finds a new install without a restart. What's New and the Feature Guide
+// say so, in the words the app shows.
+describe('installing from setup, in What\'s New (2.1.1-beta.2) and the Feature Guide', () => {
+  const top = changelog.find((e) => e.highlights?.startsWith('Codex becomes a full second assistant'))!
+  const body = (id: string) => APP_KNOWLEDGE_SECTIONS.find((s) => s.id === id)!.body
+
+  it('What\'s New says both tools install from setup with Run it for me or Copy, the publisher\'s installer first, found without a restart', () => {
+    const said = top.changes.map((c) => c.description).join('\n')
+    expect(said).toMatch(/Claude Code and Codex can both be installed from setup\. Every install or update command has Run it for me, which runs it in a visible terminal once you confirm it, and Copy\./)
+    expect(said).toMatch(/The tool's own installer comes first \(Anthropic's from claude\.ai, OpenAI's from chatgpt\.com\), and its confirmation says it downloads a script from there and runs it; npm comes second, and says so when Node\.js is not found\./)
+    expect(said).toMatch(/Setup checks again when the command ends, also when it fails or you press Ctrl\+C on Windows, and finds the new install without restarting the app\./)
+    expect(said).toMatch(/Settings, Accounts and the CLI help at the foot of the window offer the same\. The setup screens where you choose the app's folders and install and set up Claude Code have Exit; the pages after them do not\./)
+    expect(said).not.toMatch(/The first-run setup screens that check for Claude Code have Exit/)
+    expect(said).not.toMatch(/Every setup screen has Exit/)
+  })
+
+  it('the Feature Guide says how the install commands run, in order, and when the app looks again', () => {
+    const p = body('providers')
+    expect(p).toMatch(/When Claude Code or Codex is missing, or Codex is too old, its row lists the install or update commands from the publisher's own instructions, each with Run it for me and Copy\./)
+    expect(p).toMatch(/The publisher's own installer comes first \(for Claude Code, Anthropic's native installer from claude\.ai; for Codex, OpenAI's installer from chatgpt\.com\), then npm/)
+    expect(p).toMatch(/Run it for me asks first, and for an installer it says that it downloads a script from that site and runs it; then it types the command into a visible terminal tab, never with administrator rights, and checks again when the command ends\./)
+    expect(p).toMatch(/An npm command needs Node\.js: when Node\.js is not found, it says so and its Run it for me is off, while Copy still works\./)
+    expect(p).toMatch(/On Windows, Check again and the check after an install first read the PATH Windows now gives new programs, so a tool installed while the app was open is found without restarting it\./)
+    expect(p).not.toMatch(/the app never runs them/)
+  })
+
+  it('the Feature Guide says the setup screen installs Claude Code and carries on, with Check again and Exit, and never a restart that cannot help', () => {
+    expect(body('providers')).toMatch(/If Claude Code is not installed, the first setup screen says so and lists its install commands, Anthropic's native installer first and npm second, each with Run it for me and Copy: Run it for me runs the command in a terminal on that screen once you confirm it, and setup checks again when it ends and carries on as soon as Claude Code is found\./)
+    const t = body('troubleshooting')
+    expect(t).toMatch(/The page lists the install commands, each with Run it for me and Copy, says which check it ran, and has Check again; setup checks again by itself when a command it ran ends, and carries on once Claude Code is found\./)
+    expect(t).toMatch(/The setup screens where you choose the app's folders and install and set up Claude Code have Exit, which closes the window \(and quits the app on Windows and Linux\); the pages after them do not\./)
+    expect(t).not.toMatch(/The first-run setup screens that check for Claude Code have Exit/)
+    expect(t).not.toMatch(/Every setup screen has Exit/)
+    expect(t).not.toMatch(/restart the app so it picks up the new PATH/)
+    expect(t).not.toMatch(/gives you the install command to copy/)
+  })
+})
+
+// The PATH finding of the first-run test (2026-10-10; ADR-024): Anthropic's
+// installer leaves Claude Code in its own folder, off PATH. What's New, the
+// Feature Guide, the tour, the tips and Known issues say what the app does
+// then, in the words it shows, and none still says the commands are only to
+// copy.
+describe("an installer's folder off PATH, in What's New, the Feature Guide, the tour, the tips and Known issues", () => {
+  const top = changelog.find((e) => e.highlights?.startsWith('Codex becomes a full second assistant'))!
+  const body = (id: string) => APP_KNOWLEDGE_SECTIONS.find((s) => s.id === id)!.body
+
+  it("What's New says setup names the folder and adds it to PATH on Windows, or shows the line elsewhere", () => {
+    const said = top.changes.map((c) => c.description).join('\n')
+    expect(said).toMatch(/Anthropic's installer does not put its folder on your PATH: setup then says Claude Code is installed there, and on Windows Add it to PATH for me adds that one folder to your PATH; on a Mac or Linux it shows the line to add to your shell file\./)
+    expect(said).not.toMatch(/install or update commands from OpenAI's own instructions to copy/)
+    expect(said).not.toMatch(/can run the npm or Homebrew install or update command/)
+  })
+
+  it('the Feature Guide names the folder, Add it to PATH for me and Not now, the shell line, and when a restart helps', () => {
+    const p = body('providers')
+    expect(p).toMatch(/Anthropic's native installer puts Claude Code in %USERPROFILE%\\\.local\\bin on Windows \(~\/\.local\/bin on a Mac or Linux\) and does not add that folder to your PATH\./)
+    expect(p).toMatch(/on Windows, Add it to PATH for me adds that one folder to the end of your PATH for your Windows account and checks again, and Not now leaves your PATH as it is; on a Mac or Linux it shows the line to add to the shell file your login shell reads, with Copy, and never changes that file itself\./)
+    expect(p).toMatch(/The app advises quitting and starting it again only when that would help/)
+  })
+
+  it('Known issues carries the live workarounds this ships with', () => {
+    const k = body('known-issues')
+    expect(k).toMatch(/On a Mac or Linux, an npm install command can say Node\.js was not found when Node\.js is set up only in your interactive shell file/)
+    expect(k).toMatch(/Workaround: press Copy and run the command in a terminal, or use the installer listed first, which does not need Node\.js\./)
+    expect(k).toMatch(/On a Mac or Linux, pressing Ctrl\+C in an install tab can leave that tab at a shell prompt, so the app does not check again by itself\. Workaround: press Check again, or type exit in the tab\./)
+  })
+
+  it('the tour and the tips say each command has Run it for me and Copy, not only Copy', () => {
+    const highlights = trainingSteps.flatMap((t) => (t as { highlights?: string[] }).highlights ?? []).join('\n')
+    expect(highlights).toMatch(/Its row lists the install or update commands, the publisher's own installer first, each with \*\*Run it for me\*\* and \*\*Copy\*\*/)
+    expect(highlights).not.toMatch(/install or update commands to copy, then \*\*Check again\*\*/)
+    const tips = JSON.stringify(TIPS_LIBRARY)
+    expect(tips).toMatch(/each with \*\*Run it for me\*\* and \*\*Copy\*\*\. Run it for me checks again when the command ends/)
+    expect(tips).not.toMatch(/install or update command to copy, then \*\*Check again\*\*/)
+  })
+
+  it('the known issue for Codex review on the sign-in already on this computer says where the app explains it, and keeps its workaround', () => {
+    const k = body('known-issues')
+    expect(k).toMatch(/Until you add a Codex account, Claude sessions have no Codex review\. The Codex review row in Settings, General, Built-in Tools says why, and so does the Codex section of Settings, Accounts, under Code reviews use, with the next step\./)
+    expect(k).toMatch(/The workaround: add a Codex account in Settings, Accounts \(Add Codex account\), then choose Make reviewer in its menu if the sign-in already on this computer is still your default\./)
   })
 })

@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions, symbolic links and hard links. [CI] [VM] only -- never run on the owner's machine.
 // P3.10 (rows 43, 46, 47, 63): the Codex hook forwarder (scripts/ccc-codex-hook.js)
 // trusts nothing it is given. The session is named by the environment Codex
 // passes down and the hook file the app wrote for that launch, laid out as the

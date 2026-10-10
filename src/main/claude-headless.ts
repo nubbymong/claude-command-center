@@ -1,7 +1,9 @@
 // claude-headless.ts — Reusable headless `claude` process spawner.
 // Used by insights-runner and the Sentinel AI analysis runner.
-import { spawn, execSync } from 'child_process'
+import { spawn, spawnSync, type SpawnOptions } from 'child_process'
 import * as path from 'path'
+import { systemTool, windowsStartCommand } from './windows-programs'
+import { CLAUDE_NOT_ON_PATH, findClaudeOnWindowsAsync, recentClaudeOnWindows } from './claude-cli-probe'
 import { StringDecoder } from 'string_decoder'
 import { logInfo, logError } from './debug-logger'
 import { withProfileHome } from './pty-manager'
@@ -9,24 +11,33 @@ import { gateManagedLaunch, peekGateVerdict } from './managed-launch-diagnostics
 import type { ProjectGateResult } from '../shared/providers'
 import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
 import { profileIdFromHome } from './profile-id'
+import { warmFirstStart } from './first-start-warmup'
+import { claudeVersionRunEnv } from './providers/review-support'
 
 /** Grace added to a run's kill timeout for its consumer ref's leak bound: the
  *  spawner kills at `timeoutMs` and settles right after, so a ref that outlives
  *  this could only be one whose release never ran. */
 export const HEADLESS_CONSUMER_GRACE_MS = 60_000
 
-// shell:true means the spawn is `cmd.exe -> claude` on Windows, so proc.kill()
-// kills only the shell and orphans the real claude process (it keeps running and
-// a retry / next launch spawns yet another). taskkill /T /F tears down the whole
-// tree by pid -- same pattern as vision-manager / cloud-agent teardown. POSIX
-// keeps proc.kill() (no shell-orphan problem for our spawns).
+// On Windows a run can be `cmd.exe -> claude.cmd -> node` (an npm install) or a
+// claude.exe with children of its own, so proc.kill() could end only the first
+// process and orphan the rest (it keeps running and a retry / next launch
+// spawns yet another). taskkill /T /F, by its full path in the system folder,
+// tears down the whole tree by pid -- same pattern as vision-manager /
+// cloud-agent teardown; with no plain system folder to name it from, or a
+// taskkill that could not start or did not finish in time, the process itself
+// is ended. POSIX keeps proc.kill().
 function killHeadlessTree(proc: ReturnType<typeof spawn>): void {
   try {
     if (process.platform === 'win32' && proc.pid) {
-      execSync(`taskkill /pid ${proc.pid} /T /F`, { windowsHide: true, timeout: 5000 })
-    } else {
-      proc.kill()
+      let taskkill: string | null = null
+      try { taskkill = systemTool('taskkill.exe') } catch { /* no plain system folder */ }
+      if (taskkill) {
+        const r = spawnSync(taskkill, ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true, timeout: 5000, stdio: 'ignore' })
+        if (!r.error) return
+      }
     }
+    proc.kill()
   } catch {
     // process may have already exited
   }
@@ -125,8 +136,10 @@ export function assertHeadlessOptions(opts: HeadlessSpawnOptions): void {
 }
 
 /**
- * Spawn `claude` as a headless child process (shell:true so both claude.exe and
- * claude.cmd are found on PATH).  Returns stdout/stderr and the exit code.
+ * Spawn `claude` as a headless child process: on Windows by the full path found
+ * in PATH's folders, with no shell (an npm claude.cmd through the system
+ * cmd.exe); elsewhere through `sh` (shell:true), as before. Returns
+ * stdout/stderr and the exit code.
  *
  * Throws synchronously on an unsafe argv (see assertSafeArgv) — that is a
  * programming error, not a runtime condition, so it fails loudly in dev and in
@@ -161,7 +174,9 @@ export function spawnClaudeHeadless(
   //
   // The spawn stays SYNCHRONOUS when nothing is pending (the common case, and
   // what the timeout tests drive); it defers only behind a real in-flight
-  // refresh for this profile.
+  // refresh for this profile, and on Windows behind a PATH walk with no
+  // recent answer, and behind the first-start warm-up of a claude.exe started
+  // directly (spawnNow; ADR-025).
   //
   // The hold is taken BEFORE the wait (adversarial pass on #598): it is what
   // stops a new rotation from starting, and acquiring only after the in-flight
@@ -219,15 +234,69 @@ function spawnNow(
     logError(`[claude-headless] Not spawning: ${message}`)
     return Promise.resolve({ code: 1, stdout: '', stderr: message })
   }
+  // How the run starts. Windows: Claude Code by the full path found in PATH's
+  // folders (claude-cli-probe.ts CLAUDE_WINDOWS_NAMES, in that order), never
+  // through a shell; an npm claude.cmd through the system cmd.exe with plain
+  // arguments (windows-programs.ts), and the child looks for the programs it
+  // starts by name only in PATH's folders. Not found, or an argument a batch
+  // file would re-read: nothing is started, and the result says why. The PATH
+  // walk never runs on the event loop: a recent answer of it (the CLI check
+  // asks every 30 s) starts the run at once, as a cached gate verdict does;
+  // without one the walk runs one stat at a time and the run starts after it,
+  // unless it was cancelled meanwhile. POSIX: unchanged.
+  if (process.platform === 'win32') {
+    const startWith = (bin: string | null): Promise<HeadlessResult> => {
+      const how = bin ? windowsStartCommand(bin, args, env) : { refused: CLAUDE_NOT_ON_PATH }
+      if ('refused' in how) {
+        logError(`[claude-headless] Not spawning: ${how.refused}`)
+        return Promise.resolve({ code: 1, stdout: '', stderr: how.refused })
+      }
+      const run = () => runHeadless({ file: how.file, args: how.args, opts: { windowsHide: true, env: how.env, cwd, ...(how.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) } }, args, timeoutMs, stdinData, home, signal, onStdout)
+      // ADR-025: a claude.exe started directly (not an npm claude.cmd, which
+      // cmd.exe starts) may be a new file this run has not started yet, whose
+      // first start holds the start call while the OS checks it. That first
+      // start runs off the main thread first: the program found above in
+      // PATH's folders, with Claude's --version environment. A pre-start,
+      // never a gate; a run cancelled meanwhile starts nothing.
+      if (how.file !== bin) return run()
+      return warmFirstStart(bin, () => ({ env: claudeVersionRunEnv(process.env, 'win32') })).then(() => {
+        if (signal?.aborted) {
+          logInfo('[claude-headless] Aborted before it started')
+          return { code: 1, stdout: '', stderr: '\nAborted' }
+        }
+        return run()
+      })
+    }
+    const recent = recentClaudeOnWindows(env)
+    if (recent) return startWith(recent)
+    return findClaudeOnWindowsAsync(env).then((bin) => {
+      if (signal?.aborted) {
+        logInfo('[claude-headless] Aborted before it started')
+        return { code: 1, stdout: '', stderr: '\nAborted' }
+      }
+      return startWith(bin)
+    })
+  }
+  return runHeadless({ file: 'claude', args, opts: { shell: true, windowsHide: true, env, cwd } }, args, timeoutMs, stdinData, home, signal, onStdout)
+}
+
+type HeadlessResult = { code: number; stdout: string; stderr: string }
+
+/** Start the run as `start` says and settle on its exit, its timeout or an
+ *  abort (the process tree ended either way). */
+function runHeadless(
+  start: { file: string; args: string[]; opts: SpawnOptions },
+  args: string[],
+  timeoutMs: number,
+  stdinData: string | undefined,
+  home: string | null,
+  signal: AbortSignal | undefined,
+  onStdout?: (chunk: string) => void,
+): Promise<HeadlessResult> {
   return new Promise((resolve) => {
     logInfo(`[claude-headless] Spawning: claude ${args.join(' ')}${stdinData ? ' (with stdin)' : ''}${home ? ' (account home)' : ''}`)
 
-    const proc = spawn('claude', args, {
-      shell: true,
-      windowsHide: true,
-      env,
-      cwd,
-    })
+    const proc = spawn(start.file, start.args, start.opts)
 
     // Pipe prompt via stdin if provided
     if (stdinData && proc.stdin) {
@@ -255,9 +324,10 @@ function spawnNow(
     }, timeoutMs)
 
     // External cancel (Sentinel disable / re-run / account change): kill the
-    // whole tree like the timeout path. shell:true makes proc the cmd.exe pid, so
-    // a plain proc.kill() would orphan the real claude; killHeadlessTree taskkills
-    // the tree by pid.
+    // whole tree like the timeout path. On Windows proc can be the system
+    // cmd.exe running an npm claude.cmd, or a claude.exe with children of its
+    // own, so a plain proc.kill() would orphan the rest; killHeadlessTree
+    // taskkills the tree by pid.
     const onAbort = () => {
       if (resolved) return
       resolved = true

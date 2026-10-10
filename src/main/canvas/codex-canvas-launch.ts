@@ -13,7 +13,7 @@ import * as fs from 'fs'
 import type { CanvasSessionGuidance } from '../../shared/types'
 import type { RealmOwnership } from '../../shared/providers'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
-import { readConfig } from '../config-manager'
+import { readConductorToolSwitches } from '../conductor-tools-switch'
 import { codexDesignatedWorktree } from './codex-canvas-roots'
 import { codexLaunchGuidance, codexGuidanceNotStaged } from './codex-guidance'
 import { logWarn } from '../debug-logger'
@@ -75,9 +75,12 @@ export function prepareCodexCanvasLaunch(input: CodexCanvasLaunchInput): CodexCa
   }
 }
 
-/** The Built-in Tools switch is off in the saved settings. */
+/** The Built-in Tools switch is off in the saved settings: read from them,
+ *  never inferred from settings that cannot be read (those leave the tools
+ *  off for the launch through `toolsOn`, but say nothing was switched off). */
 function toolsSwitchedOff(): boolean {
-  try { return readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled === false } catch { return false }
+  const { master, switches } = readConductorToolSwitches()
+  return !master && switches !== null
 }
 
 function guidanceFor(input: CodexCanvasLaunchInput): CanvasSessionGuidance | null {

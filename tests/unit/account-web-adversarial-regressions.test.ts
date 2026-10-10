@@ -437,3 +437,35 @@ describe('MINOR — cancel is scoped to the account that asked', () => {
     expect(getSignInState().phase).toBe('failed')
   })
 })
+
+describe('an account stays closed to a new sign-in until the clear of its abandoned one has really finished', () => {
+  it('a system-browser sign-in cancelled while its session is collected: a clear that outlasts its time limit keeps the account closed until it ends', async () => {
+    const { isClaudeWebClearing, WEB_SESSION_CLEARING_REASON } = await import('../../src/main/account-web/sign-in')
+    const id = 'profile-eee555'
+    let releaseClear: (() => void) | null = null
+    clearStorageData.mockImplementation(() => new Promise<void>((r) => { releaseClear = r }))
+    let fired = false
+    cookiesSet.mockImplementation(async () => { if (!fired) { fired = true; cancelSignIn(id) } })
+    _setCdpForTest(cdp('me@example.com', 'ok'))
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const run = runSignIn({ ...RUN, profileId: id, timeoutMs: 60_000 })
+      // The run polls, writes, sees the cancel and starts the clear; the clear's
+      // bounded wait then gives up while the clear itself goes on.
+      await vi.advanceTimersByTimeAsync(30_000)
+      const s = await run
+      expect(s.phase).toBe('failed')
+      expect(releaseClear).not.toBeNull()
+      expect(isClaudeWebClearing(id)).toBe(true)
+      expect(await runSignIn({ ...RUN, profileId: id })).toMatchObject({ phase: 'failed', error: WEB_SESSION_CLEARING_REASON })
+      releaseClear!()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(isClaudeWebClearing(id)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+      clearStorageData.mockReset()
+      clearStorageData.mockImplementation(async () => {})
+      cookiesSet.mockReset()
+    }
+  })
+})

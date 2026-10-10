@@ -28,6 +28,9 @@ import path from 'node:path'
 import { logInfo, logWarn } from './debug-logger'
 import { probeClaudeCli, type ClaudeCliProbe } from './claude-cli-probe'
 import { windowsFolderAsRun, windowsPathFolderIsFullyQualified } from './providers/windows-path-names'
+import { claudeVersionRunEnv } from './providers/review-support'
+import { warmFirstStart } from './first-start-warmup'
+import { timedStart } from './main-thread-ops'
 
 /** Extract the semver from `claude --version` output ("2.1.278 (Claude Code)").
  *  Exported for the test: the shape of that line is the CLI's to change. */
@@ -86,20 +89,18 @@ function isWindowsAbsolute(p: string | undefined): p is string {
   return !!p && /^([A-Za-z]:[\\/]|\\\\)/.test(p) && !/^[\\/]{2}[?.]([\\/]|$)/.test(p)
 }
 
-/** Find the CLI on a Windows PATH IN-PROCESS, in the order the managed launch
- *  asks `where` for it (`resolveClaudeBinary`: `claude.exe` anywhere on the
- *  PATH first, then `claude.cmd`). `.bat` is looked for last, which the launch
- *  never asks for.
+/** Find the CLI on a Windows PATH IN-PROCESS, in the order every check and
+ *  start asks for it (claude-cli-probe.ts CLAUDE_WINDOWS_NAMES: `claude.exe`
+ *  anywhere on the PATH first, then `claude.cmd`, then `claude.bat`).
  *
  *  Not `where` itself: it writes its answer in the console's OEM code page,
  *  which the UTF-8 decode turns into U+FFFD (and CJK into `?`), so every
  *  install under a profile name like `José` resolved to a path that does not
  *  exist and the version stayed unknown -- the same permanent finding as the
  *  shim bug below. It reads only fully qualified PATH folders (a drive or a
- *  share, windowsPathFolderIsFullyQualified) with no unexpanded `%VAR%`, so
- *  the two can differ for other entries, for a `.bat`, and for a non-ASCII
- *  install path, which the launch's
- *  own `where` still mangles (a recorded follow-up). Each folder of an entry
+ *  share, windowsPathFolderIsFullyQualified) with no unexpanded `%VAR%`: the
+ *  same folder rule as the launch's own in-process walk (windows-programs.ts),
+ *  so the two agree, non-ASCII install paths included. Each folder of an entry
  *  is named as Windows names it when it starts the program (windowsFolderAsRun:
  *  a name ending in one dot loses it, anywhere in the entry), so the walk reads
  *  the folder a terminal runs from (WP2 PR 4 review, ADR-009 L3).
@@ -247,19 +248,42 @@ export async function resolveClaudeExecutable(): Promise<string | null> {
   return probe.installed && probe.path ? probe.path : null
 }
 
-function runVersionProbe(): Promise<string | null> {
-  return resolveForVersionProbe().then((probe) => new Promise<string | null>((resolve) => {
+/** The version, null for a failed probe, or undefined for one that ran
+ *  nothing because Claude Code was switched off meanwhile. */
+function runVersionProbe(): Promise<string | null | undefined> {
+  return resolveForVersionProbe().then(async (probe) => {
     if (!probe.installed || !probe.path) {
       logWarn(`[claude-version] no Claude CLI resolved (${probe.probe}); version stays unknown`)
-      resolve(null)
-      return
+      return null
     }
     const command = versionProbeCommand(probe.path, process.platform, { ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot })
     if ('refused' in command) {
       logWarn(`[claude-version] not running ${probe.path}: ${command.refused}; version stays unknown`)
-      resolve(null)
-      return
+      return null
     }
+    // ADR-025: at boot this is often the first start of a Claude Code that
+    // updated itself while the app was closed. On Windows that start holds
+    // the start call while the OS checks the new program, so it runs once off
+    // the main thread first (a direct claude.exe only), with Claude's
+    // --version environment. A pre-start, never a gate: it never rejects, and
+    // what it answers changes nothing below.
+    await warmFirstStart(probe.path, () => ({ env: claudeVersionRunEnv(process.env, process.platform) }))
+    // Claude Code switched off while the warm-up ran: no probe runs, and, as
+    // for a probe never started, nothing is recorded (no backoff).
+    if (!claudeCliProbeAllowed()) return undefined
+    return startVersionProbe(probe.path, command)
+  }).catch((e: unknown) => {
+    logWarn(`[claude-version] binary resolution failed: ${(e as Error)?.message ?? e}`)
+    return null
+  })
+}
+
+/** One `--version` run of the resolved CLI; settles exactly once. */
+function startVersionProbe(
+  probePath: string,
+  command: Exclude<ReturnType<typeof versionProbeCommand>, { refused: string }>,
+): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
     try {
       // Settled exactly once, by whichever comes first: the answer or the
       // timer. After that the timer can kill nothing (see abandonProbe).
@@ -271,7 +295,9 @@ function runVersionProbe(): Promise<string | null> {
         if (timer) clearTimeout(timer)
         resolve(v)
       }
-      const child = execFile(
+      // The start holds the main thread (ADR-025): timed, and a slow one
+      // logged by the program's base name only.
+      const child = timedStart(command.file, () => execFile(
         command.file,
         command.args,
         {
@@ -285,15 +311,15 @@ function runVersionProbe(): Promise<string | null> {
           if (settled) return
           if (err) { logWarn(`[claude-version] probe failed: ${err.message}`); settle(null); return }
           const v = parseClaudeCliVersion(String(stdout ?? ''))
-          if (v) logInfo(`[claude-version] installed Claude Code ${v} (${probe.path})`)
+          if (v) logInfo(`[claude-version] installed Claude Code ${v} (${probePath})`)
           else logWarn('[claude-version] probe returned no recognisable version')
           settle(v)
         },
-      )
+      ))
       if (!settled) {
         timer = setTimeout(() => {
           if (settled) return
-          logWarn(`[claude-version] probe timed out after ${probeTimeoutMs} ms (${probe.path})`)
+          logWarn(`[claude-version] probe timed out after ${probeTimeoutMs} ms (${probePath})`)
           settle(null)
           // Node sets exitCode / signalCode before it emits 'exit' and before it
           // releases the process handle, so while both are null the pid is
@@ -306,9 +332,6 @@ function runVersionProbe(): Promise<string | null> {
       logWarn(`[claude-version] probe threw: ${(e as Error).message}`)
       resolve(null)
     }
-  })).catch((e: unknown) => {
-    logWarn(`[claude-version] binary resolution failed: ${(e as Error)?.message ?? e}`)
-    return null
   })
 }
 
@@ -328,9 +351,9 @@ export function probeClaudeCliVersion(): Promise<string | null> {
   if (!claudeCliProbeAllowed()) return Promise.resolve(null)
   const run = runVersionProbe().then((v) => {
     if (v) cached = v
-    else lastFailureAt = Date.now()
+    else if (v === null) lastFailureAt = Date.now()
     inFlight = null
-    return v
+    return v ?? null
   }, (e: unknown) => {
     lastFailureAt = Date.now()
     inFlight = null

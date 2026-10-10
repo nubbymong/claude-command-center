@@ -151,8 +151,14 @@ export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow 
   })
 
   const S = PROVIDER_ACCOUNTS_SCHEMAS
-  handle(IPC.PROVIDER_ACCOUNTS_DISCOVER, S.provider, (i, svc) => svc.discover(i.providerId))
-  handle(IPC.PROVIDER_ACCOUNTS_INSTALL_RECIPES, S.provider, (i, svc) => svc.installRecipes(i.providerId))
+  // Check again, a setup page's check and the check after an install tab
+  // ends: the PATH is brought up to date first (owner decision D4), then the
+  // CLI is looked for. The recipes say which npm ones need Node.js first (D3).
+  handle(IPC.PROVIDER_ACCOUNTS_DISCOVER, S.provider, (i, svc) => svc.checkAgain(i.providerId))
+  handle(IPC.PROVIDER_ACCOUNTS_INSTALL_RECIPES, S.provider, (i, svc) => svc.installRecipesChecked(i.providerId))
+  // Add it to PATH for me: the provider id is all the renderer sends; main
+  // computes the one folder it appends (install-folder-path.ts).
+  handle(IPC.PROVIDER_ACCOUNTS_ADD_TO_PATH, S.provider, (i, svc) => svc.addToPath(i.providerId))
   handle(IPC.PROVIDER_ACCOUNTS_SET_ENABLED, S.setEnabled, (i, svc) => svc.setProviderEnabled(i.providerId, i.enabled))
   handle(IPC.PROVIDER_ACCOUNTS_BEGIN_SETUP, S.beginSetup, (i, svc) => svc.beginSetup(i))
   handle(IPC.PROVIDER_ACCOUNTS_ISSUE_SECRET_HANDLE, S.account, (i, svc, e) => svc.issueSecretHandle(i, e.sender.id))

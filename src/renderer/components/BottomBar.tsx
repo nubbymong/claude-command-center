@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
 import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton, useDialogEscape } from './ui/Dialog'
 import { useConfigHealthStore } from '../stores/configHealthStore'
@@ -8,6 +8,15 @@ import MultiAccountStatusline from './MultiAccountStatusline'
 import { useRegionTypography } from '../hooks/useTypography'
 import { formatInstalledVersion } from '../utils/versionLabel'
 import { useClaudeOff } from '../lib/claudeOff'
+import { claudeCodeInstallCommand } from '../utils/claudeInstallCommand'
+import type { InstallRecipeView, PathHintView } from '../../shared/providers'
+import { providerAccountActions } from '../stores/providerAccountsStore'
+import { InstallRecipeList, afterInstallMessage, type RunnableRecipe } from '../onboarding/InstallRecipeList'
+import { PathHintNotice, cliHelpLooksText } from '../onboarding/PathHintNotice'
+import { openInstallTab, useInstallTabRunning, type InstallTab } from '../utils/installTab'
+
+/** Where the confirmation says the line runs. */
+const CONFIRM_WHERE = 'Run this in a new terminal tab? It types the line below, and the app checks again when the command ends.'
 
 declare const __BUILD_TIME__: string
 declare const __APP_VERSION__: string
@@ -28,7 +37,11 @@ interface BottomBarProps {
 // up into SessionStatusStrip (above the command rows). The Update pill is now
 // the single update affordance -- the big green sidebar toast was removed -- so
 // it gently pulses while an update is available. The CLI poll and the
-// "CLI not found" help modal stay here verbatim so no CLI affordance is lost.
+// "CLI not found" help modal stay here so no CLI affordance is lost. The help
+// lists main's own Claude Code install commands, Anthropic's native installer
+// first, each with Run it for me and Copy (owner decision D2, 2026-10-10;
+// ADR-024); when the install tab ends, and on Check again, the app asks main to
+// check again (which brings its PATH up to date first) and reads the CLI.
 export default function BottomBar({ currentView, onViewChange, onUpdateRequested }: BottomBarProps) {
   void currentView
   const channel = useSettingsStore((s) => s.settings.updateChannel)
@@ -41,10 +54,56 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [showCliHelp, setShowCliHelp] = useState(false)
 
-  // Escape is the third way out of the CLI help modal (Close and Re-check are
+  // Escape is the third way out of the CLI help modal (Close and Check again are
   // the other two); only armed while it is open.
   const closeCliHelp = useCallback(() => setShowCliHelp(false), [])
   useDialogEscape(closeCliHelp, showCliHelp)
+
+  // Main's install commands for Claude Code, read each time the help opens
+  // (null: main could not give them; the npm command is shown to copy).
+  const [recipes, setRecipes] = useState<InstallRecipeView[] | null | undefined>(undefined)
+  useEffect(() => {
+    if (!showCliHelp) return
+    let live = true
+    void providerAccountActions.installRecipes('claude').then((r) => { if (live) setRecipes(r) })
+    return () => { live = false }
+  }, [showCliHelp])
+  // The install tab the help opened (one at a time), what the last check
+  // after it, or after Check again, found, and whether a check is running.
+  const [tab, setTab] = useState<InstallTab | null>(null)
+  const tabRunning = useInstallTabRunning(tab)
+  const [stillMissing, setStillMissing] = useState<null | 'ended' | 'checked'>(null)
+  const [pathHint, setPathHint] = useState<PathHintView | undefined>(undefined)
+  const [rechecking, setRechecking] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+  // Main checks again (bringing its PATH up to date first), then the CLI is
+  // read. Still missing after the install tab ended: the help opens again
+  // (it closed when the tab opened), so what to do is in front of the user.
+  const recheck = async (after: 'ended' | 'checked') => {
+    setRechecking(true)
+    const r = await providerAccountActions.discover('claude')
+    let found = false
+    try { found = (await window.electronAPI.cli.check()) === true } catch { found = false }
+    if (!mounted.current) return
+    setRechecking(false)
+    setCliAvailable(found)
+    setStillMissing(found ? null : after)
+    setPathHint(!found && r.ok ? r.pathHint : undefined)
+    if (found) setShowCliHelp(false)
+    else if (after === 'ended') setShowCliHelp(true)
+  }
+  const runInstall = (recipe: RunnableRecipe) => {
+    if (tabRunning) return
+    setShowCliHelp(false)
+    setStillMissing(null)
+    setTab(openInstallTab({ label: 'Install Claude Code', runLine: recipe.runLine, show: true, onEnded: () => { void recheck('ended') } }))
+  }
+  const listed = Array.isArray(recipes) && recipes.some((r) => r.purpose === 'install')
 
   // Claude Code switched off in Settings, Accounts: there is no Claude CLI
   // to watch, so the indicator is absent, as the bar treats any feature that
@@ -174,11 +233,10 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
           was removed on the owner's call (#383): the app is AI Code Conductor
           now, and the trademark attribution lives in the README. */}
 
-      {/* CLI help modal -- ported verbatim from StatusBar so the
-          "CLI not found -- click for help" path still works. */}
+      {/* CLI help modal: the "CLI not found -- click for help" path. */}
       {showCliHelp && (
         <DialogOverlay>
-          <DialogPanel width="w-[480px]" className="max-h-[80vh]" labelledBy="bottombar-cli-help-title">
+          <DialogPanel width="w-[600px]" className="max-h-[80vh]" labelledBy="bottombar-cli-help-title" testId="bottombar-cli-help">
             <DialogHeader
               titleId="bottombar-cli-help-title"
               title="Claude CLI Not Found"
@@ -186,29 +244,63 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
             />
             <DialogBody>
               <div className="space-y-3 text-sm">
-                <div className="rounded p-3" style={{ background: 'var(--surface-overlay)' }}>
-                  <div className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Option 1: Native Installer (Recommended)</div>
-                  <p className="mb-2" style={{ color: 'var(--text-secondary)' }}>Run this in any terminal:</p>
-                  <code className="block rounded px-2 py-1 font-mono text-xs select-all" style={{ background: 'var(--surface-base)', color: 'var(--brand)' }}>
-                    claude install
-                  </code>
-                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                    Installs to ~/.local/bin/claude.exe
-                  </p>
-                </div>
+                {stillMissing && !rechecking && pathHint && (
+                  <PathHintNotice
+                    hint={pathHint}
+                    toolName="Claude Code"
+                    providerId="claude"
+                    testIdPrefix="bottombar"
+                    onAdded={() => { void recheck('checked') }}
+                  />
+                )}
+                {recipes === undefined ? null : listed ? (
+                  <div className="install-recipes">
+                    <InstallRecipeList
+                      purpose="install"
+                      recipes={recipes}
+                      toolName="Claude Code"
+                      testIdPrefix="bottombar"
+                      confirmWhere={CONFIRM_WHERE}
+                      onRun={runInstall}
+                      busyReason={tab && tabRunning ? `Already running in the ${tab.label} tab` : undefined}
+                    />
+                  </div>
+                ) : (
+                  <div className="rounded p-3" style={{ background: 'var(--surface-overlay)' }}>
+                    <div className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Install with npm</div>
+                    <p className="mb-2" style={{ color: 'var(--text-secondary)' }}>Run this in a terminal (it needs Node.js 22 or later):</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 min-w-0 rounded px-2 py-1 font-mono text-xs select-all" style={{ background: 'var(--surface-base)', color: 'var(--brand)' }} data-testid="bottombar-cli-npm-install-command">
+                        {claudeCodeInstallCommand(window.electronPlatform)}
+                      </code>
+                      <DialogButton
+                        variant="secondary"
+                        className="shrink-0"
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(claudeCodeInstallCommand(window.electronPlatform)).then(() => {
+                            if (!mounted.current) return
+                            setCopied(true)
+                            setTimeout(() => { if (mounted.current) setCopied(false) }, 1500)
+                          }).catch(() => { /* clipboard blocked: the command is selectable */ })
+                        }}
+                        testId="bottombar-cli-npm-copy"
+                      >
+                        {copied ? 'Copied' : 'Copy'}
+                      </DialogButton>
+                    </div>
+                  </div>
+                )}
 
-                <div className="rounded p-3" style={{ background: 'var(--surface-overlay)' }}>
-                  <div className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Option 2: npm</div>
-                  <code className="block rounded px-2 py-1 font-mono text-xs select-all" style={{ background: 'var(--surface-base)', color: 'var(--brand)' }}>
-                    npm install -g @anthropic-ai/claude-code
-                  </code>
-                </div>
+                {stillMissing && !rechecking && !pathHint && (
+                  <p className="text-xs" role="status" style={{ color: 'var(--status-warning)' }} data-testid="bottombar-cli-after-install">
+                    {afterInstallMessage('Claude Code', { ended: stillMissing === 'ended' })}
+                  </p>
+                )}
 
                 <div className="rounded p-3" style={{ background: 'var(--surface-overlay)' }}>
                   <div className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Already installed?</div>
-                  <p style={{ color: 'var(--text-secondary)' }}>
-                    Make sure the claude binary is on your system PATH. For the native installer,
-                    add <code style={{ color: 'var(--brand)' }}>%USERPROFILE%\.local\bin</code> to your PATH environment variable.
+                  <p style={{ color: 'var(--text-secondary)' }} data-testid="bottombar-cli-looks">
+                    {cliHelpLooksText(window.electronPlatform)}
                   </p>
                 </div>
               </div>
@@ -219,12 +311,11 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
               </DialogButton>
               <DialogButton
                 variant="primary"
-                onClick={() => {
-                  setShowCliHelp(false)
-                  window.electronAPI.cli.check().then(setCliAvailable)
-                }}
+                onClick={() => { void recheck('checked') }}
+                disabled={rechecking}
+                testId="bottombar-cli-recheck"
               >
-                Re-check
+                {rechecking ? 'Checking...' : 'Check again'}
               </DialogButton>
             </DialogFooter>
           </DialogPanel>

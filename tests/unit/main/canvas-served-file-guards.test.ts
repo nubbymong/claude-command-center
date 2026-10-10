@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants hard links. [CI] [VM] only -- never run on the owner's machine.
 // BLOCKER 1, second half (adversarial review, 2026-08-15) — the READ
 // PRIMITIVE. Confining WHICH paths may be read is only half a boundary; the
 // other half is what "read that path" actually does. Three defects:

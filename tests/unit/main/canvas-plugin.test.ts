@@ -1,3 +1,4 @@
+// HOST QUARANTINE: plants junctions and symbolic links; changes ACLs on temp folders. [CI] [VM] only -- never run on the owner's machine.
 // The Agent Canvas workflow plugin (P6 seed): materialized under the
 // resources dir and handed to the CLI per session via --plugin-dir. The tests
 // pin the plugin's CONTRACT: a valid Claude Code plugin layout, a skill whose

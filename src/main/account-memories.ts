@@ -28,7 +28,7 @@ import { memoryPathWithinBound } from '../shared/account-memories'
 import type { AccountMemories, AccountMemoryFile } from '../shared/account-memories'
 import { readCheckedFile } from './account-folders'
 import type { AccountFileFs, AccountFolderSet } from './account-folders'
-import { AccountPathRefused, isGitSegment, pathInside, samePathForm, validateAccountMemoryPath, localPathFormProblem } from './utils/path-validator'
+import { AccountPathRefused, isGitSegment, isOwnRealPath, pathInside, validateAccountMemoryPath, localPathFormProblem } from './utils/path-validator'
 import { extractDescription, inferTypeFromFilename, parseFrontmatter } from './memory-scanner'
 
 /** The walk's bounds. A folder past them is listed in part (`truncated`). */
@@ -69,7 +69,7 @@ async function scanOne(set: AccountFolderSet, deps: AccountMemoryDeps): Promise<
   // folder. Then the folder's real path must be its own (no link above it).
   if (!rootStat.isDirectory()) return base
   try {
-    if (!samePathForm(await deps.fs.realpath(root), root, deps.platform)) return base
+    if (!(await isOwnRealPath(await deps.fs.realpath(root), root, deps.platform, deps.fs))) return base
   } catch {
     return base
   }
@@ -83,7 +83,7 @@ async function scanOne(set: AccountFolderSet, deps: AccountMemoryDeps): Promise<
   /** The folder is still at its own real path: no folder on the way swapped
    *  for a link since the walk looked at it. */
   const stillOwn = async (abs: string): Promise<boolean> => {
-    try { return samePathForm(await deps.fs.realpath(abs), abs, deps.platform) } catch { return false }
+    try { return await isOwnRealPath(await deps.fs.realpath(abs), abs, deps.platform, deps.fs) } catch { return false }
   }
   while (queue.length > 0 && !stop) {
     const dir = queue.shift()!
@@ -129,7 +129,7 @@ async function scanOne(set: AccountFolderSet, deps: AccountMemoryDeps): Promise<
     try {
       // At its own real path (no folder on the way swapped for a link since
       // the walk), and the file the walk saw.
-      if (!samePathForm(await deps.fs.realpath(f.abs), f.abs, deps.platform)) continue
+      if (!(await isOwnRealPath(await deps.fs.realpath(f.abs), f.abs, deps.platform, deps.fs))) continue
       head = await readCheckedFile(f.abs, L.descriptionBytes, deps.fs, { expect: { dev: f.st.dev, ino: f.st.ino } })
     } catch {
       continue
