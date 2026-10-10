@@ -253,6 +253,8 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
         // said here, and Skip for now goes on without it.
         const refusal = launchRefusalOf(started)
         if (refusal) { term.writeln(refusal.message); return }
+        // Closed, or asked for again, before it started: nothing started.
+        if (started === null) return
         setPtySpawned(true)
       })
     },
@@ -357,7 +359,9 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
   const handleExit = () => {
     const cur = installRef.current
     if (cur && !cur.ended) window.electronAPI.pty.kill(cur.id)
-    if (ptySpawned) void window.electronAPI.setup.killCliSetup()
+    // Also before the terminal has started: a start still being prepared in
+    // main (its first start, ADR-025) then starts nothing.
+    void window.electronAPI.setup.killCliSetup()
     window.electronAPI.window.close()
   }
   const exitButton = (

@@ -24,7 +24,8 @@
 //     OS, so its main-thread start is not the first start of a new program.
 //   - The program is the canonical path (real path) of what the main-process
 //     caller's own discovery or resolution found. Callers are main-process
-//     code only; no renderer input reaches this module (its importers are
+//     code only; no renderer input reaches this module (its importers, and
+//     every file that names a warm-up call, the package ports included, are
 //     pinned by tests/unit/main/first-start-warmup.test.ts).
 //   - The argv is FIRST_START_ARGS, a constant: no caller passes arguments.
 //   - The environment is the one the caller's own `--version` run is built
@@ -202,6 +203,9 @@ export function createFirstStartWarmup(deps: FirstStartWarmupDeps): {
     try {
       if (deps.platform() !== 'win32') return { outcome: 'skipped', reason: 'not-windows' }
       if (typeof program !== 'string' || !DRIVE_OR_SHARE.test(program) || windowsPathHasTrailingDotOrSpace(program)) return { outcome: 'skipped', reason: 'refused-path' }
+      // The caller's own program, not only its link target: a .cmd linked to
+      // a program is started through cmd.exe, so it is not warmed either.
+      if (!/\.exe$/i.test(program)) return { outcome: 'skipped', reason: 'not-exe' }
       let canonical: string
       let st: FirstStartFileStat
       try {

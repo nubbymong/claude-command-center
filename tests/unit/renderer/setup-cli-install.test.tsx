@@ -435,6 +435,21 @@ describe('first-run setup: Exit on every screen, and one button rule', () => {
     expect(windowApi.close).toHaveBeenCalledTimes(1)
   })
 
+  it('Exit before the Claude Code setup terminal has started still asks main to stop it, so a start main is still preparing starts nothing', async () => {
+    setup.probeCli.mockResolvedValue({ installed: true, path: 'x', probe: 'PATH walk' })
+    // Main is still preparing the terminal's first start: no answer yet.
+    setup.spawnCliSetup.mockImplementation(() => new Promise<string>(() => { /* never answers in this case */ }))
+    try {
+      await renderMissing()
+      expect(container.textContent).toContain('Claude CLI Setup')
+      await click('setup-exit')
+      expect(setup.killCliSetup).toHaveBeenCalled()
+      expect(windowApi.close).toHaveBeenCalledTimes(1)
+    } finally {
+      setup.spawnCliSetup.mockImplementation(async () => '__cli_setup__')
+    }
+  })
+
   it('an install option: Copy, then Run it for me, both secondary and small; its confirmation: Cancel, then Run it, the one primary', async () => {
     await renderMissing()
     const row = byTest(`setup-recipe-${NATIVE.id}`)!

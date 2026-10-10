@@ -38,6 +38,8 @@ import { isProfileInUseByLiveSession, sessionsOnProfile } from '../claude-accoun
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
 import { windowsStartCommand } from '../windows-programs'
 import { CLAUDE_NOT_ON_PATH, findClaudeOnWindowsAsync, recentClaudeOnWindows } from '../claude-cli-probe'
+import { warmFirstStart } from '../first-start-warmup'
+import { claudeVersionRunEnv } from '../providers/review-support'
 
 /** promisify(execFile), made when a CLI runs rather than when this module
  *  loads: the composition root imports it at start (WP2 PR 4, the Claude
@@ -66,7 +68,7 @@ export async function claudeAuthStatusCommand(
 
 /** claudeAuthStatusCommand's start once Claude Code is known (`bin`, Windows
  *  only), synchronously: the probe below takes this path while the PATH
- *  walk's answer is recent, so it stays synchronous up to the spawn. */
+ *  walk's answer is recent, so the lookup adds no wait of its own. */
 function authStatusStart(env: Record<string, string>, platform: NodeJS.Platform, bin: string | null): AuthStatusStart {
   const base = { encoding: 'utf-8' as const, timeout: STATUS_TIMEOUT_MS, windowsHide: true }
   if (platform !== 'win32') return { file: 'claude', args: ['auth', 'status'], options: { ...base, shell: true, env } }
@@ -270,9 +272,11 @@ async function readClaudeCliAuthUncached(profileId: string, runner?: ClaudeCliAu
   //    Awaited ONLY when a rotation is actually in flight, when the project
   //    gate has no recent verdict for this process's directory (the first
   //    probe, and once per reuse window after), or when the account's
-  //    sign-in folders have no verdict yet this run (Windows): the common path
-  //    stays synchronous up to the spawn, which is what lets overlapping
-  //    probes for one profile share a single subprocess.
+  //    sign-in folders have no verdict yet this run (Windows), and behind the
+  //    first-start warm-up of a claude.exe started directly (Windows,
+  //    ADR-025); otherwise the path stays synchronous up to the spawn.
+  //    Overlapping probes for one profile share a single subprocess either
+  //    way (authProbesInFlight).
   //
   //    Through a runner (the provider-neutral check, WP2 PR 4) the profile is
   //    held for the runner's own time limit plus a grace, and let go only once
@@ -312,10 +316,19 @@ async function readClaudeCliAuthUncached(profileId: string, runner?: ClaudeCliAu
         const parsed = r.refused !== undefined || r.spawnError !== undefined || r.timedOut ? null : parseAuthStatus(r.stdout)
         if (parsed) return parsed
       } else {
-        // A recent answer of Windows' PATH walk keeps this synchronous up to
-        // the spawn (see above); without one the walk runs off the event loop.
+        // A recent answer of Windows' PATH walk is used at once (see above);
+        // without one the walk runs off the event loop.
         const recent = process.platform === 'win32' ? recentClaudeOnWindows(env) : null
         const run = process.platform === 'win32' && !recent ? await claudeAuthStatusCommand(env) : authStatusStart(env, process.platform, recent)
+        // ADR-025: a claude.exe started directly (not an npm claude.cmd, which
+        // cmd.exe starts) may be a new file this run has not started yet, whose
+        // first start holds the start call while the OS checks it. That first
+        // start runs off the main thread first: the program found above in
+        // PATH's folders, with Claude's --version environment (never this
+        // account's home). A pre-start, never a gate.
+        if (process.platform === 'win32' && /\\claude\.exe$/i.test(run.file)) {
+          await warmFirstStart(run.file, () => ({ env: claudeVersionRunEnv(process.env, 'win32') }))
+        }
         const { stdout } = await execFileAsync(run.file, run.args, run.options)
         const parsed = parseAuthStatus(stdout)
         if (parsed) return parsed

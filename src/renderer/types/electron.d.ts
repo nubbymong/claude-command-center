@@ -652,7 +652,8 @@ export interface ElectronAPI {
     setResourcesDir: (dir: string) => Promise<boolean>
     isCliReady: () => Promise<boolean>
     probeCli: () => Promise<{ installed: boolean; path?: string; probe: string; pathHint?: PathHintView }>
-    spawnCliSetup: (cols: number, rows: number) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
+    /** null: closed, or asked for again, before it started (nothing started). */
+    spawnCliSetup: (cols: number, rows: number) => Promise<string | import('../../shared/providers').ProviderLaunchRefused | null>
     killCliSetup: () => Promise<boolean>
   }
   diagnostics: {

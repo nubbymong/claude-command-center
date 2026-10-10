@@ -208,6 +208,13 @@ describe('the first-start warm-up (ADR-025)', () => {
     expect(f.requests).toHaveLength(0)
   })
 
+  it('a .cmd that is a link to a program is skipped: the caller starts it through cmd.exe, so its target is never warmed', async () => {
+    const realpath = vi.fn(async (p: string) => (p === 'C:\\npm\\claude.cmd' ? 'C:\\Tools\\other.exe' : p))
+    const f = fakeDeps({ realpath })
+    expect(await createFirstStartWarmup(f.deps).warm('C:\\npm\\claude.cmd', ENV)).toEqual({ outcome: 'skipped', reason: 'not-exe' })
+    expect(f.requests).toHaveLength(0)
+  })
+
   it('logs a slow first start by the program\'s base name only, never its folder, arguments or environment', async () => {
     const f = fakeDeps()
     const p = createFirstStartWarmup(f.deps).warm(EXE, ENV)
@@ -243,7 +250,10 @@ describe('the first-start warm-up (ADR-025)', () => {
 // only from the reviewed main-side callers below with a program their own
 // discovery or resolution found. No preload or renderer file, and no IPC
 // handler outside setup's own (which passes main's resolution, never its
-// arguments; first-start-routing tests), imports it.
+// arguments; first-start-routing tests), imports it, and none names a call
+// of it: the module's own function, the provider packages' port
+// (launch.warmFirstStart, reachable through the provider registry with no
+// import of this module), the Claude review port and Codex discovery's warm.
 describe('who can start a first-start warm-up', () => {
   const ROOT = resolve(__dirname, '..', '..', '..')
   const walk = (dir: string, out: string[] = []): string[] => {
@@ -255,17 +265,41 @@ describe('who can start a first-start warm-up', () => {
     return out
   }
   const IMPORTERS = [
+    'src/main/account-web/claude-cli-auth.ts',
     'src/main/claude-cli-version.ts',
+    'src/main/claude-headless.ts',
+    'src/main/cloud-agent-manager.ts',
     'src/main/insights-runner.ts',
     'src/main/ipc/setup-handlers.ts',
     'src/main/providers/codex/index.ts',
     'src/main/providers/compose.ts',
   ]
+  // Every file that names a warm-up call: the importers above, and the
+  // reviewed holders of the ports (the package interface, the accounts
+  // service's launch, Claude's review port, Codex discovery's warm).
+  const CALLERS = [
+    ...IMPORTERS,
+    'src/main/providers/claude/review-launch.ts',
+    'src/main/providers/codex/discovery.ts',
+    'src/main/providers/core/accounts-service.ts',
+    'src/main/providers/core/package.ts',
+  ].sort()
+  const NAMES_A_CALL = /\b(?:warmFirstStart|warmCodexFirstStart|startFirstStartWorker)\b|\bdeps\s*\??\.\s*warm\b/
+  const source = () => walk(join(ROOT, 'src')).filter((f) => f !== 'src/main/first-start-warmup.ts')
   it('only the reviewed main-process callers import it', () => {
     // An import or a require of either file, in any file but the module itself.
     const IMPORTS = /\b(?:from|import|require)\s*\(?\s*['"][^'"]*first-start-(?:warmup|worker)[^'"]*['"]/
-    const found = walk(join(ROOT, 'src')).filter((f) => f !== 'src/main/first-start-warmup.ts' && IMPORTS.test(readFileSync(join(ROOT, f), 'utf8')))
+    const found = source().filter((f) => IMPORTS.test(readFileSync(join(ROOT, f), 'utf8')))
     expect(found.sort()).toEqual(IMPORTERS)
+  })
+  it('only the reviewed main-process files name a warm-up call, the package and review ports included', () => {
+    const found = source().filter((f) => NAMES_A_CALL.test(readFileSync(join(ROOT, f), 'utf8')))
+    expect(found.sort()).toEqual(CALLERS)
+  })
+  it('no IPC handler but the setup terminal\'s names a warm-up call', () => {
+    for (const f of source().filter((x) => x.startsWith('src/main/ipc/') && x !== 'src/main/ipc/setup-handlers.ts')) {
+      expect(readFileSync(join(ROOT, f), 'utf8'), f).not.toMatch(NAMES_A_CALL)
+    }
   })
   it('no IPC channel, preload or renderer file names it', () => {
     for (const f of walk(join(ROOT, 'src')).filter((x) => /^src\/(preload|renderer|shared)\//.test(x))) {

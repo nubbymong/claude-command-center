@@ -2,6 +2,7 @@
 // after an install, often its first start ever. On Windows the handler awaits
 // the first-start warm-up of the Claude Code main resolved (never anything the
 // renderer sent: it sends only the terminal's size) before node-pty starts it.
+// A kill, or a newer start, that arrives during that wait cancels the start.
 // The PTY, the resolution and the warm-up are faked; nothing is started.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as os from 'node:os'
@@ -23,7 +24,7 @@ vi.mock('electron', () => ({
 vi.mock('node-pty', () => ({
   spawn: (file: string) => {
     h.order.push(`pty ${file}`)
-    return { onData: vi.fn(), onExit: vi.fn(), kill: vi.fn(), write: vi.fn() }
+    return { onData: vi.fn(), onExit: vi.fn(), kill: vi.fn(() => { h.order.push('pty killed') }), write: vi.fn() }
   },
 }))
 vi.mock('../../../src/main/pty-manager', () => ({ resolveClaudeForPty: () => ({ cmd: RESOLVED, args: [] }) }))
@@ -48,8 +49,13 @@ vi.mock('../../../src/main/first-start-warmup', () => ({
 const real = await vi.importActual<typeof import('../../../src/main/ipc/setup-handlers')>('../../../src/main/ipc/setup-handlers')
 real.registerSetupHandlers()
 const spawnCliSetup = h.handlers.get('setup:spawnCliSetup')!
+const killCliSetup = h.handlers.get('setup:killCliSetup')!
 
-beforeEach(() => { h.order.length = 0; h.warm.length = 0; h.gate = null; h.refused = null })
+beforeEach(async () => {
+  // A terminal an earlier case started is ended first, so each case starts with none.
+  await killCliSetup({ sender: {} })
+  h.order.length = 0; h.warm.length = 0; h.gate = null; h.refused = null
+})
 afterEach(() => { delete process.env.CCC_FIRST_START_MARK })
 
 describe.runIf(process.platform === 'win32')('the first-run setup terminal on Windows (ADR-025)', () => {
@@ -85,5 +91,41 @@ describe.runIf(process.platform === 'win32')('the first-run setup terminal on Wi
     release()
     expect(await started).toEqual({ refused: h.refused })
     expect(h.order).toEqual([`warm ${RESOLVED}`])
+  })
+
+  it('Skip for now while the warm-up runs: the terminal is never started, and nothing counts as Claude Code in use', async () => {
+    let release!: () => void
+    h.gate = new Promise<void>((r) => { release = r })
+    const started = spawnCliSetup({ sender: {} }, 100, 20)
+    await vi.waitFor(() => expect(h.warm).toHaveLength(1))
+    // The setup screen closes the terminal (Skip for now, Finish or Exit) before it exists.
+    expect(await killCliSetup({ sender: {} })).toBe(true)
+    release()
+    expect(await started).toBeNull()
+    expect(h.order).toEqual([`warm ${RESOLVED}`])
+    expect(real.countCliSetupInUse()).toBe(0)
+  })
+
+  it('a second start while the first one waits on its warm-up: only the newer one starts a terminal', async () => {
+    let release!: () => void
+    h.gate = new Promise<void>((r) => { release = r })
+    const first = spawnCliSetup({ sender: {} }, 100, 20)
+    await vi.waitFor(() => expect(h.warm).toHaveLength(1))
+    const second = spawnCliSetup({ sender: {} }, 100, 20)
+    await vi.waitFor(() => expect(h.warm).toHaveLength(2))
+    release()
+    expect(await first).toBeNull()
+    expect(await second).toBe('__cli_setup__')
+    expect(h.order.filter((o) => o.startsWith('pty '))).toEqual([`pty ${RESOLVED}`])
+    expect(real.countCliSetupInUse()).toBe(1)
+  })
+
+  it('a kill after the terminal started still ends it, and a later start is not cancelled by it', async () => {
+    expect(await spawnCliSetup({ sender: {} }, 100, 20)).toBe('__cli_setup__')
+    await killCliSetup({ sender: {} })
+    expect(h.order).toEqual([`warm ${RESOLVED}`, `pty ${RESOLVED}`, 'pty killed'])
+    expect(real.countCliSetupInUse()).toBe(0)
+    expect(await spawnCliSetup({ sender: {} }, 100, 20)).toBe('__cli_setup__')
+    expect(real.countCliSetupInUse()).toBe(1)
   })
 })

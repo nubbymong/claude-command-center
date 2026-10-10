@@ -78,4 +78,12 @@ describe('the CLI setup terminal while Claude Code is off', () => {
     expect(lines).not.toContain(OFF)
     expect(byTest('setup-cli-finish')!.disabled).toBe(false)
   })
+
+  it('a start main answers with nothing started (closed, or asked for again, first) is not taken for a terminal: Finish is not offered', async () => {
+    setup.spawnCliSetup.mockResolvedValueOnce(null)
+    await renderAtStep2()
+    expect(setup.spawnCliSetup).toHaveBeenCalledTimes(1)
+    expect(lines).not.toContain(OFF)
+    expect(byTest('setup-cli-finish')!.disabled).toBe(true)
+  })
 })

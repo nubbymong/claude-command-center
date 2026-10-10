@@ -24,7 +24,13 @@ It happens wherever the app is the first to start a new `claude.exe` or
 - the boot `[claude-version]` probe, after an update installed while the app
   was closed;
 - the first-run setup terminal and the /insights terminal, which start
-  `claude.exe` itself through node-pty.
+  `claude.exe` itself through node-pty;
+- headless Claude Code runs (`claude-headless.ts`: Sentinel's `--version`
+  check at start and its analysis, the Insights runs, onboarding's Find
+  Claude), cloud agents (`cloud-agent-manager.ts`) and the Accounts panel's
+  `claude auth status` (`account-web/claude-cli-auth.ts`), which on Windows
+  start a `claude.exe` found in PATH's folders directly, with no shell (an
+  npm `claude.cmd` goes through `cmd.exe`).
 
 Measured on a Windows host with the same mechanism (copies of a large
 executable, never a real CLI): a first `spawn()` of a never-run copy held the
@@ -59,9 +65,14 @@ done. Containment:
    `.cmd` or `.bat` shim is started through `cmd.exe`, which the OS already
    knows, so its main-thread start is not the first start of a new program.
    The worker starts the canonical (real) path of what the caller's own
-   discovery or resolution found. Every caller is main-process code; no
-   renderer input reaches the module (its importers are pinned by a test,
-   and no IPC channel, preload or renderer file names it).
+   discovery or resolution found; the caller's program must itself be a
+   `.exe`, so a `.cmd` linked to a program is not warmed either. Every caller
+   is main-process code; no renderer input reaches the module. A test pins
+   both its importers and every file that names a warm-up call (the
+   module's function, the provider packages' `launch.warmFirstStart`, the
+   Claude review port and Codex discovery's `warm`), so a new caller, an IPC
+   handler included, is a reviewed change; and no IPC channel, preload or
+   renderer file names it.
 3. **Which arguments.** `FIRST_START_ARGS`, a constant: `--version`, which
    both CLIs answer and this app already runs. No caller passes arguments.
 4. **Which environment.** The one the caller's own `--version` run is built
@@ -82,7 +93,13 @@ done. Containment:
    package's `launch.warmFirstStart` only for a launch with `remote !== true`.
 7. **Quit.** A warm-up still running at quit is ended with the CLI runs' own
    kills (`flushPendingProviderCliKills`): a program not yet started never is,
-   and a running one is ended through its handle, with a bounded wait.
+   and a running one is ended through its handle, with a bounded wait. At
+   quit and at its time-out the worker ends that one process
+   (`child.kill()`), not its process tree as the CLI runner does: a launcher
+   that starts the real program as a child of its own and hangs on
+   `--version` leaves that child running. This is a known difference, kept for
+   now: a tree kill is a second program (`taskkill`) the worker would start,
+   and only a launcher whose real program hangs on `--version` is affected.
 
 The callers routed through it:
 
@@ -91,15 +108,22 @@ The callers routed through it:
 - Codex discovery's `--version` (`codex/discovery.ts`, real ports in
   `codex/index.ts`);
 - the boot `[claude-version]` probe (`claude-cli-version.ts`);
-- the first-run setup terminal (`ipc/setup-handlers.ts`, before node-pty);
+- the first-run setup terminal (`ipc/setup-handlers.ts`, before node-pty). A
+  kill that arrives while it waits (Skip for now, Finish, Exit), or a newer
+  start, cancels it: the terminal is then not started at all;
 - the /insights terminal (`insights-runner.ts`, before node-pty);
+- headless Claude Code runs (`claude-headless.ts`, a direct `claude.exe`
+  only; a run aborted during the wait starts nothing), cloud agents
+  (`cloud-agent-manager.ts`, a direct `claude.exe` only; an agent cancelled
+  during the wait starts nothing) and the Accounts panel's `claude auth
+  status` (`account-web/claude-cli-auth.ts`, a direct `claude.exe` only);
 - every local launch the accounts service prepares (`accounts-service.ts`):
   Codex sessions, reviews and background runs, and Claude reviews.
 
 Not routed, and why: Claude Code sessions start PowerShell in the PTY, which
-then starts `claude`, so the shell takes the hold, not the main thread;
-headless Claude runs (`claude-headless.ts`) go through `cmd.exe`
-(`shell: true`); the session PTY start itself lives in `pty-manager.ts`, inside
+then starts `claude`, so the shell takes the hold, not the main thread; an
+npm `claude.cmd` or `codex.cmd` is started through `cmd.exe`, which the OS
+already knows; the session PTY start itself lives in `pty-manager.ts`, inside
 the SSH status-line blast radius (AGENTS.md), so a Codex session is warmed by
 its prepared launch instead, which runs exactly the file discovery proved.
 

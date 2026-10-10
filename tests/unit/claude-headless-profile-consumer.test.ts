@@ -7,10 +7,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 // On Windows a start with a recent answer of the PATH walk (claude-cli-probe.ts) is synchronous, and the
 // cases here are about that path (the hold, the release, the waits), not about the lookup, which
-// windows-program-lookup.test.ts covers: the answer is always recent here.
+// windows-program-lookup.test.ts covers: the answer is always recent here. It is an npm claude.cmd,
+// which cmd.exe starts at once; a claude.exe started directly first awaits its first-start warm-up
+// (ADR-025, tests/unit/main/first-start-headless.test.ts).
 vi.mock('../../src/main/claude-cli-probe', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/claude-cli-probe')>()),
-  recentClaudeOnWindows: () => 'C:\\Tools\\claude.exe',
+  recentClaudeOnWindows: () => 'C:\\Tools\\claude.cmd',
 }))
 // On Windows, programs are found in PATH's folders (windows-programs.ts); stubbed here,
 // so no real PATH is read: the first name asked for, in one fully qualified folder

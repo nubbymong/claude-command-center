@@ -28,6 +28,8 @@ import { stripSpoofableText } from '../shared/safe-text'
 import { randomId } from '../shared/id'
 import { systemTool, windowsStartCommand } from './windows-programs'
 import { CLAUDE_NOT_ON_PATH, findClaudeOnWindowsAsync, recentClaudeOnWindows } from './claude-cli-probe'
+import { warmFirstStart } from './first-start-warmup'
+import { claudeVersionRunEnv } from './providers/review-support'
 
 export interface CloudAgentData {
   id: string
@@ -412,6 +414,16 @@ export async function dispatchAgent(params: DispatchAgentParams): Promise<CloudA
     if ('refused' in how) return failBeforeSpawn(`Claude Code could not be started: ${how.refused}`)
     start = how
     spawnEnvVars = how.env
+    // ADR-025: a claude.exe started directly (not an npm claude.cmd, which
+    // cmd.exe starts) may be a new file this run has not started yet, whose
+    // first start holds the start call while the OS checks it. That first
+    // start runs off the main thread first: the program found above (a valid
+    // legacy pin's, or the one in PATH's folders), with Claude's --version
+    // environment. A pre-start, never a gate. A cancel during it is caught by
+    // the check after the account refresh wait below, before anything starts.
+    if (how.file === bin) {
+      await warmFirstStart(bin, () => ({ env: claudeVersionRunEnv(process.env, 'win32') }))
+    }
   } else {
     start = { file: claudeBin ?? 'claude', args: claudeArgs, windowsVerbatimArguments: false }
   }

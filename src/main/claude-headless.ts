@@ -11,6 +11,8 @@ import { gateManagedLaunch, peekGateVerdict } from './managed-launch-diagnostics
 import type { ProjectGateResult } from '../shared/providers'
 import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consumers'
 import { profileIdFromHome } from './profile-id'
+import { warmFirstStart } from './first-start-warmup'
+import { claudeVersionRunEnv } from './providers/review-support'
 
 /** Grace added to a run's kill timeout for its consumer ref's leak bound: the
  *  spawner kills at `timeoutMs` and settles right after, so a ref that outlives
@@ -173,7 +175,8 @@ export function spawnClaudeHeadless(
   // The spawn stays SYNCHRONOUS when nothing is pending (the common case, and
   // what the timeout tests drive); it defers only behind a real in-flight
   // refresh for this profile, and on Windows behind a PATH walk with no
-  // recent answer (spawnNow).
+  // recent answer, and behind the first-start warm-up of a claude.exe started
+  // directly (spawnNow; ADR-025).
   //
   // The hold is taken BEFORE the wait (adversarial pass on #598): it is what
   // stops a new rotation from starting, and acquiring only after the in-flight
@@ -248,7 +251,21 @@ function spawnNow(
         logError(`[claude-headless] Not spawning: ${how.refused}`)
         return Promise.resolve({ code: 1, stdout: '', stderr: how.refused })
       }
-      return runHeadless({ file: how.file, args: how.args, opts: { windowsHide: true, env: how.env, cwd, ...(how.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) } }, args, timeoutMs, stdinData, home, signal, onStdout)
+      const run = () => runHeadless({ file: how.file, args: how.args, opts: { windowsHide: true, env: how.env, cwd, ...(how.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) } }, args, timeoutMs, stdinData, home, signal, onStdout)
+      // ADR-025: a claude.exe started directly (not an npm claude.cmd, which
+      // cmd.exe starts) may be a new file this run has not started yet, whose
+      // first start holds the start call while the OS checks it. That first
+      // start runs off the main thread first: the program found above in
+      // PATH's folders, with Claude's --version environment. A pre-start,
+      // never a gate; a run cancelled meanwhile starts nothing.
+      if (how.file !== bin) return run()
+      return warmFirstStart(bin, () => ({ env: claudeVersionRunEnv(process.env, 'win32') })).then(() => {
+        if (signal?.aborted) {
+          logInfo('[claude-headless] Aborted before it started')
+          return { code: 1, stdout: '', stderr: '\nAborted' }
+        }
+        return run()
+      })
     }
     const recent = recentClaudeOnWindows(env)
     if (recent) return startWith(recent)

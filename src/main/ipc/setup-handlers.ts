@@ -80,6 +80,12 @@ export function isCliReady(): boolean {
 
 // Track CLI setup PTY
 let cliSetupPty: pty.IPty | null = null
+/** ADR-025: which start of the setup terminal is the current one. A start
+ *  takes the next number before it awaits the first-start warm-up; a kill,
+ *  or a newer start, moves it on. A start whose number is no longer the
+ *  current one after the wait starts nothing: the setup screen that asked
+ *  for it has closed it (Skip for now, Finish, Exit) or asked again. */
+let cliSetupStart = 0
 
 /** WP2: the CLI setup terminal runs Claude Code for as long as it is open, so
  *  it counts as Claude Code in use for the switch-off rule
@@ -190,6 +196,7 @@ export function registerSetupHandlers(): void {
     const { providerLaunchRefusal } = await import('../provider-launch-gate')
     const refused = providerLaunchRefusal('claude')
     if (refused) return { refused }
+    const thisStart = ++cliSetupStart
     const sessionId = '__cli_setup__'
     const installPath = getInstallPath()
     const cwd = installPath && fs.existsSync(installPath) ? installPath : homedir()
@@ -204,6 +211,14 @@ export function registerSetupHandlers(): void {
       // Claude Code main resolved above (nothing the renderer sent), with
       // Claude's --version environment. A pre-start, never a gate.
       await warmFirstStart(cmd, () => ({ env: claudeVersionRunEnv(process.env, 'win32') }))
+      // Closed, or asked for again, while the warm-up ran: a kill then found
+      // no terminal to end, so this start must not make one (it would run
+      // hidden, and count as Claude Code in use, until the app quits). The
+      // screen that asked has gone, so there is nothing to say.
+      if (thisStart !== cliSetupStart) {
+        logInfo('[setup] CLI setup PTY not started: the setup terminal was closed while its first start was prepared')
+        return null
+      }
       // The launch check again, in the same step as the start: Claude Code
       // may have been switched off while the warm-up ran.
       const offNow = providerLaunchRefusal('claude')
@@ -263,6 +278,8 @@ export function registerSetupHandlers(): void {
   })
 
   ipcMain.handle('setup:killCliSetup', async () => {
+    // Also a start still waiting on its warm-up: it then starts nothing.
+    cliSetupStart++
     if (cliSetupPty) {
       try {
         cliSetupPty.kill()
