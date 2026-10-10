@@ -15,6 +15,8 @@ import {
 } from './provider-account-registry'
 import { readConfigChecked } from './config-manager'
 import { logInfo, logError } from './debug-logger'
+import { nodeToolsFound } from './node-tools-probe'
+import { refreshWindowsPath } from './windows-path-refresh'
 
 /** The one-shot secret store behind API-key sign-in (A6). A monotonic
  *  clock: a wall-clock change neither shortens nor extends a handle. */
@@ -118,6 +120,10 @@ export function initProviderAccounts(opts: {
     randomHex: () => randomBytes(16).toString('hex'),
     reconcileLegacy: (id) => reconcileLegacyAccountStore(id),
     log: (m) => logInfo(m),
+    // An npm install command says when Node.js is not found (owner decision
+    // D3), and a check the user asked for brings PATH up to date first (D4).
+    nodeToolsFound: () => nodeToolsFound(),
+    refreshPath: () => refreshWindowsPath(),
   })
   return service
 }

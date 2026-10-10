@@ -34,8 +34,9 @@ export type { LeaseKind, LaunchLeaseKind, LeaseOwner, AccountLease, LeaseAddResu
 export { SecretHandleStore, SECRET_HANDLE_TTL_MS, SECRET_HANDLES_PER_RENDERER } from './secret-handles'
 export { AccountsService, USAGE_READ_GAP_MS, USAGE_READ_REUSE_MS, USAGE_READ_TRANSIENT_LIMIT, USAGE_READ_SETTLE_MAX_MS } from './accounts-service'
 export type { AccountsServiceDeps, LaunchLeaseResult, PreparedLaunchResult } from './accounts-service'
-// WP2 commit 6e: the shell line a terminal tab types for a recipe main allows to run.
-export { recipeRunLine } from './recipe-run-line'
+// WP2 commit 6e: the shell line a terminal tab types for a recipe main allows to run;
+// ADR-024: a vendor's installer script too, and the recipe as the renderer sees it.
+export { recipeRunLine, vendorScriptHost, installRecipeView, WINDOWS_RUN_LINE_END, POSIX_RUN_LINE_END } from './recipe-run-line'
 // WP2 PR 4, P4.6: work registered at start that runs before an account is archived.
 export { onBeforeAccountArchive, prepareAccountArchive, _resetAccountArchiveHooksForTest } from './archive-hooks'
 export type { BeforeAccountArchive } from './archive-hooks'

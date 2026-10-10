@@ -7,10 +7,12 @@
 // be checked, is too old, or has not been looked for yet gets "Check again"
 // (6e, 6g): a new discovery, which is also the executable later launches and
 // sign-ins run. The same row shows the provider's own install or update
-// commands, to copy, once discovery says they are needed (6g: the retired
-// Codex settings tab's install hint lives here now).
-import React, { useEffect, useRef, useState } from 'react'
-import type { InstallRecipeView, ProviderInstallationView } from '../../../../shared/providers'
+// commands once discovery says they are needed (6g: the retired Codex
+// settings tab's install hint lives here now), each with Run it for me and
+// Copy (owner decision D2, 2026-10-10; ADR-024): Run it for me opens a
+// visible terminal tab, shows it, and checks again when the tab ends.
+import React, { useEffect, useState } from 'react'
+import type { InstallRecipeView, ProviderId, ProviderInstallationView } from '../../../../shared/providers'
 import { useProviderAccountsStore, providerAccountActions, providerStatus, providerNotSetUp } from '../../../stores/providerAccountsStore'
 import { ProviderMark } from '../../sidebar/Badges'
 import ToggleSwitch from '../../github/config/ToggleSwitch'
@@ -18,6 +20,9 @@ import { Section } from '../../SettingsPage'
 import { Pill, StatusText, ErrorLine, MutedLine, RowButton } from './accounts-ui'
 import { showHelloCodexReplay, codexSetUp } from '../../../onboarding/hello-codex'
 import { tryGetRendererProvider } from '../../../providers/core'
+import { InstallRecipeRow, afterInstallMessage, type RunnableRecipe } from '../../../onboarding/InstallRecipeList'
+import { openInstallTab, installTabRunning, useInstallTabRunning, type InstallTab } from '../../../utils/installTab'
+import { useSessionStore } from '../../../stores/sessionStore'
 
 /** The user has not said whether they use the provider (Codex after an
  *  update, until they answer: owner decision 2026-09-26). The row never says
@@ -47,55 +52,35 @@ export function installPurpose(p: ProviderInstallationView): 'install' | 'update
   return p.discoveryState === 'found' ? 'update' : 'install'
 }
 
-/** Said for a script recipe that arrives without main's own note. */
-export const SCRIPT_NOTE = 'Shown for you to review and run yourself; the app does not run it.'
+/** Where the confirmation says the line runs. */
+const CONFIRM_WHERE = 'Run this in a new terminal tab? It types the line below, and the app checks again when the command ends.'
 
-/** One command, verbatim as its publisher documents it, to copy. Settings
- *  shows and copies; running one in a terminal is the Codex setup page's. */
-function RecipeLine({ recipe }: { recipe: InstallRecipeView }) {
-  const [copied, setCopied] = useState(false)
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const live = useRef(true)
-  useEffect(() => {
-    live.current = true
-    return () => {
-      live.current = false
-      if (timer.current) clearTimeout(timer.current)
-    }
-  }, [])
-  const copy = () => {
-    void navigator.clipboard?.writeText(recipe.displayCommand).then(() => {
-      if (!live.current) return
-      setCopied(true)
-      if (timer.current) clearTimeout(timer.current)
-      timer.current = setTimeout(() => { timer.current = null; setCopied(false) }, 1500)
-    }).catch(() => { /* clipboard blocked: the command is selectable */ })
-  }
-  const note = recipe.note ?? (recipe.method === 'script' ? SCRIPT_NOTE : undefined)
-  return (
-    <div className="mt-1.5" data-testid={`provider-recipe-${recipe.id}`}>
-      <div className="flex items-center gap-2">
-        <code
-          className="flex-1 min-w-0 border rounded-[6px] px-2 py-1 text-[11.5px] font-mono select-all break-all"
-          style={{ background: 'var(--surface-sunken)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
-          data-testid={`provider-recipe-command-${recipe.id}`}
-        >
-          {recipe.displayCommand}
-        </code>
-        <RowButton onClick={copy} testId={`provider-recipe-copy-${recipe.id}`}>{copied ? 'Copied' : 'Copy'}</RowButton>
-      </div>
-      {note && <MutedLine className="mt-0.5" testId={`provider-recipe-note-${recipe.id}`}>{note}</MutedLine>}
-    </div>
-  )
+// The install tab each provider's row last opened, and the providers whose
+// install tab has ended since. Held for the renderer's lifetime: the card is
+// gone while its tab is shown (the sessions view), and comes back to them.
+const providerTabs = new Map<ProviderId, InstallTab>()
+const endedInstalls = new Set<ProviderId>()
+
+/** Test seam: forget every tab a row opened. */
+export function _resetProviderInstallTabsForTest(): void {
+  providerTabs.clear()
+  endedInstalls.clear()
 }
 
 /** The install or update commands main knows for the provider on this
- *  computer, with where they come from. Asked for when the row first needs
- *  them, and again after each check: the update commands are the ones for
- *  the install that check found. A provider with none for the purpose
- *  (Claude Code has none here), or whose commands could not be read, shows
- *  nothing: its status line and Check again still say what is wrong. */
-function InstallCommands({ p, purpose }: { p: ProviderInstallationView; purpose: 'install' | 'update' }) {
+ *  computer, with where they come from, verbatim as its publisher documents
+ *  them (the publisher's own installer first). Asked for when the row first
+ *  needs them, and again after each check: the update commands are the ones
+ *  for the install that check found, and whether npm can run (Node.js found)
+ *  may have changed. A provider with none for the purpose, or whose commands
+ *  could not be read, shows nothing: its status line and Check again still
+ *  say what is wrong. */
+function InstallCommands({ p, purpose, onRun, busyReason }: {
+  p: ProviderInstallationView
+  purpose: 'install' | 'update'
+  onRun: (r: RunnableRecipe) => void
+  busyReason?: string
+}) {
   const [recipes, setRecipes] = useState<InstallRecipeView[] | null | undefined>(undefined)
   useEffect(() => {
     let live = true
@@ -112,7 +97,9 @@ function InstallCommands({ p, purpose }: { p: ProviderInstallationView; purpose:
         <span title={mine[0].sourceUrl}>({/readme/i.test(mine[0].sourceUrl) ? `from ${mine[0].publisher}'s README` : `from ${mine[0].publisher}`})</span>
         {', then Check again.'}
       </MutedLine>
-      {mine.map((r) => <RecipeLine key={r.id} recipe={r} />)}
+      <div className="install-recipes grid gap-1.5 mt-1.5">
+        {mine.map((r) => <InstallRecipeRow key={r.id} recipe={r} testIdPrefix="provider" confirmWhere={CONFIRM_WHERE} onRun={onRun} busyReason={busyReason} />)}
+      </div>
     </div>
   )
 }
@@ -137,15 +124,48 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
     setInUse((n) => (n === null ? null : live > 0 ? live : null))
   }, [p])
 
-  // The result arrives with the snapshot main pushes after the check.
+  // The result arrives with the snapshot main pushes after the check, which
+  // main makes after bringing its PATH up to date (owner decision D4).
+  const [checked, setChecked] = useState(false)
   const checkAgain = async () => {
     setChecking(true)
     setError(null)
     setInUse(null)
     const r = await providerAccountActions.discover(p.providerId)
     setChecking(false)
+    setChecked(true)
     if (!r.ok) setError(r.message)
   }
+
+  // One install or update at a time for this provider: while the tab its row
+  // opened still runs, Run it for me is off and says where it runs. When that
+  // tab ends (its line ends the shell), the app checks again, whether or not
+  // this card is showing then.
+  const [tab, setTab] = useState(() => providerTabs.get(p.providerId) ?? null)
+  const running = useInstallTabRunning(tab)
+  const busyReason = tab && running ? `Already running in the ${tab.label} tab` : undefined
+  const run = (recipe: RunnableRecipe) => {
+    const providerId = p.providerId
+    if (installTabRunning(providerTabs.get(providerId), useSessionStore.getState().sessions)) return
+    endedInstalls.delete(providerId)
+    setChecked(false)
+    const label = `${recipe.purpose === 'update' ? 'Update' : 'Install'} ${p.displayName}`
+    const opened = openInstallTab({
+      label, runLine: recipe.runLine, show: true,
+      onEnded: () => { endedInstalls.add(providerId); void providerAccountActions.discover(providerId) },
+    })
+    providerTabs.set(providerId, opened)
+    setTab(opened)
+  }
+  // Found since: what an ended install said no longer applies.
+  useEffect(() => {
+    if (!purpose) endedInstalls.delete(p.providerId)
+  }, [purpose, p.providerId])
+  // Still not found after its install ended, or after the user's own Check
+  // again. (A CLI found but too old says so in its status line.)
+  const after = purpose !== 'install' || checking ? null
+    : endedInstalls.has(p.providerId) && !running ? afterInstallMessage(p.displayName, { ended: true })
+    : checked ? afterInstallMessage(p.displayName, { ended: false }) : null
 
   // Not set up: the switch shows off, and turning it on is the answer.
   const unset = notSetUp(p)
@@ -193,7 +213,8 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
         )}
         {/* Keyed on the purpose: a CLI that goes from missing to too old
             reads the commands again, for the update ones. */}
-        {purpose && <InstallCommands key={purpose} p={p} purpose={purpose} />}
+        {purpose && <InstallCommands key={purpose} p={p} purpose={purpose} onRun={run} busyReason={busyReason} />}
+        {after && <MutedLine className="mt-1" testId={`provider-after-install-${p.providerId}`}>{after}</MutedLine>}
         {/* The Codex introduction, replayed (WP2 commit 6f): offered only
             once Codex is set up, since its first page says the account is
             ready. A replay marks it seen only if it was still due. */}

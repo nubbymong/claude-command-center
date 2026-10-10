@@ -39,28 +39,24 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import type { AccountsSnapshot, InstallRecipeView, ProviderInstallationView } from '../../../src/shared/providers'
 import { codexInstallRecipes } from '../../../src/main/providers/codex/install-recipes'
-import { recipeRunLine } from '../../../src/main/providers/core/recipe-run-line'
+import { installRecipeView } from '../../../src/main/providers/core/recipe-run-line'
 import { provider, account, snapshot, claudeMain } from './accounts-snapshot-harness'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
 // Main's own recipes for Windows, as the IPC returns them (no argv): the line
 // to type (`runLine`) only where main allows the recipe to run, built by main.
-const RECIPES: InstallRecipeView[] = codexInstallRecipes('win32').map((r) => {
-  const runLine = recipeRunLine(r, 'win32')
-  return {
-    id: r.id, providerId: r.providerId, purpose: r.purpose, publisher: r.publisher, sourceUrl: r.sourceUrl, displayCommand: r.displayCommand,
-    method: r.method, needsNetwork: r.needsNetwork, mayElevate: r.mayElevate, autoRunAllowed: r.autoRunAllowed, ...(r.note !== undefined ? { note: r.note } : {}),
-    ...(runLine !== undefined ? { runLine } : {}),
-  }
-})
+const RECIPES: InstallRecipeView[] = codexInstallRecipes('win32').map((r) => installRecipeView(r, 'win32'))
 const NPM_INSTALL = RECIPES.find((r) => r.id === 'codex-npm-install')!
 const PS1 = RECIPES.find((r) => r.id === 'codex-script-install-ps1')!
 const NPM_UPDATE = RECIPES.find((r) => r.id === 'codex-npm-update')!
 // What Windows types: npm.cmd, not the npm.ps1 PowerShell's execution policy
-// refuses to load. Not the command the user is shown.
-const NPM_INSTALL_LINE = "npm.cmd 'install' '-g' '@openai/codex'"
-const NPM_UPDATE_LINE = "npm.cmd 'install' '-g' '@openai/codex@latest'"
+// refuses to load, and the line ends its shell when the command ends (ADR-024).
+// Not the command the user is shown.
+const NPM_INSTALL_LINE = "npm.cmd 'install' '-g' '@openai/codex'; exit $LASTEXITCODE"
+const NPM_UPDATE_LINE = "npm.cmd 'install' '-g' '@openai/codex@latest'; exit $LASTEXITCODE"
+// OpenAI's own installer, typed as its README writes it.
+const PS1_LINE = 'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"; exit $LASTEXITCODE'
 
 const ok = () => Promise.resolve({ ok: true })
 const pa = {
@@ -189,29 +185,84 @@ describe('Codex CLI not found', () => {
     expect(byTest('codex-recipes-update')).toBeNull()
   })
 
-  it('the recipe main sent a line for runs in a terminal and shows its note; the script (no line) is Copy only', async () => {
+  it("every command offers Run it for me and Copy, OpenAI's installer first, each with main's note", async () => {
     expect(NPM_INSTALL.runLine).toBe(NPM_INSTALL_LINE)
-    expect(PS1.runLine).toBeUndefined()
+    expect(PS1.runLine).toBe(PS1_LINE)
     await render(snap({ discoveryState: 'missing', version: undefined }))
-    expect(byTest(`codex-recipe-run-${NPM_INSTALL.id}`)!.textContent).toBe('Run in a terminal')
-    expect(byTest(`codex-recipe-note-${NPM_INSTALL.id}`)!.textContent).toBe(NPM_INSTALL.note)
-    expect(byTest(`codex-recipe-run-${PS1.id}`)).toBeNull()
-    expect(byTest(`codex-recipe-copy-${PS1.id}`)!.textContent).toBe('Copy')
-    expect(byTest(`codex-recipe-note-${PS1.id}`)!.textContent).toContain('Shown for you to review and run yourself; the app does not run it.')
+    const rows = [...byTest('codex-recipes-install')!.querySelectorAll('[data-testid^="codex-recipe-command-"]')].map((c) => c.textContent)
+    expect(rows).toEqual([PS1.displayCommand, NPM_INSTALL.displayCommand])
+    for (const r of [PS1, NPM_INSTALL]) {
+      expect(byTest(`codex-recipe-run-${r.id}`)!.textContent, r.id).toBe('Run it for me')
+      expect((byTest(`codex-recipe-run-${r.id}`) as HTMLButtonElement).disabled, r.id).toBe(false)
+      expect(byTest(`codex-recipe-copy-${r.id}`)!.textContent, r.id).toBe('Copy')
+      expect(byTest(`codex-recipe-note-${r.id}`)!.textContent, r.id).toBe(r.note)
+    }
   })
 
-  it('whether a recipe runs is main\'s call: a package-manager recipe main sent no line for is Copy only', async () => {
+  it("whether a recipe runs is main's call: one main sent no line for has Run it for me off, saying why; Copy still works", async () => {
     const { runLine: _dropped, ...noLine } = NPM_INSTALL
     pa.installRecipes.mockResolvedValue([noLine, PS1])
     await render(snap({ discoveryState: 'missing', version: undefined }))
     expect(noLine.method).toBe('package-manager')
     expect(noLine.autoRunAllowed).toBe(true)
-    expect(byTest(`codex-recipe-run-${NPM_INSTALL.id}`)).toBeNull()
+    const run = byTest(`codex-recipe-run-${NPM_INSTALL.id}`) as HTMLButtonElement
+    expect(run.disabled).toBe(true)
+    expect(byTest(`codex-recipe-not-run-${NPM_INSTALL.id}`)!.textContent).toBe('The app does not run this command: copy it and run it in a terminal.')
+    await click(`codex-recipe-run-${NPM_INSTALL.id}`)
+    expect(byTest(`codex-recipe-confirm-${NPM_INSTALL.id}`)).toBeNull()
     expect(byTest(`codex-recipe-copy-${NPM_INSTALL.id}`)!.textContent).toBe('Copy')
     await click(`codex-recipe-copy-${NPM_INSTALL.id}`)
     // Copy is the shown command, verbatim.
     expect(writeText).toHaveBeenCalledWith(NPM_INSTALL.displayCommand)
     expect(useSessionStore.getState().sessions).toEqual([])
+  })
+
+  it('a script that arrives without the host it downloads from is not run: the confirmation could not name it', async () => {
+    const { downloadsFrom: _dropped, ...noHost } = PS1
+    pa.installRecipes.mockResolvedValue([noHost, NPM_INSTALL])
+    await render(snap({ discoveryState: 'missing', version: undefined }))
+    expect((byTest(`codex-recipe-run-${PS1.id}`) as HTMLButtonElement).disabled).toBe(true)
+    expect((byTest(`codex-recipe-run-${NPM_INSTALL.id}`) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it("Run it for me on OpenAI's installer asks first, naming chatgpt.com and saying it downloads and runs a script; only Run it types its line", async () => {
+    expect(PS1.downloadsFrom).toBe('chatgpt.com')
+    await render(snap({ discoveryState: 'missing', version: undefined }))
+    await click(`codex-recipe-run-${PS1.id}`)
+    expect(byTest(`codex-recipe-confirm-text-${PS1.id}`)!.textContent).toBe(
+      'This downloads a script from chatgpt.com and runs it. Run this in a new terminal tab? It types the line below. Setup steps aside so you can watch it, and you come back to it when you are done.',
+    )
+    expect(byTest(`codex-recipe-run-line-${PS1.id}`)!.textContent).toBe(PS1_LINE)
+    expect(useSessionStore.getState().sessions).toEqual([])
+    await click(`codex-recipe-cancel-${PS1.id}`)
+    expect(useSessionStore.getState().sessions).toEqual([])
+    await click(`codex-recipe-run-${PS1.id}`)
+    await click(`codex-recipe-confirm-run-${PS1.id}`)
+    const s = useSessionStore.getState().sessions
+    expect(s).toHaveLength(1)
+    expect(s[0].terminalOptions).toEqual({ command: PS1_LINE, elevated: false, noCommandSecrets: true })
+    expect(s[0].label).toBe('Install Codex')
+  })
+
+  it('a package-manager command asks first too, without the script sentence', async () => {
+    await render(snap({ discoveryState: 'missing', version: undefined }))
+    await click(`codex-recipe-run-${NPM_INSTALL.id}`)
+    expect(byTest(`codex-recipe-confirm-text-${NPM_INSTALL.id}`)!.textContent).toBe(
+      'Run this in a new terminal tab? It types the line below. Setup steps aside so you can watch it, and you come back to it when you are done.',
+    )
+  })
+
+  it('Node.js not found: the npm command says so and its Run it for me is off; Copy still works; the installer still runs', async () => {
+    pa.installRecipes.mockResolvedValue([PS1, { ...NPM_INSTALL, needsNode: true }])
+    await render(snap({ discoveryState: 'missing', version: undefined }))
+    const run = byTest(`codex-recipe-run-${NPM_INSTALL.id}`) as HTMLButtonElement
+    expect(run.disabled).toBe(true)
+    expect(run.title).toBe('Needs Node.js, which was not found on this computer.')
+    expect(byTest(`codex-recipe-needs-node-${NPM_INSTALL.id}`)!.textContent).toBe('Needs Node.js, which was not found on this computer.')
+    await click(`codex-recipe-copy-${NPM_INSTALL.id}`)
+    expect(writeText).toHaveBeenCalledWith(NPM_INSTALL.displayCommand)
+    expect((byTest(`codex-recipe-run-${PS1.id}`) as HTMLButtonElement).disabled).toBe(false)
+    expect(byTest(`codex-recipe-needs-node-${PS1.id}`)).toBeNull()
   })
 
   it('Copy puts the exact script command on the clipboard and runs nothing', async () => {
@@ -223,7 +274,7 @@ describe('Codex CLI not found', () => {
     expect(stepAside).not.toHaveBeenCalled()
   })
 
-  it('Run in a terminal asks first, showing the line it will type; Cancel runs nothing', async () => {
+  it('Run it for me asks first, showing the line it will type; Cancel runs nothing', async () => {
     await render(snap({ discoveryState: 'missing', version: undefined }))
     await click(`codex-recipe-run-${NPM_INSTALL.id}`)
     expect(byTest(`codex-recipe-confirm-${NPM_INSTALL.id}`)).not.toBeNull()
@@ -288,6 +339,51 @@ describe('Codex CLI not found', () => {
     expect(again.disabled).toBe(false)
     expect(again.title).toBe('')
     expect(byTest(`codex-recipe-busy-${NPM_INSTALL.id}`)).toBeNull()
+  })
+
+  it("once the tab's shell exits (the line ends it), Run is back and the page checks again, once", async () => {
+    await render(snap({ discoveryState: 'missing', version: undefined }))
+    await click(`codex-recipe-run-${NPM_INSTALL.id}`)
+    await click(`codex-recipe-confirm-run-${NPM_INSTALL.id}`)
+    const tab = useSessionStore.getState().sessions[0]
+    expect((byTest(`codex-recipe-run-${NPM_INSTALL.id}`) as HTMLButtonElement).disabled).toBe(true)
+    const before = pa.discover.mock.calls.length
+    act(() => { useSessionStore.getState().updateSession(tab.id, { ptyExited: true }) })
+    await flush()
+    expect(pa.discover.mock.calls.length).toBe(before + 1)
+    expect((byTest(`codex-recipe-run-${NPM_INSTALL.id}`) as HTMLButtonElement).disabled).toBe(false)
+    expect(byTest(`codex-recipe-busy-${NPM_INSTALL.id}`)).toBeNull()
+    // Still not found after it ended: the page says so, with what to do.
+    expect(byTest('codex-setup-after-install')!.textContent).toBe(
+      'The command ended, but Codex was still not found. The terminal shows what happened. If it installed without an error, quit AI Code Conductor and start it again so it sees the new PATH.',
+    )
+    // The same end is not checked twice.
+    act(() => { useSessionStore.getState().updateSession(tab.id, { label: 'Install Codex (ended)' }) })
+    await flush()
+    expect(pa.discover.mock.calls.length).toBe(before + 1)
+  })
+
+  it('the tab closed while its command ran: the page checks again, and a Codex found then moves it on', async () => {
+    await render(snap({ discoveryState: 'missing', version: undefined }))
+    await click(`codex-recipe-run-${NPM_INSTALL.id}`)
+    await click(`codex-recipe-confirm-run-${NPM_INSTALL.id}`)
+    const tab = useSessionStore.getState().sessions[0]
+    pa.discover.mockResolvedValueOnce({ ok: true, installation: codex({ discoveryState: 'found', version: '0.155.1', compatibility: 'supported', lastCheckedAt: 5 }) })
+    const before = pa.discover.mock.calls.length
+    act(() => { useSessionStore.getState().removeSession(tab.id) })
+    await flush()
+    expect(pa.discover.mock.calls.length).toBe(before + 1)
+    expect(byTest('codex-setup-missing')).toBeNull()
+    expect(byTest('codex-setup-after-install')).toBeNull()
+  })
+
+  it('the restart advice is never shown before anything was tried; Check again that still finds nothing shows it', async () => {
+    await render(snap({ discoveryState: 'missing', version: undefined }))
+    expect(byTest('codex-setup-after-install')).toBeNull()
+    await click('codex-setup-check-again')
+    expect(byTest('codex-setup-after-install')!.textContent).toBe(
+      'Codex was still not found. If you installed it, quit AI Code Conductor and start it again so it sees the new PATH.',
+    )
   })
 
   it('a second Run it before the page re-renders opens no second tab', async () => {

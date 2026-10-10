@@ -19,6 +19,7 @@ import type { ClaudeDiscovery, ClaudeDiscoveryDeps, ClaudeFileStat } from './dis
 import { createClaudeReviewOperations } from './review'
 import type { ClaudeCliPorts } from './review'
 import { CLAUDE_MIN_MANAGED_CLI_VERSION } from './managed-launch'
+import { claudeInstallRecipes } from './install-recipes'
 import fs from 'node:fs'
 
 /** What the composition root hands the Claude package for reviews. */
@@ -138,8 +139,8 @@ export function createClaudeReviewLaunch(ports: ClaudeReviewPorts): {
 
   return {
     executable: currentExecutable,
-    // Nothing to install through the app yet: the capability stays unknown.
-    setup: { discover, installRecipes: () => [] },
+    // Anthropic's own install commands (ADR-024): the native installer, then npm.
+    setup: { discover, installRecipes: claudeInstallRecipes },
     launch: {
       kinds: ['review'],
       async prepare(realm: RealmRef): Promise<LaunchPreparation | Refusal> {

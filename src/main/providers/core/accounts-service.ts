@@ -53,7 +53,7 @@ import type { ConsumerLeaseRegistry, AccountLease, LaunchLeaseKind } from './con
 import { LAUNCH_LEASE_KINDS } from './consumer-leases'
 import type { SecretHandleStore } from './secret-handles'
 import { realmEnvForProvider } from './registry'
-import { recipeRunLine } from './recipe-run-line'
+import { installRecipeView, recipeRunsNpm } from './recipe-run-line'
 import { lowerAsciiLetters } from '../../../shared/profile-id'
 // P4.6 (row 58): what an account holds outside its sign-in is cleared before it
 // is archived, through a provider-neutral seam inside core (index.ts registers
@@ -100,6 +100,17 @@ export interface AccountsServiceDeps {
    *  has, no registry (or one not loaded) means "not read yet"; after, it
    *  means none can be read. Absent: never settled. */
   registrySettled?: () => boolean
+  /** Whether Node.js and npm are where an install tab's npm line would find
+   *  them (owner decision D3). Asked for a recipe list that has an npm
+   *  recipe; a throw counts as no answer, which marks nothing. Absent: never
+   *  asked. */
+  nodeToolsFound?: () => Promise<boolean>
+  /** Brings this process's PATH up to date before a check the user asked for
+   *  (owner decision D4): on Windows it appends the folders the registry's
+   *  PATH holds now and the process does not, never dropping one, so a tool
+   *  installed since the app started is found without a restart. A throw is
+   *  ignored. Absent: nothing to bring up to date. */
+  refreshPath?: () => Promise<unknown>
 }
 
 /** Usage track MP8 (ADR-022, bound 7): the least time between two fresh
@@ -827,6 +838,18 @@ export class AccountsService {
     return { ok: true, installation: this.installationView(p) }
   }
 
+  /** A check the user asked for (Check again, a setup page's check, the
+   *  check after an install or update tab ends): this process's PATH is
+   *  brought up to date first (deps.refreshPath), so a CLI installed since
+   *  the app started is found without a restart, and then discover. A
+   *  refresh that fails still checks. */
+  async checkAgain(providerId: ProviderId): Promise<AccountsResult<{ installation: ProviderInstallationView }>> {
+    if (this.pkg(providerId)?.setup && this.deps.refreshPath) {
+      try { await this.deps.refreshPath() } catch { /* the check runs on the PATH there is */ }
+    }
+    return this.discover(providerId)
+  }
+
   /** The models the provider's installed CLI offers in its own picker, read
    *  from the CLI (P3.9, row 39: Sentinel's live model check). Like every
    *  CLI a provider runs, the launch rule decides first, and again after the
@@ -968,26 +991,36 @@ export class AccountsService {
     if (moved) this.changed()
   }
 
-  /** What to show and copy, and, only for a recipe main allows to run, the
-   *  one shell line a terminal tab may type for it (`runLine`, decided and
-   *  built here from the argv for this platform's terminal shell). Never the
-   *  argv itself: the renderer neither decides what runs nor builds the line. */
-  installRecipes(providerId: ProviderId): InstallRecipeView[] {
+  /** The provider's recipes for this platform, for the install discovery
+   *  last resolved (the one sessions run), not merely any install: its path
+   *  stays in main. None when it has no setup or its recipes throw. */
+  private recipesOf(providerId: ProviderId): readonly InstallRecipe[] {
     const p = this.pkg(providerId)
     if (!p?.setup) return []
-    // The update commands update the install discovery last resolved (the
-    // one sessions run), not merely any install: its path stays in main.
     const executable = this.installations.get(p.id)?.executable
-    let recipes: readonly InstallRecipe[] = []
-    try { recipes = p.setup.installRecipes(this.deps.platform, executable ? { executable } : {}) } catch { return [] }
-    return recipes.map((r) => {
-      const runLine = recipeRunLine(r, this.deps.platform)
-      return {
-        id: r.id, providerId: r.providerId, purpose: r.purpose, publisher: r.publisher, sourceUrl: r.sourceUrl, displayCommand: r.displayCommand,
-        method: r.method, needsNetwork: r.needsNetwork, mayElevate: r.mayElevate, autoRunAllowed: r.autoRunAllowed, ...(r.note !== undefined ? { note: r.note } : {}),
-        ...(runLine !== undefined ? { runLine } : {}),
-      }
-    })
+    try { return p.setup.installRecipes(this.deps.platform, executable ? { executable } : {}) } catch { return [] }
+  }
+
+  /** What to show and copy, and, only for a recipe main allows to run, the
+   *  one shell line a terminal tab may type for it (`runLine`, decided and
+   *  built here for this platform's terminal shell; installRecipeView).
+   *  Never the argv or a script's address itself: the renderer neither
+   *  decides what runs nor builds the line. `nodeFound: false` marks the npm
+   *  recipes as needing Node.js first. */
+  installRecipes(providerId: ProviderId, opts: { nodeFound?: boolean } = {}): InstallRecipeView[] {
+    return this.recipesOf(providerId).map((r) => installRecipeView(r, this.deps.platform, opts))
+  }
+
+  /** installRecipes, with Node.js looked for first when a recipe runs npm
+   *  (deps.nodeToolsFound): the list the setup pages and Settings show. No
+   *  answer (no check, or one that threw) marks nothing. */
+  async installRecipesChecked(providerId: ProviderId): Promise<InstallRecipeView[]> {
+    const recipes = this.recipesOf(providerId)
+    let nodeFound: boolean | undefined
+    if (this.deps.nodeToolsFound && recipes.some((r) => recipeRunsNpm(r))) {
+      try { nodeFound = (await this.deps.nodeToolsFound()) === true } catch { nodeFound = undefined }
+    }
+    return recipes.map((r) => installRecipeView(r, this.deps.platform, { nodeFound }))
   }
 
   // -------------------------------------------------------------------------

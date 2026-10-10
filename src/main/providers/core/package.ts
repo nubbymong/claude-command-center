@@ -38,9 +38,10 @@ export interface InstallRecipe {
   platform: CapabilityPlatform
   publisher: string
   sourceUrl: string
-  /** Structured argv, never interpolated with user data, run without a
-   *  shell. Null for a recipe the app only shows (`autoRunAllowed` false):
-   *  there is then nothing a careless caller could execute. */
+  /** Structured argv for a package manager, never interpolated with user
+   *  data. Null for anything else: a vendor's installer script runs only as
+   *  its documented line (`scriptUrl`), and a recipe the app only shows has
+   *  nothing a careless caller could execute. */
   command: readonly string[] | null
   /** Exactly what the user is shown and may copy, character for character
    *  the provider's documented command. */
@@ -48,8 +49,19 @@ export interface InstallRecipe {
   method: 'package-manager' | 'installer' | 'script'
   needsNetwork: boolean
   mayElevate: boolean
-  /** A remote pipe-to-shell recipe is displayed/copied, never auto-run (8.4). */
+  /** Whether the app may run it, in a visible terminal after the user
+   *  confirms its line, never on its own and never elevated. A package
+   *  manager by its argv; a vendor's installer script (ADR-024, superseding
+   *  design 8.4's show-and-copy rule for scripts) only as its documented
+   *  line naming its fixed `scriptUrl`. False: shown and copied only. */
   autoRunAllowed: boolean
+  /** A vendor's installer script the app may run: the one HTTPS address its
+   *  documented line downloads the script from, written in code beside that
+   *  line and copied from the publisher's own install docs. Main gives the
+   *  recipe a line to type only when the documented line names exactly this
+   *  address and no other (recipeRunLine), and the confirmation names its
+   *  host. Absent on every other recipe. */
+  scriptUrl?: string
   /** Non-secret caveat shown beside the command. */
   note?: string
 }

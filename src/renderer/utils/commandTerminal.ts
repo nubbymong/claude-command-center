@@ -10,6 +10,14 @@ export function spentCommand(opts: TerminalOptions | undefined): TerminalOptions
   return rest
 }
 
+/** How an install or update line main built runs: typed into a plain shell,
+ *  never elevated, with none of the command-button secrets in its
+ *  environment. The install tab and the first-run screen's own install
+ *  terminal both start it this way. */
+export function installTerminalOptions(command: string): TerminalOptions {
+  return { command, elevated: false, noCommandSecrets: true }
+}
+
 /**
  * Open a terminal tab that runs one command, in plain sight.
  *
@@ -52,7 +60,7 @@ export function openCommandTerminal(opts: { label: string; command: string }): s
     transient: true,
     // The stored shape of a terminal-only session (see SessionDialog).
     provider: 'claude',
-    terminalOptions: { command: opts.command, elevated: false, noCommandSecrets: true },
+    terminalOptions: installTerminalOptions(opts.command),
   })
   return id
 }

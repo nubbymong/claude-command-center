@@ -317,7 +317,7 @@ export const CODEX_PINNED_VERSION = CODEX_PINNED_CLI_VERSION
 export const CODEX_MINIMUM_VERSION_CANDIDATE = CODEX_MIN_SUPPORTED_VERSION
 export const codexCapabilities: ProviderCapabilities = {
   'cli.discovery': { state: 'supported', note: 'codex --version in a throwaway home under the allowlisted environment (setup.discover); run at start, by Check again in Settings, Accounts and by the Codex setup page' },
-  'install.recipes': { state: 'supported', note: 'code-defined recipes (npm everywhere, Homebrew on macOS); a package-manager recipe runs only in a visible terminal tab after the user confirms its line; the install scripts are shown and copied, never run' },
+  'install.recipes': { state: 'supported', note: 'code-defined recipes from the README (OpenAI\'s installer first, then npm everywhere and Homebrew on macOS); each runs only in a visible terminal tab after the user confirms its line (for the installer, a confirmation that names chatgpt.com, the host its script comes from; ADR-024), never on its own and never elevated' },
   'auth.browser': { state: 'unknown', note: 'codex login (ChatGPT); wired in the Codex adapter slice' },
   'auth.device': { state: 'unknown', note: 'codex login --device-auth, labelled beta by the provider; wired in the Codex adapter slice' },
   'auth.apiKey': { state: 'unknown', note: 'codex login --with-api-key over a one-shot non-TTY stdin pipe, never an argument; wired in the Codex adapter slice' },

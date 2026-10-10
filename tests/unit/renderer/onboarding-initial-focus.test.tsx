@@ -22,19 +22,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import type { AccountsSnapshot, InstallRecipeView, ProviderInstallationView } from '../../../src/shared/providers'
 import { codexInstallRecipes } from '../../../src/main/providers/codex/install-recipes'
-import { recipeRunLine } from '../../../src/main/providers/core/recipe-run-line'
+import { installRecipeView } from '../../../src/main/providers/core/recipe-run-line'
 import { provider, account, snapshot, claudeMain } from './accounts-snapshot-harness'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
-const RECIPES: InstallRecipeView[] = codexInstallRecipes('win32').map((r) => {
-  const runLine = recipeRunLine(r, 'win32')
-  return {
-    id: r.id, providerId: r.providerId, purpose: r.purpose, publisher: r.publisher, sourceUrl: r.sourceUrl, displayCommand: r.displayCommand,
-    method: r.method, needsNetwork: r.needsNetwork, mayElevate: r.mayElevate, autoRunAllowed: r.autoRunAllowed, ...(r.note !== undefined ? { note: r.note } : {}),
-    ...(runLine !== undefined ? { runLine } : {}),
-  }
-})
+// Main's own recipes for Windows, as the IPC returns them.
+const RECIPES: InstallRecipeView[] = codexInstallRecipes('win32').map((r) => installRecipeView(r, 'win32'))
 
 const ok = () => Promise.resolve({ ok: true })
 const pa = {
@@ -252,7 +246,7 @@ describe('Set up Codex: focus follows the page\'s primary control', () => {
 
   it('CLI not found: the first install command\'s button', async () => {
     await show(snap({ discoveryState: 'missing', version: undefined }))
-    expect(focused()).toBe('codex-recipe-run-codex-npm-install')
+    expect(focused()).toBe('codex-recipe-run-codex-script-install-ps1')
   })
 
   it('CLI not found, and no command can take focus: Check again', async () => {
@@ -263,7 +257,7 @@ describe('Set up Codex: focus follows the page\'s primary control', () => {
 
   it('too old: the update command\'s button', async () => {
     await show(snap({ discoveryState: 'found', version: '0.100.0', compatibility: 'too-old' }))
-    expect(focused()).toBe('codex-recipe-run-codex-npm-update')
+    expect(focused()).toBe('codex-recipe-run-codex-script-update-ps1')
   })
 
   it('ready to sign in: the first sign-in method', async () => {

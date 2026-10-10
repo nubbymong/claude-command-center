@@ -204,3 +204,121 @@ describe('BottomBar: the Claude CLI help', () => {
     }
   })
 })
+
+// Owner decisions D2 and D4 (2026-10-10; ADR-024): the CLI help lists main's
+// own Claude Code install commands, Anthropic's native installer first, each
+// with Run it for me and Copy. `claude install` is gone from it: it needs a
+// Claude Code already installed. Run it for me asks first, opens a visible
+// install tab and shows it; when that tab ends, and on Re-check, the app asks
+// main to check again (which brings PATH up to date first) and then reads the
+// CLI.
+const { claudeInstallRecipes } = await import('../../../src/main/providers/claude/install-recipes')
+const { installRecipeView } = await import('../../../src/main/providers/core/recipe-run-line')
+const { useSessionStore } = await import('../../../src/renderer/stores/sessionStore')
+const { GO_TO_SESSION_EVENT } = await import('../../../src/renderer/lib/goToSession')
+
+describe('BottomBar: installing Claude Code from the CLI help', () => {
+  const RECIPES = claudeInstallRecipes('win32').map((r) => installRecipeView(r, 'win32'))
+  const byTest = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement | null
+  const flush = async () => { for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve() }) }
+
+  async function openHelp(cliCheck: ReturnType<typeof vi.fn>, providerAccounts: Record<string, unknown>) {
+    const api = (globalThis as any).window.electronAPI
+    api.cli = { check: cliCheck }
+    api.providerAccounts = providerAccounts
+    useSessionStore.setState({ sessions: [], activeSessionId: null })
+    await render()
+    await act(async () => { (container.querySelector('[data-testid="bottom-bar-cli"]') as HTMLElement).click() })
+    await flush()
+  }
+
+  it("lists main's commands, the native installer first, each with Run it for me and Copy; no claude install", async () => {
+    const api = (globalThis as any).window.electronAPI
+    const before = { cli: api.cli, pa: api.providerAccounts }
+    try {
+      const installRecipes = vi.fn(async () => RECIPES)
+      await openHelp(vi.fn(() => Promise.resolve(false)), { installRecipes, discover: vi.fn() })
+      expect(installRecipes).toHaveBeenCalledWith('claude')
+      const shown = [...document.querySelectorAll('[data-testid^="bottombar-recipe-command-"]')].map((c) => c.textContent)
+      expect(shown).toEqual(['irm https://claude.ai/install.ps1 | iex', 'npm.cmd install -g @anthropic-ai/claude-code'])
+      for (const r of RECIPES) {
+        expect(byTest(`bottombar-recipe-run-${r.id}`)!.textContent).toBe('Run it for me')
+        expect(byTest(`bottombar-recipe-copy-${r.id}`)!.textContent).toBe('Copy')
+      }
+      expect(document.body.textContent).not.toContain('claude install')
+    } finally {
+      api.cli = before.cli
+      api.providerAccounts = before.pa
+    }
+  })
+
+  it('Run it for me asks first, naming claude.ai; Run it opens the install tab and shows it; when the tab ends the app checks again', async () => {
+    const api = (globalThis as any).window.electronAPI
+    const before = { cli: api.cli, pa: api.providerAccounts }
+    const shownTabs: string[] = []
+    const onGoTo = (e: Event) => { shownTabs.push((e as CustomEvent).detail.sessionId) }
+    window.addEventListener(GO_TO_SESSION_EVENT, onGoTo)
+    try {
+      const calls: string[] = []
+      const cliCheck = vi.fn(() => { calls.push('cli.check'); return Promise.resolve(false) })
+      const discover = vi.fn(async () => { calls.push('discover'); return { ok: true, installation: {} } })
+      await openHelp(cliCheck, { installRecipes: vi.fn(async () => RECIPES), discover })
+      const native = RECIPES[0]
+      await act(async () => { byTest(`bottombar-recipe-run-${native.id}`)!.click() })
+      expect(byTest(`bottombar-recipe-confirm-text-${native.id}`)!.textContent).toBe(
+        'This downloads a script from claude.ai and runs it. Run this in a new terminal tab? It types the line below, and the app checks again when the command ends.',
+      )
+      expect(useSessionStore.getState().sessions).toEqual([])
+      await act(async () => { byTest(`bottombar-recipe-confirm-run-${native.id}`)!.click() })
+      await flush()
+      const tabs = useSessionStore.getState().sessions
+      expect(tabs).toHaveLength(1)
+      expect(tabs[0]).toMatchObject({ label: 'Install Claude Code', shellOnly: true, transient: true, terminalOptions: { command: native.runLine, elevated: false, noCommandSecrets: true } })
+      expect(shownTabs).toEqual([tabs[0].id])
+      expect(byTest('bottombar-cli-help')).toBeNull()
+      calls.length = 0
+      act(() => { useSessionStore.getState().updateSession(tabs[0].id, { ptyExited: true }) })
+      await flush()
+      expect(discover).toHaveBeenCalledWith('claude')
+      expect(calls).toEqual(['discover', 'cli.check'])
+      // Still not found: the help says so, with what to do, when it is opened again.
+      await act(async () => { (container.querySelector('[data-testid="bottom-bar-cli"]') as HTMLElement).click() })
+      await flush()
+      expect(byTest('bottombar-cli-after-install')!.textContent).toBe(
+        'The command ended, but Claude Code was still not found. The terminal shows what happened. If it installed without an error, quit AI Code Conductor and start it again so it sees the new PATH.',
+      )
+    } finally {
+      window.removeEventListener(GO_TO_SESSION_EVENT, onGoTo)
+      api.cli = before.cli
+      api.providerAccounts = before.pa
+    }
+  })
+
+  it('Re-check asks main to check again before it reads the CLI; found, the help closes', async () => {
+    const api = (globalThis as any).window.electronAPI
+    const before = { cli: api.cli, pa: api.providerAccounts }
+    try {
+      const calls: string[] = []
+      let available = false
+      const cliCheck = vi.fn(() => { calls.push('cli.check'); return Promise.resolve(available) })
+      const discover = vi.fn(async () => { calls.push('discover'); return { ok: true, installation: {} } })
+      await openHelp(cliCheck, { installRecipes: vi.fn(async () => RECIPES), discover })
+      expect(byTest('bottombar-cli-after-install')).toBeNull()
+      calls.length = 0
+      await act(async () => { byTest('bottombar-cli-recheck')!.click() })
+      await flush()
+      expect(calls).toEqual(['discover', 'cli.check'])
+      expect(byTest('bottombar-cli-after-install')!.textContent).toBe(
+        'Claude Code was still not found. If you installed it, quit AI Code Conductor and start it again so it sees the new PATH.',
+      )
+      available = true
+      await act(async () => { byTest('bottombar-cli-recheck')!.click() })
+      await flush()
+      expect(byTest('bottombar-cli-help')).toBeNull()
+      expect(container.querySelector('[data-testid="bottom-bar-cli"]')!.getAttribute('title')).toBe('Claude CLI available')
+    } finally {
+      api.cli = before.cli
+      api.providerAccounts = before.pa
+    }
+  })
+})

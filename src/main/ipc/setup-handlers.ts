@@ -9,6 +9,7 @@ import { logInfo } from '../debug-logger'
 import { getInstallPath } from '../update-watcher'
 import { resolveClaudeForPty } from '../pty-manager'
 import { probeClaudeCli } from '../claude-cli-probe'
+import { afterPathRefresh } from '../windows-path-refresh'
 import { defaultLoginShell } from '../login-shell'
 import { withFullyQualifiedProgramLookup } from '../windows-programs'
 import {
@@ -151,9 +152,14 @@ export function registerSetupHandlers(): void {
   // now runs on the event loop and collapses overlapping calls onto one probe;
   // this handler must AWAIT it so a rejection still lands in the catch below
   // rather than escaping as an unhandled rejection.
+  // Owner decision D4 (2026-10-10): every probe here is one the setup screen
+  // asked for (on entry, Retry, the check after its install ends), so on
+  // Windows this process's PATH is brought up to date from the registry
+  // first (windows-path-refresh.ts: folders appended, never dropped), and a
+  // Claude Code installed since the app started is found without a restart.
   ipcMain.handle('setup:probeCli', async () => {
     try {
-      return await probeClaudeCli()
+      return await afterPathRefresh(probeClaudeCli)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       logInfo(`[setup] Claude CLI probe failed: ${message}`)

@@ -16,7 +16,12 @@ import {
 } from './ui/Dialog'
 import { noteClaudeMissingAtSetup, type FirstRunOutcome } from '../onboarding/provider-choice'
 import { launchRefusalOf } from '../../shared/providers'
+import type { InstallRecipeView } from '../../shared/providers'
 import { claudeCodeInstallCommand } from '../utils/claudeInstallCommand'
+import { providerAccountActions } from '../stores/providerAccountsStore'
+import { InstallRecipeList, afterInstallMessage, type RunnableRecipe } from '../onboarding/InstallRecipeList'
+import { installTerminalOptions } from '../utils/commandTerminal'
+import { generateId } from '../utils/id'
 
 interface Props {
   /** `{ codexOnly: true }` when the user continued without Claude Code
@@ -30,6 +35,82 @@ interface Props {
 const OPAQUE_BACKDROP: React.CSSProperties = { background: 'var(--surface-base)' }
 
 type CliProbe = { installed: boolean; path?: string; probe: string }
+
+/** A Claude Code install this screen is running (owner decisions D1 to D4,
+ *  2026-10-10; ADR-024): main's line for one recipe, in a terminal on this
+ *  screen. `ended` once its shell exited (the line ends it), with the code;
+ *  `checking` while setup checks again after that. */
+type SetupInstall = { id: string; recipe: RunnableRecipe; ended: boolean; exitCode?: number; checking: boolean }
+
+/** Where the confirmation says the line runs. */
+const SETUP_CONFIRM_WHERE = 'Run this in a terminal on this screen? It types the line below, and setup checks again when the command ends.'
+
+/** What a pty.spawn answer that started nothing says, or null when it started. */
+function notStarted(r: unknown): string | null {
+  if (!r || typeof r !== 'object' || (r as { started?: unknown }).started !== false) return null
+  const said = (r as { refused?: { message?: unknown } }).refused?.message
+  return typeof said === 'string' && said !== '' ? said : 'The terminal did not start.'
+}
+
+/**
+ * One terminal on this screen, attached to the PTY `sessionId` while it is
+ * set (none while it is null). Its output is subscribed BEFORE `start` spawns
+ * it, so nothing early is missed; keystrokes go to it; it opens and is fitted
+ * once `containerRef` has a size, which is when `start` runs. The setup
+ * terminal and the install terminal both run through it.
+ */
+function useEmbeddedTerminal(
+  containerRef: React.RefObject<HTMLDivElement | null>,
+  sessionId: string | null,
+  handlers: { start: (term: Terminal) => void; exit: (term: Terminal, exitCode: number) => void },
+): void {
+  const current = useRef(handlers)
+  current.current = handlers
+  useEffect(() => {
+    if (!sessionId) return
+    const term = new Terminal({
+      theme: buildLogTheme(),
+      fontSize: 13,
+      fontFamily: "'Cascadia Code', 'Consolas', monospace",
+      cursorBlink: true,
+      cursorStyle: 'bar',
+      allowTransparency: true,
+      scrollback: 1000,
+    })
+    const fitAddon = new FitAddon()
+    term.loadAddon(fitAddon)
+    const unsubData = window.electronAPI.pty.onData(sessionId, (data) => { term.write(data) })
+    const unsubExit = window.electronAPI.pty.onExit(sessionId, (code) => { current.current.exit(term, code) })
+    term.onData((data) => { window.electronAPI.pty.write(sessionId, data) })
+    const resizeObserver = new ResizeObserver(() => {
+      try { fitAddon.fit() } catch { /* ignore */ }
+    })
+    let disposed = false
+    const tryOpen = () => {
+      if (disposed) return
+      const container = containerRef.current
+      if (!container || container.clientWidth === 0 || container.clientHeight === 0) {
+        requestAnimationFrame(tryOpen)
+        return
+      }
+      term.open(container)
+      fitAddon.fit()
+      resizeObserver.observe(container)
+      // The terminal is what the user works in on this screen, so it takes
+      // the focus, not the page body.
+      term.focus()
+      current.current.start(term)
+    }
+    requestAnimationFrame(tryOpen)
+    return () => {
+      disposed = true
+      resizeObserver.disconnect()
+      unsubData()
+      unsubExit()
+      term.dispose()
+    }
+  }, [sessionId, containerRef])
+}
 
 /**
  * The setup flow's hero, kept deliberately OUT of the shared `DialogHeader`.
@@ -80,14 +161,27 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
   const [cliProbe, setCliProbe] = useState<CliProbe | null>(null)
   const [probing, setProbing] = useState(false)
   const [copied, setCopied] = useState(false)
-  // The one thing the user has to run, for this computer's terminal (npm.cmd
-  // on Windows): the notice and the copy button speak about the same string.
+  // When main cannot give its install commands: the npm one, for this
+  // computer's terminal (npm.cmd on Windows), to copy.
   const installCommand = claudeCodeInstallCommand(window.electronPlatform)
   const termContainerRef = useRef<HTMLDivElement>(null)
-  const termRef = useRef<Terminal | null>(null)
-  const fitAddonRef = useRef<FitAddon | null>(null)
-  const unsubDataRef = useRef<(() => void) | null>(null)
-  const unsubExitRef = useRef<(() => void) | null>(null)
+  // Main's install commands for Claude Code (undefined: not read yet; null:
+  // main could not give them), read whenever the not-installed screen may show.
+  const [recipes, setRecipes] = useState<InstallRecipeView[] | null | undefined>(undefined)
+  const recipesRead = useRef(0)
+  // The install running on this screen, kept in a ref too: its terminal's
+  // callbacks and the cleanup read the current one.
+  const [install, setInstallState] = useState<SetupInstall | null>(null)
+  const installRef = useRef<SetupInstall | null>(null)
+  const setInstall = (next: SetupInstall | null) => { installRef.current = next; setInstallState(next) }
+  const installContainerRef = useRef<HTMLDivElement>(null)
+  // The user pressed Retry: a check that still finds nothing says what to do.
+  const [tried, setTried] = useState(false)
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
   useEffect(() => {
     // Get default directories
@@ -111,16 +205,19 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
    * main, and Retry re-asks -- so a user who installs the CLI in another window
    * is one click from unblocked.
    */
-  const probeCli = useCallback(async () => {
+  const probeCli = useCallback(async (): Promise<CliProbe> => {
     setProbing(true)
+    let result: CliProbe
     try {
-      const result = await window.electronAPI.setup.probeCli()
-      setCliProbe(result)
+      // Main brings its PATH up to date first (owner decision D4), so a
+      // Claude Code installed since the app started is found.
+      result = await window.electronAPI.setup.probeCli()
     } catch (err) {
-      setCliProbe({ installed: false, probe: err instanceof Error ? err.message : String(err) })
-    } finally {
-      setProbing(false)
+      result = { installed: false, probe: err instanceof Error ? err.message : String(err) }
     }
+    setProbing(false)
+    setCliProbe(result)
+    return result
   }, [])
 
   useEffect(() => {
@@ -128,82 +225,106 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
     void probeCli()
   }, [step, cliProbe, probeCli])
 
-  // Terminal setup for step 2 — only once the CLI is known to be installed.
+  // Main's install commands: read on entry to step 2 (alongside the probe),
+  // and again after every probe that did not find Claude Code, since whether
+  // npm can run (Node.js found) may have changed. Only the latest read lands.
+  const readRecipes = useCallback(async () => {
+    const mine = ++recipesRead.current
+    const r = await providerAccountActions.installRecipes('claude')
+    if (mountedRef.current && mine === recipesRead.current) setRecipes(r)
+  }, [])
   useEffect(() => {
-    if (step !== 2 || !cliProbe?.installed) return
+    if (step !== 2 || cliProbe?.installed) return
+    void readRecipes()
+  }, [step, cliProbe, readRecipes])
 
-    const term = new Terminal({
-      theme: buildLogTheme(),
-      fontSize: 13,
-      fontFamily: "'Cascadia Code', 'Consolas', monospace",
-      cursorBlink: true,
-      cursorStyle: 'bar',
-      allowTransparency: true,
-      scrollback: 1000,
-    })
-    const fitAddon = new FitAddon()
-    term.loadAddon(fitAddon)
-
-    termRef.current = term
-    fitAddonRef.current = fitAddon
-
-    // Subscribe to PTY channels BEFORE spawning to avoid missing early data
-    const sessionId = '__cli_setup__'
-    unsubDataRef.current = window.electronAPI.pty.onData(sessionId, (data) => {
-      term.write(data)
-    })
-    unsubExitRef.current = window.electronAPI.pty.onExit(sessionId, () => {
-      setPtyExited(true)
-      term.write('\r\n\x1b[32mClaude CLI setup complete. Click Finish to continue.\x1b[0m\r\n')
-    })
-    // Forward terminal input to PTY
-    term.onData((data) => {
-      window.electronAPI.pty.write(sessionId, data)
-    })
-
-    // Handle resize — created early but observer attached once container is ready
-    const resizeObserver = new ResizeObserver(() => {
-      if (fitAddonRef.current) {
-        try { fitAddonRef.current.fit() } catch { /* ignore */ }
-      }
-    })
-
-    // Wait for container to have dimensions, then open terminal and spawn PTY
-    const tryOpen = () => {
-      const container = termContainerRef.current
-      if (!container || container.clientWidth === 0 || container.clientHeight === 0) {
-        requestAnimationFrame(tryOpen)
-        return
-      }
-      term.open(container)
-      fitAddon.fit()
-      resizeObserver.observe(container)
-      // The terminal is what the user works in on this screen (its button
-      // waits for it), so it takes the focus, not the page body.
-      term.focus()
-
-      // Spawn CLI setup PTY (listeners already subscribed above)
-      const cols = term.cols
-      const rows = term.rows
-      window.electronAPI.setup.spawnCliSetup(cols, rows).then((started) => {
+  // Terminal setup for step 2: only once the CLI is known to be installed,
+  // and not while an install runs on this screen.
+  useEmbeddedTerminal(termContainerRef, step === 2 && cliProbe?.installed && !install ? '__cli_setup__' : null, {
+    start: (term) => {
+      // Spawn CLI setup PTY (listeners already subscribed)
+      window.electronAPI.setup.spawnCliSetup(term.cols, term.rows).then((started) => {
         // Main refuses this Claude Code terminal while Claude Code is off:
         // said here, and Skip for now goes on without it.
         const refusal = launchRefusalOf(started)
         if (refusal) { term.writeln(refusal.message); return }
         setPtySpawned(true)
       })
-    }
-    requestAnimationFrame(tryOpen)
+    },
+    exit: (term) => {
+      setPtyExited(true)
+      term.write('\r\n\x1b[32mClaude CLI setup complete. Click Finish to continue.\x1b[0m\r\n')
+    },
+  })
 
-    return () => {
-      resizeObserver.disconnect()
-      unsubDataRef.current?.()
-      unsubExitRef.current?.()
-      term.dispose()
-      termRef.current = null
-      fitAddonRef.current = null
-    }
-  }, [step, cliProbe?.installed])
+  // The install on this screen: main's line, started exactly as the install
+  // tab starts it (shell only, never elevated, no command secrets; its
+  // program found only in the folders PATH names in full on Windows), in a
+  // terminal here, since the app's tabs do not exist yet. The line ends the
+  // shell when its command ends; setup then checks again.
+  const checkAfterInstall = async (id: string) => {
+    const cur = installRef.current
+    if (!cur || cur.id !== id) return
+    setInstall({ ...cur, checking: true })
+    const result = await probeCli()
+    await readRecipes()
+    const now = installRef.current
+    if (!mountedRef.current || !now || now.id !== id) return
+    // Found: the step-2 terminal opens for Claude Code's own setup.
+    if (result.installed) { setInstall(null); return }
+    setInstall({ ...now, checking: false })
+  }
+  const installEnded = (id: string, exitCode: number | undefined) => {
+    const cur = installRef.current
+    if (!cur || cur.id !== id || cur.ended) return
+    setInstall({ ...cur, ended: true, ...(exitCode !== undefined ? { exitCode } : {}) })
+    void checkAfterInstall(id)
+  }
+  useEmbeddedTerminal(installContainerRef, install?.id ?? null, {
+    start: (term) => {
+      const cur = installRef.current
+      if (!cur) return
+      const id = cur.id
+      Promise.resolve(window.electronAPI.pty.spawn(id, {
+        cols: term.cols, rows: term.rows, shellOnly: true, provider: 'claude',
+        terminalOptions: installTerminalOptions(cur.recipe.runLine),
+      })).then((r) => {
+        const why = notStarted(r)
+        if (why) { term.writeln(why); installEnded(id, undefined) }
+      }, (err: unknown) => {
+        term.writeln(`The terminal did not start: ${err instanceof Error ? err.message : String(err)}`)
+        installEnded(id, undefined)
+      })
+    },
+    exit: (term, code) => {
+      const id = installRef.current?.id
+      term.write(`\r\n\x1b[90mThe command ended${code ? ` with exit code ${code}` : ''}. Checking for Claude Code...\x1b[0m\r\n`)
+      if (id) installEnded(id, code)
+    },
+  })
+  // Leaving setup while the command runs stops it.
+  useEffect(() => () => {
+    const cur = installRef.current
+    if (cur && !cur.ended) window.electronAPI.pty.kill(cur.id)
+  }, [])
+
+  const runInstall = (recipe: RunnableRecipe) => {
+    if (installRef.current) return
+    setTried(false)
+    setInstall({ id: generateId(), recipe, ended: false, checking: false })
+  }
+  // Back from the install: a command still running is stopped, then setup
+  // checks again (the user may have installed it anyway).
+  const leaveInstall = () => {
+    const cur = installRef.current
+    if (cur && !cur.ended) window.electronAPI.pty.kill(cur.id)
+    setInstall(null)
+    void probeCli()
+  }
+  const retry = async () => {
+    await probeCli()
+    if (mountedRef.current) setTried(true)
+  }
 
   // The "not installed" screen's primary button, Retry, has the focus each
   // time a check ends on that screen: when it opens (it only ever opens when
@@ -237,6 +358,7 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
     // Re-arm the CLI gate: coming back to step 2 always re-probes, so a user who
     // went Back to install the CLI is not shown a stale verdict.
     setCliProbe(null)
+    setTried(false)
     setStep(2)
   }
 
@@ -261,6 +383,8 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
   // does the first-run screen of a new computer pointed at an existing
   // resources folder, which is an upgrader too.
   const handleCodexOnly = () => {
+    const cur = installRef.current
+    if (cur && !cur.ended) window.electronAPI.pty.kill(cur.id)
     noteClaudeMissingAtSetup()
     onComplete({ codexOnly: true })
   }
@@ -286,7 +410,62 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
   // is mounted afresh: they share their frame, and without a key React would
   // reuse one screen's footer button for the next (Retry, say, becoming step
   // 1's Continue after Back) and autoFocus would not run again.
+  // Step 2, installing: the command runs in the terminal below; setup checks
+  // again when it ends. Back stops it (if it still runs) and checks again.
+  if (step === 2 && install) {
+    return (
+      <DialogOverlay key="setup-cli-install" style={OPAQUE_BACKDROP}>
+        <DialogPanel width="w-[672px]" labelledBy="setup-cli-install-title">
+          <DialogBody className="space-y-3">
+            <div data-testid="setup-cli-install">
+              <SetupHero
+                titleId="setup-cli-install-title"
+                mark=">_"
+                title="Installing Claude Code"
+                subtitle="The command runs in the terminal below. Answer any question it asks there; setup checks again when it ends."
+              />
+            </div>
+            <div
+              ref={installContainerRef}
+              className="rounded-lg overflow-hidden border relative"
+              style={{ height: '340px', backgroundColor: 'var(--surface-stage)', borderColor: 'var(--border-subtle)' }}
+              data-testid="setup-cli-install-terminal"
+            />
+            {install.ended && install.checking && (
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }} data-testid="setup-cli-install-checking">
+                Checking for Claude Code…
+              </p>
+            )}
+            {install.ended && !install.checking && (
+              <DialogCallout tone="warning" role="status" testId="setup-cli-install-ended">
+                {afterInstallMessage('Claude Code', { ended: true, exitCode: install.exitCode })}
+              </DialogCallout>
+            )}
+          </DialogBody>
+          <DialogFooter
+            left={
+              <DialogButton variant="secondary" onClick={leaveInstall} testId="setup-cli-install-back">
+                Back
+              </DialogButton>
+            }
+          >
+            <DialogButton
+              variant="primary"
+              size="md"
+              onClick={() => { void checkAfterInstall(install.id) }}
+              disabled={!install.ended || install.checking}
+              testId="setup-cli-install-retry"
+            >
+              {install.checking ? 'Checking…' : 'Retry'}
+            </DialogButton>
+          </DialogFooter>
+        </DialogPanel>
+      </DialogOverlay>
+    )
+  }
+
   if (step === 2 && cliProbe && !cliProbe.installed) {
+    const listed = Array.isArray(recipes) && recipes.some((r) => r.purpose === 'install')
     return (
       <DialogOverlay key="setup-cli-missing" style={OPAQUE_BACKDROP}>
         <DialogPanel width="w-[672px]" labelledBy="setup-cli-missing-title" panelRef={missingPanelRef}>
@@ -306,11 +485,27 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
             >
               <p>
                 The <code style={{ color: 'var(--text-primary)' }}>claude</code> command was not found on this
-                PC. Every Claude session AI Code Conductor launches is a Claude Code process, so there is nothing
+                computer. Every Claude session AI Code Conductor launches is a Claude Code process, so there is nothing
                 to configure for it until it is installed.
               </p>
             </DialogCallout>
 
+            {listed ? (
+              <div className="install-recipes">
+                <InstallRecipeList
+                  purpose="install"
+                  recipes={recipes}
+                  toolName="Claude Code"
+                  testIdPrefix="setup"
+                  confirmWhere={SETUP_CONFIRM_WHERE}
+                  onRun={runInstall}
+                />
+                <p className="text-[11px]" style={{ color: 'var(--text-muted)' }} data-testid="setup-cli-install-hint">
+                  Run it for me runs the command in a terminal on this screen, and setup checks again when it ends. If you
+                  install Claude Code another way, press Retry once it is done.
+                </p>
+              </div>
+            ) : (
             <div>
               <p className="text-xs mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                 Install it with Node.js 18 or newer, in a terminal:
@@ -339,10 +534,16 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
                 </DialogButton>
               </div>
               <p className="text-[11px] mt-1.5" style={{ color: 'var(--text-muted)' }}>
-                Then come back and press Retry. If you installed it in a terminal that was already open, the new{' '}
-                <code>PATH</code> may not have reached this app — restart AI Code Conductor and it will pick it up.
+                Then come back and press Retry.
               </p>
             </div>
+            )}
+
+            {tried && !probing && (
+              <DialogCallout tone="warning" role="status" testId="setup-cli-still-missing">
+                {afterInstallMessage('Claude Code', { ended: false })}
+              </DialogCallout>
+            )}
 
             <p className="text-[11px]" style={{ color: 'var(--text-muted)' }} data-testid="setup-cli-probe-detail">
               Checked with <code>{cliProbe.probe}</code>.
@@ -372,7 +573,7 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
             <DialogButton
               variant="primary"
               size="md"
-              onClick={() => { void probeCli() }}
+              onClick={() => { void retry() }}
               disabled={probing}
               testId="setup-cli-retry"
             >

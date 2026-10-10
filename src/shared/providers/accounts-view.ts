@@ -296,13 +296,21 @@ export interface InstallRecipeView {
   autoRunAllowed: boolean
   note?: string
   /** The exact line a Conductor terminal tab types to run this recipe, built
-   *  by main from the recipe's argv for this computer's terminal shell (on
-   *  Windows it names npm.cmd, which PowerShell's execution policy does not
-   *  block). Present only for a package-manager recipe main allows to run;
-   *  absent means show and copy only. Not what the user is shown: that is
-   *  `displayCommand`, verbatim (the documented command, with npm named
-   *  npm.cmd on Windows too). */
+   *  by main for this computer's terminal shell: from a package manager's
+   *  argv (on Windows it names npm.cmd, which PowerShell's execution policy
+   *  does not block), or a vendor's installer command as documented (ADR-024);
+   *  either way it ends the shell when the command ends. Present only for a
+   *  recipe main allows to run; absent means show and copy only. Not what the
+   *  user is shown: that is `displayCommand`, verbatim (the documented
+   *  command, with npm named npm.cmd on Windows too). */
   runLine?: string
+  /** For a vendor's installer script that has a `runLine`: the host it
+   *  downloads the script from (`claude.ai`), which the confirmation names
+   *  before anything runs. A script without it is not run. */
+  downloadsFrom?: string
+  /** Node.js was looked for and not found on this computer, and this is an
+   *  npm command: it is offered to copy, not to run, until Node.js is found. */
+  needsNode?: true
 }
 
 /** An account's allowance as the Account usage page shows it (usage track

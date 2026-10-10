@@ -923,3 +923,37 @@ describe('app knowledge for the 2.1.1-beta.2 hardening', () => {
     expect(k).toMatch(/make sure Windows PowerShell, whoami and icacls are allowed to run for your user, since the app uses them to check those folders' rights\./)
   })
 })
+
+// [host] Installing from setup (owner decisions D1 to D4, 2026-10-10;
+// ADR-024): both tools can be installed or updated with Run it for me or
+// Copy, the publisher's own installer first and npm second, and the app
+// finds a new install without a restart. What's New and the Feature Guide
+// say so, in the words the app shows.
+describe('installing from setup, in What\'s New (2.1.1-beta.2) and the Feature Guide', () => {
+  const top = changelog.find((e) => e.highlights?.startsWith('Codex becomes a full second assistant'))!
+  const body = (id: string) => APP_KNOWLEDGE_SECTIONS.find((s) => s.id === id)!.body
+
+  it('What\'s New says both tools install from setup with Run it for me or Copy, the publisher\'s installer first, found without a restart', () => {
+    const said = top.changes.map((c) => c.description).join('\n')
+    expect(said).toMatch(/Claude Code and Codex can both be installed from setup\. Every install or update command has Run it for me, which runs it in a visible terminal once you confirm it, and Copy\./)
+    expect(said).toMatch(/The tool's own installer comes first \(Anthropic's from claude\.ai, OpenAI's from chatgpt\.com\), and its confirmation says it downloads a script from there and runs it; npm comes second, and says so when Node\.js is not found\./)
+    expect(said).toMatch(/Setup checks again when the command ends and finds the new install without restarting the app\. Settings, Accounts and the CLI help at the foot of the window offer the same\./)
+  })
+
+  it('the Feature Guide says how the install commands run, in order, and when the app looks again', () => {
+    const p = body('providers')
+    expect(p).toMatch(/When Claude Code or Codex is missing, or Codex is too old, its row lists the install or update commands from the publisher's own instructions, each with Run it for me and Copy\./)
+    expect(p).toMatch(/The publisher's own installer comes first \(for Claude Code, Anthropic's native installer from claude\.ai; for Codex, OpenAI's installer from chatgpt\.com\), then npm/)
+    expect(p).toMatch(/Run it for me asks first, and for an installer it says that it downloads a script from that site and runs it; then it types the command into a visible terminal tab, never with administrator rights, and checks again when the command ends\./)
+    expect(p).toMatch(/An npm command needs Node\.js: when Node\.js is not found, it says so and its Run it for me is off, while Copy still works\./)
+    expect(p).toMatch(/On Windows, Check again, Retry and the check after an install first read the PATH Windows now gives new programs, so a tool installed while the app was open is found without restarting it\./)
+    expect(p).not.toMatch(/the app never runs them/)
+  })
+
+  it('the Feature Guide says the setup screen installs Claude Code and carries on, and when to restart', () => {
+    expect(body('providers')).toMatch(/If Claude Code is not installed, the first setup screen says so and lists its install commands, Anthropic's native installer first and npm second, each with Run it for me and Copy: Run it for me runs the command in a terminal on that screen once you confirm it, and setup checks again when it ends and carries on as soon as Claude Code is found\./)
+    const t = body('troubleshooting')
+    expect(t).toMatch(/The page lists the install commands, each with Run it for me and Copy, says which check it ran, and has a Retry; setup checks again by itself when a command it ran ends, and carries on once Claude Code is found\. If it is still not found after that, restart the app so it picks up the new PATH\./)
+    expect(t).not.toMatch(/gives you the install command to copy/)
+  })
+})

@@ -7,8 +7,9 @@ import {
   externalHomeFolder,
 } from '../stores/providerAccountsStore'
 import { AddProviderAccountDialog, methodCopy } from '../components/settings/accounts/AddProviderAccountDialog'
-import { openCommandTerminal } from '../utils/commandTerminal'
 import { useSessionStore } from '../stores/sessionStore'
+import { InstallRecipeList, afterInstallMessage, type RunnableRecipe } from './InstallRecipeList'
+import { openInstallTab, installTabRunning, useInstallTabRunning, type InstallTab } from '../utils/installTab'
 
 const CHECK = String.fromCodePoint(0x2713)
 
@@ -120,116 +121,13 @@ function CheckRow({ tone, children, testId }: { tone: 'ok' | 'warn' | 'pending';
   )
 }
 
-function sourceLine(r: InstallRecipeView): string {
-  return /readme/i.test(r.sourceUrl) ? `From ${r.publisher}'s README` : `From ${r.publisher}`
-}
-
-const SCRIPT_NOTE = 'Shown for you to review and run yourself; the app does not run it.'
+/** What the confirmation says about where the line runs. */
+const CONFIRM_WHERE = 'Run this in a new terminal tab? It types the line below. Setup steps aside so you can watch it, and you come back to it when you are done.'
 
 /** The terminal tab this page last opened for a recipe. Held for the
  *  renderer's lifetime, not the page's, so a page shown again (Back, then
  *  Next) still knows that install is running while its tab is open. */
-let openedTab: { id: string; label: string } | null = null
-
-/**
- * One recipe. Whether it may run is main's decision, not this page's: main
- * sends `runLine` only for a recipe it allows to run, built for this
- * computer's terminal shell, and "Run in a terminal" types exactly that line.
- * Without it the recipe is Copy only. What is shown and copied is always the
- * provider's documented command, verbatim.
- */
-function Recipe({ recipe, onRun, busyReason }: {
-  recipe: InstallRecipeView
-  onRun: (r: InstallRecipeView & { runLine: string }) => void
-  /** Why Run is unavailable right now (a tab this page opened is still open). */
-  busyReason?: string
-}) {
-  const [confirming, setConfirming] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const runLine = recipe.runLine
-  const runnable = typeof runLine === 'string' && runLine.length > 0
-  const note = recipe.note ?? (runnable ? undefined : SCRIPT_NOTE)
-  const copy = () => {
-    void navigator.clipboard?.writeText(recipe.displayCommand).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    }).catch(() => { /* clipboard blocked: the command is selectable */ })
-  }
-  return (
-    <div className="cx-recipe" data-testid={`codex-recipe-${recipe.id}`}>
-      <div className="cx-cmd">
-        <code className="select-all" data-testid={`codex-recipe-command-${recipe.id}`}>{recipe.displayCommand}</code>
-        {runnable ? (
-          <button
-            className="cx-btn"
-            type="button"
-            onClick={() => setConfirming(true)}
-            disabled={confirming || !!busyReason}
-            title={busyReason}
-            data-autofocus=""
-            data-testid={`codex-recipe-run-${recipe.id}`}
-          >
-            Run in a terminal
-          </button>
-        ) : (
-          <button className="cx-btn" type="button" onClick={copy} data-autofocus="" data-testid={`codex-recipe-copy-${recipe.id}`}>
-            {copied ? 'Copied' : 'Copy'}
-          </button>
-        )}
-      </div>
-      {note && <div className="cx-note" data-testid={`codex-recipe-note-${recipe.id}`}>{note}</div>}
-      {runnable && busyReason && !confirming && (
-        <div className="cx-note" data-testid={`codex-recipe-busy-${recipe.id}`}>{busyReason}</div>
-      )}
-      {runnable && confirming && (
-        <div className="cx-confirm" role="group" aria-label="Run this command?" data-testid={`codex-recipe-confirm-${recipe.id}`}>
-          <span>
-            Run this in a new terminal tab? It types the line below. Setup steps aside so you can watch it, and you come back to it when you are done.
-            <code className="cx-run-line" data-testid={`codex-recipe-run-line-${recipe.id}`}>{runLine}</code>
-          </span>
-          <span className="cx-confirm-btns">
-            <button className="cx-btn" type="button" onClick={() => setConfirming(false)} data-testid={`codex-recipe-cancel-${recipe.id}`}>Cancel</button>
-            <button
-              className="cx-btn primary"
-              type="button"
-              disabled={!!busyReason}
-              onClick={() => { setConfirming(false); onRun({ ...recipe, runLine }) }}
-              data-testid={`codex-recipe-confirm-run-${recipe.id}`}
-            >
-              Run it
-            </button>
-          </span>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function Recipes({ purpose, recipes, onRun, busyReason }: {
-  purpose: 'install' | 'update'
-  recipes: InstallRecipeView[] | null | undefined
-  onRun: (r: InstallRecipeView & { runLine: string }) => void
-  busyReason?: string
-}) {
-  if (recipes === undefined) return null
-  const mine = (recipes ?? []).filter((r) => r.purpose === purpose)
-  return (
-    <div className="cx-recipes" data-testid={`codex-recipes-${purpose}`}>
-      <div className="cx-recipes-h">
-        <b>{purpose === 'install' ? 'Install Codex' : 'Update Codex'}</b>
-        {mine[0] && <span className="cx-muted" title={mine[0].sourceUrl}>{sourceLine(mine[0])}</span>}
-      </div>
-      {mine.length === 0 && (
-        <div className="cx-muted" data-testid="codex-recipes-none">
-          {recipes === null
-            ? `The ${purpose} commands could not be read.`
-            : `No ${purpose} command is known for this computer.`}
-        </div>
-      )}
-      {mine.map((r) => <Recipe key={r.id} recipe={r} onRun={onRun} busyReason={busyReason} />)}
-    </div>
-  )
-}
+let openedTab: InstallTab | null = null
 
 /**
  * "Set up Codex" (WP2 commit 6e, canvas F2). Shown when the user chose Codex
@@ -238,10 +136,13 @@ function Recipes({ purpose, recipes, onRun, busyReason }: {
  * discovery in the accounts snapshot (checked again on entry), the install
  * recipes, and what is known about this computer's own Codex sign-in.
  *
- *   - Not found: the install recipes, verbatim. A recipe main allows to run
- *     (it sends the line to type, `runLine`) runs in a visible terminal tab
- *     after the user confirms that line, one at a time; any other is shown
- *     and copied, never run. "Check again" looks again.
+ *   - Not found: the install recipes, verbatim, OpenAI's installer first,
+ *     each with Run it for me and Copy (InstallRecipeList). A recipe main
+ *     allows to run (it sends the line to type, `runLine`) runs in a visible
+ *     terminal tab after the user confirms that line, one at a time; the line
+ *     ends the tab's shell when its command ends, and the page then checks
+ *     again. "Check again" looks again; a check that still finds nothing
+ *     says what to do.
  *   - Too old: the version found and the update recipe.
  *   - Ready, and nothing stands for this computer's own sign-in (canvas
  *     F2 d, approved again for the update page on 2026-09-26): the page asks
@@ -316,7 +217,9 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
   const checkAgain = async () => {
     setChecking(true)
     setError(null)
+    // Main brings its PATH up to date before it looks (owner decision D4).
     const r = await providerAccountActions.discover('codex')
+    if (!mounted.current) return
     setChecking(false)
     if (r.ok) setAnswer(r.installation)
     else setError({ code: r.code, message: r.message })
@@ -366,22 +269,41 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
     })()
   }, [canProbe, probeRound])
 
-  // One install at a time: while the tab this page opened is still open, Run
-  // is off for the whole page and says where it is running.
+  // One install at a time: while the tab this page opened is still running
+  // (open, and its shell has not exited), Run is off for the whole page and
+  // says where it is running.
   const [tab, setTab] = useState(openedTab)
-  const tabOpen = useSessionStore((s) => !!tab && s.sessions.some((x) => x.id === tab.id))
-  const busyReason = tab && tabOpen ? `Already running in the ${tab.label} tab` : undefined
+  const running = useInstallTabRunning(tab)
+  const busyReason = tab && running ? `Already running in the ${tab.label} tab` : undefined
+
+  // The line ends the tab's shell when its command ends: once the page has
+  // seen its tab running and then ended (exited, or closed), it checks again,
+  // once per tab. A tab that ended while the page was not shown is covered by
+  // the check every entry makes.
+  const seenRunning = useRef<string | null>(null)
+  const [endedTab, setEndedTab] = useState<string | null>(null)
+  useEffect(() => {
+    if (!tab) return
+    if (running) { seenRunning.current = tab.id; return }
+    if (seenRunning.current !== tab.id) return
+    seenRunning.current = null
+    setEndedTab(tab.id)
+    void checkAgain()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, running])
+  // The user's own Check again: a check that still finds nothing says what to do.
+  const [userChecked, setUserChecked] = useState(false)
 
   // Types main's line, exactly: the page never builds or picks what runs.
-  const run = (recipe: InstallRecipeView & { runLine: string }) => {
+  const run = (recipe: RunnableRecipe) => {
     // Read live, not from this render: a second click that lands before the
     // page re-renders must not open a second install.
-    const last = openedTab
-    if (last && useSessionStore.getState().sessions.some((x) => x.id === last.id)) return
+    if (installTabRunning(openedTab, useSessionStore.getState().sessions)) return
     const label = recipe.purpose === 'update' ? 'Update Codex' : 'Install Codex'
-    const id = openCommandTerminal({ label, command: recipe.runLine })
-    openedTab = { id, label }
+    openedTab = openInstallTab({ label, runLine: recipe.runLine })
     setTab(openedTab)
+    setEndedTab(null)
+    setUserChecked(false)
     stepAside()
   }
 
@@ -437,18 +359,26 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
     body = <p className="cx-muted" data-testid="codex-setup-unavailable">The account list is not available right now. You can set up Codex later in Settings, Accounts.</p>
   } else if (install.kind === 'checking') {
     body = <CheckRow tone="pending" testId="codex-setup-checking">Checking for the Codex CLI...</CheckRow>
-  } else if (install.kind === 'missing') {
+  } else if (install.kind === 'missing' || install.kind === 'update') {
+    // Still not found after a command this page ran ended, or after the
+    // user's own Check again: what to do, once that check has answered. (A
+    // Codex found but too old has its own line above.)
+    const ended = !!endedTab && endedTab === tab?.id
+    const after = checking || install.kind !== 'missing' ? null
+      : ended ? afterInstallMessage('Codex', { ended: true }) : userChecked ? afterInstallMessage('Codex', { ended: false }) : null
     body = (
-      <div data-testid="codex-setup-missing">
-        <CheckRow tone="pending" testId="codex-setup-check">{install.text}</CheckRow>
-        <Recipes purpose="install" recipes={recipes} onRun={run} busyReason={busyReason} />
-      </div>
-    )
-  } else if (install.kind === 'update') {
-    body = (
-      <div data-testid="codex-setup-update">
-        <CheckRow tone="warn" testId="codex-setup-check">{install.text}</CheckRow>
-        <Recipes purpose="update" recipes={recipes} onRun={run} busyReason={busyReason} />
+      <div data-testid={install.kind === 'missing' ? 'codex-setup-missing' : 'codex-setup-update'}>
+        <CheckRow tone={install.kind === 'missing' ? 'pending' : 'warn'} testId="codex-setup-check">{install.text}</CheckRow>
+        <InstallRecipeList
+          purpose={install.kind === 'missing' ? 'install' : 'update'}
+          recipes={recipes}
+          toolName="Codex"
+          testIdPrefix="codex"
+          confirmWhere={CONFIRM_WHERE}
+          onRun={run}
+          busyReason={busyReason}
+        />
+        {after && <p className="cx-muted" role="status" data-testid="codex-setup-after-install">{after}</p>}
       </div>
     )
   } else {
@@ -621,7 +551,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
         {onBack && <button className="back" onClick={onBack} type="button" data-testid="codex-setup-back">← Back</button>}
         <span className="cx-foot-actions">
           {needsCli && (
-            <button className="back" type="button" onClick={() => { void checkAgain() }} disabled={checking} data-autofocus="" data-testid="codex-setup-check-again">
+            <button className="back" type="button" onClick={() => { setUserChecked(true); void checkAgain() }} disabled={checking} data-autofocus="" data-testid="codex-setup-check-again">
               {checking ? 'Checking...' : 'Check again'}
             </button>
           )}

