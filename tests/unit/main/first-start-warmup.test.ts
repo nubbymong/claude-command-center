@@ -10,6 +10,8 @@
 // worker is the canonical path the main process resolved, the fixed
 // `--version`, and a prototype-free copy of the environment the caller built.
 import { describe, it, expect, vi, afterEach } from 'vitest'
+// The module itself, not tests/unit/setup.ts's default fake of its warmFirstStart.
+vi.unmock('../../../src/main/first-start-warmup')
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import {

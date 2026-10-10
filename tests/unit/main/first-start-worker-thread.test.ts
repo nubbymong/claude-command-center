@@ -4,6 +4,8 @@
 // worker's own body runs for real in first-start-worker.test.ts. Nothing is
 // started.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+// The module itself, not tests/unit/setup.ts's default fake of its warmFirstStart.
+vi.unmock('../../../src/main/first-start-warmup')
 
 const h = vi.hoisted(() => ({ made: [] as Array<{ source: unknown; options: Record<string, unknown>; posted: unknown[]; emit: (ev: string, a?: unknown) => void; unrefd: boolean }> }))
 vi.mock('node:worker_threads', async () => {

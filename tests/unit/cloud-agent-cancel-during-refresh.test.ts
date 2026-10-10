@@ -10,6 +10,12 @@
 // refused and Remove hiding the row. Dispatch now re-reads the record after
 // EVERY pre-spawn await and, if it was cancelled or removed, releases the hold,
 // deletes the prompt file, broadcasts and returns without spawning.
+//
+// On Windows, dispatch awaits the first-start warm-up (ADR-025) before it writes the
+// prompt file. Here that is the setup file's default fake (tests/unit/setup.ts), which
+// answers at once: by the timer tick that sees the record published, the dispatch has
+// written the prompt file and is parked on the refresh wait. The real warm-up read the
+// program's path on the thread pool first, and raced that tick on Windows CI.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 // On Windows a start with a recent answer of the PATH walk (claude-cli-probe.ts) is synchronous, and the
 // cases here are about that path (the hold, the release, the waits), not about the lookup, which

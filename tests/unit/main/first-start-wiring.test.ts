@@ -73,8 +73,9 @@ describe.runIf(process.platform === 'win32')('the Codex package (ADR-025)', () =
   it('its own discovery warms the executable it resolved before the --version run, with that run\'s environment', async () => {
     const pkg = createCodexPackage({ hostHome: { env: {}, homeDir: dir } })
     expect(await pkg.setup!.discover()).toMatchObject({ state: 'found' })
-    // Discovery resolves the file it found (realpathSync.native), which
-    // names a temp folder's 8.3 short name, as on CI, by its long form.
+    // Discovery warms and runs the canonical path it resolved (realpathSync.native): the long
+    // name, also when the temp folder is reached through an 8.3 short one (RUNNER~1 on
+    // GitHub's Windows runners).
     const exe = realpathSync.native(h.exe)
     expect(h.order.map((o) => o.toLowerCase())).toEqual([`warm ${exe}`, `run ${exe} --version`].map((o) => o.toLowerCase()))
     const warmEnv = (await (h.warm[0].env as () => Promise<{ env: unknown }> | { env: unknown })()).env

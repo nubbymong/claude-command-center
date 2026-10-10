@@ -23,6 +23,11 @@
 // control that used to make that claim about a managed spawn now makes it about
 // an unmanaged one, and asserts the new ordering for the managed case.
 //
+// The managed launch's version check first awaits the first-start warm-up (ADR-025).
+// Here that is the setup file's default fake (tests/unit/setup.ts), which answers at
+// once; the real one started the stand-in claude.exe in a worker thread, which the home
+// guard refuses (a TEST_ISOLATION_VIOLATION on Windows CI).
+//
 // Real fetchAccountUsage held at a mocked POST; real spawnPty with node-pty mocked.
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'

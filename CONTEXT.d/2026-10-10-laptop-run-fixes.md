@@ -80,6 +80,14 @@ takes time; and the test waits until the dispatch reaches the refresh wait.
 Each half is held by a mutant: a single tick again fails 3 of 3 runs, and
 removing the fake fails 3 of 3.
 
+CI then failed three more Windows tests the same way, one of them a suite
+that runs only on CI (a real warm-up worker, refused by the test home guard),
+and one that expected a temp folder's 8.3 short name where discovery resolves
+the long one. The unit test setup now fakes the warm-up for every suite: it
+answers at once, as the real one does off Windows. The suites that test the
+warm-up itself opt back in to the real module, and a suite's own mock of it
+still wins. The stall lane's mutants are all still killed under the default.
+
 Not addressed: the other four stalls in the laptop log came during the
 Microsoft sign-in inside the chatgpt.com window. Windows' own records of the
 programs run on the laptop place the Windows Hello (passkey) step around the

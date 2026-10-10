@@ -10,7 +10,9 @@
 // body runs on this thread here, with the guarded child_process and a stand-in
 // for its worker_threads port; the thread itself, the message plumbing and the
 // quit's stop are first-start-worker-thread.test.ts's.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+// The module itself, not tests/unit/setup.ts's default fake of its warmFirstStart.
+vi.unmock('../../../src/main/first-start-warmup')
 import { mkdtempSync, rmSync, readFileSync, existsSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
