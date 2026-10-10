@@ -85,6 +85,11 @@
    "how": "system-folder",
    "reason": "taskkill.exe by its full path in the system folder (systemTool); with no plain system folder to name it from, none is started."
   },
+  "src/main/first-start-worker.cjs :: spawn(req.file": {
+   "count": 1,
+   "how": "full-path",
+   "reason": "ADR-025's first-start warm-up, in a worker thread: the canonical (real) path of a Claude Code or Codex .exe that a main-process caller's own discovery or resolution found, a drive or share path checked by first-start-warmup.ts before the request is built, with the fixed --version, no shell, its own folder as the working folder and only the variables its --version run is built with."
+  },
   "src/main/github-update.ts :: execFile handed to promisify(": {
    "count": 1,
    "how": "not-a-process",

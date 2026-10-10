@@ -14,6 +14,9 @@ import { pathHintFor } from '../install-folder-path'
 import type { PathHintView } from '../../shared/providers'
 import { defaultLoginShell } from '../login-shell'
 import { withFullyQualifiedProgramLookup } from '../windows-programs'
+import { warmFirstStart } from '../first-start-warmup'
+import { timedStart } from '../main-thread-ops'
+import { claudeVersionRunEnv } from '../providers/review-support'
 import {
   getDataDirectory,
   getResourcesDirectory,
@@ -195,28 +198,38 @@ export function registerSetupHandlers(): void {
 
     // The log line names what this terminal runs on each platform.
     if (process.platform === 'win32') {
+      // ADR-025: straight after an install this is often the first start of
+      // a new claude.exe, which holds the start call while the OS checks the
+      // new program. That first start runs off the main thread first: the
+      // Claude Code main resolved above (nothing the renderer sent), with
+      // Claude's --version environment. A pre-start, never a gate.
+      await warmFirstStart(cmd, () => ({ env: claudeVersionRunEnv(process.env, 'win32') }))
+      // The launch check again, in the same step as the start: Claude Code
+      // may have been switched off while the warm-up ran.
+      const offNow = providerLaunchRefusal('claude')
+      if (offNow) return { refused: offNow }
       // Windows: spawn claude directly; a program it starts by a bare name is
       // found only in the folders PATH names (setupTerminalEnv).
       logInfo(`[setup] Spawning CLI setup PTY: ${cmd} in ${cwd}`)
-      cliSetupPty = pty.spawn(cmd, [], {
+      cliSetupPty = timedStart(cmd, () => pty.spawn(cmd, [], {
         name: 'xterm-256color',
         cols: cols || 100,
         rows: rows || 20,
         cwd,
         env: setupTerminalEnv(process.env as Record<string, string>),
-      })
+      }))
     } else {
       // macOS/Linux: spawn interactive login shell so PATH includes Homebrew etc.
       // The platform is passed explicitly and is the same source as the gate above.
       const shell = defaultLoginShell(process.env, process.platform)
       logInfo(`[setup] Spawning CLI setup PTY: ${shell} -l in ${cwd}, then claude by name`)
-      cliSetupPty = pty.spawn(shell, ['-l'], {
+      cliSetupPty = timedStart(shell, () => pty.spawn(shell, ['-l'], {
         name: 'xterm-256color',
         cols: cols || 100,
         rows: rows || 20,
         cwd,
         env: process.env as Record<string, string>,
-      })
+      }))
       // Send the claude command after a brief delay for shell init. The
       // user's own login shell runs this terminal and finds Claude Code by
       // name; with fish or PowerShell 7.3 or later that is the Claude Code the

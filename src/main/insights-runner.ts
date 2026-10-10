@@ -44,6 +44,9 @@ import type { InsightsCatalogue, InsightsData, InsightsRun, InsightsRunMember } 
 import { getAccountsService } from './provider-accounts'
 import { ownerOnlyThroughHandle, sweepStaleFolders } from './stale-folder-sweep'
 import { withFullyQualifiedProgramLookup } from './windows-programs'
+import { warmFirstStart } from './first-start-warmup'
+import { timedStart } from './main-thread-ops'
+import { claudeVersionRunEnv } from './providers/review-support'
 import { isOpaqueId } from '../shared/providers'
 import type { AccountsSnapshot, ProviderId } from '../shared/providers'
 import { tryGetProviderPackage } from './providers/core'
@@ -489,17 +492,23 @@ async function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Pro
   // own settings files are gated like any other launch's. A refusal throws
   // from withProfileHome below and rejects this promise.
   const projectGate = home ? await gateManagedLaunch(cwd) : null
+  // ADR-025: this can be the first start of a Claude Code that updated
+  // itself, which on Windows holds the start call while the OS checks the new
+  // program. That first start runs off the main thread first (a direct
+  // claude.exe only), with Claude's --version environment. Never a gate.
+  await warmFirstStart(cmd, () => ({ env: claudeVersionRunEnv(process.env, process.platform) }))
   return new Promise((resolve) => {
     const reportPath = claudeReportPath(home)
     logInfo(`[insights] Spawning Claude PTY for /insights: ${cmd} in ${cwd} (home=${home ?? 'default'})`)
 
-    const proc = pty.spawn(cmd, [], {
+    // The start holds the main thread: timed, a slow one logged by name only.
+    const proc = timedStart(cmd, () => pty.spawn(cmd, [], {
       name: 'xterm-256color',
       cols: 120,
       rows: 30,
       cwd,
       env: insightsTerminalEnv(withProfileHome(process.env as Record<string, string>, home, { launchId: 'insights', cwd, probe: false, projectGate }))
-    })
+    }))
     // P3.15 round 4 (P2): an error on this PTY's input (the app types
     // /insights into it) or output never quits the app; the run settles on its
     // exit or its time limit.

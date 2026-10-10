@@ -3455,6 +3455,13 @@ export class AccountsService {
     } catch {
       return release(failure('internal', 'The launch environment could not be prepared.'))
     }
+    // ADR-025: a launch on this computer starts the executable on the main
+    // thread, which on Windows holds for seconds at a new program's first
+    // start; the package starts it once off the main thread first. Never for
+    // an SSH session (it runs on another machine), and never a gate.
+    if (input.remote !== true && typeof p.launch.warmFirstStart === 'function') {
+      try { await p.launch.warmFirstStart(prep.executable) } catch { /* the launch goes ahead */ }
+    }
     return {
       ok: true, lease: leased.lease, binding: leased.binding, realmOnly: leased.realmOnly,
       ...(input.kind === 'review' ? { reviewer: chosen.source } : {}),

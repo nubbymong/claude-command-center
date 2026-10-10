@@ -342,6 +342,14 @@ export interface ProviderLaunchOperations {
    *  none (Claude keeps one memory store for every account, and its own log
    *  folder is the app's). */
   accountFolders?(realm: RealmRef): Promise<ProviderAccountFolders | null>
+  /** ADR-025: before a launch that runs on THIS computer, the first start of
+   *  the executable `prepare` returned, off the main thread, when this app
+   *  run has not started that file yet (on Windows a new program's first
+   *  start holds the start call while the OS checks it). The accounts service
+   *  awaits it for a local launch only, never for an SSH one; it is a
+   *  pre-start, never a gate: its outcome, or a throw, changes nothing.
+   *  Absent: nothing is warmed. */
+  warmFirstStart?(executable: string): Promise<unknown>
 }
 
 /** A realm's folders the Memory page and Settings, Debug Logging show (P4.4):

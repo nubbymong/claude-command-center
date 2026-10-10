@@ -22,6 +22,7 @@ import { getAccountRegistry, getAccountRegistryResourcesDir, REGISTRY_DIRNAME } 
 import { takeProviderSecret } from '../provider-accounts'
 import { atomicWriteFileSync } from '../atomic-write'
 import { createCarryMarksFilePort } from '../carry-marks-port'
+import { warmFirstStart, flushFirstStartWarmups } from '../first-start-warmup'
 import path from 'node:path'
 
 /** Where the conversations a Switch Account carried are marked between runs
@@ -91,6 +92,9 @@ export const claudeReviewPorts: ClaudeReviewPorts = {
   shellEnv: (env, platform) => codexShellEnv(env, platform),
   // Built per run, never at compose time (and it reads SystemRoot fresh).
   run: (cmd, opts) => runCodexCli(cmd, opts, defaultCodexRunDeps()),
+  // ADR-025: a Claude Code program's first start this run, off the main
+  // thread, with exactly the environment its `--version` run was built with.
+  warmFirstStart: (executable, env) => warmFirstStart(executable, () => ({ env })),
 }
 
 /** How the Claude sign-in status and sign-out run the CLI (WP2 PR 4): the
@@ -156,7 +160,9 @@ export function composedProviderIds(): readonly string[] {
 
 /** At app quit: the headless CLI runs of both providers go through one
  *  runner, and its kills still reading a process table kill what they know
- *  at once rather than leave a CLI running once the app is gone. */
+ *  at once rather than leave a CLI running once the app is gone. A
+ *  first-start warm-up still running (ADR-025) is ended too. */
 export function flushPendingProviderCliKills(): void {
+  try { flushFirstStartWarmups() } catch { /* best effort at quit */ }
   flushPendingCodexKills()
 }

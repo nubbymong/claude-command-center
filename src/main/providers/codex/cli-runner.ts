@@ -43,6 +43,7 @@ import fs from 'node:fs'
 import { spawn as nodeSpawn, execFile, execFileSync } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { logInfo } from '../../debug-logger'
+import { timedStart } from '../../main-thread-ops'
 
 export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key' | 'review' | 'app-server' | 'models' | 'analysis' | 'insights'
 
@@ -1236,7 +1237,9 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
     for (const k of Object.keys(opts.env)) if (typeof opts.env[k] === 'string') env[k] = opts.env[k]
     try {
       spawnedAt = Date.now()
-      child = deps.spawn(cmd.file, cmd.args, {
+      // The start holds the main thread (ADR-025): timed, and a slow one
+      // logged by the program's base name only.
+      child = timedStart(cmd.file, () => deps.spawn(cmd.file, cmd.args, {
         cwd: cmd.cwd,
         env,
         stdio: [stdinPiped ? 'pipe' : 'ignore', 'pipe', 'pipe'],
@@ -1245,7 +1248,7 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
         shell: false,
         // POSIX: lead a process group so the whole tree can be killed.
         detached: deps.platform !== 'win32',
-      })
+      }))
     } catch (e) {
       finish({ exitCode: null, timedOut: false, spawnError: e instanceof Error ? e.message : String(e) })
       return

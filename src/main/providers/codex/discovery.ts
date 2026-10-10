@@ -53,6 +53,11 @@ export interface CodexDiscoveryDeps {
   /** A fresh, empty CODEX_HOME for `--version`, removed by `dispose`. */
   versionHome(): { home: string; dispose(): void }
   now(): number
+  /** ADR-025: the first start of the canonical executable this app run, off
+   *  the main thread, with exactly the environment the `--version` run is
+   *  about to get. Awaited before that run; never a gate (its outcome, or a
+   *  throw, changes nothing). Absent: nothing is warmed. */
+  warm?(executable: string, env: Readonly<Record<string, string>>): Promise<unknown>
 }
 
 export type CodexDiscovery = DiscoveryResult & { identity?: CodexExecutableIdentity }
@@ -113,7 +118,11 @@ export async function discoverCodex(deps: CodexDiscoveryDeps): Promise<CodexDisc
   let kill: Promise<void> | undefined
   try {
     scratch = deps.versionHome()
-    run = await deps.run(cmd, codexCliEnv(deps.env, scratch.home, deps.platform))
+    const env = codexCliEnv(deps.env, scratch.home, deps.platform)
+    // Often the first start of a Codex just installed or updated: that start
+    // runs off the main thread first, with this same environment (ADR-025).
+    if (deps.warm) { try { await deps.warm(canonical, env) } catch { /* the run goes ahead */ } }
+    run = await deps.run(cmd, env)
     if (run && run.killSettled instanceof Promise) kill = run.killSettled
   } catch {
     return { ...base, state: 'error', executable: canonical, identity, detail: 'the Codex CLI could not be started' }

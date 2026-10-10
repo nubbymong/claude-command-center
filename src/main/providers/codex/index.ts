@@ -18,6 +18,8 @@ import { CODEX_PINNED_CLI_VERSION, CODEX_MIN_SUPPORTED_VERSION, CODEX_MAX_TESTED
 import { codexInstallRecipes } from './install-recipes'
 import { codexOperationBaseEnv } from './process-env'
 import { runCodexCli, defaultCodexRunDeps } from './cli-runner'
+import { codexCliEnv } from './cli-env'
+import { warmFirstStart } from '../../first-start-warmup'
 import { discoverCodex } from './discovery'
 import type { CodexDiscovery, CodexDiscoveryDeps } from './discovery'
 import { readCodexModelCatalogue } from './model-catalogue'
@@ -569,6 +571,8 @@ function withRealms(ops: CodexAuthOperations, usageFs: CodexUsageFsPort, liveUsa
     launch: {
       kinds: ['session', 'review', 'background'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.usageSessionsDir(realm),
       accountFolders: (realm) => ops.accountFolders(realm),
+      // ADR-025: awaited by the accounts service before a local launch.
+      warmFirstStart: (executable) => warmCodexFirstStart(executable),
     },
     usage: createCodexUsageOperations({
       sessionsDir: (realm) => ops.usageSessionsDir(realm), fs: usageFs, live: liveUsage, marks,
@@ -728,6 +732,33 @@ export function codexModelsScratchHome(parent: string): { home: string; dispose(
   return { home, dispose: () => fs.rmSync(home, { recursive: true, force: true }) }
 }
 
+/** The CLI prepares its home before it parses `--version`: a fresh, empty
+ *  one under the temp folder, removed by `dispose`, never the user's own
+ *  ~/.codex or an account's folder. */
+function codexVersionHome(): { home: string; dispose(): void } {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-codex-version-'))
+  return { home, dispose: () => fs.rmSync(home, { recursive: true, force: true }) }
+}
+
+/** ADR-025: a launch's first start of the proven executable this app run,
+ *  off the main thread, with the environment discovery's `--version` run is
+ *  built with: the operation environment, allowlisted, over a fresh
+ *  throwaway home that is removed once that start has finished. Built only
+ *  when the file has not been started this run. */
+function warmCodexFirstStart(executable: string): Promise<unknown> {
+  const platform = process.platform
+  return warmFirstStart(executable, async () => {
+    const base = await codexOperationBaseEnv(process.env, platform)
+    const scratch = codexVersionHome()
+    try {
+      return { env: codexCliEnv(base, scratch.home, platform), dispose: scratch.dispose }
+    } catch (e) {
+      scratch.dispose()
+      throw e
+    }
+  })
+}
+
 /** The real ports behind discovery: the session resolver, the filesystem,
  *  and the runner. Built per call, so the environment is read fresh. */
 async function realDiscoveryDeps(): Promise<CodexDiscoveryDeps> {
@@ -736,13 +767,10 @@ async function realDiscoveryDeps(): Promise<CodexDiscoveryDeps> {
   return {
     ...realExecutablePorts(platform),
     run: (cmd, env) => runCodexCli(cmd, { env, timeoutMs: 10_000 }, runDeps),
+    // ADR-025: the `--version` run's own environment, as it is about to get it.
+    warm: (executable, env) => warmFirstStart(executable, () => ({ env })),
     env: await codexOperationBaseEnv(process.env, platform),
-    // The CLI prepares its home before it parses `--version`: give it a
-    // fresh, empty one and remove it, never the user's own ~/.codex.
-    versionHome: () => {
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-codex-version-'))
-      return { home, dispose: () => fs.rmSync(home, { recursive: true, force: true }) }
-    },
+    versionHome: () => codexVersionHome(),
     now: () => Date.now(),
   }
 }

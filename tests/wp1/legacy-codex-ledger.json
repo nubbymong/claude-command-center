@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "e5ea8ced72d82465330a77c218d86567ca84beea37d5d2650d9b8cd5d966abf6",
-  "manifestHead": "24c1dbfc2362579332f460ff93848a0d78bdc437",
+  "manifestPathDigest": "e25be70e219f2554d9bd7edea77e27efc28fef226fda8ea5a919484b01aefa0b",
+  "manifestHead": "7ed87dad76dc9815bda74148d2a6660b3765684f",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1063,6 +1063,16 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.7 (row 36) module: each provider conversation's running time, kept by main by conversation id (the most recent 1000), written into the saved session state at every save and read back at load, schema-checked, so a Codex session's Duration carries on across launches and relaunches as Claude Code's does (WP1.33, WP1.38); tests/unit/main/conversation-running-time.test.ts; WP2 PR 3 P3.16a main track (WP1.68): gaps that touch or overlap are one; past the cap the shortest go; the part of the gaps' turns a run counted is kept with them (gapMs); tests/unit/main/conversation-running-time.test.ts",
       "note": "provider-neutral (ids and numbers only); names Codex in its header only, as the reason the rollout cannot tell runs apart; the Codex watcher is its writer"
+    },
+    {
+      "path": "src/main/first-start-warmup.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "LAUNCH",
+      "disposition": "added",
+      "evidence": "new 2.1.1-beta.2 module (ADR-025, src/main/first-start-warmup.ts): before a main-process caller starts a Claude Code or Codex .exe this app run has not started yet, the same canonical file is started once with the fixed --version in a worker thread, with the environment its own --version run is built with, so the first start on Windows holds the worker and not the main thread; keyed by file identity, one in flight per identity, bounded, never a gate, local only (WP1.17, WP1.68); tests/unit/main/first-start-warmup.test.ts, tests/unit/main/first-start-worker.test.ts, tests/unit/main/first-start-routing.test.ts",
+      "note": "created by the first-start warm-up change (ADR-025); the P14 hit is comments naming Codex and its --version environment"
     },
     {
       "path": "src/main/github/session/codex-rollout-loader.ts",
@@ -6416,6 +6426,51 @@
       "note": "created by WP2 PR 3 P3.7; pure, fake timers only"
     },
     {
+      "path": "tests/unit/main/first-start-routing.test.ts",
+      "predicates": [
+        "P04",
+        "P09",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new ADR-025 test (tests/unit/main/first-start-routing.test.ts): Claude Code and Codex discovery await the first-start warm-up of the canonical executable before their --version run, with that run's own environment (no Conductor variable; Codex's throwaway home, no ambient API key); every local launch the accounts service prepares (a Codex session, review, background run) waits for it; an SSH launch never warms; a failing warm-up changes nothing (WP1.17, WP1.68)",
+      "note": "created by the first-start warm-up change (ADR-025); fake ports and the WP1 accounts harness, nothing started"
+    },
+    {
+      "path": "tests/unit/main/first-start-warmup.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new ADR-025 test (tests/unit/main/first-start-warmup.test.ts): the warm-up starts the canonical path with the fixed --version in its own folder and a prototype-free copy of the caller's environment; keyed by identity (a changed size, modification time or file id warms again); one in flight per identity; bounded wait; failures resolve; off Windows, a .cmd shim or a refused path is skipped; logs name the program only; only the reviewed main-process callers import it (WP1.17, WP1.68)",
+      "note": "created by the first-start warm-up change (ADR-025); a fake worker, nothing started"
+    },
+    {
+      "path": "tests/unit/main/first-start-wiring.test.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P09",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new ADR-025 test (tests/unit/main/first-start-wiring.test.ts): the composition root's Claude warm-up port runs with discovery's own environment, the quit flush stops a running warm-up, the Codex package's real discovery warms before its --version run, and its launch warms with a fresh throwaway home removed afterwards and no API key (WP1.17, WP1.68)",
+      "note": "created by the first-start warm-up change (ADR-025); the warm-up and the Codex run are faked, an empty codex.exe in a temp folder that nothing runs"
+    },
+    {
+      "path": "tests/unit/main/first-start-worker.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new ADR-025 test (tests/unit/main/first-start-worker.test.ts): the worker thread starts a harmless node -e stand-in in a temp folder with only the variables given, caps its output, ends it at its time limit, answers a start error with its code, refuses a bad request, and a quit stop ends a running program or one not yet started (WP1.68)",
+      "note": "created by the first-start warm-up change (ADR-025); the P13 hit is a comment saying the stand-in is never Claude Code or Codex"
+    },
+    {
       "path": "tests/unit/main/help-workspace-rebuild-links.test.ts",
       "predicates": [
         "P04",
@@ -6553,6 +6608,16 @@
       "disposition": "replace",
       "evidence": "WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): the Codex rename cases; tests/unit/main/logs2-ipc-handlers.test.ts",
       "note": "newly names Codex in WP2 PR 3 P3.12"
+    },
+    {
+      "path": "tests/unit/main/main-thread-ops.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new ADR-025 test (tests/unit/main/main-thread-ops.test.ts): a synchronous program start on the main thread is timed and one over 500 ms is logged by its base name only, the CLI runner times its spawn, and the [jank] line names the tracked start in flight or says none was (WP1.68)",
+      "note": "created by the first-start warm-up change (ADR-025); the P13 hit is the CLI runner and a codex.exe name in its cases"
     },
     {
       "path": "tests/unit/main/memory-account-ipc.test.ts",

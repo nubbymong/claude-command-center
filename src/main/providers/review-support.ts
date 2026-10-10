@@ -274,6 +274,15 @@ export function reviewerEnv(source: Readonly<Record<string, string>> | undefined
   return env
 }
 
+/** The environment Claude Code's `--version` run gets (its discovery,
+ *  review-launch.ts): this process's own string variables through
+ *  reviewerEnv. One builder, so the first-start warm-up of a Claude Code
+ *  program (ADR-025: the boot version probe, the setup terminal, the
+ *  /insights terminal) runs with exactly what discovery's run gets. */
+export function claudeVersionRunEnv(source: Readonly<Record<string, string | undefined>>, platform: NodeJS.Platform): Record<string, string> {
+  return reviewerEnv(Object.fromEntries(Object.entries(source ?? {}).filter((e): e is [string, string] => typeof e[1] === 'string')), platform)
+}
+
 /** The review as it goes back: token-shaped credentials redacted, and past
  *  REVIEW_MAX_TEXT its tail (the conclusion) with a note that it was cut. */
 export function finishReview(text: string): string {

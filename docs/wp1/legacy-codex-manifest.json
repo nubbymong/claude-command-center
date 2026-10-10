@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-10T04:36:38.401Z",
-  "head": "24c1dbfc2362579332f460ff93848a0d78bdc437",
-  "tree": "aaa889a94a4ce517685197ef25b770bccc09f6d1",
+  "generatedAt": "2026-10-10T10:53:58.372Z",
+  "head": "7ed87dad76dc9815bda74148d2a6660b3765684f",
+  "tree": "807d1c915899f3dc252179e6dc159f5038f8d8e4",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2924,
-  "excludedFileCount": 407,
-  "scannedFileCount": 2517,
+  "trackedFileCount": 2940,
+  "excludedFileCount": 408,
+  "scannedFileCount": 2532,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 867,
-  "pathDigest": "e5ea8ced72d82465330a77c218d86567ca84beea37d5d2650d9b8cd5d966abf6",
+  "matchedPathCount": 873,
+  "pathDigest": "e25be70e219f2554d9bd7edea77e27efc28fef226fda8ea5a919484b01aefa0b",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -697,6 +697,13 @@
       "lineCount": 2
     },
     {
+      "path": "src/main/first-start-warmup.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 3
+    },
+    {
       "path": "src/main/github/session/codex-rollout-loader.ts",
       "predicates": [
         "P01",
@@ -1123,7 +1130,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 48
+      "lineCount": 49
     },
     {
       "path": "src/main/providers/codex/enablement.ts",
@@ -1151,7 +1158,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 277
+      "lineCount": 285
     },
     {
       "path": "src/main/providers/codex/insights-exec.ts",
@@ -4453,6 +4460,39 @@
       "lineCount": 1
     },
     {
+      "path": "tests/unit/main/first-start-routing.test.ts",
+      "predicates": [
+        "P04",
+        "P09",
+        "P13"
+      ],
+      "lineCount": 34
+    },
+    {
+      "path": "tests/unit/main/first-start-warmup.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 2
+    },
+    {
+      "path": "tests/unit/main/first-start-wiring.test.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P09",
+        "P13"
+      ],
+      "lineCount": 20
+    },
+    {
+      "path": "tests/unit/main/first-start-worker.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
       "path": "tests/unit/main/help-workspace-rebuild-links.test.ts",
       "predicates": [
         "P04",
@@ -4551,6 +4591,13 @@
         "P13"
       ],
       "lineCount": 24
+    },
+    {
+      "path": "tests/unit/main/main-thread-ops.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 10
     },
     {
       "path": "tests/unit/main/memory-account-ipc.test.ts",
@@ -4856,7 +4903,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 21
+      "lineCount": 22
     },
     {
       "path": "tests/unit/main/ssh-end-remote-password.test.ts",
