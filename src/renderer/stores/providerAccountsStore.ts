@@ -402,6 +402,35 @@ export function canOfferMakeReviewer(snapshot: AccountsSnapshot | null, account:
   return !!providerView(snapshot, account.providerId)?.review
 }
 
+/** Why reviews cannot run on the account a provider's reviews would use,
+ *  asked once that review is known not to be ready. A kind, not a sentence:
+ *  the Accounts card and Code review tools each word it for their own place.
+ *  - external-only / external-another: this computer's own sign-in, which
+ *    is confirmed at each launch, and a review has no one to confirm it;
+ *    with no other account to make the reviewer, or with one.
+ *  - unverified-only / unverified-another: the same for an unverified sign-in.
+ *  - refusal: this platform will not let the account review (its message says why).
+ *  - other: anything else (inactive, blocked, signed out, signing in).
+ *  "Another" is exactly an account whose row offers Make reviewer
+ *  (canOfferMakeReviewer), so no surface points at a menu item that is not there. */
+export type ReviewerBlockKind = 'external-only' | 'external-another' | 'unverified-only' | 'unverified-another' | 'refusal' | 'other'
+
+export function reviewerBlockKind(snapshot: AccountsSnapshot | null, account: AccountView): ReviewerBlockKind {
+  if (account.external || account.unverified) {
+    const another = (snapshot?.accounts ?? []).some((a) => a.id !== account.id && a.providerId === account.providerId && canOfferMakeReviewer(snapshot, a))
+    if (account.external) return another ? 'external-another' : 'external-only'
+    return another ? 'unverified-another' : 'unverified-only'
+  }
+  return account.reviewRefusal ? 'refusal' : 'other'
+}
+
+/** Why a sign-in confirmed at each launch cannot run reviews, as a clause
+ *  the reviewer line and the Confirm each launch badge both use. */
+export function confirmEachLaunchWhy(account: Pick<AccountView, 'external'>): string {
+  const which = account.external ? "this computer's own sign-in" : 'an unverified sign-in'
+  return `you confirm each launch on ${which}, and a review has no one to confirm it`
+}
+
 /** The Codex accounts Sentinel's analysis may run under (P3.9), as the
  *  Settings select lists them: the ones a review could run on unattended
  *  (active, not blocked, vouched for, nothing stopping reviews on this

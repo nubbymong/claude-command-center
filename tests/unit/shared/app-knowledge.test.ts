@@ -999,4 +999,10 @@ describe("an installer's folder off PATH, in What's New, the Feature Guide, the 
     expect(tips).toMatch(/each with \*\*Run it for me\*\* and \*\*Copy\*\*\. Run it for me checks again when the command ends/)
     expect(tips).not.toMatch(/install or update command to copy, then \*\*Check again\*\*/)
   })
+
+  it('the known issue for Codex review on the sign-in already on this computer says where the app explains it, and keeps its workaround', () => {
+    const k = body('known-issues')
+    expect(k).toMatch(/Until you add a Codex account, Claude sessions have no Codex review\. The Codex review row in Settings, General, Built-in Tools says why, and so does the Codex section of Settings, Accounts, under Code reviews use, with the next step\./)
+    expect(k).toMatch(/The workaround: add a Codex account in Settings, Accounts \(Add Codex account\), then choose Make reviewer in its menu if the sign-in already on this computer is still your default\./)
+  })
 })

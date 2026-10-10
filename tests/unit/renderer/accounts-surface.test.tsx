@@ -897,6 +897,83 @@ describe('Claude section', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The reviewer line when reviews cannot run on the account it names
+
+describe('reviewer line: why reviews cannot run, and what to do', () => {
+  const EXTERNAL_WHY = "Reviews can't run on it: you confirm each launch on this computer's own sign-in, and a review has no one to confirm it."
+  const UNVERIFIED_WHY = "Reviews can't run on it: you confirm each launch on an unverified sign-in, and a review has no one to confirm it."
+  const ADD_CODEX = "Choose Add Codex account below, then Make reviewer in the new account's menu."
+  const localDefault = { ...local, isProviderDefault: true }
+  const spare = { ...work, isProviderDefault: false }
+  const unvHome = { ...claudeHome, unverified: true, identityAssurance: 'realm-only' as const }
+  function codexReview(accounts: AccountView[], accountId: string, source: 'provider-default' | 'reviewer-default' = 'provider-default') {
+    const s = snapshot({ accounts: [...accounts, claudeMain, claudeHome] })
+    s.providers[1] = { ...s.providers[1], review: { ready: false, accountId, source } }
+    return s
+  }
+  function claudeReview(accounts: AccountView[]) {
+    const s = snapshot({ accounts: [work, ...accounts] })
+    s.providers[0] = { ...s.providers[0], review: { ready: false, accountId: unvHome.id, source: 'reviewer-default' } }
+    return s
+  }
+
+  it("this computer's own sign-in as the only Codex account: says why, then Add Codex account and Make reviewer", () => {
+    render(codexReview([localDefault], local.id))
+    expect(q('reviewer-line-codex-account')?.textContent).toBe("This computer's Codex (~/.codex) (default)")
+    expect(q('reviewer-not-ready-codex')?.textContent).toBe(`${EXTERNAL_WHY} ${ADD_CODEX}`)
+    // The button it names is the one below the rows.
+    expect(q('add-provider-account-codex')?.textContent).toBe('Add Codex account')
+  })
+
+  it("with another Codex account that can review: points at Make reviewer in that account's menu", async () => {
+    render(codexReview([localDefault, spare], local.id))
+    expect(q('reviewer-not-ready-codex')?.textContent).toBe(`${EXTERNAL_WHY} Choose Make reviewer in another Codex account's menu.`)
+    expect(await menuKeys('acc-work')).toContain('make-reviewer')
+  })
+
+  it('never counts an account whose menu has no Make reviewer: refused, blocked, inactive or unverified', () => {
+    render(codexReview([localDefault, refused, old, parked, unv], local.id))
+    expect(q('reviewer-not-ready-codex')?.textContent).toBe(`${EXTERNAL_WHY} ${ADD_CODEX}`)
+  })
+
+  it('an unverified Claude sign-in: Make reviewer on another Claude account, else Add another account', () => {
+    render(claudeReview([claudeMain, unvHome]))
+    expect(q('reviewer-not-ready-claude')?.textContent).toBe(`${UNVERIFIED_WHY} Choose Make reviewer in another Claude account's menu.`)
+    unmountNow()
+    render(claudeReview([unvHome]))
+    expect(q('reviewer-not-ready-claude')?.textContent).toBe(`${UNVERIFIED_WHY} Choose Add another account below, then Make reviewer in the new account's menu.`)
+    expect(q('add-account-btn')?.textContent).toBe('Add another account')
+  })
+
+  it('on macOS, where the Claude card has no add button, gives only the reason', () => {
+    ;(window as any).electronPlatform = 'darwin'
+    render(claudeReview([unvHome]))
+    expect(q('add-account-btn')).toBeNull()
+    expect(q('reviewer-not-ready-claude')?.textContent).toBe(UNVERIFIED_WHY)
+  })
+
+  it("a platform refusal: the refusal's own message", () => {
+    const refusedReviewer = { ...personal, reviewRefusal: { reason: 'platform' as const, message: 'This account cannot run reviews on this computer.' } }
+    render(codexReview([work, refusedReviewer], personal.id, 'reviewer-default'))
+    expect(q('reviewer-not-ready-codex')?.textContent).toBe('This account cannot run reviews on this computer.')
+  })
+
+  it('anything else keeps the plain line', () => {
+    for (const held of [{ lifecycle: 'inactive' as const }, { operationalState: 'blocked' as const }, { signingIn: true as const }]) {
+      render(codexReview([work, { ...personal, ...held }], personal.id, 'reviewer-default'))
+      expect(q('reviewer-not-ready-codex')?.textContent, JSON.stringify(held)).toBe("Reviews can't run on it right now.")
+      unmountNow()
+    }
+  })
+
+  it('says why on the Confirm each launch badge when pointed at', () => {
+    render(snapshot())
+    expect(q('account-badge-confirm-acc-local')?.getAttribute('title')).toBe("Cannot run reviews: you confirm each launch on this computer's own sign-in, and a review has no one to confirm it.")
+    expect(q('account-badge-confirm-acc-unv')?.getAttribute('title')).toBe('Cannot run reviews: you confirm each launch on an unverified sign-in, and a review has no one to confirm it.')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Add Codex account
 
 describe('Add Codex account', () => {

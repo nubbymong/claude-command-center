@@ -3,8 +3,8 @@
 // provider sections). Semantic tokens only.
 import React, { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import type { ProviderId } from '../../../../shared/providers'
-import { useProviderAccountsStore, reviewerLine, reviewerNotice, providerView, type StatusTone } from '../../../stores/providerAccountsStore'
+import type { AccountsSnapshot, ProviderId } from '../../../../shared/providers'
+import { useProviderAccountsStore, reviewerLine, reviewerNotice, providerView, reviewerBlockKind, confirmEachLaunchWhy, type StatusTone } from '../../../stores/providerAccountsStore'
 import { DialogCallout, DialogOverlay, DialogPanel } from '../../ui/Dialog'
 import { useFocusTrap } from '../../../hooks/useFocusTrap'
 
@@ -87,6 +87,29 @@ export function RowButton({ children, onClick, disabled, testId, title }: { chil
   )
 }
 
+const NOT_READY = "Reviews can't run on it right now."
+
+/** What the reviewer line says when reviews cannot run on the account it
+ *  names: why, and the next step with the controls on this card (the add
+ *  button below the rows, Make reviewer in an account's menu). A platform
+ *  refusal gives its own message; anything else keeps the plain line. */
+function notReadyText(snapshot: AccountsSnapshot | null, providerId: ProviderId, accountId: string, platform: string): string {
+  const account = snapshot?.accounts.find((a) => a.id === accountId)
+  if (!account) return NOT_READY
+  const kind = reviewerBlockKind(snapshot, account)
+  if (kind === 'refusal') return account.reviewRefusal?.message || NOT_READY
+  if (kind === 'other') return NOT_READY
+  const why = `Reviews can't run on it: ${confirmEachLaunchWhy(account)}.`
+  const claude = providerId === 'claude'
+  const name = claude ? 'Claude' : (providerView(snapshot, providerId)?.displayName ?? providerId)
+  if (kind === 'external-another' || kind === 'unverified-another') return `${why} Choose Make reviewer in another ${name} account's menu.`
+  // No account can take over: add one. The Claude card has no add button on
+  // macOS, where its accounts would share one Keychain sign-in.
+  if (claude && platform === 'darwin') return why
+  const add = claude ? 'Add another account' : `Add ${name} account`
+  return `${why} Choose ${add} below, then Make reviewer in the new account's menu.`
+}
+
 /**
  * The reviewer line under a provider's section header: which account this
  * provider's code reviews use, and why, plus a cleared-reviewer notice when
@@ -118,7 +141,7 @@ export function ReviewerLineBlock({ providerId }: { providerId: ProviderId }) {
       <MutedLine>When none is set, reviews use the default account.</MutedLine>
       {line.kind === 'account' && !line.ready && (
         <div className="text-[11.5px]" style={{ color: 'var(--status-warning)' }} data-testid={`reviewer-not-ready-${providerId}`}>
-          Reviews can't run on it right now.
+          {notReadyText(snapshot, providerId, line.accountId, platform)}
         </div>
       )}
       {notice && <MutedLine testId={`reviewer-notice-${providerId}`}>{notice}</MutedLine>}

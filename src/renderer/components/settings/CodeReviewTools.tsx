@@ -8,7 +8,7 @@ import React from 'react'
 import type { AccountsSnapshot, ProviderId, ReviewReadinessView } from '../../../shared/providers'
 import { providerOffMessage, providerNotSetUpMessage } from '../../../shared/providers'
 import { useSettingsStore, DEFAULT_CONDUCTOR_TOOLS } from '../../stores/settingsStore'
-import { useProviderAccountsStore, providerView, reviewerLine, reviewerNotice, accountDisplayName, savedOff, providerUnanswered, providerNotSetUp, externalHomeWhere } from '../../stores/providerAccountsStore'
+import { useProviderAccountsStore, providerView, reviewerLine, reviewerNotice, accountDisplayName, savedOff, providerUnanswered, providerNotSetUp, externalHomeWhere, reviewerBlockKind } from '../../stores/providerAccountsStore'
 import ToggleSwitch from '../github/config/ToggleSwitch'
 import { ProviderMark } from '../sidebar/Badges'
 import { DialogCallout } from '../ui/Dialog'
@@ -55,22 +55,26 @@ function noReviewMessage(snapshot: AccountsSnapshot, id: ProviderId, review: Rev
   if (!account) {
     return isCodex ? `No Codex account can run reviews. Add a Codex account (a sign-in from ${home} cannot review).` : 'No Claude account can run reviews right now.'
   }
-  if (account.external || account.unverified) {
-    // Only point at making another account the reviewer when one exists:
-    // an active, vouched-for, unblocked account of this provider. With none,
-    // the way forward is adding one.
-    const another = snapshot.accounts.some((a) => a.id !== account.id && a.providerId === id && a.lifecycle === 'active'
-      && a.operationalState !== 'blocked' && !a.unverified && !a.external)
-    if (!another) {
-      return isCodex ? `No Codex account can run reviews. Add a Codex account (a sign-in from ${home} cannot review).` : 'No Claude account can run reviews right now.'
+  // Why, as the Accounts card also tells it (reviewerBlockKind). Only point at
+  // making another account the reviewer when a row offers Make reviewer;
+  // with none, the way forward is adding one.
+  switch (reviewerBlockKind(snapshot, account)) {
+    case 'external-only':
+    case 'unverified-only':
+      return isCodex
+        ? `No Codex account can run reviews. Add a Codex account (a sign-in from ${home} cannot review).`
+        : 'No Claude account can run reviews. Add a Claude account (an unverified sign-in cannot review).'
+    case 'external-another':
+    case 'unverified-another':
+      return isCodex
+        ? `Make a Codex account the reviewer in Accounts (a sign-in from ${home} cannot review).`
+        : 'Make another Claude account the reviewer in Accounts (an unverified sign-in cannot review).'
+    default: {
+      // Inactive, archived, blocked, signed out, signing in, or refused here.
+      const name = !isCodex && account.providerLabel ? account.providerLabel : accountDisplayName(snapshot, account)
+      return `Reviews can't run on ${name} right now. Check it in Accounts.`
     }
-    return isCodex
-      ? `Make a Codex account the reviewer in Accounts (a sign-in from ${home} cannot review).`
-      : 'Make another Claude account the reviewer in Accounts (an unverified sign-in cannot review).'
   }
-  // Inactive, archived, blocked, signed out, signing in, or refused here.
-  const name = !isCodex && account.providerLabel ? account.providerLabel : accountDisplayName(snapshot, account)
-  return `Reviews can't run on ${name} right now. Check it in Accounts.`
 }
 
 /**

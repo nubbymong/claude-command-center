@@ -16,6 +16,7 @@ import {
   externalHomeLabelInSentence, accountNameInSentence,
   canOfferMakeInactive, canOfferMakeActive, canOfferArchive, externalAdoption, canOfferCheckSignIn, signInCheckText, externalSignInHint,
   selectArchivedAccounts, canOfferRestore, linkedAccounts, linkedAccountLabel, blockerSessions, sessionTitle, unnamedHolders, oldSignInText,
+  confirmEachLaunchWhy,
 } from '../../../stores/providerAccountsStore'
 import { useSessionStore } from '../../../stores/sessionStore'
 import { useResolvedTheme } from '../../../hooks/useThemeController'
@@ -279,7 +280,7 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
         <>
           {account.isProviderDefault && <Pill tone="default" testId={`account-badge-default-${id}`}>Default</Pill>}
           {showsReviewerBadge(account) && <Pill tone="reviewer" testId={`account-badge-reviewer-${id}`}>Reviewer</Pill>}
-          {cannotReview && <Pill tone="warn" testId={`account-badge-confirm-${id}`}>Confirm each launch</Pill>}
+          {cannotReview && <Pill tone="warn" testId={`account-badge-confirm-${id}`} title={`Cannot run reviews: ${confirmEachLaunchWhy(account)}.`}>Confirm each launch</Pill>}
           {cannotReview && <MutedLine testId={`account-no-reviews-${id}`}>Cannot run reviews</MutedLine>}
           {account.lifecycle === 'inactive' && <Pill tone="muted" testId={`account-badge-inactive-${id}`}>Inactive</Pill>}
         </>
