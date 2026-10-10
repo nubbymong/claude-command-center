@@ -814,14 +814,14 @@ describe('What\'s New (2.1.1-beta.2): the hardening it ships, as guarantees', ()
       /On Windows a Codex session's PATH keeps only absolute folders/,
       /On Windows a Claude session's PATH keeps only absolute folders too, and so does the PATH of the terminals in which the app sets up Claude Code, runs its \/insights command or runs an install or update command you confirmed, and of a cloud agent, a Sentinel or Insights run, a Claude review or the check of whether one can run, the sign-in check, the Claude Code version check during onboarding, the list of versions to pin and a pinned version's install\./,
       /only in the folders PATH names or in the Windows system folder, never in the current folder\./,
-      /A Claude Code or Codex session in a network folder that its npm launcher cannot start from is refused, with the reason/,
+      /A Claude Code or Codex session in a network folder that its claude\.cmd, claude\.bat or codex\.cmd launcher cannot start from is refused, with the reason \(see Known issues in the Feature Guide\)\./,
       /Ask Conductor's conversation list stays inside its help folder/,
       /Names and paths shown from outside the app drop more invisible characters\./,
       /Sentinel's proposed model entries follow the same name rule as the model picker\./,
       /A Claude Code config's extra CLI arguments are now held to a rule of the same shape as a Codex config's/,
       /and so is a word Claude Code would read as a command or as a server to run the session on, or that starts or ends with a comma\./,
       /extra CLI arguments now come after the app's own options on its start line\. On Windows each word reaches a local Claude Code session as one argument, exactly as typed\./,
-      /the resume list hands agent templates and other options to Claude Code exactly as written, or starts nothing and says why/,
+      /With Claude Code on Windows installed as claude\.cmd \(npm's launcher\) or claude\.bat, the resume list hands options to Claude Code exactly as written, or starts nothing and says why \(see Known issues in the Feature Guide\)\./,
       /starts under your login shell when it is sh, bash, zsh, dash or ksh/,
       /finds Claude Code where that shell finds it when asked to run a command, so a PATH change made only in interactive shells, such as nvm\.fish's default node, is not seen \(see Known issues in the Feature Guide\)\./,
       /On macOS and Linux, a terminal tab whose shell is outside the sh family, such as fish or PowerShell, opens in its folder, and the app types no folder line into it\./,
@@ -840,6 +840,9 @@ describe('What\'s New (2.1.1-beta.2): the hardening it ships, as guarantees', ()
       /The app starts normally even when the Insights catalogue cannot be updated or has been edited into another shape\./,
     ]) expect(all()).toMatch(said)
     for (const c of top.changes) expect(c.description, c.description.slice(0, 40)).toMatch(/^[\x20-\x7e]*$/)
+    // No control has set agent templates since 2.1, so What's New (the entry's highlights and its
+    // change lines) does not offer them.
+    expect(`${top.highlights ?? ''}\n${all()}`).not.toMatch(/agent templates?/i)
   })
 
   it('the review line names only what the review leaves out by its own flags, and no handler line claims more than its own channels', () => {
@@ -889,7 +892,7 @@ describe('app knowledge for the 2.1.1-beta.2 hardening', () => {
   it('each known issue it ships with carries its workaround', () => {
     const k = body('known-issues')
     for (const said of [
-      /cannot start through the npm launcher, claude\.cmd or codex\.cmd, so the app refuses it and says why\. Workaround: open the folder from a mapped drive letter, or install the native Claude Code or the standalone Codex\./,
+      /cannot start through its claude\.cmd or claude\.bat launcher, or codex\.cmd, so the app refuses it and says why\. Workaround: open the folder from a mapped drive letter, or install the native Claude Code or the standalone Codex\./,
       /Ask Conductor cannot start, on either assistant, when the resources folder's path holds a ; on Windows \(a : on macOS and Linux\) or a control character; it says so and starts nothing\. Workaround: choose a resources folder whose path has none\./,
       /With Claude Code on Windows installed as claude\.cmd \(npm's launcher\) or claude\.bat, a session that opens the resume list cannot pass an option that holds a % sign or a control character/,
       /holds a % sign or a control character: it starts nothing, and names the option where it can\. Workaround: remove the % sign, or install the native Claude Code\./,
@@ -903,12 +906,13 @@ describe('app knowledge for the 2.1.1-beta.2 hardening', () => {
       /give an option's value after an = sign when the value starts with letters and a colon/,
       /and write a list with no space after its commas \(--allowedTools=Bash,Edit rather than --allowedTools=Bash, Edit\)\./,
       /that account cannot be used and nothing is written there\. Workaround: make your Windows user the owner of AI Code Conductor's resources folder/,
+      /resources folder \(the folder chosen for its data when it was set up\) and of everything in it \(in the folder's Properties, choose Security, then Advanced, change the owner and tick Replace owner on subcontainers and objects\), or move that folder to an NTFS disk, then restart the app\./,
       /make sure Windows PowerShell, whoami and icacls are allowed to run for your user/,
       /Insights runs only when the insights folder in your resources folder is a real folder, not a link or junction/,
       /and on macOS and Linux one you own whose permissions let only you write to it\./,
       /On macOS the app keeps your accounts' sign-in folders in your resources folder to you alone, and the Insights and Sentinel folders there writable only by you, through their owner and permissions\. That holds when the resources folder is on a volume that honours ownership/,
       /Workaround: keep the resources folder on your Mac's own disk, or on a drive whose Get Info has Ignore ownership on this volume turned off/,
-      /On Windows, an account cannot be used when a file, folder or link directly in its own folder, its Claude Code folder or its identity folder belongs to another Windows account and the app can neither make it yours nor copy that folder into a new one of yours/,
+      /On Windows, an account cannot be used when a file, folder or link directly in its own folder, its Claude Code folder or its identity copy belongs to another Windows account and the app can neither make it yours nor copy that folder into a new one of yours/,
       /but never a link, a sign-in file \(\.credentials\.json or \.claude\.json\) or a file with a second name \(a hard link\)\. Workaround: take ownership of it or remove it, then restart the app\./,
     ]) expect(k).toMatch(said)
     // Sessions start through node (the resume picker), so the native installer
