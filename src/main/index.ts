@@ -7,6 +7,7 @@ import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
+import { setSignInWindowsQuitting } from './account-web/in-app-sign-in'
 import { warnAboutOrphanedSharedPartitions } from './account-web/orphan-partitions'
 import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, writeCanvasMarkerLine, routeHookTranscriptPath, noteCodexHookEvent, isCodexPtySession, codexRolloutForSessionContext, applyLoggingSwitches } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
@@ -1120,6 +1121,9 @@ if (!gotTheLock) {
   // window is up, asks the renderer, and re-issues the quit once the close is
   // allowed; this body runs on THAT pass, exactly once.
   quitTeardown = () => {
+    // First: the quit now goes ahead, and Electron closes every window next, so
+    // a sign-in window must not hold its close (a held close cancels the quit).
+    setSignInWindowsQuitting(true)
     logInfo('App quitting...')
     // #397 Group 2: persist sessions BEFORE the logging teardown below tears the
     // transcript binder down — flushing after that would lose the resume targets.

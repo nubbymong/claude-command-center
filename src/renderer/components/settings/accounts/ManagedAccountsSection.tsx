@@ -291,7 +291,7 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
           {account.signingIn && <MutedLine testId={`account-signing-in-${id}`}>Signing in now</MutedLine>}
           {webApplies && webSigningIn && (
             <MutedLine testId={`account-web-${id}`}>
-              chatgpt.com: finish the sign-in in its window.{' '}
+              chatgpt.com: finish the sign-in in its window. It closes by itself once you are signed in.{' '}
               <RowButton onClick={() => { void useCodexWebStore.getState().cancel(id) }} testId={`account-web-cancel-${id}`}>Cancel</RowButton>
             </MutedLine>
           )}

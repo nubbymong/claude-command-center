@@ -143,6 +143,8 @@ describe('[host] a Codex account row: its chatgpt.com web session', () => {
     await menu(A)
     await click(`account-menu-chatgpt-sign-in-${A}`)
     expect(q(`account-web-${A}`)!.textContent).toContain('finish the sign-in in its window')
+    // The window closes by itself once the sign-in is done: nothing for the user to close.
+    expect(q(`account-web-${A}`)!.textContent).toContain('It closes by itself once you are signed in.')
     await click(`account-web-cancel-${A}`)
     expect(codexWeb.cancel).toHaveBeenCalledWith(A)
     await act(async () => { finish({ ok: true, state: { phase: 'failed', accountId: A, error: 'Sign-in cancelled.' } }) })
