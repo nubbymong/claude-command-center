@@ -11,6 +11,10 @@
  *   - a row with nothing for the plan track renders no plan cell and gives
  *     that track to the name, which otherwise truncated beside an empty one;
  *   - a row with a plan keeps its cell, and the name stays in its own track;
+ *   - a long name wraps to a second line and is never truncated, with a plan
+ *     cell or without one, and keeps its full text as its title;
+ *   - the state cell breaks a long unbroken line (an email) anywhere, rather
+ *     than run it under the "..." menu;
  *   - the layout is set on the cells themselves, never by a child selector
  *     on the grid (the "..." menu's root is a div too).
  */
@@ -98,6 +102,26 @@ describe('the account row grid', () => {
     expect(nameCell.classList.contains('col-span-2')).toBe(false)
     expect(cells[2].querySelector('[data-testid="plan"]')?.textContent).toBe('ChatGPT Plus')
     expect(cells[3].querySelector('[data-testid="badge"]')).not.toBeNull()
+  })
+
+  it.each<[string, React.ReactNode]>([
+    ['no plan', null],
+    ['a plan', React.createElement('span', null, 'Plus')],
+  ])('with %s, a long name wraps to two lines, is never truncated, and keeps its full text as its title', (_label, planCell) => {
+    const { nameCell } = renderRow(planCell)
+    const name = nameCell.querySelector('[data-testid="name"]') as HTMLElement
+    expect(name.classList.contains('line-clamp-2')).toBe(true)
+    expect(name.classList.contains('[overflow-wrap:anywhere]')).toBe(true)
+    expect(name.classList.contains('truncate')).toBe(false)
+    expect(name.classList.contains('whitespace-nowrap')).toBe(false)
+    expect(name.getAttribute('title')).toBe('A name long enough to want the plan track')
+  })
+
+  it('breaks a long unbroken line in the state cell anywhere, rather than run it under the menu', () => {
+    const { cells } = renderRow(null)
+    // chip, name, badges, state, menu
+    expect(cells[3].querySelector('[data-testid="state"]')).not.toBeNull()
+    expect(cells[3].classList.contains('[overflow-wrap:anywhere]')).toBe(true)
   })
 
   it('sets the layout on the cells, never with a child selector on the grid', () => {

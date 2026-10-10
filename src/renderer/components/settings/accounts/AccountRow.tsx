@@ -127,22 +127,24 @@ export function AccountRow({ testId, chip, name, nameMuted, nameTestId, secondar
   // chip's initial, however far the cells below it run; centring each cell on
   // its own height scattered them. The tracks never depend on what a row
   // holds, so columns line up from row to row; a row with no plan gives that
-  // track to its name instead of truncating the name beside an empty one. The
+  // track to its name. A long name wraps to a second line, never truncated,
+  // so it stays whole when a plan, recorded later, takes its track back. The
   // badge track keeps 128px, in px like the pills it holds, so a pill never
   // runs into the state column; on a narrow card that floor comes out of the
-  // name and state tracks.
+  // other text tracks, and the state cell breaks a long email anywhere
+  // rather than run it under the menu.
   return (
     <div className="py-3" style={{ borderTop: '1px solid var(--border-subtle)' }} data-testid={testId}>
       <div className="grid items-baseline gap-3 text-[13px] grid-cols-[26px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(128px,1.1fr)_minmax(0,1.5fr)_28px]">
         {chip}
         <div className={`flex flex-col items-start gap-0.5 min-w-0${planCell ? '' : ' col-span-2'}`}>
-          <span className="font-semibold truncate max-w-full" style={{ color: nameMuted ? 'var(--text-muted)' : 'var(--text-primary)' }} title={name} data-testid={nameTestId}>{name}</span>
+          <span className="font-semibold max-w-full line-clamp-2 [overflow-wrap:anywhere]" style={{ color: nameMuted ? 'var(--text-muted)' : 'var(--text-primary)' }} title={name} data-testid={nameTestId}>{name}</span>
           {secondary}
           {linked}
         </div>
         {planCell ? <div className="flex flex-col items-start gap-0.5 min-w-0">{planCell}</div> : null}
         <div className="flex flex-col items-start gap-1 min-w-0">{badges}</div>
-        <div className="flex flex-col items-start gap-1 min-w-0">{stateCell}</div>
+        <div className="flex flex-col items-start gap-1 min-w-0 [overflow-wrap:anywhere]">{stateCell}</div>
         {menu}
       </div>
       {children && <div className="pl-[38px]">{children}</div>}

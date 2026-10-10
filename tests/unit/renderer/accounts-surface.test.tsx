@@ -464,6 +464,21 @@ describe('Codex rows', () => {
     expect(document.body.textContent).not.toContain('account unverified')
   })
 
+  it("once a usage read records this computer's plan, shows it with no method, and the full name wraps beside it rather than truncating", () => {
+    const withPlan = { ...local, planLabel: 'Plus' }
+    render(snapshot({ accounts: [work, personal, withPlan, old, parked, unv, refused, gone, claudeMain, claudeHome] }))
+    expect(q('account-plan-acc-local')?.textContent).toBe('Plus')
+    expect(q('account-method-acc-local')).toBeNull()
+    const name = q('account-name-acc-local')!
+    expect(name.textContent).toBe("This computer's Codex (~/.codex)")
+    expect(name.getAttribute('title')).toBe("This computer's Codex (~/.codex)")
+    // The plan cell takes its track back: the name has one track, beside it.
+    expect(name.parentElement!.classList.contains('col-span-2')).toBe(false)
+    expect(name.parentElement!.parentElement!.children).toHaveLength(6)
+    expect(name.classList.contains('line-clamp-2')).toBe(true)
+    expect(name.classList.contains('truncate')).toBe(false)
+  })
+
   it('badges Default, Reviewer, Inactive, and Confirm each launch / Cannot run reviews for external and unverified accounts', () => {
     render(snapshot())
     expect(q('account-badge-default-acc-work')?.textContent).toBe('Default')
