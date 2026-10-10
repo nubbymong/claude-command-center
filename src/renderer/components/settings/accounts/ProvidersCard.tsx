@@ -12,7 +12,7 @@
 // Copy (owner decision D2, 2026-10-10; ADR-024): Run it for me opens a
 // visible terminal tab, shows it, and checks again when the tab ends.
 import React, { useEffect, useState } from 'react'
-import type { InstallRecipeView, ProviderId, ProviderInstallationView } from '../../../../shared/providers'
+import type { InstallRecipeView, PathHintView, ProviderId, ProviderInstallationView } from '../../../../shared/providers'
 import { useProviderAccountsStore, providerAccountActions, providerStatus, providerNotSetUp } from '../../../stores/providerAccountsStore'
 import { ProviderMark } from '../../sidebar/Badges'
 import ToggleSwitch from '../../github/config/ToggleSwitch'
@@ -21,6 +21,7 @@ import { Pill, StatusText, ErrorLine, MutedLine, RowButton } from './accounts-ui
 import { showHelloCodexReplay, codexSetUp } from '../../../onboarding/hello-codex'
 import { tryGetRendererProvider } from '../../../providers/core'
 import { InstallRecipeRow, afterInstallMessage, type RunnableRecipe } from '../../../onboarding/InstallRecipeList'
+import { PathHintNotice } from '../../../onboarding/PathHintNotice'
 import { openInstallTab, installTabRunning, useInstallTabRunning, type InstallTab } from '../../../utils/installTab'
 import { useSessionStore } from '../../../stores/sessionStore'
 
@@ -60,11 +61,23 @@ const CONFIRM_WHERE = 'Run this in a new terminal tab? It types the line below, 
 // gone while its tab is shown (the sessions view), and comes back to them.
 const providerTabs = new Map<ProviderId, InstallTab>()
 const endedInstalls = new Set<ProviderId>()
+// What the last check that found nothing said helps, per provider (main's
+// path hint: its install folder is off PATH, or a restart), and the rows
+// to tell when it changes (a check after a tab ends lands while the card may
+// be gone, and its reply may come after the snapshot it pushed).
+const pathHints = new Map<ProviderId, PathHintView>()
+const hintListeners = new Set<() => void>()
+function notePathHint(providerId: ProviderId, r: { ok: boolean; pathHint?: PathHintView }): void {
+  if (r.ok && r.pathHint) pathHints.set(providerId, r.pathHint)
+  else pathHints.delete(providerId)
+  for (const l of [...hintListeners]) l()
+}
 
 /** Test seam: forget every tab a row opened. */
 export function _resetProviderInstallTabsForTest(): void {
   providerTabs.clear()
   endedInstalls.clear()
+  pathHints.clear()
 }
 
 /** The install or update commands main knows for the provider on this
@@ -95,7 +108,7 @@ function InstallCommands({ p, purpose, onRun, busyReason }: {
         {purpose === 'install' ? `Install ${p.displayName}` : `Update ${p.displayName}`}
         {' '}
         <span title={mine[0].sourceUrl}>({/readme/i.test(mine[0].sourceUrl) ? `from ${mine[0].publisher}'s README` : `from ${mine[0].publisher}`})</span>
-        {', then Check again.'}
+        {': Run it for me checks again when it ends; after a command you copied, press Check again.'}
       </MutedLine>
       <div className="install-recipes grid gap-1.5 mt-1.5">
         {mine.map((r) => <InstallRecipeRow key={r.id} recipe={r} testIdPrefix="provider" confirmWhere={CONFIRM_WHERE} onRun={onRun} busyReason={busyReason} />)}
@@ -127,11 +140,19 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
   // The result arrives with the snapshot main pushes after the check, which
   // main makes after bringing its PATH up to date (owner decision D4).
   const [checked, setChecked] = useState(false)
+  const [hint, setHint] = useState<PathHintView | undefined>(() => pathHints.get(p.providerId))
+  useEffect(() => {
+    const sync = () => setHint(pathHints.get(p.providerId))
+    hintListeners.add(sync)
+    sync()
+    return () => { hintListeners.delete(sync) }
+  }, [p.providerId])
   const checkAgain = async () => {
     setChecking(true)
     setError(null)
     setInUse(null)
     const r = await providerAccountActions.discover(p.providerId)
+    notePathHint(p.providerId, r)
     setChecking(false)
     setChecked(true)
     if (!r.ok) setError(r.message)
@@ -152,18 +173,27 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
     const label = `${recipe.purpose === 'update' ? 'Update' : 'Install'} ${p.displayName}`
     const opened = openInstallTab({
       label, runLine: recipe.runLine, show: true,
-      onEnded: () => { endedInstalls.add(providerId); void providerAccountActions.discover(providerId) },
+      onEnded: () => {
+        endedInstalls.add(providerId)
+        void providerAccountActions.discover(providerId).then((r) => notePathHint(providerId, r))
+      },
     })
     providerTabs.set(providerId, opened)
     setTab(opened)
   }
-  // Found since: what an ended install said no longer applies.
+  // Found since: what an ended install said, and what helped, no longer apply.
   useEffect(() => {
-    if (!purpose) endedInstalls.delete(p.providerId)
+    if (!purpose) {
+      endedInstalls.delete(p.providerId)
+      if (pathHints.delete(p.providerId)) setHint(undefined)
+    }
   }, [purpose, p.providerId])
   // Still not found after its install ended, or after the user's own Check
-  // again. (A CLI found but too old says so in its status line.)
-  const after = purpose !== 'install' || checking ? null
+  // again. (A CLI found but too old says so in its status line.) When main
+  // said what helps (its install folder is off PATH, or a restart), that is
+  // shown instead.
+  const shownHint = purpose === 'install' && !checking ? hint : undefined
+  const after = purpose !== 'install' || checking || shownHint ? null
     : endedInstalls.has(p.providerId) && !running ? afterInstallMessage(p.displayName, { ended: true })
     : checked ? afterInstallMessage(p.displayName, { ended: false }) : null
 
@@ -215,6 +245,17 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
             reads the commands again, for the update ones. */}
         {purpose && <InstallCommands key={purpose} p={p} purpose={purpose} onRun={run} busyReason={busyReason} />}
         {after && <MutedLine className="mt-1" testId={`provider-after-install-${p.providerId}`}>{after}</MutedLine>}
+        {shownHint && (
+          <div className="mt-1.5">
+            <PathHintNotice
+              hint={shownHint}
+              toolName={p.displayName}
+              providerId={p.providerId}
+              testIdPrefix={`provider-${p.providerId}`}
+              onAdded={(r) => notePathHint(p.providerId, { ok: true, ...r })}
+            />
+          </div>
+        )}
         {/* The Codex introduction, replayed (WP2 commit 6f): offered only
             once Codex is set up, since its first page says the account is
             ready. A replay marks it seen only if it was still due. */}

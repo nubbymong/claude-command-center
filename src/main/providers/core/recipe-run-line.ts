@@ -10,20 +10,35 @@
 //     built from the argv (never from the text the user is shown, which is
 //     the provider's documented command and may not run as is in that shell).
 //   - A vendor's own installer script with `autoRunAllowed` (ADR-024): the
-//     line is the documented command itself, character for character, and
-//     only when that command names exactly one web address, its `scriptUrl`,
-//     an HTTPS address with no user, port, query or fragment, fixed in code
-//     beside it. The confirmation the renderer shows names that address's
-//     host (installRecipeView's `downloadsFrom`), so the user is told where
-//     the script comes from before anything runs. A command with a second
-//     address, another address, or a control character gets no line.
+//     line runs the documented command itself, character for character, and
+//     only when that command is exactly one of the documented shapes filled
+//     in with its `scriptUrl` (VENDOR_SCRIPT_SHAPES: `irm <url> | iex`,
+//     `curl -fsSL <url> | bash` or `| sh`, and OpenAI's `powershell
+//     -ExecutionPolicy ByPass -c "irm <url> | iex"`), `scriptUrl` being an
+//     HTTPS address with no user, port, query or fragment, fixed in code
+//     beside it. So the command names that one address and nothing else, and
+//     runs nothing else: no second fetch (with or without a scheme), no
+//     chained command, no substitution. The confirmation the renderer shows
+//     names that address's host (installRecipeView's `downloadsFrom`), so the
+//     user is told where the script comes from before anything runs.
 //   - Anything else (an installer, a recipe not allowed to run) gets none, so
 //     there is nothing the renderer could type for it.
-//   - Every line ends its own shell when its command ends (`; exit`, and in
-//     PowerShell `; exit $LASTEXITCODE`). The tab's session then reads as
-//     exited, which is how the surface that opened it knows to check again;
-//     the exit code is shown, but whether the tool is there is always decided
-//     by that check, never by the code.
+//   - Every line ends its own shell when its command ends, however it ends.
+//     POSIX: `<command>; exit`. PowerShell: `$failed = $true; try {
+//     <command>; $failed = $false } catch { $_ } finally { if ($failed) {
+//     exit 1 } }; exit $LASTEXITCODE`. An installer piped into iex runs in
+//     the tab's own PowerShell, and Anthropic's sets $ErrorActionPreference
+//     to Stop, so its every failure is an error that abandons the rest of a
+//     plain typed line, `; exit` included: the shell stayed open and nothing
+//     checked again. In the try, that error is shown and the shell ends with
+//     1; Ctrl+C runs the finally, which ends it with 1 too; otherwise it ends
+//     with the command's own code. (One cost: an installer that ends with its
+//     own `exit 0` inside the try is reported as 1. Neither documented
+//     installer does.) The tab's session then reads as exited, which is how
+//     the surface that opened it knows to check again; the exit code is
+//     shown, but whether the tool is there is always decided by that check,
+//     never by the code. A POSIX shell interrupted by Ctrl+C may stay at its
+//     prompt; every surface's Check again works while a tab still runs.
 //   - On Windows, PowerShell resolves `npm` to npm.ps1, which the default
 //     execution policy (Restricted) refuses to load: the install would fail
 //     for most Windows users. The line names npm.cmd, the batch shim installed
@@ -44,17 +59,29 @@ import type { InstallRecipe } from './package'
 /** A program name that can be typed bare at the start of the line. */
 const PLAIN_PROGRAM = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
-/** What ends a line in PowerShell: the shell exits with the command's code. */
-export const WINDOWS_RUN_LINE_END = '; exit $LASTEXITCODE'
+/** What starts a line in PowerShell: the command runs inside a try, so
+ *  every way it can end still ends the shell (see the header). */
+export const WINDOWS_RUN_LINE_START = '$failed = $true; try { '
+/** What ends a line in PowerShell: an error is shown and ends the shell with
+ *  1, as Ctrl+C does; otherwise the shell exits with the command's code. */
+export const WINDOWS_RUN_LINE_END = '; $failed = $false } catch { $_ } finally { if ($failed) { exit 1 } }; exit $LASTEXITCODE'
 /** What ends a line in a POSIX shell: the shell exits with the command's status. */
 export const POSIX_RUN_LINE_END = '; exit'
 
-function runLineEnd(platform: CapabilityPlatform): string {
-  return platform === 'win32' ? WINDOWS_RUN_LINE_END : POSIX_RUN_LINE_END
+/** `command` as the line a terminal tab types on `platform`. */
+export function endedRunLine(command: string, platform: CapabilityPlatform): string {
+  return platform === 'win32' ? `${WINDOWS_RUN_LINE_START}${command}${WINDOWS_RUN_LINE_END}` : `${command}${POSIX_RUN_LINE_END}`
 }
 
-/** Every web address a command names (any scheme), as written. */
-const ADDRESS = /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'`|;&<>()]+/g
+/** The only shapes a vendor's installer command may have to be run, each
+ *  filled in with its fixed `scriptUrl`: the two publishers' documented
+ *  lines (Anthropic's setup page, OpenAI's README). */
+export const VENDOR_SCRIPT_SHAPES: ReadonlyArray<(url: string) => string> = Object.freeze([
+  (u: string) => `irm ${u} | iex`,
+  (u: string) => `curl -fsSL ${u} | bash`,
+  (u: string) => `curl -fsSL ${u} | sh`,
+  (u: string) => `powershell -ExecutionPolicy ByPass -c "irm ${u} | iex"`,
+])
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\x00-\x1f\x7f]/
 
@@ -69,8 +96,9 @@ function fixedHttpsAddress(u: unknown): URL | null {
 }
 
 /** For a vendor's installer script the app may run: the host its documented
- *  command downloads the script from (its fixed `scriptUrl`, the one address
- *  the command names). Undefined for anything else, which then gets no line. */
+ *  command downloads the script from (its fixed `scriptUrl`; the command is
+ *  exactly one of VENDOR_SCRIPT_SHAPES filled in with it). Undefined for
+ *  anything else, which then gets no line. */
 export function vendorScriptHost(
   recipe: Pick<InstallRecipe, 'method' | 'autoRunAllowed'> & Partial<Pick<InstallRecipe, 'displayCommand' | 'scriptUrl'>>,
 ): string | undefined {
@@ -78,8 +106,7 @@ export function vendorScriptHost(
   const url = fixedHttpsAddress(recipe.scriptUrl)
   const line = recipe.displayCommand
   if (!url || typeof line !== 'string' || line.trim() === '' || CONTROL.test(line)) return undefined
-  const named = line.match(ADDRESS) ?? []
-  return named.length === 1 && named[0] === recipe.scriptUrl ? url.hostname : undefined
+  return VENDOR_SCRIPT_SHAPES.some((shape) => shape(url.href) === line) ? url.hostname : undefined
 }
 
 /** The line a terminal tab types to run `recipe` on `platform`, or undefined
@@ -90,7 +117,7 @@ export function recipeRunLine(
 ): string | undefined {
   if (recipe.autoRunAllowed !== true) return undefined
   if (recipe.method === 'script') {
-    return vendorScriptHost(recipe) === undefined ? undefined : `${recipe.displayCommand}${runLineEnd(platform)}`
+    return vendorScriptHost(recipe) === undefined || typeof recipe.displayCommand !== 'string' ? undefined : endedRunLine(recipe.displayCommand, platform)
   }
   if (recipe.method !== 'package-manager') return undefined
   const argv = recipe.command
@@ -99,7 +126,7 @@ export function recipeRunLine(
   if (typeof program !== 'string' || !PLAIN_PROGRAM.test(program)) return undefined
   if (!args.every((a) => typeof a === 'string')) return undefined
   const isWin32 = platform === 'win32'
-  return [shellProgram(program, platform), ...args.map((a) => quoteArgForShell(a, isWin32))].join(' ') + runLineEnd(platform)
+  return endedRunLine([shellProgram(program, platform), ...args.map((a) => quoteArgForShell(a, isWin32))].join(' '), platform)
 }
 
 /** A recipe whose line runs npm, which needs Node.js on this computer. */

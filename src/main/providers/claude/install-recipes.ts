@@ -52,7 +52,9 @@ export function claudeInstallRecipes(platform: CapabilityPlatform): readonly Ins
       // npm's default global prefix is per-user on Windows but often a system
       // folder elsewhere, where `npm install -g` needs sudo. This only warns.
       mayElevate: platform !== 'win32', autoRunAllowed: true,
-      note: 'Needs Node.js 22 or later and npm. A system-wide npm prefix may ask for administrator rights; the app never elevates on its own.',
+      note: platform === 'win32'
+        ? 'Needs Node.js 22 or later.'
+        : 'Needs Node.js 22 or later. If npm says permission denied (EACCES), use the installer above instead: the app never asks for administrator rights.',
     },
   ]
 }

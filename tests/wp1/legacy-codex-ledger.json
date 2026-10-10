@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "e1ee53cc2024f822b367f8d59a8e5aa9cfd26be427face5e74eb4ea705d18044",
-  "manifestHead": "664e124ed9cf8c096b1f09e91388e6a53bb73ad8",
+  "manifestPathDigest": "e5ea8ced72d82465330a77c218d86567ca84beea37d5d2650d9b8cd5d966abf6",
+  "manifestHead": "24c1dbfc2362579332f460ff93848a0d78bdc437",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1159,6 +1159,16 @@
       "disposition": "replace",
       "evidence": "WP2 PR 4 P4.7 (row 68; 9c4f219e, 38dd2dc9, 0d3c75f2, a7c0adab, deb2a7c4): runCodexInsights, a Codex account's report on a background launch that holds the account's lease (prepareLaunch names the account; a confirmation counts only with it), refused while Codex is off, counted as Codex in use until the lease is held and never as Claude Code; the roll-up over both assistants (C1 A) leaving out an account that needs its own confirmation; vs previous run paired by assistant; a Codex report served as data; Claude Code's run unchanged (WP1.38, WP1.42, WP1.60); tests/unit/main/insights-codex-run.test.ts, tests/unit/main/insights-codex-rollup.test.ts, tests/unit/main/insights-provider-off.test.ts; WP2 PR 4 P4.7 fix pass 1: the Codex report run is reached through the registered package's Insights port (tryGetProviderPackage), no longer by a deep import into the Codex package; a package without the port fails the run saying so (WP1.55); tests/unit/main/insights-codex-run.test.ts, tests/wp1/dependency-boundaries.test.ts; WP2 PR 4 P4.7 fix pass 2: the package's Insights port and the runs folder are checked before the account is launched (report and roll-up); the runs folder is checked again before the stale sweep and before a run's folder is removed; the sessions read has a time limit; the previous run's figures reach the prompt as numbers only; the roll-up's written analysis on Claude Code runs in Sentinel's argv form in an empty folder of its own, and Codex's written analysis and a run's failure text are kept as plain text; report.json is served only as a bounded regular file (WP1.38, WP1.60); tests/unit/main/insights-codex-run.test.ts, tests/unit/main/insights-codex-rollup.test.ts, tests/unit/main/insights-codex-fs-guards.test.ts; WP2 PR 4 P4.7 fix pass 3 (e20aeb95): Run all names an account whose sign-in check failed with its reason, never run (WP1.38, WP1.60); tests/unit/main/insights-codex-rollup.test.ts; WP2 PR 4 P4.7 fix pass 4 (750d272c): on POSIX the insights folder held to the runs folder's rule; report.json matched on its whole device and inode, opened without waiting on a FIFO; the written analysis on Claude Code takes its transport settings through Sentinel's one reader; nothing is sent when no marker fences the data (WP1.38, WP1.60); tests/unit/main/insights-codex-fs-guards.test.ts, tests/unit/main/insights-codex-rollup.test.ts, tests/unit/main/insights-codex-run.test.ts; WP2 PR 4 P4.7 fix pass 6 (3397df8d): on POSIX the insights folder made owner-only (0700) through a handle on the folder its check saw, opened without following a link and changed only when it is a folder, this user's, the same device and inode (WP1.38, WP1.60); tests/unit/main/insights-codex-fs-guards.test.ts; WP2 PR 4 fix pass 16 (387eacf5): a Codex report with no session left after those larger than the read limit fails with that reason, and the run log counts them; tests/unit/main/insights-codex-run.test.ts",
       "note": "Claude Code's report run and its pty-manager import are unchanged"
+    },
+    {
+      "path": "src/main/install-folder-path.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "new first-run install review fix (2026-10-10, ADR-024): a CLI its publisher's installer left in its own folder off PATH; Claude Code in %USERPROFILE%\\.local\\bin on Windows gets Add it to PATH for me (main computes the one folder), Claude Code and Codex in ~/.local/bin on macOS and Linux the shell line to copy; a restart advised only when it would help (WP1.18); tests/unit/main/install-folder-path.test.ts, tests/unit/main/setup-probe-cli-path.test.ts",
+      "note": "main only; names codex as a provider id with a POSIX install folder"
     },
     {
       "path": "src/main/install-secret.ts",
@@ -6495,6 +6505,16 @@
       "note": ""
     },
     {
+      "path": "tests/unit/main/install-folder-path.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new first-run install review fix (2026-10-10, ADR-024) test: the PATH hint per platform and provider (Codex has no Windows folder of its own; ~/.local/bin/codex on macOS and Linux gets the shell line), and Add it to PATH for me appends only the folder main computes (WP1.18); tests/unit/main/install-folder-path.test.ts",
+      "note": "host-safe: the file system, registry and PATH write are stand-ins"
+    },
+    {
       "path": "tests/unit/main/install-tab-command-secrets.test.ts",
       "predicates": [
         "P13"
@@ -9334,6 +9354,16 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.9 (rows 39, 42) test (tests/unit/renderer/settings-sentinel-codex.test.tsx): Settings, Sentinel names what it watches and spends for the assistants in use, and its Analysis account select lists the Codex accounts that can run unattended when the analysis runs on Codex, saving the choice as its own setting; Claude Code alone reads as before; the P05 hits are settings seeds (WP1.60); WP2 PR 4 P4.3 (row 53; 12dcb6bd): the Ask Conductor runs on row shows only with both on, reads Claude Code by default and is never rewritten when an assistant is turned off; Sentinel follows it (WP1.60); tests/unit/renderer/settings-sentinel-codex.test.tsx",
       "note": "created by WP2 PR 3 P3.9"
+    },
+    {
+      "path": "tests/unit/renderer/setup-cli-install.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "first-run install (24c1dbfc) test, extended by its review fix (2026-10-10, ADR-024): the PATH prompt and Not now keep every way on, Use Codex only included; Exit on every Setup screen and one button rule (WP1.18); tests/unit/renderer/setup-cli-install.test.tsx",
+      "note": "host-safe: jsdom, electronAPI stand-ins"
     },
     {
       "path": "tests/unit/renderer/setup-codex-only.test.tsx",

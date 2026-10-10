@@ -12,15 +12,28 @@
 // installer; without them Run it for me is off and says why. An npm command
 // main marks `needsNode` (Node.js was not found) is offered to copy only.
 //
+// The buttons follow the one rule of the setup and install surfaces
+// (BUTTON_RULE below): every button is a DialogButton of the small size; in
+// a group they run from the least to the most committal, the commit last;
+// at most one primary, the commit, and everything else secondary. An
+// install option answers no question, so its row has no primary: Copy, then
+// Run it for me. Its confirmation's commit is Run it: Cancel, then Run it.
+//
 // Styled by the onboarding sheet's .cx-* rules, which apply inside .ob-root
 // and inside any element with the install-recipes class.
 import { useEffect, useRef, useState } from 'react'
 import type { InstallRecipeView } from '../../shared/providers'
+import { DialogButton } from '../components/ui/Dialog'
 import './onboarding.css'
 
 export type RunnableRecipe = InstallRecipeView & { runLine: string }
 
-export const NEEDS_NODE_TEXT = 'Needs Node.js, which was not found on this computer.'
+/** The one button rule of the setup and install surfaces (the first-run
+ *  Setup screens, every install option and its confirmation, the PATH
+ *  prompt). Said once, here, for the record and for its test. */
+export const BUTTON_RULE = 'Every button is a DialogButton, size sm. Back alone sits at the left of a footer; every other button is right-aligned, in its footer or on the row of the item it acts on. Within a group, left to right: the way out first (Exit, Cancel, Not now), then the alternatives, then the commit last. At most one primary per group, the commit; every other button is secondary. 8px between buttons.'
+
+export const NEEDS_NODE_TEXT = 'Needs Node.js, which this app did not find on your PATH.'
 export const NOT_RUN_NOTE = 'The app does not run this command: copy it and run it in a terminal.'
 
 /** "From Anthropic", or "From OpenAI's README" for a command copied from a README. */
@@ -30,13 +43,13 @@ export function recipeSourceLine(r: Pick<InstallRecipeView, 'publisher' | 'sourc
 
 /** What a check that still does not find `tool` says: after a command the app
  *  ran ended (with its exit code when it is known and not 0), or after the
- *  user's own Retry or Check again. The PATH was brought up to date before
- *  the check, so a restart is the last resort, not the first. */
+ *  user's own Check again. Never "restart the app": the PATH was brought up
+ *  to date before the check, and when a restart is what would help, main
+ *  says so itself (a `restart` path hint, PathHintNotice). */
 export function afterInstallMessage(tool: string, how: { ended: boolean; exitCode?: number }): string {
-  const restart = 'quit AI Code Conductor and start it again so it sees the new PATH.'
-  if (!how.ended) return `${tool} was still not found. If you installed it, ${restart}`
+  if (!how.ended) return `${tool} was still not found. If you installed it another way, check that its folder is on your PATH, then press Check again.`
   const code = typeof how.exitCode === 'number' && how.exitCode !== 0 ? ` with exit code ${how.exitCode}` : ''
-  return `The command ended${code}, but ${tool} was still not found. The terminal shows what happened. If it installed without an error, ${restart}`
+  return `The command ended${code}, but ${tool} was still not found. The terminal shows what happened: fix what it reports and run it again, or try another command.`
 }
 
 /** The confirmation's words: for an installer script, where it downloads the
@@ -89,20 +102,28 @@ export function InstallRecipeRow({ recipe, testIdPrefix: P, confirmWhere, onRun,
     <div className="cx-recipe" data-testid={`${P}-recipe-${id}`}>
       <div className="cx-cmd">
         <code className="select-all" data-testid={`${P}-recipe-command-${id}`}>{recipe.displayCommand}</code>
-        <button
-          className="cx-btn"
-          type="button"
+        {/* A page focuses its first enabled data-autofocus control: Run it
+            for me while it can run, Copy when it cannot. */}
+        <DialogButton
+          variant="secondary"
+          className="shrink-0"
+          onClick={copy}
+          data-autofocus={off ? '' : undefined}
+          testId={`${P}-recipe-copy-${id}`}
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </DialogButton>
+        <DialogButton
+          variant="secondary"
+          className="shrink-0"
           onClick={() => setConfirming(true)}
           disabled={confirming || !!off}
           title={off}
           data-autofocus=""
-          data-testid={`${P}-recipe-run-${id}`}
+          testId={`${P}-recipe-run-${id}`}
         >
           Run it for me
-        </button>
-        <button className="cx-btn" type="button" onClick={copy} data-autofocus="" data-testid={`${P}-recipe-copy-${id}`}>
-          {copied ? 'Copied' : 'Copy'}
-        </button>
+        </DialogButton>
       </div>
       {recipe.note && <div className="cx-note" data-testid={`${P}-recipe-note-${id}`}>{recipe.note}</div>}
       {recipe.needsNode && <div className="cx-note" data-testid={`${P}-recipe-needs-node-${id}`}>{NEEDS_NODE_TEXT}</div>}
@@ -112,21 +133,20 @@ export function InstallRecipeRow({ recipe, testIdPrefix: P, confirmWhere, onRun,
       )}
       {runLine && confirming && (
         <div className="cx-confirm" role="group" aria-label="Run this command?" data-testid={`${P}-recipe-confirm-${id}`}>
-          <span>
+          <span className="flex-1 min-w-0">
             <span data-testid={`${P}-recipe-confirm-text-${id}`}>{recipeConfirmText(recipe, confirmWhere)}</span>
             <code className="cx-run-line" data-testid={`${P}-recipe-run-line-${id}`}>{runLine}</code>
           </span>
           <span className="cx-confirm-btns">
-            <button className="cx-btn" type="button" onClick={() => setConfirming(false)} data-testid={`${P}-recipe-cancel-${id}`}>Cancel</button>
-            <button
-              className="cx-btn primary"
-              type="button"
+            <DialogButton variant="secondary" onClick={() => setConfirming(false)} testId={`${P}-recipe-cancel-${id}`}>Cancel</DialogButton>
+            <DialogButton
+              variant="primary"
               disabled={!!off}
               onClick={() => { setConfirming(false); onRun({ ...recipe, runLine }) }}
-              data-testid={`${P}-recipe-confirm-run-${id}`}
+              testId={`${P}-recipe-confirm-run-${id}`}
             >
               Run it
-            </button>
+            </DialogButton>
           </span>
         </div>
       )}

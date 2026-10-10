@@ -43,7 +43,7 @@ import type {
   ProviderId, ProviderRegistryDoc, RegistryResult, AuthMethod, KnownAuthState, AccountLifecycle, SessionBinding,
   CapabilityKey, CapabilityPlatform, ScopedCapabilityKey, ProviderPreference, SignInMethod, AccountsSnapshot, AccountsFailure,
   AccountsFailureCode, AccountsResult, AccountView, ProviderInstallationView, CapabilityView, PendingSetupView, ExternalDefaultView,
-  SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, CredentialClass,
+  SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, CredentialClass, PathHintView,
   ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView, ProviderLaunchRefusal,
   ProviderAccountUsageView, ProviderUsageStreamResult, AuthRealm, SignInAgainResult, SignInPhase, ProviderAccount,
 } from '../../../shared/providers'
@@ -111,6 +111,15 @@ export interface AccountsServiceDeps {
    *  installed since the app started is found without a restart. A throw is
    *  ignored. Absent: nothing to bring up to date. */
   refreshPath?: () => Promise<unknown>
+  /** What a check the user asked for adds when it did not find the CLI: the
+   *  publisher's own install folder holds it but PATH does not name it, or a
+   *  restart would help (main's install-folder-path.ts). Display text only.
+   *  A throw counts as nothing to add. Absent: nothing is added. */
+  pathHint?: (providerId: ProviderId) => Promise<PathHintView | undefined>
+  /** "Add it to PATH for me": appends the publisher's install folder for the
+   *  provider, which main computes itself, to the user PATH and to this
+   *  process's PATH (Windows). Absent: the provider offers no such change. */
+  addToPath?: (providerId: ProviderId) => Promise<{ outcome: 'added' | 'already' } | { outcome: 'refused' | 'failed'; message: string }>
 }
 
 /** Usage track MP8 (ADR-022, bound 7): the least time between two fresh
@@ -843,11 +852,31 @@ export class AccountsService {
    *  brought up to date first (deps.refreshPath), so a CLI installed since
    *  the app started is found without a restart, and then discover. A
    *  refresh that fails still checks. */
-  async checkAgain(providerId: ProviderId): Promise<AccountsResult<{ installation: ProviderInstallationView }>> {
+  async checkAgain(providerId: ProviderId): Promise<AccountsResult<{ installation: ProviderInstallationView; pathHint?: PathHintView }>> {
     if (this.pkg(providerId)?.setup && this.deps.refreshPath) {
       try { await this.deps.refreshPath() } catch { /* the check runs on the PATH there is */ }
     }
-    return this.discover(providerId)
+    const r = await this.discover(providerId)
+    if (!r.ok || r.installation.discoveryState !== 'missing' || !this.deps.pathHint) return r
+    let pathHint: PathHintView | undefined
+    try { pathHint = await this.deps.pathHint(providerId) } catch { pathHint = undefined }
+    return pathHint ? { ...r, pathHint } : r
+  }
+
+  /** "Add it to PATH for me" for a provider whose check found its CLI in its
+   *  publisher's install folder, off PATH (pathHint `add-to-path`): main
+   *  appends that folder, which it computes itself, to the user PATH and to
+   *  its own (deps.addToPath), then checks again. The renderer names only
+   *  the provider. */
+  async addToPath(providerId: ProviderId): Promise<AccountsResult<{ added: 'added' | 'already'; installation: ProviderInstallationView; pathHint?: PathHintView }>> {
+    const p = this.pkg(providerId)
+    if (!p?.setup || !this.deps.addToPath) return failure('unsupported')
+    const done = await this.deps.addToPath(p.id)
+    if (done.outcome === 'refused') return failure('unsupported', done.message)
+    if (done.outcome === 'failed') return failure('internal', done.message)
+    const checked = await this.checkAgain(p.id)
+    if (!checked.ok) return checked
+    return { ...checked, added: done.outcome }
   }
 
   /** The models the provider's installed CLI offers in its own picker, read

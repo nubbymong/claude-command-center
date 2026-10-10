@@ -34,7 +34,7 @@ import type {
   TrailEntry,
 } from '../shared/canvas'
 import type {
-  AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest, SignInAgainRequest, SignInAgainResult,
+  AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, PathHintView, SignInOutputEvent, BeginSetupRequest, SignInRequest, SignInAgainRequest, SignInAgainResult,
   CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest, SecretDeposit, KnownAuthState, ProviderId,
   ResolveConflictRequest, SetReviewerDefaultRequest, ProviderAccountUsageView, ProviderUsageStreamResult,
 } from '../shared/providers'
@@ -666,8 +666,10 @@ export interface ElectronAPI {
   providerAccounts: {
     snapshot: () => Promise<AccountsSnapshot | null>
     onChanged: (cb: (snapshot: AccountsSnapshot) => void) => () => void
-    discover: (providerId: ProviderId) => Promise<AccountsResult<{ installation: ProviderInstallationView }>>
+    discover: (providerId: ProviderId) => Promise<AccountsResult<{ installation: ProviderInstallationView; pathHint?: PathHintView }>>
     installRecipes: (providerId: ProviderId) => Promise<InstallRecipeView[] | AccountsResult>
+    /** Add it to PATH for me: main appends the provider's own install folder, which it computes. */
+    addToPath: (providerId: ProviderId) => Promise<AccountsResult<{ added: 'added' | 'already'; installation: ProviderInstallationView; pathHint?: PathHintView }>>
     setEnabled: (providerId: ProviderId, enabled: boolean) => Promise<AccountsResult>
     beginSetup: (req: BeginSetupRequest) => Promise<AccountsResult<{ accountId: string }>>
     issueSecretHandle: (accountId: string) => Promise<AccountsResult<{ handle: string }>>
@@ -743,7 +745,7 @@ export interface ElectronAPI {
     selectResourcesDir: () => Promise<string | null>
     setResourcesDir: (dir: string) => Promise<boolean>
     isCliReady: () => Promise<boolean>
-    probeCli: () => Promise<{ installed: boolean; path?: string; probe: string }>
+    probeCli: () => Promise<{ installed: boolean; path?: string; probe: string; pathHint?: PathHintView }>
     spawnCliSetup: (cols: number, rows: number) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
     killCliSetup: () => Promise<boolean>
   }
@@ -1410,6 +1412,7 @@ const electronAPI: ElectronAPI = {
     onChanged: (cb) => onChannel<AccountsSnapshot>(IPC.PROVIDER_ACCOUNTS_CHANGED, cb),
     discover: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_DISCOVER, { providerId }),
     installRecipes: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_INSTALL_RECIPES, { providerId }),
+    addToPath: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_ADD_TO_PATH, { providerId }),
     setEnabled: (providerId, enabled) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_ENABLED, { providerId, enabled }),
     beginSetup: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_BEGIN_SETUP, { providerId: req.providerId, method: req.method }),
     issueSecretHandle: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_ISSUE_SECRET_HANDLE, { accountId }),

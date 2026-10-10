@@ -79,25 +79,28 @@ const npmMayElevate = (p: CapabilityPlatform) => p !== 'win32'
 const PS1_URL = 'https://chatgpt.com/codex/install.ps1'
 const SH_URL = 'https://chatgpt.com/codex/install.sh'
 const INSTALLER = 'It downloads a script from chatgpt.com and runs it.'
+// OpenAI's installer ends by asking whether to start the CLI now; the tab
+// would wait on that answer, and a yes would run it there.
+const START_PROMPT = 'When it asks whether to start Codex now, answer N: the app checks again when it ends.'
 
 const DRAFTS: readonly Draft[] = [
   {
     id: 'codex-script-install-sh', purpose: 'install', platforms: ['darwin', 'linux'], method: 'script',
     command: null, displayCommand: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh', scriptUrl: SH_URL,
     needsNetwork: true, mayElevate: false, autoRunAllowed: true,
-    note: "OpenAI's own installer: it downloads a script from chatgpt.com and runs it. It does not need Node.js.",
+    note: `OpenAI's own installer: it downloads a script from chatgpt.com and runs it. It does not need Node.js. ${START_PROMPT}`,
   },
   {
     id: 'codex-script-install-ps1', purpose: 'install', platforms: ['win32'], method: 'script',
     command: null, displayCommand: 'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"', scriptUrl: PS1_URL,
     needsNetwork: true, mayElevate: false, autoRunAllowed: true,
-    note: "OpenAI's own installer: it downloads a script from chatgpt.com and runs it, in a PowerShell started for it with the script policy bypassed, as OpenAI documents. It does not need Node.js.",
+    note: `OpenAI's own installer: it downloads a script from chatgpt.com and runs it, in a PowerShell started for it with the script policy bypassed, as OpenAI documents. It does not need Node.js. ${START_PROMPT}`,
   },
   {
     id: 'codex-npm-install', purpose: 'install', platforms: ALL, method: 'package-manager',
     command: ['npm', 'install', '-g', '@openai/codex'], displayCommand: (p) => `${shellProgram('npm', p)} install -g @openai/codex`,
     needsNetwork: true, mayElevate: npmMayElevate, autoRunAllowed: true,
-    note: 'Needs Node.js and npm. A system-wide npm prefix may ask for administrator rights; the app never elevates on its own.',
+    note: 'Needs Node.js. If npm says permission denied (EACCES), use the installer above instead: the app never asks for administrator rights.',
   },
   {
     id: 'codex-brew-install', purpose: 'install', platforms: ['darwin'], method: 'package-manager',
@@ -108,13 +111,13 @@ const DRAFTS: readonly Draft[] = [
     id: 'codex-script-update-sh', purpose: 'update', platforms: ['darwin', 'linux'], method: 'script', updates: 'standalone',
     command: null, displayCommand: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh', scriptUrl: SH_URL,
     needsNetwork: true, mayElevate: false, autoRunAllowed: true,
-    note: `Updates a Codex this script installed: running it again installs the latest version. ${INSTALLER}`,
+    note: `Updates a Codex this script installed: running it again installs the latest version. ${INSTALLER} ${START_PROMPT}`,
   },
   {
     id: 'codex-script-update-ps1', purpose: 'update', platforms: ['win32'], method: 'script', updates: 'standalone',
     command: null, displayCommand: 'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"', scriptUrl: PS1_URL,
     needsNetwork: true, mayElevate: false, autoRunAllowed: true,
-    note: `Updates a Codex this script installed: running it again installs the latest version. ${INSTALLER}`,
+    note: `Updates a Codex this script installed: running it again installs the latest version. ${INSTALLER} ${START_PROMPT}`,
   },
   {
     id: 'codex-npm-update', purpose: 'update', platforms: ALL, method: 'package-manager', updates: 'npm',

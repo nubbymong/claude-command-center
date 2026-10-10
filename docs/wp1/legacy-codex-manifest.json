@@ -1,9 +1,9 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-08T23:52:34.807Z",
-  "head": "664e124ed9cf8c096b1f09e91388e6a53bb73ad8",
-  "tree": "4846b7f3c0d9a638e474e84ab05b34160d1684d6",
-  "scannedWorkingTree": false,
+  "generatedAt": "2026-10-10T04:36:38.401Z",
+  "head": "24c1dbfc2362579332f460ff93848a0d78bdc437",
+  "tree": "aaa889a94a4ce517685197ef25b770bccc09f6d1",
+  "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
     {
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2895,
-  "excludedFileCount": 405,
-  "scannedFileCount": 2490,
+  "trackedFileCount": 2924,
+  "excludedFileCount": 407,
+  "scannedFileCount": 2517,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 864,
-  "pathDigest": "e1ee53cc2024f822b367f8d59a8e5aa9cfd26be427face5e74eb4ea705d18044",
+  "matchedPathCount": 867,
+  "pathDigest": "e5ea8ced72d82465330a77c218d86567ca84beea37d5d2650d9b8cd5d966abf6",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -190,7 +190,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 157
+      "lineCount": 160
     },
     {
       "path": "docs/dev-alongside-prod.md",
@@ -766,6 +766,13 @@
       "lineCount": 169
     },
     {
+      "path": "src/main/install-folder-path.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 5
+    },
+    {
       "path": "src/main/install-secret.ts",
       "predicates": [
         "P14"
@@ -1160,7 +1167,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 37
+      "lineCount": 40
     },
     {
       "path": "src/main/providers/codex/mcp-config.ts",
@@ -2011,7 +2018,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 11
+      "lineCount": 10
     },
     {
       "path": "src/renderer/components/settings/accounts/accounts-ui.tsx",
@@ -2255,7 +2262,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 109
+      "lineCount": 101
     },
     {
       "path": "src/renderer/onboarding/CommandBarStep.tsx",
@@ -3750,7 +3757,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 107
+      "lineCount": 112
     },
     {
       "path": "tests/unit/codex-web-sign-in.test.ts",
@@ -3758,7 +3765,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 148
+      "lineCount": 156
     },
     {
       "path": "tests/unit/codex-web-sweep-race.test.ts",
@@ -4509,6 +4516,13 @@
         "P13"
       ],
       "lineCount": 15
+    },
+    {
+      "path": "tests/unit/main/install-folder-path.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 9
     },
     {
       "path": "tests/unit/main/install-tab-command-secrets.test.ts",
@@ -5375,7 +5389,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 26
+      "lineCount": 27
     },
     {
       "path": "tests/unit/providers/codex/spawn-resume.test.ts",
@@ -5395,7 +5409,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 25
+      "lineCount": 27
     },
     {
       "path": "tests/unit/providers/codex/spawn.test.ts",
@@ -6162,7 +6176,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 257
+      "lineCount": 304
     },
     {
       "path": "tests/unit/renderer/onboarding-flow-stubs.tsx",
@@ -6279,7 +6293,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 50
+      "lineCount": 67
     },
     {
       "path": "tests/unit/renderer/quick-start-panel.test.tsx",
@@ -6559,6 +6573,13 @@
         "P13"
       ],
       "lineCount": 39
+    },
+    {
+      "path": "tests/unit/renderer/setup-cli-install.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
     },
     {
       "path": "tests/unit/renderer/setup-codex-only.test.tsx",
@@ -6900,7 +6921,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 209
+      "lineCount": 219
     },
     {
       "path": "tests/unit/shared/extra-args.test.ts",

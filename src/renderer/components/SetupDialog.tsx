@@ -16,10 +16,11 @@ import {
 } from './ui/Dialog'
 import { noteClaudeMissingAtSetup, type FirstRunOutcome } from '../onboarding/provider-choice'
 import { launchRefusalOf } from '../../shared/providers'
-import type { InstallRecipeView } from '../../shared/providers'
+import type { InstallRecipeView, PathHintView } from '../../shared/providers'
 import { claudeCodeInstallCommand } from '../utils/claudeInstallCommand'
 import { providerAccountActions } from '../stores/providerAccountsStore'
 import { InstallRecipeList, afterInstallMessage, type RunnableRecipe } from '../onboarding/InstallRecipeList'
+import { PathHintNotice } from '../onboarding/PathHintNotice'
 import { installTerminalOptions } from '../utils/commandTerminal'
 import { generateId } from '../utils/id'
 
@@ -34,13 +35,17 @@ interface Props {
  *  app base rather than the usual scrim — there is nothing behind it to dim. */
 const OPAQUE_BACKDROP: React.CSSProperties = { background: 'var(--surface-base)' }
 
-type CliProbe = { installed: boolean; path?: string; probe: string }
+/** What main's check said. `pathHint` when it found nothing: what helps
+ *  (Anthropic's installer put claude in a folder PATH does not name, or a
+ *  restart would help). */
+type CliProbe = { installed: boolean; path?: string; probe: string; pathHint?: PathHintView }
 
 /** A Claude Code install this screen is running (owner decisions D1 to D4,
  *  2026-10-10; ADR-024): main's line for one recipe, in a terminal on this
  *  screen. `ended` once its shell exited (the line ends it), with the code;
- *  `checking` while setup checks again after that. */
-type SetupInstall = { id: string; recipe: RunnableRecipe; ended: boolean; exitCode?: number; checking: boolean }
+ *  `checking` while setup checks again; `checkedWhileRunning` once the
+ *  user's Check again found nothing while the command still ran. */
+type SetupInstall = { id: string; recipe: RunnableRecipe; ended: boolean; exitCode?: number; checking: boolean; checkedWhileRunning?: boolean }
 
 /** Where the confirmation says the line runs. */
 const SETUP_CONFIRM_WHERE = 'Run this in a terminal on this screen? It types the line below, and setup checks again when the command ends.'
@@ -325,6 +330,41 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
     await probeCli()
     if (mountedRef.current) setTried(true)
   }
+  // Check again on the install screen. After the command ended: the check
+  // it already made, again. While it still runs (its shell may be sitting at
+  // a prompt): a check that leaves it running; when Claude Code is found, the
+  // command's terminal is stopped and setup goes on.
+  const checkInstallNow = async () => {
+    const cur = installRef.current
+    if (!cur || cur.checking) return
+    if (cur.ended) { await checkAfterInstall(cur.id); return }
+    setInstall({ ...cur, checking: true })
+    const result = await probeCli()
+    const now = installRef.current
+    if (!mountedRef.current || !now || now.id !== cur.id) return
+    if (result.installed) {
+      if (!now.ended) window.electronAPI.pty.kill(now.id)
+      setInstall(null)
+      return
+    }
+    setInstall({ ...now, checking: false, checkedWhileRunning: true })
+  }
+
+  // Exit, on every Setup screen: the window closes as its own close button
+  // closes it (the app's title bar is not drawn while setup shows), which
+  // quits the app on Windows and Linux. A command still running on this
+  // screen, and the Claude Code setup terminal, are stopped first.
+  const handleExit = () => {
+    const cur = installRef.current
+    if (cur && !cur.ended) window.electronAPI.pty.kill(cur.id)
+    if (ptySpawned) void window.electronAPI.setup.killCliSetup()
+    window.electronAPI.window.close()
+  }
+  const exitButton = (
+    <DialogButton variant="secondary" onClick={handleExit} testId="setup-exit">
+      Exit
+    </DialogButton>
+  )
 
   // The "not installed" screen's primary button, Retry, has the focus each
   // time a check ends on that screen: when it opens (it only ever opens when
@@ -400,19 +440,27 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
   // Step 2, blocked: the Claude CLI is not installed on this machine. A FULL
   // STOP for Claude Code -- no Skip, no Continue into a Claude setup that
   // cannot run, because "carry on and hope" only produces a broken app the
-  // user has no way to diagnose. The ways out are: install it and Retry, go
-  // Back and quit, or (WP2) "Use Codex only", which turns Claude Code off
-  // rather than pretending it is there.
+  // user has no way to diagnose. The ways out are: install it and Check
+  // again, Exit, go Back, or (WP2) "Use Codex only", which turns Claude Code
+  // off rather than pretending it is there. Claude Code installed in
+  // Anthropic's own folder, which PATH does not name, is said as such, with
+  // Add it to PATH for me on Windows (PathHintNotice).
+  //
+  // Every screen's buttons follow BUTTON_RULE (InstallRecipeList.tsx): Back
+  // alone at the left of the footer, then at the right Exit, any
+  // alternative, and the screen's one primary last; all small.
   //
   // Each screen's primary button takes focus when the screen opens, rather
-  // than leaving it on the page body: Continue by autoFocus, Retry when the
-  // check that opens this screen ends (above). The screens are keyed so each
-  // is mounted afresh: they share their frame, and without a key React would
-  // reuse one screen's footer button for the next (Retry, say, becoming step
-  // 1's Continue after Back) and autoFocus would not run again.
+  // than leaving it on the page body: Continue by autoFocus, Check again when
+  // the check that opens this screen ends (above). The screens are keyed so
+  // each is mounted afresh: they share their frame, and without a key React
+  // would reuse one screen's footer button for the next (Check again, say,
+  // becoming step 1's Continue after Back) and autoFocus would not run again.
   // Step 2, installing: the command runs in the terminal below; setup checks
-  // again when it ends. Back stops it (if it still runs) and checks again.
+  // again when it ends. Back stops it (if it still runs) and checks again;
+  // Check again works while it runs too.
   if (step === 2 && install) {
+    const hint = install.ended && !install.checking ? cliProbe?.pathHint : undefined
     return (
       <DialogOverlay key="setup-cli-install" style={OPAQUE_BACKDROP}>
         <DialogPanel width="w-[672px]" labelledBy="setup-cli-install-title">
@@ -422,7 +470,7 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
                 titleId="setup-cli-install-title"
                 mark=">_"
                 title="Installing Claude Code"
-                subtitle="The command runs in the terminal below. Answer any question it asks there; setup checks again when it ends."
+                subtitle="The command runs in the terminal below; it may show nothing for a minute while it downloads. Answer any question it asks there. Setup checks again when it ends; if it stops at a prompt, press Check again."
               />
             </div>
             <div
@@ -431,14 +479,23 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
               style={{ height: '340px', backgroundColor: 'var(--surface-stage)', borderColor: 'var(--border-subtle)' }}
               data-testid="setup-cli-install-terminal"
             />
-            {install.ended && install.checking && (
+            {install.checking && (
               <p className="text-xs" style={{ color: 'var(--text-muted)' }} data-testid="setup-cli-install-checking">
                 Checking for Claude Code…
               </p>
             )}
-            {install.ended && !install.checking && (
+            {!install.ended && !install.checking && install.checkedWhileRunning && (
+              <DialogCallout tone="warning" role="status" testId="setup-cli-install-not-yet">
+                Claude Code was not found yet. If the terminal above is back at a prompt, the command has ended: press Back to try another command.
+              </DialogCallout>
+            )}
+            {hint && (
+              <PathHintNotice hint={hint} toolName="Claude Code" providerId="claude" testIdPrefix="setup" onAdded={() => { void checkAfterInstall(install.id) }} />
+            )}
+            {install.ended && !install.checking && !hint && (
               <DialogCallout tone="warning" role="status" testId="setup-cli-install-ended">
-                {afterInstallMessage('Claude Code', { ended: true, exitCode: install.exitCode })}
+                {afterInstallMessage('Claude Code', { ended: true, exitCode: install.exitCode })}{' '}
+                Back lists the other install commands.
               </DialogCallout>
             )}
           </DialogBody>
@@ -449,14 +506,14 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
               </DialogButton>
             }
           >
+            {exitButton}
             <DialogButton
               variant="primary"
-              size="md"
-              onClick={() => { void checkAfterInstall(install.id) }}
-              disabled={!install.ended || install.checking}
+              onClick={() => { void checkInstallNow() }}
+              disabled={install.checking}
               testId="setup-cli-install-retry"
             >
-              {install.checking ? 'Checking…' : 'Retry'}
+              {install.checking ? 'Checking…' : 'Check again'}
             </DialogButton>
           </DialogFooter>
         </DialogPanel>
@@ -466,6 +523,7 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
 
   if (step === 2 && cliProbe && !cliProbe.installed) {
     const listed = Array.isArray(recipes) && recipes.some((r) => r.purpose === 'install')
+    const hint = cliProbe.pathHint
     return (
       <DialogOverlay key="setup-cli-missing" style={OPAQUE_BACKDROP}>
         <DialogPanel width="w-[672px]" labelledBy="setup-cli-missing-title" panelRef={missingPanelRef}>
@@ -473,10 +531,13 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
             <SetupHero
               titleId="setup-cli-missing-title"
               mark="!"
-              title="Claude Code is not installed"
+              title={hint ? 'Claude Code cannot be found yet' : 'Claude Code is not installed'}
               subtitle="AI Code Conductor runs the Claude Code CLI; it cannot set up, or run a Claude session, without it."
             />
 
+            {hint ? (
+              <PathHintNotice hint={hint} toolName="Claude Code" providerId="claude" testIdPrefix="setup" onAdded={() => { void probeCli() }} />
+            ) : (
             <DialogCallout
               tone="danger"
               role="alert"
@@ -489,8 +550,9 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
                 to configure for it until it is installed.
               </p>
             </DialogCallout>
+            )}
 
-            {listed ? (
+            {recipes === undefined ? null : listed ? (
               <div className="install-recipes">
                 <InstallRecipeList
                   purpose="install"
@@ -502,15 +564,15 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
                 />
                 <p className="text-[11px]" style={{ color: 'var(--text-muted)' }} data-testid="setup-cli-install-hint">
                   Run it for me runs the command in a terminal on this screen, and setup checks again when it ends. If you
-                  install Claude Code another way, press Retry once it is done.
+                  install Claude Code another way, press Check again once it is done.
                 </p>
               </div>
             ) : (
             <div>
               <p className="text-xs mb-1.5" style={{ color: 'var(--text-secondary)' }}>
-                Install it with Node.js 18 or newer, in a terminal:
+                Install it with Node.js 22 or later, in a terminal:
               </p>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
                 <code
                   className="flex-1 px-3 py-2 rounded-lg border font-mono text-xs select-all"
                   style={{ background: 'var(--surface-stage)', borderColor: 'var(--border-subtle)', color: 'var(--brand)' }}
@@ -527,19 +589,18 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
                     }).catch(() => { /* clipboard blocked — the text is select-all anyway */ })
                   }}
                   className="shrink-0"
-                  style={{ height: 'auto', alignSelf: 'stretch' }}
                   testId="setup-cli-copy"
                 >
                   {copied ? 'Copied' : 'Copy'}
                 </DialogButton>
               </div>
               <p className="text-[11px] mt-1.5" style={{ color: 'var(--text-muted)' }}>
-                Then come back and press Retry.
+                Then come back and press Check again.
               </p>
             </div>
             )}
 
-            {tried && !probing && (
+            {tried && !probing && !hint && (
               <DialogCallout tone="warning" role="status" testId="setup-cli-still-missing">
                 {afterInstallMessage('Claude Code', { ended: false })}
               </DialogCallout>
@@ -570,14 +631,14 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
               </DialogButton>
             }
           >
+            {exitButton}
             <DialogButton
               variant="primary"
-              size="md"
               onClick={() => { void retry() }}
               disabled={probing}
               testId="setup-cli-retry"
             >
-              {probing ? 'Checking…' : 'Retry'}
+              {probing ? 'Checking…' : 'Check again'}
             </DialogButton>
           </DialogFooter>
         </DialogPanel>
@@ -614,22 +675,16 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
             </div>
           </DialogBody>
 
-          <DialogFooter
-            left={
-              /* Held back until the CLI is confirmed: while the probe is still
-                 out, Skip would be a way past a gate that has not decided yet. */
-              cliProbe?.installed ? (
-                <button
-                  onClick={handleSkip}
-                  className="text-xs underline transition-colors hover:text-[var(--text-secondary)]"
-                  style={{ color: 'var(--text-muted)' }}
-                  data-testid="setup-cli-skip"
-                >
-                  Skip for now
-                </button>
-              ) : undefined
-            }
-          >
+          <DialogFooter>
+            {exitButton}
+            {/* Held back until the CLI is confirmed: while the probe is still
+                out, Skip would be a way past a gate that has not decided yet.
+                It stays the way on when main refuses this terminal. */}
+            {cliProbe?.installed && (
+              <DialogButton variant="secondary" onClick={handleSkip} testId="setup-cli-skip">
+                Skip for now
+              </DialogButton>
+            )}
             {/* The old green / purple fills each carried a `text-base` class
                 meaning "dark text on the fill" — but that name is a FONT SIZE in
                 Tailwind, so the label just inherited its colour and sat
@@ -637,10 +692,8 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
                 primary variant sets) is the colour that was intended. */}
             <DialogButton
               variant="primary"
-              size="md"
               onClick={handleFinish}
               disabled={!ptySpawned || !cliProbe?.installed}
-              style={ptyExited ? { background: 'var(--status-success)' } : undefined}
               testId="setup-cli-finish"
             >
               {ptyExited ? 'Done' : 'Skip & Continue'}
@@ -736,9 +789,10 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
         </DialogBody>
 
         <DialogFooter>
+          {exitButton}
           {/* Was a purple fill with the same font-size-not-a-colour trap as
               step 2's Finish button. */}
-          <DialogButton variant="primary" size="md" onClick={handleContinue} autoFocus testId="setup-continue">
+          <DialogButton variant="primary" onClick={handleContinue} autoFocus testId="setup-continue">
             Continue
           </DialogButton>
         </DialogFooter>

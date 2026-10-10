@@ -937,7 +937,8 @@ describe('installing from setup, in What\'s New (2.1.1-beta.2) and the Feature G
     const said = top.changes.map((c) => c.description).join('\n')
     expect(said).toMatch(/Claude Code and Codex can both be installed from setup\. Every install or update command has Run it for me, which runs it in a visible terminal once you confirm it, and Copy\./)
     expect(said).toMatch(/The tool's own installer comes first \(Anthropic's from claude\.ai, OpenAI's from chatgpt\.com\), and its confirmation says it downloads a script from there and runs it; npm comes second, and says so when Node\.js is not found\./)
-    expect(said).toMatch(/Setup checks again when the command ends and finds the new install without restarting the app\. Settings, Accounts and the CLI help at the foot of the window offer the same\./)
+    expect(said).toMatch(/Setup checks again when the command ends, also when it fails or you press Ctrl\+C on Windows, and finds the new install without restarting the app\./)
+    expect(said).toMatch(/Settings, Accounts and the CLI help at the foot of the window offer the same\. Every setup screen has Exit\./)
   })
 
   it('the Feature Guide says how the install commands run, in order, and when the app looks again', () => {
@@ -946,14 +947,56 @@ describe('installing from setup, in What\'s New (2.1.1-beta.2) and the Feature G
     expect(p).toMatch(/The publisher's own installer comes first \(for Claude Code, Anthropic's native installer from claude\.ai; for Codex, OpenAI's installer from chatgpt\.com\), then npm/)
     expect(p).toMatch(/Run it for me asks first, and for an installer it says that it downloads a script from that site and runs it; then it types the command into a visible terminal tab, never with administrator rights, and checks again when the command ends\./)
     expect(p).toMatch(/An npm command needs Node\.js: when Node\.js is not found, it says so and its Run it for me is off, while Copy still works\./)
-    expect(p).toMatch(/On Windows, Check again, Retry and the check after an install first read the PATH Windows now gives new programs, so a tool installed while the app was open is found without restarting it\./)
+    expect(p).toMatch(/On Windows, Check again and the check after an install first read the PATH Windows now gives new programs, so a tool installed while the app was open is found without restarting it\./)
     expect(p).not.toMatch(/the app never runs them/)
   })
 
-  it('the Feature Guide says the setup screen installs Claude Code and carries on, and when to restart', () => {
+  it('the Feature Guide says the setup screen installs Claude Code and carries on, with Check again and Exit, and never a restart that cannot help', () => {
     expect(body('providers')).toMatch(/If Claude Code is not installed, the first setup screen says so and lists its install commands, Anthropic's native installer first and npm second, each with Run it for me and Copy: Run it for me runs the command in a terminal on that screen once you confirm it, and setup checks again when it ends and carries on as soon as Claude Code is found\./)
     const t = body('troubleshooting')
-    expect(t).toMatch(/The page lists the install commands, each with Run it for me and Copy, says which check it ran, and has a Retry; setup checks again by itself when a command it ran ends, and carries on once Claude Code is found\. If it is still not found after that, restart the app so it picks up the new PATH\./)
+    expect(t).toMatch(/The page lists the install commands, each with Run it for me and Copy, says which check it ran, and has Check again; setup checks again by itself when a command it ran ends, and carries on once Claude Code is found\./)
+    expect(t).toMatch(/Every setup screen has Exit, which closes the app\./)
+    expect(t).not.toMatch(/restart the app so it picks up the new PATH/)
     expect(t).not.toMatch(/gives you the install command to copy/)
+  })
+})
+
+// The PATH finding of the first-run test (2026-10-10; ADR-024): Anthropic's
+// installer leaves Claude Code in its own folder, off PATH. What's New, the
+// Feature Guide, the tour, the tips and Known issues say what the app does
+// then, in the words it shows, and none still says the commands are only to
+// copy.
+describe("an installer's folder off PATH, in What's New, the Feature Guide, the tour, the tips and Known issues", () => {
+  const top = changelog.find((e) => e.highlights?.startsWith('Codex becomes a full second assistant'))!
+  const body = (id: string) => APP_KNOWLEDGE_SECTIONS.find((s) => s.id === id)!.body
+
+  it("What's New says setup names the folder and adds it to PATH on Windows, or shows the line elsewhere", () => {
+    const said = top.changes.map((c) => c.description).join('\n')
+    expect(said).toMatch(/Anthropic's installer does not put its folder on your PATH: setup then says Claude Code is installed there, and on Windows Add it to PATH for me adds that one folder to your PATH; on a Mac or Linux it shows the line to add to your shell file\./)
+    expect(said).not.toMatch(/install or update commands from OpenAI's own instructions to copy/)
+    expect(said).not.toMatch(/can run the npm or Homebrew install or update command/)
+  })
+
+  it('the Feature Guide names the folder, Add it to PATH for me and Not now, the shell line, and when a restart helps', () => {
+    const p = body('providers')
+    expect(p).toMatch(/Anthropic's native installer puts Claude Code in %USERPROFILE%\\\.local\\bin on Windows \(~\/\.local\/bin on a Mac or Linux\) and does not add that folder to your PATH\./)
+    expect(p).toMatch(/on Windows, Add it to PATH for me adds that one folder to the end of your PATH for your Windows account and checks again, and Not now leaves your PATH as it is; on a Mac or Linux it shows the line to add to the shell file your login shell reads, with Copy, and never changes that file itself\./)
+    expect(p).toMatch(/The app advises quitting and starting it again only when that would help/)
+  })
+
+  it('Known issues carries the live workarounds this ships with', () => {
+    const k = body('known-issues')
+    expect(k).toMatch(/On a Mac or Linux, an npm install command can say Node\.js was not found when Node\.js is set up only in your interactive shell file/)
+    expect(k).toMatch(/Workaround: press Copy and run the command in a terminal, or use the installer listed first, which does not need Node\.js\./)
+    expect(k).toMatch(/On a Mac or Linux, pressing Ctrl\+C in an install tab can leave that tab at a shell prompt, so the app does not check again by itself\. Workaround: press Check again, or type exit in the tab\./)
+  })
+
+  it('the tour and the tips say each command has Run it for me and Copy, not only Copy', () => {
+    const highlights = trainingSteps.flatMap((t) => (t as { highlights?: string[] }).highlights ?? []).join('\n')
+    expect(highlights).toMatch(/Its row lists the install or update commands, the publisher's own installer first, each with \*\*Run it for me\*\* and \*\*Copy\*\*/)
+    expect(highlights).not.toMatch(/install or update commands to copy, then \*\*Check again\*\*/)
+    const tips = JSON.stringify(TIPS_LIBRARY)
+    expect(tips).toMatch(/each with \*\*Run it for me\*\* and \*\*Copy\*\*\. Run it for me checks again when the command ends/)
+    expect(tips).not.toMatch(/install or update command to copy, then \*\*Check again\*\*/)
   })
 })

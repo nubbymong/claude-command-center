@@ -60,6 +60,7 @@ function wire(service: AccountsService | null) {
 const CHANNELS: Array<[string, unknown]> = [
   [IPC.PROVIDER_ACCOUNTS_DISCOVER, { providerId: 'codex' }],
   [IPC.PROVIDER_ACCOUNTS_INSTALL_RECIPES, { providerId: 'codex' }],
+  [IPC.PROVIDER_ACCOUNTS_ADD_TO_PATH, { providerId: 'claude' }],
   [IPC.PROVIDER_ACCOUNTS_SET_ENABLED, { providerId: 'codex', enabled: true }],
   [IPC.PROVIDER_ACCOUNTS_BEGIN_SETUP, { providerId: 'codex', method: 'browser' }],
   [IPC.PROVIDER_ACCOUNTS_ISSUE_SECRET_HANDLE, { accountId: ACC }],
@@ -119,6 +120,27 @@ describe('the Accounts IPC boundary (WP1.42)', () => {
     expect(reached.length).toBe(CHANNELS.length)
   })
 
+  // Owner decisions D3 and D4 and the PATH finding of the first-run test
+  // (2026-10-10; ADR-024): a check the renderer asks for brings PATH up to
+  // date first (checkAgain, never a bare discover), the recipes it shows ask
+  // whether Node.js is there (installRecipesChecked), and Add it to PATH for
+  // me hands the service the provider id and nothing else.
+  it('install channels reach the service operations that refresh PATH, look for Node.js and add the folder main computes', async () => {
+    const asked: Array<[string, unknown[]]> = []
+    const svc = new Proxy({}, {
+      get: (_t, prop) => {
+        if (prop === 'subscribe') return () => () => {}
+        if (prop === 'then') return undefined
+        return (...args: unknown[]) => { asked.push([String(prop), args]); return { ok: true } }
+      },
+    }) as unknown as AccountsService
+    const w = wire(svc)
+    await w.call(IPC.PROVIDER_ACCOUNTS_DISCOVER, { providerId: 'codex' })
+    await w.call(IPC.PROVIDER_ACCOUNTS_INSTALL_RECIPES, { providerId: 'codex' })
+    await w.call(IPC.PROVIDER_ACCOUNTS_ADD_TO_PATH, { providerId: 'claude' })
+    expect(asked).toEqual([['checkAgain', ['codex']], ['installRecipesChecked', ['codex']], ['addToPath', ['claude']]])
+  })
+
   it('any other sender is refused before validation and the service is never reached', async () => {
     const { svc, reached } = spyService()
     const w = wire(svc)
@@ -151,6 +173,13 @@ describe('the Accounts IPC boundary (WP1.42)', () => {
       [IPC.PROVIDER_ACCOUNTS_COMPLETE_SETUP, { accountId: ACC, identity: { mode: 'link', identityId: GRP } }],
       // Unknown provider, method, lifecycle, mode.
       [IPC.PROVIDER_ACCOUNTS_DISCOVER, { providerId: 'gemini' }],
+      // Add it to PATH for me names a known provider and nothing else: never a folder.
+      [IPC.PROVIDER_ACCOUNTS_ADD_TO_PATH, { providerId: 'gemini' }],
+      [IPC.PROVIDER_ACCOUNTS_ADD_TO_PATH, { providerId: 'claude', folder: 'C:\\Users\\victim\\evil' }],
+      [IPC.PROVIDER_ACCOUNTS_ADD_TO_PATH, { providerId: 'claude', path: 'D:\\x' }],
+      [IPC.PROVIDER_ACCOUNTS_ADD_TO_PATH, { folder: 'C:\\x' }],
+      [IPC.PROVIDER_ACCOUNTS_ADD_TO_PATH, 'claude'],
+      [IPC.PROVIDER_ACCOUNTS_ADD_TO_PATH, undefined],
       [IPC.PROVIDER_ACCOUNTS_BEGIN_SETUP, { providerId: 'codex', method: 'password' }],
       [IPC.PROVIDER_ACCOUNTS_SET_LIFECYCLE, { accountId: ACC, lifecycle: 'deleted' }],
       [IPC.PROVIDER_ACCOUNTS_COMPLETE_SETUP, { accountId: ACC, identity: { mode: 'adopt', identityId: IDN } }],

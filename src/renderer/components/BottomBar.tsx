@@ -9,9 +9,10 @@ import { useRegionTypography } from '../hooks/useTypography'
 import { formatInstalledVersion } from '../utils/versionLabel'
 import { useClaudeOff } from '../lib/claudeOff'
 import { claudeCodeInstallCommand } from '../utils/claudeInstallCommand'
-import type { InstallRecipeView } from '../../shared/providers'
+import type { InstallRecipeView, PathHintView } from '../../shared/providers'
 import { providerAccountActions } from '../stores/providerAccountsStore'
 import { InstallRecipeList, afterInstallMessage, type RunnableRecipe } from '../onboarding/InstallRecipeList'
+import { PathHintNotice, cliHelpLooksText } from '../onboarding/PathHintNotice'
 import { openInstallTab, useInstallTabRunning, type InstallTab } from '../utils/installTab'
 
 /** Where the confirmation says the line runs. */
@@ -39,7 +40,7 @@ interface BottomBarProps {
 // "CLI not found" help modal stay here so no CLI affordance is lost. The help
 // lists main's own Claude Code install commands, Anthropic's native installer
 // first, each with Run it for me and Copy (owner decision D2, 2026-10-10;
-// ADR-024); when the install tab ends, and on Re-check, the app asks main to
+// ADR-024); when the install tab ends, and on Check again, the app asks main to
 // check again (which brings its PATH up to date first) and reads the CLI.
 export default function BottomBar({ currentView, onViewChange, onUpdateRequested }: BottomBarProps) {
   void currentView
@@ -53,7 +54,7 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [showCliHelp, setShowCliHelp] = useState(false)
 
-  // Escape is the third way out of the CLI help modal (Close and Re-check are
+  // Escape is the third way out of the CLI help modal (Close and Check again are
   // the other two); only armed while it is open.
   const closeCliHelp = useCallback(() => setShowCliHelp(false), [])
   useDialogEscape(closeCliHelp, showCliHelp)
@@ -68,27 +69,33 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
     return () => { live = false }
   }, [showCliHelp])
   // The install tab the help opened (one at a time), what the last check
-  // after it, or after Re-check, found, and whether a check is running.
+  // after it, or after Check again, found, and whether a check is running.
   const [tab, setTab] = useState<InstallTab | null>(null)
   const tabRunning = useInstallTabRunning(tab)
   const [stillMissing, setStillMissing] = useState<null | 'ended' | 'checked'>(null)
+  const [pathHint, setPathHint] = useState<PathHintView | undefined>(undefined)
   const [rechecking, setRechecking] = useState(false)
+  const [copied, setCopied] = useState(false)
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false }
   }, [])
-  // Main checks again (bringing its PATH up to date first), then the CLI is read.
+  // Main checks again (bringing its PATH up to date first), then the CLI is
+  // read. Still missing after the install tab ended: the help opens again
+  // (it closed when the tab opened), so what to do is in front of the user.
   const recheck = async (after: 'ended' | 'checked') => {
     setRechecking(true)
-    await providerAccountActions.discover('claude')
+    const r = await providerAccountActions.discover('claude')
     let found = false
     try { found = (await window.electronAPI.cli.check()) === true } catch { found = false }
     if (!mounted.current) return
     setRechecking(false)
     setCliAvailable(found)
     setStillMissing(found ? null : after)
+    setPathHint(!found && r.ok ? r.pathHint : undefined)
     if (found) setShowCliHelp(false)
+    else if (after === 'ended') setShowCliHelp(true)
   }
   const runInstall = (recipe: RunnableRecipe) => {
     if (tabRunning) return
@@ -237,7 +244,16 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
             />
             <DialogBody>
               <div className="space-y-3 text-sm">
-                {listed ? (
+                {stillMissing && !rechecking && pathHint && (
+                  <PathHintNotice
+                    hint={pathHint}
+                    toolName="Claude Code"
+                    providerId="claude"
+                    testIdPrefix="bottombar"
+                    onAdded={() => { void recheck('checked') }}
+                  />
+                )}
+                {recipes === undefined ? null : listed ? (
                   <div className="install-recipes">
                     <InstallRecipeList
                       purpose="install"
@@ -252,14 +268,30 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
                 ) : (
                   <div className="rounded p-3" style={{ background: 'var(--surface-overlay)' }}>
                     <div className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Install with npm</div>
-                    <p className="mb-2" style={{ color: 'var(--text-secondary)' }}>Run this in a terminal:</p>
-                    <code className="block rounded px-2 py-1 font-mono text-xs select-all" style={{ background: 'var(--surface-base)', color: 'var(--brand)' }} data-testid="bottombar-cli-npm-install-command">
-                      {claudeCodeInstallCommand(window.electronPlatform)}
-                    </code>
+                    <p className="mb-2" style={{ color: 'var(--text-secondary)' }}>Run this in a terminal (it needs Node.js 22 or later):</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 min-w-0 rounded px-2 py-1 font-mono text-xs select-all" style={{ background: 'var(--surface-base)', color: 'var(--brand)' }} data-testid="bottombar-cli-npm-install-command">
+                        {claudeCodeInstallCommand(window.electronPlatform)}
+                      </code>
+                      <DialogButton
+                        variant="secondary"
+                        className="shrink-0"
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(claudeCodeInstallCommand(window.electronPlatform)).then(() => {
+                            if (!mounted.current) return
+                            setCopied(true)
+                            setTimeout(() => { if (mounted.current) setCopied(false) }, 1500)
+                          }).catch(() => { /* clipboard blocked: the command is selectable */ })
+                        }}
+                        testId="bottombar-cli-npm-copy"
+                      >
+                        {copied ? 'Copied' : 'Copy'}
+                      </DialogButton>
+                    </div>
                   </div>
                 )}
 
-                {stillMissing && !rechecking && (
+                {stillMissing && !rechecking && !pathHint && (
                   <p className="text-xs" role="status" style={{ color: 'var(--status-warning)' }} data-testid="bottombar-cli-after-install">
                     {afterInstallMessage('Claude Code', { ended: stillMissing === 'ended' })}
                   </p>
@@ -267,8 +299,8 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
 
                 <div className="rounded p-3" style={{ background: 'var(--surface-overlay)' }}>
                   <div className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Already installed?</div>
-                  <p style={{ color: 'var(--text-secondary)' }}>
-                    Press Re-check. It looks again in the folders on your PATH, including any added since the app started.
+                  <p style={{ color: 'var(--text-secondary)' }} data-testid="bottombar-cli-looks">
+                    {cliHelpLooksText(window.electronPlatform)}
                   </p>
                 </div>
               </div>
@@ -283,7 +315,7 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
                 disabled={rechecking}
                 testId="bottombar-cli-recheck"
               >
-                {rechecking ? 'Checking...' : 'Re-check'}
+                {rechecking ? 'Checking...' : 'Check again'}
               </DialogButton>
             </DialogFooter>
           </DialogPanel>

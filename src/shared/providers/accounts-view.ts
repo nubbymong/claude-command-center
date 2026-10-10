@@ -313,6 +313,23 @@ export interface InstallRecipeView {
   needsNode?: true
 }
 
+/** What a check that did not find a provider's CLI adds (main's
+ *  install-folder-path.ts). Display text only, never a path the renderer
+ *  could use: the folder as `%USERPROFILE%\.local\bin` or `~/.local/bin`,
+ *  a shell file with the home folder as `~`.
+ *  - `add-to-path` (Windows): the publisher's installer put the tool in
+ *    `folder`, which is not on PATH; the app can add it (addToPath).
+ *  - `shell-profile` (macOS, Linux): the tool is in `folder`, which the login
+ *    shell's PATH lacks; `line` added to `file` puts it there. The app never
+ *    edits that file.
+ *  - `restart` (Windows): the tool is in a folder Windows' PATH names that
+ *    this process could not take in; a restart of the app is what helps.
+ *    The only case where a restart is advised. */
+export type PathHintView =
+  | { kind: 'add-to-path'; folder: string }
+  | { kind: 'shell-profile'; folder: string; file: string; line: string }
+  | { kind: 'restart' }
+
 /** An account's allowance as the Account usage page shows it (usage track
  *  MP3; plan section 3). Views only: percentages, reset times, window labels,
  *  the time of the reading, the plan's name and, for an account that has

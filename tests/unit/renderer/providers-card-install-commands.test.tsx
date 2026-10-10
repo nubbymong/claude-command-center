@@ -40,7 +40,8 @@ const CLAUDE_RECIPES: InstallRecipeView[] = claudeInstallRecipes('win32').map((r
 const PS1 = 'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"'
 
 const pa = {
-  discover: vi.fn(async () => ({ ok: true, installation: {} })),
+  discover: vi.fn(async (_id: string) => ({ ok: true, installation: {} }) as Record<string, unknown>),
+  addToPath: vi.fn(async (_id: string) => ({ ok: true, added: 'added', installation: {} }) as Record<string, unknown>),
   setEnabled: vi.fn(async () => ({ ok: true })),
   installRecipes: vi.fn(async (id: string) => (id === 'codex' ? RECIPES : CLAUDE_RECIPES)),
 }
@@ -64,6 +65,8 @@ beforeEach(() => {
   root = createRoot(container)
   pa.installRecipes.mockClear()
   pa.discover.mockClear()
+  pa.discover.mockResolvedValue({ ok: true, installation: {} })
+  pa.addToPath.mockClear()
   writeText.mockClear()
   useSessionStore.setState({ sessions: [], activeSessionId: null })
   // The tabs a row opened, and which of them ended, outlive the card (it is
@@ -104,7 +107,7 @@ describe('Providers card: install and update commands (the retired Codex tab ins
       'npm.cmd install -g @openai/codex',
     ])
     expect(commands('update')).toEqual([])
-    expect(byTest('provider-recipes-source-codex')!.textContent).toBe("Install Codex (from OpenAI's README), then Check again.")
+    expect(byTest('provider-recipes-source-codex')!.textContent).toBe("Install Codex (from OpenAI's README): Run it for me checks again when it ends; after a command you copied, press Check again.")
     // Check again is still offered beside them.
     expect(byTest('provider-check-again-codex')).not.toBeNull()
   })
@@ -113,7 +116,7 @@ describe('Providers card: install and update commands (the retired Codex tab ins
     await render(codex({}), claude({ discoveryState: 'missing', version: undefined }))
     expect(pa.installRecipes).toHaveBeenCalledWith('claude')
     expect(commands('install', 'claude')).toEqual(['irm https://claude.ai/install.ps1 | iex', 'npm.cmd install -g @anthropic-ai/claude-code'])
-    expect(byTest('provider-recipes-source-claude')!.textContent).toBe('Install Claude Code (from Anthropic), then Check again.')
+    expect(byTest('provider-recipes-source-claude')!.textContent).toBe('Install Claude Code (from Anthropic): Run it for me checks again when it ends; after a command you copied, press Check again.')
   })
 
   it('a CLI that did not run, or could not be checked, gets the install commands too', async () => {
@@ -134,7 +137,7 @@ describe('Providers card: install and update commands (the retired Codex tab ins
         'npm.cmd install -g @openai/codex@latest',
       ])
       expect(commands('install')).toEqual([])
-      expect(byTest('provider-recipes-source-codex')!.textContent).toBe("Update Codex (from OpenAI's README), then Check again.")
+      expect(byTest('provider-recipes-source-codex')!.textContent).toBe("Update Codex (from OpenAI's README): Run it for me checks again when it ends; after a command you copied, press Check again.")
       act(() => { root.unmount() })
       root = createRoot(container)
     }
@@ -170,7 +173,7 @@ describe('Providers card: install and update commands (the retired Codex tab ins
     await render(codex({ discoveryState: 'missing', version: undefined }))
     const ps1 = RECIPES.find((r) => r.id === 'codex-script-install-ps1')!
     expect(byTest('provider-recipe-note-codex-script-install-ps1')!.textContent).toBe(ps1.note)
-    expect(byTest('provider-recipe-note-codex-npm-install')!.textContent).toContain('Needs Node.js and npm')
+    expect(byTest('provider-recipe-note-codex-npm-install')!.textContent).toContain('Needs Node.js. If npm says permission denied (EACCES), use the installer above instead')
     const copy = byTest('provider-recipe-copy-codex-npm-install')!
     await act(async () => { copy.click() })
     expect(writeText).toHaveBeenCalledWith('npm.cmd install -g @openai/codex')
@@ -201,7 +204,7 @@ describe('Providers card: install and update commands (the retired Codex tab ins
     expect(byTest(`provider-recipe-confirm-text-${native.id}`)!.textContent).toBe(
       'This downloads a script from claude.ai and runs it. Run this in a new terminal tab? It types the line below, and the app checks again when the command ends.',
     )
-    expect(byTest(`provider-recipe-run-line-${native.id}`)!.textContent).toBe('irm https://claude.ai/install.ps1 | iex; exit $LASTEXITCODE')
+    expect(byTest(`provider-recipe-run-line-${native.id}`)!.textContent).toBe('$failed = $true; try { irm https://claude.ai/install.ps1 | iex; $failed = $false } catch { $_ } finally { if ($failed) { exit 1 } }; exit $LASTEXITCODE')
     expect(useSessionStore.getState().sessions).toEqual([])
     await click(`provider-recipe-confirm-run-${native.id}`)
     const tabs = useSessionStore.getState().sessions
@@ -232,7 +235,7 @@ describe('Providers card: install and update commands (the retired Codex tab ins
     })
     await act(async () => { await Promise.resolve() })
     expect(byTest('provider-after-install-claude')!.textContent).toBe(
-      'The command ended, but Claude Code was still not found. The terminal shows what happened. If it installed without an error, quit AI Code Conductor and start it again so it sees the new PATH.',
+      'The command ended, but Claude Code was still not found. The terminal shows what happened: fix what it reports and run it again, or try another command.',
     )
     act(() => { root.unmount() })
     root = createRoot(container)
@@ -240,7 +243,7 @@ describe('Providers card: install and update commands (the retired Codex tab ins
     expect(byTest('provider-after-install-codex')).toBeNull()
     await click('provider-check-again-codex')
     expect(byTest('provider-after-install-codex')!.textContent).toBe(
-      'Codex was still not found. If you installed it, quit AI Code Conductor and start it again so it sees the new PATH.',
+      'Codex was still not found. If you installed it another way, check that its folder is on your PATH, then press Check again.',
     )
   })
 
@@ -249,7 +252,7 @@ describe('Providers card: install and update commands (the retired Codex tab ins
     try {
       await render(codex({}), claude({ discoveryState: 'missing', version: undefined }))
       expect((byTest('provider-recipe-run-claude-npm-install') as HTMLButtonElement).disabled).toBe(true)
-      expect(byTest('provider-recipe-needs-node-claude-npm-install')!.textContent).toBe('Needs Node.js, which was not found on this computer.')
+      expect(byTest('provider-recipe-needs-node-claude-npm-install')!.textContent).toBe('Needs Node.js, which this app did not find on your PATH.')
       expect((byTest('provider-recipe-run-claude-script-install-ps1') as HTMLButtonElement).disabled).toBe(false)
       await click('provider-recipe-copy-claude-npm-install')
       expect(writeText).toHaveBeenCalledWith('npm.cmd install -g @anthropic-ai/claude-code')
@@ -301,5 +304,48 @@ describe('Providers card: install and update commands (the retired Codex tab ins
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+// The PATH finding of the first-run test (2026-10-10; ADR-024): a check that
+// still does not find Claude Code, though Anthropic's installer put it in its
+// own folder, says so on the row, with Add it to PATH for me; the row sends
+// main only the provider id. No restart is advised unless main says so.
+describe('Providers card: a CLI in its publisher\'s folder, off PATH', () => {
+  const BSL = String.fromCharCode(92)
+  const HINT = { kind: 'add-to-path', folder: '%USERPROFILE%' + BSL + '.local' + BSL + 'bin' }
+
+  it('after Check again: the row names the folder and offers Add it to PATH for me, for that provider only', async () => {
+    pa.discover.mockResolvedValue({ ok: true, installation: {}, pathHint: HINT })
+    await render(codex({}), claude({ discoveryState: 'missing', version: undefined }))
+    await click('provider-check-again-claude')
+    expect(byTest('provider-claude-path-hint-text')!.textContent).toContain('Claude Code is installed in %USERPROFILE%' + BSL + '.local' + BSL + 'bin, but that folder is not on your PATH yet')
+    expect(byTest('provider-after-install-claude')).toBeNull()
+    expect(container.textContent).not.toContain('quit AI Code Conductor')
+    await click('provider-claude-path-add')
+    expect(pa.addToPath).toHaveBeenCalledTimes(1)
+    expect(pa.addToPath.mock.calls[0]).toEqual(['claude'])
+  })
+
+  it('after an install tab ends, even with the card away: the check\'s hint is shown when the card comes back', async () => {
+    pa.discover.mockResolvedValue({ ok: true, installation: {}, pathHint: HINT })
+    await render(codex({}), claude({ discoveryState: 'missing', version: undefined }))
+    await click(`provider-recipe-run-${CLAUDE_RECIPES[0].id}`)
+    await click(`provider-recipe-confirm-run-${CLAUDE_RECIPES[0].id}`)
+    const tab = useSessionStore.getState().sessions[0]
+    act(() => { root.unmount() })
+    act(() => { useSessionStore.getState().updateSession(tab.id, { ptyExited: true }) })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(pa.discover).toHaveBeenCalledWith('claude')
+    root = createRoot(container)
+    await render(codex({}), claude({ discoveryState: 'missing', version: undefined, lastCheckedAt: 5 }))
+    expect(byTest('provider-claude-path-add')).not.toBeNull()
+  })
+
+  it('a restart is advised only when main says it would help', async () => {
+    pa.discover.mockResolvedValue({ ok: true, installation: {}, pathHint: { kind: 'restart' } })
+    await render(codex({ discoveryState: 'missing', version: undefined }))
+    await click('provider-check-again-codex')
+    expect(byTest('provider-codex-path-restart')!.textContent).toContain('Quit AI Code Conductor and start it again')
   })
 })

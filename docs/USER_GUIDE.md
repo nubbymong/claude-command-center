@@ -11,8 +11,9 @@ next to your install see [`dev-alongside-prod.md`](./dev-alongside-prod.md).
 1. Install (see README → Getting started) and launch. On first run, CCC picks a data
    directory and checks that the `claude` CLI is on your PATH. If it is not
    there, the screen lists Claude Code's install commands with **Run it for me**
-   and **Copy** (see [Installing from setup](#installing-from-setup)), and has a
-   Retry; or choose **Use Codex only** if you only use Codex.
+   and **Copy** (see [Installing from setup](#installing-from-setup)), and has
+   **Check again**; or choose **Use Codex only** if you only use Codex. Every
+   setup screen has **Exit**, which closes CCC.
 2. A fresh install asks **Which assistants will you use?**: Claude Code, Codex,
    or both. Choosing Codex adds a **Set up Codex** page (see
    [Installing or updating Codex](#installing-or-updating-codex) and
@@ -373,20 +374,33 @@ Linux), then `npm install -g @anthropic-ai/claude-code`.
 - **Run it for me** asks first. It shows the exact line it will type and, for
   an installer, names the site the script comes from (claude.ai or
   chatgpt.com) and says it downloads and runs it. Only **Run it** starts
-  anything. The line runs in a visible terminal, one install at a time: a tab
-  that is never saved or restored, or, on the first setup screen, a terminal
-  on that screen. CCC never runs it on its own and never with administrator
-  rights; a system-wide npm on macOS or Linux may ask for them itself.
-- The line ends its terminal when the command ends, and CCC checks again then:
-  once the tool is found, setup carries on. On Windows each check first reads
-  the PATH Windows now gives new programs, so a tool installed while CCC was
-  open is found without restarting it. If it is still not found, CCC says so
-  and suggests restarting it.
+  anything. The line runs in a visible terminal: a tab that is never saved or
+  restored, or, on the first setup screen, a terminal on that screen. Each
+  page runs one install at a time. CCC never runs it on its own and never
+  with administrator rights; a system-wide npm on macOS or Linux may ask for
+  them itself.
+- The line ends its terminal when the command ends, also when it fails (and,
+  on Windows, when you press Ctrl+C), and CCC checks again then: once the tool
+  is found, setup carries on. **Check again** works while the command runs
+  too. On Windows each check first reads the PATH Windows now gives new
+  programs, so a tool installed while CCC was open is found without
+  restarting it.
+- Anthropic's installer puts Claude Code in `%USERPROFILE%\.local\bin` on
+  Windows (`~/.local/bin` on macOS and Linux) and does not add that folder
+  to your PATH. When a check finds it there and the folder is not on PATH,
+  CCC says so. On Windows, **Add it to PATH for me** adds that one folder to
+  the end of your PATH for your Windows account (nothing else in it changes)
+  and checks again; **Not now** leaves PATH as it is and says how to add the
+  folder yourself. On macOS and Linux CCC shows the line to add to the shell
+  file your login shell reads (`~/.zprofile` for zsh), with **Copy**; it
+  never edits that file. Codex gets the same on macOS and Linux. CCC advises
+  quitting and starting it again only when that would help.
 - An npm command needs Node.js. When CCC does not find Node.js, the npm
   command says so, and only **Copy** works for it.
 - On Windows the npm commands run as `npm.cmd`. After a command you copied
-  and ran yourself, press **Check again** (or **Retry** on the first setup
-  screen).
+  and ran yourself, press **Check again**.
+- When OpenAI's installer asks whether to start Codex now, answer N: CCC
+  checks again when it ends.
 
 ## Code review between Claude and Codex
 

@@ -209,9 +209,12 @@ describe('BottomBar: the Claude CLI help', () => {
 // own Claude Code install commands, Anthropic's native installer first, each
 // with Run it for me and Copy. `claude install` is gone from it: it needs a
 // Claude Code already installed. Run it for me asks first, opens a visible
-// install tab and shows it; when that tab ends, and on Re-check, the app asks
-// main to check again (which brings PATH up to date first) and then reads the
-// CLI.
+// install tab and shows it; when that tab ends, and on Check again, the app
+// asks main to check again (which brings PATH up to date first) and then reads
+// the CLI. Still missing after the tab ended, the help opens again by itself.
+// When main says Claude Code is in Anthropic's own folder, off PATH, the help
+// says so and offers Add it to PATH for me (the PATH finding of the first-run
+// test, 2026-10-10).
 const { claudeInstallRecipes } = await import('../../../src/main/providers/claude/install-recipes')
 const { installRecipeView } = await import('../../../src/main/providers/core/recipe-run-line')
 const { useSessionStore } = await import('../../../src/renderer/stores/sessionStore')
@@ -281,11 +284,10 @@ describe('BottomBar: installing Claude Code from the CLI help', () => {
       await flush()
       expect(discover).toHaveBeenCalledWith('claude')
       expect(calls).toEqual(['discover', 'cli.check'])
-      // Still not found: the help says so, with what to do, when it is opened again.
-      await act(async () => { (container.querySelector('[data-testid="bottom-bar-cli"]') as HTMLElement).click() })
-      await flush()
+      // Still not found: the help opens again by itself and says so, with what to do (never a restart).
+      expect(byTest('bottombar-cli-help')).not.toBeNull()
       expect(byTest('bottombar-cli-after-install')!.textContent).toBe(
-        'The command ended, but Claude Code was still not found. The terminal shows what happened. If it installed without an error, quit AI Code Conductor and start it again so it sees the new PATH.',
+        'The command ended, but Claude Code was still not found. The terminal shows what happened: fix what it reports and run it again, or try another command.',
       )
     } finally {
       window.removeEventListener(GO_TO_SESSION_EVENT, onGoTo)
@@ -294,7 +296,7 @@ describe('BottomBar: installing Claude Code from the CLI help', () => {
     }
   })
 
-  it('Re-check asks main to check again before it reads the CLI; found, the help closes', async () => {
+  it('Check again asks main to check again before it reads the CLI; found, the help closes', async () => {
     const api = (globalThis as any).window.electronAPI
     const before = { cli: api.cli, pa: api.providerAccounts }
     try {
@@ -308,8 +310,9 @@ describe('BottomBar: installing Claude Code from the CLI help', () => {
       await act(async () => { byTest('bottombar-cli-recheck')!.click() })
       await flush()
       expect(calls).toEqual(['discover', 'cli.check'])
+      expect(byTest('bottombar-cli-recheck')!.textContent).toBe('Check again')
       expect(byTest('bottombar-cli-after-install')!.textContent).toBe(
-        'Claude Code was still not found. If you installed it, quit AI Code Conductor and start it again so it sees the new PATH.',
+        'Claude Code was still not found. If you installed it another way, check that its folder is on your PATH, then press Check again.',
       )
       available = true
       await act(async () => { byTest('bottombar-cli-recheck')!.click() })
@@ -320,5 +323,50 @@ describe('BottomBar: installing Claude Code from the CLI help', () => {
       api.cli = before.cli
       api.providerAccounts = before.pa
     }
+  })
+})
+
+describe('BottomBar: Claude Code installed in Anthropic\'s folder, off PATH', () => {
+  const RECIPES = claudeInstallRecipes('win32').map((r) => installRecipeView(r, 'win32'))
+  const byTest = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement | null
+  const flush = async () => { for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve() }) }
+  const HINT = { kind: 'add-to-path', folder: '%USERPROFILE%' + String.fromCharCode(92) + '.local' + String.fromCharCode(92) + 'bin' }
+
+  it('the help names the folder and offers Add it to PATH for me, which sends only the provider id and checks again', async () => {
+    const api = (globalThis as any).window.electronAPI
+    const before = { cli: api.cli, pa: api.providerAccounts }
+    try {
+      let available = false
+      api.cli = { check: vi.fn(() => Promise.resolve(available)) }
+      const addToPath = vi.fn(async () => { available = true; return { ok: true, added: 'added', installation: {} } })
+      api.providerAccounts = { installRecipes: vi.fn(async () => RECIPES), discover: vi.fn(async () => ({ ok: true, installation: {}, pathHint: HINT })), addToPath }
+      useSessionStore.setState({ sessions: [], activeSessionId: null })
+      await render()
+      await act(async () => { (container.querySelector('[data-testid="bottom-bar-cli"]') as HTMLElement).click() })
+      await flush()
+      await act(async () => { byTest('bottombar-cli-recheck')!.click() })
+      await flush()
+      expect(byTest('bottombar-path-hint-text')!.textContent).toBe(
+        'Claude Code is installed in %USERPROFILE%' + String.fromCharCode(92) + '.local' + String.fromCharCode(92) + 'bin, but that folder is not on your PATH yet, so this app and your terminals cannot find it. Add it to PATH for me adds that one folder to the end of your PATH for your Windows account; nothing else in it changes.',
+      )
+      expect(byTest('bottombar-cli-after-install')).toBeNull()
+      expect(document.body.textContent).not.toContain('quit AI Code Conductor')
+      await act(async () => { byTest('bottombar-path-add')!.click() })
+      await flush()
+      expect(addToPath).toHaveBeenCalledTimes(1)
+      expect(addToPath).toHaveBeenCalledWith('claude')
+      expect(byTest('bottombar-cli-help')).toBeNull()
+    } finally {
+      api.cli = before.cli
+      api.providerAccounts = before.pa
+    }
+  })
+
+  it('the help says where the app looks, on each platform: the PATH and Anthropic\'s folder', async () => {
+    const { cliHelpLooksText } = await import('../../../src/renderer/onboarding/PathHintNotice')
+    expect(cliHelpLooksText('win32')).toContain('%USERPROFILE%' + String.fromCharCode(92) + '.local' + String.fromCharCode(92) + 'bin')
+    expect(cliHelpLooksText('win32')).toContain('the app offers to add it')
+    expect(cliHelpLooksText('darwin')).toContain('~/.local/bin')
+    expect(cliHelpLooksText('linux')).toContain('the app shows the line to add')
   })
 })

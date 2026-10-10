@@ -46,13 +46,24 @@ describe("Claude Code's install recipes", () => {
         displayCommand: `${p === 'win32' ? 'npm.cmd' : 'npm'} install -g @anthropic-ai/claude-code`, mayElevate: p !== 'win32',
       })
       expect(npm.scriptUrl, p).toBeUndefined()
-      expect(npm.note, p).toBe('Needs Node.js 22 or later and npm. A system-wide npm prefix may ask for administrator rights; the app never elevates on its own.')
+      // ux MINOR 8 (2026-10-10): plain words; what to do when npm is refused.
+      expect(npm.note, p).toBe(p === 'win32'
+        ? 'Needs Node.js 22 or later.'
+        : 'Needs Node.js 22 or later. If npm says permission denied (EACCES), use the installer above instead: the app never asks for administrator rights.')
     }
   })
 
-  it('the lines a terminal tab types, each ending its shell when its command ends', () => {
+  // ux MAJOR 2 (2026-10-10): Anthropic's PowerShell installer sets
+  // $ErrorActionPreference to Stop, so its every failure is an error that
+  // abandoned the rest of a plain typed line, `; exit` included, and the tab
+  // stayed open. On Windows the line runs the documented command inside a
+  // try whose finally ends the shell with 1 on an error or Ctrl+C.
+  it('the lines a terminal tab types, each ending its shell however its command ends', () => {
     const lines = (p: (typeof platforms)[number]) => claudeInstallRecipes(p).map((r) => recipeRunLine(r, p))
-    expect(lines('win32')).toEqual([`${PS1}; exit $LASTEXITCODE`, "npm.cmd 'install' '-g' '@anthropic-ai/claude-code'; exit $LASTEXITCODE"])
+    expect(lines('win32')).toEqual([
+      '$failed = $true; try { irm https://claude.ai/install.ps1 | iex; $failed = $false } catch { $_ } finally { if ($failed) { exit 1 } }; exit $LASTEXITCODE',
+      "$failed = $true; try { npm.cmd 'install' '-g' '@anthropic-ai/claude-code'; $failed = $false } catch { $_ } finally { if ($failed) { exit 1 } }; exit $LASTEXITCODE",
+    ])
     for (const p of ['darwin', 'linux'] as const) expect(lines(p), p).toEqual([`${SH}; exit`, "npm 'install' '-g' '@anthropic-ai/claude-code'; exit"])
   })
 

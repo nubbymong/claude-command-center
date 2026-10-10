@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { AccountsResult, AccountsSnapshot, AccountView, InstallRecipeView, KnownAuthState, ProviderInstallationView, SignInMethod } from '../../shared/providers'
+import type { AccountsResult, AccountsSnapshot, AccountView, InstallRecipeView, KnownAuthState, PathHintView, ProviderInstallationView, SignInMethod } from '../../shared/providers'
 import { SIGN_IN_METHODS } from '../../shared/providers'
 import {
   useProviderAccountsStore, providerAccountActions, providerView, selectProviderAccounts, accountDisplayName, providerAnsweredOn,
@@ -9,6 +9,7 @@ import {
 import { AddProviderAccountDialog, methodCopy } from '../components/settings/accounts/AddProviderAccountDialog'
 import { useSessionStore } from '../stores/sessionStore'
 import { InstallRecipeList, afterInstallMessage, type RunnableRecipe } from './InstallRecipeList'
+import { PathHintNotice } from './PathHintNotice'
 import { openInstallTab, installTabRunning, useInstallTabRunning, type InstallTab } from '../utils/installTab'
 
 const CHECK = String.fromCodePoint(0x2713)
@@ -214,6 +215,10 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
     return parts.length > 0 ? ` (${parts.join(', ')})` : ''
   }
 
+  // What main said helps when its check found nothing: Codex is in
+  // OpenAI's install folder, which the login shell's PATH lacks (macOS and
+  // Linux), or a restart would help.
+  const [pathHint, setPathHint] = useState<PathHintView | undefined>(undefined)
   const checkAgain = async () => {
     setChecking(true)
     setError(null)
@@ -221,6 +226,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
     const r = await providerAccountActions.discover('codex')
     if (!mounted.current) return
     setChecking(false)
+    setPathHint(r.ok ? r.pathHint : undefined)
     if (r.ok) setAnswer(r.installation)
     else setError({ code: r.code, message: r.message })
   }
@@ -364,7 +370,8 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
     // user's own Check again: what to do, once that check has answered. (A
     // Codex found but too old has its own line above.)
     const ended = !!endedTab && endedTab === tab?.id
-    const after = checking || install.kind !== 'missing' ? null
+    const hint = checking || install.kind !== 'missing' ? undefined : pathHint
+    const after = checking || install.kind !== 'missing' || hint ? null
       : ended ? afterInstallMessage('Codex', { ended: true }) : userChecked ? afterInstallMessage('Codex', { ended: false }) : null
     body = (
       <div data-testid={install.kind === 'missing' ? 'codex-setup-missing' : 'codex-setup-update'}>
@@ -379,6 +386,7 @@ export function CodexSetupStep({ onNext, onBack, stepAside, returns }: {
           busyReason={busyReason}
         />
         {after && <p className="cx-muted" role="status" data-testid="codex-setup-after-install">{after}</p>}
+        {hint && <PathHintNotice hint={hint} toolName="Codex" providerId="codex" testIdPrefix="codex" onAdded={() => { void checkAgain() }} />}
       </div>
     )
   } else {

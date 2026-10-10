@@ -22,3 +22,25 @@ Testing per D5: unit tests red first for each new guarantee, typecheck,
 changelog sync and the WP1 gate; no VM rows or e2e (the owner checks the
 installer on a fresh laptop). The ADR-009 adversarial pass is owed before
 merge.
+
+Review fixes, same day. Anthropic's native installer puts claude.exe in
+%USERPROFILE%\.local\bin and never adds it to PATH, so the check after it
+found nothing and the restart advice could not help. Now, when a check finds
+nothing, main looks in the publisher's fixed folder: on Windows, a regular
+file there whose folder neither registry PATH names gets "Add it to PATH for
+me" (main appends exactly that folder to HKCU Path, in its own registry type,
+no duplicate, values passed through the script's environment, then announces
+the change, adds it to its own PATH and checks again) and "Not now"; on macOS
+and Linux the shell file the login shell reads and the line to add, to copy.
+The restart advice appears only when the tool is in a folder the registry's
+PATH names that the running app could not take in. The registry is read
+through Windows PowerShell with every character intact (reg.exe lost every
+non-ASCII character). The Windows run line wraps the documented command in a
+try/finally, so a failure or Ctrl+C ends the shell too, and Check again works
+while a command runs. A vendor installer command must be exactly one of the
+documented shapes. Every Setup screen has Exit, and the setup and install
+buttons follow one rule (InstallRecipeList.tsx BUTTON_RULE). Tests also run
+the real deps of the PATH refresh and of Add it to PATH for me, with the
+registry reader and writer as spies, so an edit that stubs the read, the
+append, the failure log or the link check goes red; a real junction or
+symbolic link is checked in CI.

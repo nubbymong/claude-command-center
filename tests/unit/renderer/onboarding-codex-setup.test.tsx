@@ -51,12 +51,13 @@ const NPM_INSTALL = RECIPES.find((r) => r.id === 'codex-npm-install')!
 const PS1 = RECIPES.find((r) => r.id === 'codex-script-install-ps1')!
 const NPM_UPDATE = RECIPES.find((r) => r.id === 'codex-npm-update')!
 // What Windows types: npm.cmd, not the npm.ps1 PowerShell's execution policy
-// refuses to load, and the line ends its shell when the command ends (ADR-024).
-// Not the command the user is shown.
-const NPM_INSTALL_LINE = "npm.cmd 'install' '-g' '@openai/codex'; exit $LASTEXITCODE"
-const NPM_UPDATE_LINE = "npm.cmd 'install' '-g' '@openai/codex@latest'; exit $LASTEXITCODE"
+// refuses to load, and the line ends its shell however the command ends
+// (ADR-024). Not the command the user is shown.
+const WIN = (cmd: string) => `$failed = $true; try { ${cmd}; $failed = $false } catch { $_ } finally { if ($failed) { exit 1 } }; exit $LASTEXITCODE`
+const NPM_INSTALL_LINE = WIN("npm.cmd 'install' '-g' '@openai/codex'")
+const NPM_UPDATE_LINE = WIN("npm.cmd 'install' '-g' '@openai/codex@latest'")
 // OpenAI's own installer, typed as its README writes it.
-const PS1_LINE = 'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"; exit $LASTEXITCODE'
+const PS1_LINE = WIN('powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"')
 
 const ok = () => Promise.resolve({ ok: true })
 const pa = {
@@ -257,8 +258,8 @@ describe('Codex CLI not found', () => {
     await render(snap({ discoveryState: 'missing', version: undefined }))
     const run = byTest(`codex-recipe-run-${NPM_INSTALL.id}`) as HTMLButtonElement
     expect(run.disabled).toBe(true)
-    expect(run.title).toBe('Needs Node.js, which was not found on this computer.')
-    expect(byTest(`codex-recipe-needs-node-${NPM_INSTALL.id}`)!.textContent).toBe('Needs Node.js, which was not found on this computer.')
+    expect(run.title).toBe('Needs Node.js, which this app did not find on your PATH.')
+    expect(byTest(`codex-recipe-needs-node-${NPM_INSTALL.id}`)!.textContent).toBe('Needs Node.js, which this app did not find on your PATH.')
     await click(`codex-recipe-copy-${NPM_INSTALL.id}`)
     expect(writeText).toHaveBeenCalledWith(NPM_INSTALL.displayCommand)
     expect((byTest(`codex-recipe-run-${PS1.id}`) as HTMLButtonElement).disabled).toBe(false)
@@ -355,7 +356,7 @@ describe('Codex CLI not found', () => {
     expect(byTest(`codex-recipe-busy-${NPM_INSTALL.id}`)).toBeNull()
     // Still not found after it ended: the page says so, with what to do.
     expect(byTest('codex-setup-after-install')!.textContent).toBe(
-      'The command ended, but Codex was still not found. The terminal shows what happened. If it installed without an error, quit AI Code Conductor and start it again so it sees the new PATH.',
+      'The command ended, but Codex was still not found. The terminal shows what happened: fix what it reports and run it again, or try another command.',
     )
     // The same end is not checked twice.
     act(() => { useSessionStore.getState().updateSession(tab.id, { label: 'Install Codex (ended)' }) })
@@ -377,13 +378,36 @@ describe('Codex CLI not found', () => {
     expect(byTest('codex-setup-after-install')).toBeNull()
   })
 
-  it('the restart advice is never shown before anything was tried; Check again that still finds nothing shows it', async () => {
+  it('nothing is said before anything was tried; Check again that still finds nothing says what to check, never a restart', async () => {
     await render(snap({ discoveryState: 'missing', version: undefined }))
     expect(byTest('codex-setup-after-install')).toBeNull()
     await click('codex-setup-check-again')
     expect(byTest('codex-setup-after-install')!.textContent).toBe(
-      'Codex was still not found. If you installed it, quit AI Code Conductor and start it again so it sees the new PATH.',
+      'Codex was still not found. If you installed it another way, check that its folder is on your PATH, then press Check again.',
     )
+    expect(document.body.textContent).not.toContain('quit AI Code Conductor')
+  })
+
+  // The PATH finding of the first-run test (2026-10-10; ADR-024): on Linux
+  // OpenAI's installer writes its PATH line to a file a login shell does not
+  // read, so ~/.local/bin/codex can be missed. The page says which file the
+  // login shell reads and the line to add, with Copy; it never edits it.
+  it('Codex in ~/.local/bin, which the login shell misses: the page names the file and the line, with Copy', async () => {
+    const line = 'export PATH="$HOME/.local/bin:$PATH"'
+    pa.discover.mockResolvedValue({ ok: true, installation: codex({ discoveryState: 'missing', version: undefined }), pathHint: { kind: 'shell-profile', folder: '~/.local/bin', file: '~/.bashrc', line } })
+    try {
+      await render(snap({ discoveryState: 'missing', version: undefined }))
+      await click('codex-setup-check-again')
+      expect(byTest('codex-path-hint-text')!.textContent).toBe(
+        'Codex is installed in ~/.local/bin, but the PATH your login shell builds does not include that folder, so this app cannot find it. Add this line to ~/.bashrc, then press Check again. The app does not change that file.',
+      )
+      expect(byTest('codex-path-line')!.textContent).toBe(line)
+      expect(byTest('codex-setup-after-install')).toBeNull()
+      await click('codex-path-copy')
+      expect(writeText).toHaveBeenCalledWith(line)
+    } finally {
+      pa.discover.mockReset()
+    }
   })
 
   it('a second Run it before the page re-renders opens no second tab', async () => {

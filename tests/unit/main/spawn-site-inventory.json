@@ -206,7 +206,7 @@
   "src/main/owner-only-folders.ts :: execFile(powershellPath()": {
    "count": 1,
    "how": "system-folder",
-   "reason": "Windows PowerShell by its full path in the system folder (powershellPath), no profile."
+   "reason": "Windows PowerShell by its full path in the system folder (powershellPath), no profile. Also runs windows-registry-path.ts's fixed script (the registry PATH read before a check, and Add it to PATH for me), its values passed through the environment."
   },
   "src/main/providers/codex/cli-runner.ts :: deps.spawn(cmd.file": {
    "count": 1,
@@ -335,11 +335,6 @@
     "msedge"
    ],
    "reason": "The vision browser at a known install path that exists; with none there, the browser by its name (chrome or msedge on Windows), as the system finds it. Not one of the programs the Windows lookup promise names (the Feature Guide's, which the inventory test reads)."
-  },
-  "src/main/windows-path-refresh.ts :: execFile(systemTool('reg.exe')": {
-   "count": 1,
-   "how": "system-folder",
-   "reason": "reg.exe by its full path in the system folder (systemTool), arguments as a list, no shell, off the event loop: reads the system and user PATH values before a check the user asked for, on Windows only (owner decision D4)."
   }
  }
 }

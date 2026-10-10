@@ -11,7 +11,7 @@ import { create } from 'zustand'
 import type {
   AccountsSnapshot, AccountView, AccountsResult, AccountsFailure, ProviderInstallationView, ProviderId,
   BeginSetupRequest, SignInRequest, SignInAgainRequest, SignInAgainResult, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, ResolveConflictRequest,
-  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, InstallRecipeView, UpdateIdentityRequest, IdentityView, SignInPhase,
+  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, InstallRecipeView, PathHintView, UpdateIdentityRequest, IdentityView, SignInPhase,
 } from '../../shared/providers'
 import { SIGN_IN_METHODS } from '../../shared/providers'
 import { useSettingsStore } from './settingsStore'
@@ -148,11 +148,19 @@ export async function answerYesIfUnanswered(providerId: ProviderId): Promise<Acc
 
 export const providerAccountActions = {
   setEnabled: (providerId: ProviderId, enabled: boolean) => call(() => api().setEnabled(providerId, enabled)),
-  /** Look for the provider's CLI again. Main keeps what it finds as the
-   *  executable its launches and sign-ins run, and pushes a new snapshot. */
-  discover: (providerId: ProviderId) => call<{ installation: ProviderInstallationView }>(() => api().discover(providerId)),
-  /** How the provider's CLI is installed or updated, to show; never run by
-   *  main. Null when main could not say. */
+  /** Look for the provider's CLI again, after main brings its PATH up to
+   *  date. Main keeps what it finds as the executable its launches and
+   *  sign-ins run, and pushes a new snapshot. When it still finds nothing,
+   *  `pathHint` says what helps (the publisher's install folder is off
+   *  PATH, or a restart). */
+  discover: (providerId: ProviderId) => call<{ installation: ProviderInstallationView; pathHint?: PathHintView }>(() => api().discover(providerId)),
+  /** Add it to PATH for me: main appends the provider's own install folder
+   *  (which it computes; this sends only the provider id) to the user PATH
+   *  and its own, then checks again. */
+  addToPath: (providerId: ProviderId) => call<{ added: 'added' | 'already'; installation: ProviderInstallationView; pathHint?: PathHintView }>(() => api().addToPath(providerId)),
+  /** How the provider's CLI is installed or updated: each command to show
+   *  and copy, and the line a terminal may run for it after the user
+   *  confirms. Null when main could not say. */
   installRecipes: async (providerId: ProviderId): Promise<InstallRecipeView[] | null> => {
     try {
       const r = await api().installRecipes(providerId)

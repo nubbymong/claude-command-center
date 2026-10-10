@@ -10,6 +10,8 @@ import { getInstallPath } from '../update-watcher'
 import { resolveClaudeForPty } from '../pty-manager'
 import { probeClaudeCli } from '../claude-cli-probe'
 import { afterPathRefresh } from '../windows-path-refresh'
+import { pathHintFor } from '../install-folder-path'
+import type { PathHintView } from '../../shared/providers'
 import { defaultLoginShell } from '../login-shell'
 import { withFullyQualifiedProgramLookup } from '../windows-programs'
 import {
@@ -157,9 +159,17 @@ export function registerSetupHandlers(): void {
   // Windows this process's PATH is brought up to date from the registry
   // first (windows-path-refresh.ts: folders appended, never dropped), and a
   // Claude Code installed since the app started is found without a restart.
+  // A probe that still finds nothing says what helps (install-folder-path.ts):
+  // Anthropic's installer put claude in its own folder, which PATH does not
+  // name (Windows: Add it to PATH for me; macOS and Linux: the shell line),
+  // or a restart would help. Display text only.
   ipcMain.handle('setup:probeCli', async () => {
     try {
-      return await afterPathRefresh(probeClaudeCli)
+      const found = await afterPathRefresh(probeClaudeCli)
+      if (found.installed) return found
+      let pathHint: PathHintView | undefined
+      try { pathHint = await pathHintFor('claude') } catch { pathHint = undefined }
+      return pathHint ? { ...found, pathHint } : found
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       logInfo(`[setup] Claude CLI probe failed: ${message}`)
